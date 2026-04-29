@@ -1,22 +1,29 @@
 using System;
 using System.IO;
+using System.Linq;
 using SkiaSharp;
 
 namespace Floss.App.Brushes;
 
 public sealed class ImageBrushTip : IBrushTip, IDisposable
 {
+    private readonly byte[] _pngBytes;
     private readonly SKBitmap _source;
     private SKBitmap? _cachedMask;
     private int _cachedSize;
 
     public ImageBrushTip(string pngPath)
+        : this(File.ReadAllBytes(pngPath))
     {
-        if (!File.Exists(pngPath))
-            throw new FileNotFoundException("Brush tip PNG was not found.", pngPath);
-
-        _source = SKBitmap.Decode(pngPath) ?? throw new InvalidDataException("Brush tip PNG could not be decoded.");
     }
+
+    public ImageBrushTip(byte[] pngBytes)
+    {
+        _pngBytes = pngBytes.ToArray();
+        _source = SKBitmap.Decode(_pngBytes) ?? throw new InvalidDataException("Brush tip PNG could not be decoded.");
+    }
+
+    public byte[] GetPngBytes() => _pngBytes.ToArray();
 
     public SKBitmap GenerateMask(int baseSize, float hardness)
     {

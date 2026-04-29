@@ -62,6 +62,7 @@ public partial class MainWindow : Window
     private TextBlock          _toolStatusText      = null!;
     private TextBlock          _footerStatusText    = null!;
     private TextBlock          _canvasStatusText    = null!;
+    private Button             _saveBrushButton     = null!;
 
     // ── State ─────────────────────────────────────────────────────────────────
     private double     _zoom     = 1.0;
@@ -69,6 +70,9 @@ public partial class MainWindow : Window
     private int        _swatchIndex;
     private BrushKind? _selectedBrushKind;
     private BrushPreset? _activePreset;
+    private BrushAsset? _activeBrushAsset;
+    private BrushLibrary _brushLibrary = null!;
+    private IReadOnlyList<BrushAsset> _brushAssets = [];
 
     private bool  _spacePanning;
     private bool  _isPanning;
@@ -79,17 +83,20 @@ public partial class MainWindow : Window
     private TranslateTransform _canvasPan    = null!;
 
     private bool _syncingLayerUi;
+    private bool _syncingBrushUi;
 
     // ── Constructor ───────────────────────────────────────────────────────────
     public MainWindow()
     {
         InitializeComponent();
+        _brushLibrary = new BrushLibrary(AppPaths.BrushesDirectory);
         BuildUi();
         WireControls();
         RestoreFromConfig();
         BuildSwatches();
         BuildBrushCategories();
-        ApplyPreset(BrushPreset.Defaults[0]);
+        LoadBrushAssets();
+        SelectInitialBrush();
         SetColor(Color.Parse(App.Config.LastColor));
         SyncCanvasFrameToDocument(fitToViewport: false);
         BuildLayerList();
@@ -469,6 +476,22 @@ public partial class MainWindow : Window
     {
         _brushCategoryPanel = new StackPanel { Spacing = 3 };
         _presetPanel        = new StackPanel { Spacing = 3 };
+        var importPngBtn = SmBtn("PNG", "Import brush tip PNG");
+        _saveBrushButton = SmBtn("S", "Save brush");
+        var duplicateBrushBtn = SmBtn("⎘", "Duplicate brush");
+        importPngBtn.Width = 54;
+        _saveBrushButton.Width = 34;
+        duplicateBrushBtn.Width = 34;
+        importPngBtn.Click += async (_, _) => await ImportBrushTipPngAsync();
+        _saveBrushButton.Click += (_, _) => SaveActiveBrush();
+        duplicateBrushBtn.Click += (_, _) => DuplicateActiveBrush();
+
+        var brushTools = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            Spacing = 3,
+            Children = { importPngBtn, _saveBrushButton, duplicateBrushBtn }
+        };
 
         var presetScroll = new ScrollViewer
         {
@@ -482,7 +505,7 @@ public partial class MainWindow : Window
         {
             Margin  = new Thickness(10, 0, 10, 8),
             Spacing = 6,
-            Children = { _brushCategoryPanel, presetScroll }
+            Children = { _brushCategoryPanel, brushTools, presetScroll }
         };
     }
 
@@ -610,12 +633,12 @@ public partial class MainWindow : Window
         _canvas.HistoryChanged += (_, _) => UpdateStatus();
         _canvas.LayersChanged  += (_, _) => { BuildLayerList(); UpdateStatus(); };
 
-        SliderChanged(_sizeSlider,      v => _canvas.SetBrushSize(v));
-        SliderChanged(_opacitySlider,   v => _canvas.SetBrushOpacity(v));
-        SliderChanged(_hardnessSlider,  v => _canvas.SetBrushHardness(v));
-        SliderChanged(_spacingSlider,   v => _canvas.SetBrushSpacing(v));
-        SliderChanged(_smoothingSlider, v => _canvas.SetBrushSmoothing(v));
-        SliderChanged(_grainSlider,     v => _canvas.SetBrushGrain(v));
+        SliderChanged(_sizeSlider,      v => UpdateCurrentBrush(p => p with { Size = v }));
+        SliderChanged(_opacitySlider,   v => UpdateCurrentBrush(p => p with { Opacity = v }));
+        SliderChanged(_hardnessSlider,  v => UpdateCurrentBrush(p => p with { Hardness = v }));
+        SliderChanged(_spacingSlider,   v => UpdateCurrentBrush(p => p with { Spacing = v }));
+        SliderChanged(_smoothingSlider, v => UpdateCurrentBrush(p => p with { Smoothing = v }));
+        SliderChanged(_grainSlider,     v => UpdateCurrentBrush(p => p with { Grain = v }));
 
         KeyDown += OnKeyDown;
         KeyUp   += OnKeyUp;
@@ -723,13 +746,14 @@ public partial class MainWindow : Window
     private void BuildPresets()
     {
         _presetPanel.Children.Clear();
-        var presets = _selectedBrushKind is null
-            ? BrushPreset.Defaults
-            : BrushPreset.Defaults.Where(p => p.Kind == _selectedBrushKind).ToArray();
+        var assets = _selectedBrushKind is null
+            ? _brushAssets
+            : _brushAssets.Where(p => p.Preset.Kind == _selectedBrushKind).ToArray();
 
-        foreach (var preset in presets)
+        foreach (var asset in assets)
         {
-            var isActive = _activePreset?.Name == preset.Name;
+            var preset = asset.Preset;
+            var isActive = _activeBrushAsset?.Id == asset.Id;
             var row = new Button
             {
                 HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
@@ -737,7 +761,7 @@ public partial class MainWindow : Window
                 BorderBrush     = Avalonia.Media.Brushes.Transparent,
                 CornerRadius    = new CornerRadius(6),
                 Padding         = new Thickness(9, 7),
-                Tag             = preset
+                Tag             = asset
             };
             var nameText = new TextBlock
             {
@@ -748,16 +772,30 @@ public partial class MainWindow : Window
             };
             var previewText = new TextBlock
             {
-                Text       = PreviewStroke(preset),
+                Text       = PreviewStroke(preset) + "  " + TipLabel(asset.Tip),
                 Foreground = new SolidColorBrush(isActive ? Color.Parse("#eef3ff") : Color.Parse("#505570")),
                 FontSize   = 14,
                 Margin     = new Thickness(0, 2, 0, 0)
             };
             var col = new StackPanel { Children = { nameText, previewText } };
             row.Content = col;
-            row.Click  += (_, _) => ApplyPreset(preset);
+            row.Click  += (_, _) => ApplyBrushAsset(asset);
             _presetPanel.Children.Add(row);
         }
+    }
+
+    private void LoadBrushAssets()
+    {
+        _brushAssets = _brushLibrary.Load();
+        BuildPresets();
+    }
+
+    private void SelectInitialBrush()
+    {
+        var initial = _brushAssets.FirstOrDefault(b => b.Preset.Name == App.Config.LastBrushName)
+            ?? _brushAssets.FirstOrDefault()
+            ?? BrushAsset.FromPreset(BrushPreset.Defaults[0]);
+        ApplyBrushAsset(initial);
     }
 
     private static string PreviewStroke(BrushPreset p) => p.Kind switch
@@ -768,9 +806,30 @@ public partial class MainWindow : Window
         _                  => "━━━━━━"
     };
 
-    private void ApplyPreset(BrushPreset preset)
+    private static string TipLabel(BrushTipData tip)
+        => tip.Kind == BrushTipStorageKind.EmbeddedPng ? "PNG" : tip.Shape.ToString();
+
+    private void ApplyBrushAsset(BrushAsset asset)
+    {
+        _activeBrushAsset = asset;
+        ApplyPreset(asset.ToPreset(), syncSliders: true);
+    }
+
+    private void ApplyPreset(BrushPreset preset, bool syncSliders)
     {
         _activePreset = preset;
+        if (syncSliders)
+        {
+            _syncingBrushUi = true;
+            _sizeSlider.Value = Math.Clamp(preset.Size, _sizeSlider.Minimum, _sizeSlider.Maximum);
+            _opacitySlider.Value = Math.Clamp(preset.Opacity, _opacitySlider.Minimum, _opacitySlider.Maximum);
+            _hardnessSlider.Value = Math.Clamp(preset.Hardness, _hardnessSlider.Minimum, _hardnessSlider.Maximum);
+            _spacingSlider.Value = Math.Clamp(preset.Spacing, _spacingSlider.Minimum, _spacingSlider.Maximum);
+            _smoothingSlider.Value = Math.Clamp(preset.Smoothing, _smoothingSlider.Minimum, _smoothingSlider.Maximum);
+            _grainSlider.Value = Math.Clamp(preset.Grain, _grainSlider.Minimum, _grainSlider.Maximum);
+            _syncingBrushUi = false;
+        }
+
         var applied = preset with
         {
             Color    = _canvas.PaintColor,
@@ -780,11 +839,84 @@ public partial class MainWindow : Window
             Spacing  = _spacingSlider.Value
         };
         _canvas.SetBrush(applied);
-        _smoothingSlider.Value = preset.Smoothing;
-        _grainSlider.Value     = preset.Grain;
         SetTool(preset.Kind == BrushKind.Eraser ? "eraser" : "brush");
         BuildPresets();
         UpdateStatus();
+    }
+
+    private void UpdateCurrentBrush(Func<BrushPreset, BrushPreset> update)
+    {
+        if (_syncingBrushUi || _activePreset == null) return;
+        var updated = update(_activePreset);
+        _activePreset = updated;
+        if (_activeBrushAsset != null)
+        {
+            _activeBrushAsset.Preset = updated;
+            _activeBrushAsset.Tip = BrushTipData.FromTip(updated.Tip);
+        }
+        ApplyPreset(updated, syncSliders: false);
+    }
+
+    private void SaveActiveBrush()
+    {
+        if (_activeBrushAsset == null || _activePreset == null) return;
+        _activeBrushAsset.WithPreset(CurrentBrushFromUi());
+        _brushLibrary.Save(_activeBrushAsset);
+        LoadBrushAssets();
+        _activeBrushAsset = _brushAssets.FirstOrDefault(b => b.Id == _activeBrushAsset.Id) ?? _activeBrushAsset;
+        _footerStatusText.Text = $"Saved brush {_activeBrushAsset.Preset.Name}";
+    }
+
+    private void DuplicateActiveBrush()
+    {
+        if (_activeBrushAsset == null) return;
+        var copy = _activeBrushAsset.CloneForSaveAs(_activeBrushAsset.Preset.Name + " Copy");
+        copy.WithPreset(CurrentBrushFromUi() with { Name = copy.Preset.Name });
+        _brushLibrary.Save(copy);
+        LoadBrushAssets();
+        var saved = _brushAssets.FirstOrDefault(b => b.Id == copy.Id);
+        if (saved != null) ApplyBrushAsset(saved);
+    }
+
+    private async System.Threading.Tasks.Task ImportBrushTipPngAsync()
+    {
+        if (_activeBrushAsset == null || _activePreset == null) return;
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Import brush tip PNG",
+            AllowMultiple = false,
+            FileTypeFilter = [new FilePickerFileType("PNG Image") { Patterns = ["*.png"] }]
+        });
+        if (files.Count == 0) return;
+
+        await using var stream = await files[0].OpenReadAsync();
+        using var memory = new MemoryStream();
+        await stream.CopyToAsync(memory);
+
+        var tip = new BrushTipData
+        {
+            Kind = BrushTipStorageKind.EmbeddedPng,
+            PngBytes = memory.ToArray()
+        };
+        _activeBrushAsset.Tip = tip;
+        _activeBrushAsset.Preset = CurrentBrushFromUi() with { Tip = tip.CreateTip() };
+        ApplyPreset(_activeBrushAsset.ToPreset(), syncSliders: false);
+        BuildPresets();
+        _footerStatusText.Text = $"Embedded PNG tip in {_activeBrushAsset.Preset.Name}";
+    }
+
+    private BrushPreset CurrentBrushFromUi()
+    {
+        var source = _activePreset ?? BrushPreset.Defaults[0];
+        return source with
+        {
+            Size = _sizeSlider.Value,
+            Opacity = _opacitySlider.Value,
+            Hardness = _hardnessSlider.Value,
+            Spacing = _spacingSlider.Value,
+            Smoothing = _smoothingSlider.Value,
+            Grain = _grainSlider.Value
+        };
     }
 
     // ── Tool selection ────────────────────────────────────────────────────────

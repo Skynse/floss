@@ -12,6 +12,9 @@ public enum BrushTipShape
 
 public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circle, float aspectRatio = 1.0f) : IBrushTip
 {
+    public BrushTipShape Shape { get; } = shape;
+    public float AspectRatio { get; } = aspectRatio;
+
     public SKBitmap GenerateMask(int baseSize, float hardness)
     {
         var size = Math.Max(1, baseSize);
@@ -34,12 +37,12 @@ public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circl
             MaskFilter = sigma > 0.01f ? SKMaskFilter.CreateBlur(SKBlurStyle.Normal, sigma) : null
         };
 
-        DrawShape(canvas, paint, cx, cy, maxRadius, shape, aspectRatio);
+        DrawShape(canvas, paint, cx, cy, maxRadius, Shape, AspectRatio);
 
         if (clampedHardness < 0.999f)
         {
             paint.MaskFilter = null;
-            DrawShape(canvas, paint, cx, cy, maxRadius * clampedHardness, shape, aspectRatio);
+            DrawShape(canvas, paint, cx, cy, maxRadius * clampedHardness, Shape, AspectRatio);
         }
 
         return bitmap;
