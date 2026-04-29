@@ -1,10 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../providers/brush_provider.dart';
-import '../providers/engine_provider.dart';
 import '../providers/tool_provider.dart';
-import '../config/config_service.dart';
 
 // Intents
 class BrushToolIntent extends Intent {

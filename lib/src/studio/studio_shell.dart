@@ -41,54 +41,87 @@ class _StudioShellState extends ConsumerState<StudioShell> {
     // Ensure app data directory exists
     await AppDataDirectory.getPath();
     // Load config (creates defaults if none exists)
-    final config = await ConfigService.load();
-    // TODO: Apply loaded config settings
-    
+    await ConfigService.load();
+
     // Initialize engine
-    await ref.read(engineProvider.notifier).initialize(
-      const NativeEngineOptions(
-        width: _canvasWidth,
-        height: _canvasHeight,
-        tileSize: 256,
-      ),
-    );
+    await ref
+        .read(engineProvider.notifier)
+        .initialize(
+          const NativeEngineOptions(
+            width: _canvasWidth,
+            height: _canvasHeight,
+            tileSize: 256,
+          ),
+        );
     final brush = ref.read(brushProvider);
     await ref.read(engineProvider.notifier).setBrush(brush);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Stack(
-          children: [
-            const Positioned.fill(child: _StudioBackdrop()),
-            Positioned.fill(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(86, 66, 44, 28),
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 1040),
-                    child: AspectRatio(
-                      aspectRatio: 0.72,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          boxShadow: const [
-                            BoxShadow(
-                              color: Color(0x66000000),
-                              blurRadius: 36,
-                              offset: Offset(0, 18),
-                            ),
-                          ],
-                          border: Border.all(
-                            color: const Color(0x22ffffff),
+    return ShortcutHandler(
+      actions: ShortcutActions(
+        selectTool: _selectTool,
+        zoomIn: () =>
+            setState(() => _zoomScale = (_zoomScale * 1.2).clamp(0.1, 5.0)),
+        zoomOut: () =>
+            setState(() => _zoomScale = (_zoomScale / 1.2).clamp(0.1, 5.0)),
+        resetZoom: () => setState(() => _zoomScale = 1.0),
+        undo: () {
+          // TODO: Implement undo when Phase 3 is done
+        },
+        redo: () {
+          // TODO: Implement redo when Phase 3 is done
+        },
+        decreaseBrushSize: () {
+          final brush = ref.read(brushProvider);
+          ref
+              .read(brushProvider.notifier)
+              .updateBrush(brush.copyWith(size: (brush.size - 2).clamp(2, 96)));
+        },
+        increaseBrushSize: () {
+          final brush = ref.read(brushProvider);
+          ref
+              .read(brushProvider.notifier)
+              .updateBrush(brush.copyWith(size: (brush.size + 2).clamp(2, 96)));
+        },
+        swapColor: () {
+          // TODO: Implement foreground/background color swap
+        },
+        saveDocument: () {
+          // TODO: Implement document save
+        },
+      ),
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: SafeArea(
+          child: Stack(
+            children: [
+              const Positioned.fill(child: _StudioBackdrop()),
+              Positioned.fill(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(86, 66, 44, 28),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1040),
+                      child: AspectRatio(
+                        aspectRatio: 0.72,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Color(0x66000000),
+                                blurRadius: 36,
+                                offset: Offset(0, 18),
+                              ),
+                            ],
+                            border: Border.all(color: const Color(0x22ffffff)),
                           ),
-                        ),
-                        child: const ClipRect(
-                          child: TextureCanvasSurface(
-                            textureWidth: _canvasWidth,
-                            textureHeight: _canvasHeight,
+                          child: const ClipRect(
+                            child: TextureCanvasSurface(
+                              textureWidth: _canvasWidth,
+                              textureHeight: _canvasHeight,
+                            ),
                           ),
                         ),
                       ),
@@ -96,53 +129,45 @@ class _StudioShellState extends ConsumerState<StudioShell> {
                   ),
                 ),
               ),
-            ),
-            Positioned(
-              left: 18,
-              top: 12,
-              right: 18,
-              child: _TopToolbar(
-                openPanel: _openPanel,
-                onToolSelected: _selectTool,
-                onPanelToggled: _togglePanel,
-              ),
-            ),
-            const Positioned(
-              left: 18,
-              top: 110,
-              bottom: 54,
-              child: _SideControls(),
-            ),
-            if (_openPanel == _PanelKind.brush)
               Positioned(
-                top: 76,
-                right: 70,
-                bottom: 30,
-                child: _BrushLibrary(
-                  onBrushSelected: _selectBrush,
+                left: 18,
+                top: 12,
+                right: 18,
+                child: _TopToolbar(
+                  openPanel: _openPanel,
+                  onToolSelected: _selectTool,
+                  onPanelToggled: _togglePanel,
                 ),
               ),
-            if (_openPanel == _PanelKind.color)
-              Positioned(
-                right: 360,
-                bottom: 44,
-                child: _ColorPanel(
-                  onColorSelected: _selectColor,
-                ),
-              ),
-            if (_openPanel == _PanelKind.layers)
               const Positioned(
-                top: 76,
-                right: 70,
-                child: _LayersPanel(),
+                left: 18,
+                top: 110,
+                bottom: 54,
+                child: _SideControls(),
               ),
-            const Positioned(
-              left: 18,
-              right: 18,
-              bottom: 10,
-              child: _StatusStrip(),
-            ),
-          ],
+              if (_openPanel == _PanelKind.brush)
+                Positioned(
+                  top: 76,
+                  right: 70,
+                  bottom: 30,
+                  child: _BrushLibrary(onBrushSelected: _selectBrush),
+                ),
+              if (_openPanel == _PanelKind.color)
+                Positioned(
+                  right: 360,
+                  bottom: 44,
+                  child: _ColorPanel(onColorSelected: _selectColor),
+                ),
+              if (_openPanel == _PanelKind.layers)
+                const Positioned(top: 76, right: 70, child: _LayersPanel()),
+              const Positioned(
+                left: 18,
+                right: 18,
+                bottom: 10,
+                child: _StatusStrip(),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -160,14 +185,16 @@ class _StudioShellState extends ConsumerState<StudioShell> {
       ref.read(brushProvider.notifier).updateBrush(_lastPaintBrush);
     } else {
       final brush = ref.read(brushProvider);
-      ref.read(brushProvider.notifier).updateBrush(
-        brush.copyWith(
-          name: 'Soft Eraser',
-          opacity: 1,
-          color: _paperColor,
-          blendMode: BrushBlendMode.normal,
-        ),
-      );
+      ref
+          .read(brushProvider.notifier)
+          .updateBrush(
+            brush.copyWith(
+              name: 'Soft Eraser',
+              opacity: 1,
+              color: _paperColor,
+              blendMode: BrushBlendMode.normal,
+            ),
+          );
     }
   }
 
@@ -277,9 +304,9 @@ class _SideControls extends ConsumerWidget {
                 min: 2,
                 max: 96,
                 onChanged: (value) {
-                  ref.read(brushProvider.notifier).updateBrush(
-                    brush.copyWith(size: value),
-                  );
+                  ref
+                      .read(brushProvider.notifier)
+                      .updateBrush(brush.copyWith(size: value));
                 },
               ),
             ),
@@ -297,9 +324,9 @@ class _SideControls extends ConsumerWidget {
                 min: 0.05,
                 max: 1,
                 onChanged: (value) {
-                  ref.read(brushProvider.notifier).updateBrush(
-                    brush.copyWith(opacity: value),
-                  );
+                  ref
+                      .read(brushProvider.notifier)
+                      .updateBrush(brush.copyWith(opacity: value));
                 },
               ),
             ),
@@ -319,9 +346,11 @@ class _SideControls extends ConsumerWidget {
                 divisions: 6,
                 label: brush.pressureCurveExponent.toStringAsFixed(1),
                 onChanged: (value) {
-                  ref.read(brushProvider.notifier).updateBrush(
-                    brush.copyWith(pressureCurveExponent: value),
-                  );
+                  ref
+                      .read(brushProvider.notifier)
+                      .updateBrush(
+                        brush.copyWith(pressureCurveExponent: value),
+                      );
                 },
               ),
             ),
@@ -339,9 +368,11 @@ class _SideControls extends ConsumerWidget {
                 min: 0.0,
                 max: 1.0,
                 onChanged: (value) {
-                  ref.read(brushProvider.notifier).updateBrush(
-                    brush.copyWith(velocitySizeSensitivity: value),
-                  );
+                  ref
+                      .read(brushProvider.notifier)
+                      .updateBrush(
+                        brush.copyWith(velocitySizeSensitivity: value),
+                      );
                 },
               ),
             ),
@@ -359,9 +390,11 @@ class _SideControls extends ConsumerWidget {
                 min: 0.0,
                 max: 1.0,
                 onChanged: (value) {
-                  ref.read(brushProvider.notifier).updateBrush(
-                    brush.copyWith(velocityOpacitySensitivity: value),
-                  );
+                  ref
+                      .read(brushProvider.notifier)
+                      .updateBrush(
+                        brush.copyWith(velocityOpacitySensitivity: value),
+                      );
                 },
               ),
             ),
@@ -527,7 +560,9 @@ class _LayersPanel extends ConsumerWidget {
               itemCount: layers.length,
               onReorder: (oldIndex, newIndex) {
                 if (oldIndex < newIndex) newIndex--;
-                ref.read(engineProvider.notifier).moveLayer(layers[oldIndex].id, newIndex);
+                ref
+                    .read(engineProvider.notifier)
+                    .moveLayer(layers[oldIndex].id, newIndex);
               },
               itemBuilder: (context, index) {
                 final layer = layers[index];
@@ -536,12 +571,20 @@ class _LayersPanel extends ConsumerWidget {
                   key: ValueKey(layer.id),
                   layer: layer,
                   isActive: isActive,
-                  onTap: () => ref.read(engineProvider.notifier).setActiveLayer(layer.id),
-                  onVisibilityToggle: () => ref.read(engineProvider.notifier).setLayerVisibility(layer.id, !layer.visible),
+                  onTap: () => ref
+                      .read(engineProvider.notifier)
+                      .setActiveLayer(layer.id),
+                  onVisibilityToggle: () => ref
+                      .read(engineProvider.notifier)
+                      .setLayerVisibility(layer.id, !layer.visible),
                   onDelete: layers.length > 1
-                      ? () => ref.read(engineProvider.notifier).deleteLayer(layer.id)
+                      ? () => ref
+                            .read(engineProvider.notifier)
+                            .deleteLayer(layer.id)
                       : null,
-                  onOpacityChanged: (opacity) => ref.read(engineProvider.notifier).setLayerOpacity(layer.id, opacity),
+                  onOpacityChanged: (opacity) => ref
+                      .read(engineProvider.notifier)
+                      .setLayerOpacity(layer.id, opacity),
                 );
               },
             ),
@@ -591,14 +634,20 @@ class _LayerTile extends StatelessWidget {
                       size: 16,
                     ),
                     padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                    constraints: const BoxConstraints(
+                      minWidth: 28,
+                      minHeight: 28,
+                    ),
                     onPressed: onVisibilityToggle,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       layer.name,
-                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -606,7 +655,10 @@ class _LayerTile extends StatelessWidget {
                     IconButton(
                       icon: const Icon(Icons.delete_outline, size: 16),
                       padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                      constraints: const BoxConstraints(
+                        minWidth: 28,
+                        minHeight: 28,
+                      ),
                       onPressed: onDelete,
                     ),
                 ],

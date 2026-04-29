@@ -22,7 +22,7 @@ class FlossConfig {
     'shortcuts': shortcuts.toJson(),
     'brushDefaults': brushDefaults.toJson(),
     'uiState': uiState.toJson(),
-    'recentColors': recentColors.map((c) => c.value).toList(),
+    'recentColors': recentColors.map((c) => c.toARGB32()).toList(),
   };
 
   factory FlossConfig.fromJson(Map<String, dynamic> json) {
