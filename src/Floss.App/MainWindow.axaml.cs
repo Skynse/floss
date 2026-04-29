@@ -18,6 +18,17 @@ namespace Floss.App;
 
 public partial class MainWindow : Window
 {
+    private const string Bg0 = "#0d0f14";
+    private const string Bg1 = "#13151a";
+    private const string Bg2 = "#1a1c22";
+    private const string Bg3 = "#20232b";
+    private const string Stroke = "#2b303b";
+    private const string TextPrimary = "#d7dde8";
+    private const string TextSecondary = "#A0AAB4";
+    private const string TextMuted = "#6f7888";
+    private const string Accent = "#3d6fd8";
+    private const string AccentSoft = "#22355f";
+
     // ── Palette ───────────────────────────────────────────────────────────────
     private readonly Color[] _swatches =
     [
@@ -56,6 +67,8 @@ public partial class MainWindow : Window
     private Slider             _layerOpacitySlider  = null!;
     private Button             _undoButton          = null!;
     private Button             _redoButton          = null!;
+    private Button             _brushToolButton     = null!;
+    private Button             _eraserToolButton    = null!;
     private Button             _deleteLayerButton   = null!;
     private Button             _moveLayerUpButton   = null!;
     private Button             _moveLayerDownButton = null!;
@@ -138,8 +151,8 @@ public partial class MainWindow : Window
 
         var statusBar = new Border
         {
-            Background       = new SolidColorBrush(Color.Parse("#13151a")),
-            BorderBrush      = new SolidColorBrush(Color.Parse("#22252e")),
+            Background       = new SolidColorBrush(Color.Parse(Bg1)),
+            BorderBrush      = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness  = new Thickness(0, 0, 0, 1),
             Height           = 26,
             Padding          = new Thickness(12, 0),
@@ -148,8 +161,8 @@ public partial class MainWindow : Window
 
         var footer = new Border
         {
-            Background       = new SolidColorBrush(Color.Parse("#13151a")),
-            BorderBrush      = new SolidColorBrush(Color.Parse("#22252e")),
+            Background       = new SolidColorBrush(Color.Parse(Bg1)),
+            BorderBrush      = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness  = new Thickness(0, 1, 0, 0),
             Height           = 22,
             Padding          = new Thickness(12, 0),
@@ -168,7 +181,7 @@ public partial class MainWindow : Window
         var rightPanel = BuildRightPanel();
 
         var root = new Grid();
-        root.ColumnDefinitions.Add(new ColumnDefinition(48, GridUnitType.Pixel));
+        root.ColumnDefinitions.Add(new ColumnDefinition(56, GridUnitType.Pixel));
         root.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 320 });
         root.ColumnDefinitions.Add(new ColumnDefinition(5, GridUnitType.Pixel));
         root.ColumnDefinitions.Add(new ColumnDefinition(290, GridUnitType.Pixel) { MinWidth = 180, MaxWidth = 600 });
@@ -178,7 +191,7 @@ public partial class MainWindow : Window
             Width = 5,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Stretch,
-            Background          = new SolidColorBrush(Color.Parse("#1a1c22"))
+            Background          = new SolidColorBrush(Color.Parse(Bg2))
         };
 
         Grid.SetColumn(leftRail,   0);
@@ -190,15 +203,82 @@ public partial class MainWindow : Window
         root.Children.Add(splitter);
         root.Children.Add(rightPanel);
 
-        Content = root;
+        var shell = new Grid { RowDefinitions = new RowDefinitions("30,*") };
+        var menu = BuildMenuBar();
+        Grid.SetRow(menu, 0);
+        Grid.SetRow(root, 1);
+        shell.Children.Add(menu);
+        shell.Children.Add(root);
+
+        Content = shell;
     }
 
     private static TextBlock MiniText() => new()
     {
-        Foreground        = new SolidColorBrush(Color.Parse("#505570")),
+        Foreground        = new SolidColorBrush(Color.Parse(TextSecondary)),
         FontSize          = 11,
         VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
     };
+
+    private Control BuildMenuBar()
+    {
+        var fileMenu = new MenuItem
+        {
+            Header = "_File",
+            ItemsSource = new object[]
+            {
+                MenuAction("_Open PSD...", async () => await OpenPsdAsync()),
+                MenuAction("_Save PSD...", async () => await SavePsdAsync()),
+                new Separator(),
+                MenuAction("_Reset View", () => { SetZoom(1.0, null); SetRotation(0); })
+            }
+        };
+
+        var brushMenu = new MenuItem
+        {
+            Header = "_Brush",
+            ItemsSource = new object[]
+            {
+                MenuAction("_Save Brush", SaveActiveBrush),
+                MenuAction("_Duplicate Brush", DuplicateActiveBrush),
+                MenuAction("_Import Tip PNG...", async () => await ImportBrushTipPngAsync())
+            }
+        };
+
+        var layerMenu = new MenuItem
+        {
+            Header = "_Layer",
+            ItemsSource = new object[]
+            {
+                MenuAction("_Add Layer", () => _canvas.AddLayer()),
+                MenuAction("_Duplicate Layer", () => _canvas.DuplicateLayer()),
+                MenuAction("_Delete Layer", () => _canvas.DeleteLayer()),
+                new Separator(),
+                MenuAction("Move Layer _Up", () => _canvas.MoveActiveLayer(1)),
+                MenuAction("Move Layer _Down", () => _canvas.MoveActiveLayer(-1))
+            }
+        };
+
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.Parse(Bg1)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Child = new Menu
+            {
+                Background = Avalonia.Media.Brushes.Transparent,
+                Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+                ItemsSource = new[] { fileMenu, brushMenu, layerMenu }
+            }
+        };
+    }
+
+    private static MenuItem MenuAction(string header, Action action)
+    {
+        var item = new MenuItem { Header = header };
+        item.Click += (_, _) => action();
+        return item;
+    }
 
     // ── Left rail ─────────────────────────────────────────────────────────────
     private Control BuildLeftRail()
@@ -206,7 +286,7 @@ public partial class MainWindow : Window
         _toolStatusText = new TextBlock
         {
             Text              = "Brush",
-            Foreground        = new SolidColorBrush(Color.Parse("#505570")),
+            Foreground        = new SolidColorBrush(Color.Parse(TextMuted)),
             FontSize          = 9,
             TextAlignment     = TextAlignment.Center,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
@@ -215,10 +295,10 @@ public partial class MainWindow : Window
 
         _colorWell = new Border
         {
-            Width            = 26,
-            Height           = 26,
-            CornerRadius     = new CornerRadius(13),
-            BorderBrush      = new SolidColorBrush(Color.Parse("#3a3d46")),
+            Width            = 28,
+            Height           = 28,
+            CornerRadius     = new CornerRadius(14),
+            BorderBrush      = new SolidColorBrush(Color.Parse("#4b5260")),
             BorderThickness  = new Thickness(1.5),
             Background       = new SolidColorBrush(Color.Parse("#111111"))
         };
@@ -226,21 +306,23 @@ public partial class MainWindow : Window
         var colorBtn = new Button
         {
             Content            = _colorWell,
-            Width              = 36,
-            Height             = 36,
-            Background         = Avalonia.Media.Brushes.Transparent,
-            BorderBrush        = Avalonia.Media.Brushes.Transparent,
-            Padding            = new Thickness(4),
+            Width              = 42,
+            Height             = 42,
+            Background         = new SolidColorBrush(Color.Parse(Bg2)),
+            BorderBrush        = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness    = new Thickness(1),
+            CornerRadius       = new CornerRadius(8),
+            Padding            = new Thickness(6),
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalContentAlignment   = Avalonia.Layout.VerticalAlignment.Center
         };
         ToolTip.SetTip(colorBtn, "Cycle color  (X)");
         colorBtn.Click += (_, _) => CycleColor();
 
-        var brushBtn  = RailBtn("⬤", "Brush  (B)");
-        var eraserBtn = RailBtn("◎", "Eraser  (E)");
-        brushBtn.Click  += (_, _) => SetTool("brush");
-        eraserBtn.Click += (_, _) => SetTool("eraser");
+        _brushToolButton  = RailBtn("⬤", "Brush  (B)");
+        _eraserToolButton = RailBtn("◎", "Eraser  (E)");
+        _brushToolButton.Click  += (_, _) => SetTool("brush");
+        _eraserToolButton.Click += (_, _) => SetTool("eraser");
 
         _undoButton = RailBtn("↩", "Undo  (Ctrl+Z)");
         _redoButton = RailBtn("↪", "Redo  (Ctrl+Shift+Z)");
@@ -260,11 +342,11 @@ public partial class MainWindow : Window
         {
             Orientation         = Avalonia.Layout.Orientation.Vertical,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            Margin              = new Thickness(0, 10),
-            Spacing             = 2
+            Margin              = new Thickness(0, 12),
+            Spacing             = 8
         };
-        stack.Children.Add(brushBtn);
-        stack.Children.Add(eraserBtn);
+        stack.Children.Add(_brushToolButton);
+        stack.Children.Add(_eraserToolButton);
         stack.Children.Add(_toolStatusText);
         stack.Children.Add(RailSep());
         stack.Children.Add(colorBtn);
@@ -280,8 +362,8 @@ public partial class MainWindow : Window
 
         return new Border
         {
-            Background      = new SolidColorBrush(Color.Parse("#13151a")),
-            BorderBrush     = new SolidColorBrush(Color.Parse("#22252e")),
+            Background      = new SolidColorBrush(Color.Parse(Bg1)),
+            BorderBrush     = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 0, 1, 0),
             Child           = new ScrollViewer
             {
@@ -297,14 +379,14 @@ public partial class MainWindow : Window
         var btn = new Button
         {
             Content  = glyph,
-            Width    = 36,
-            Height   = 36,
+            Width    = 42,
+            Height   = 42,
             FontSize = 15,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalContentAlignment   = Avalonia.Layout.VerticalAlignment.Center,
             Background      = Avalonia.Media.Brushes.Transparent,
             BorderBrush     = Avalonia.Media.Brushes.Transparent,
-            CornerRadius    = new CornerRadius(6),
+            CornerRadius    = new CornerRadius(8),
             Padding         = new Thickness(0)
         };
         ToolTip.SetTip(btn, tip);
@@ -314,9 +396,9 @@ public partial class MainWindow : Window
     private static Border RailSep() => new()
     {
         Height     = 1,
-        Width      = 28,
-        Background = new SolidColorBrush(Color.Parse("#22252e")),
-        Margin     = new Thickness(0, 5)
+        Width      = 34,
+        Background = new SolidColorBrush(Color.Parse(Stroke)),
+        Margin     = new Thickness(0, 2)
     };
 
     // ── Right panel ───────────────────────────────────────────────────────────
@@ -330,8 +412,8 @@ public partial class MainWindow : Window
 
         return new Border
         {
-            Background      = new SolidColorBrush(Color.Parse("#13151a")),
-            BorderBrush     = new SolidColorBrush(Color.Parse("#22252e")),
+            Background      = new SolidColorBrush(Color.Parse(Bg1)),
+            BorderBrush     = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 0, 0, 0),
             Child           = new ScrollViewer
             {
@@ -351,7 +433,7 @@ public partial class MainWindow : Window
             FontSize          = 10,
             Width             = 14,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            Foreground        = new SolidColorBrush(Color.Parse("#50557a"))
+            Foreground        = new SolidColorBrush(Color.Parse(TextMuted))
         };
         var titleText = new TextBlock
         {
@@ -359,7 +441,7 @@ public partial class MainWindow : Window
             FontSize      = 9,
             FontWeight    = FontWeight.SemiBold,
             LetterSpacing = 1.2,
-            Foreground    = new SolidColorBrush(Color.Parse("#50557a")),
+            Foreground    = new SolidColorBrush(Color.Parse(TextMuted)),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
         var headerRow = new StackPanel
@@ -370,13 +452,13 @@ public partial class MainWindow : Window
         headerRow.Children.Add(arrow);
         headerRow.Children.Add(titleText);
 
-        var contentWrap = new Border { Child = content, IsVisible = startExpanded };
+        var contentWrap = new Border { Child = content, IsVisible = startExpanded, Padding = new Thickness(0, 4, 0, 0) };
 
         var headerBtn = new Button
         {
             Content            = headerRow,
-            Padding            = new Thickness(10, 7),
-            Background         = new SolidColorBrush(Color.Parse("#0d0f14")),
+            Padding            = new Thickness(12, 8, 12, 10),
+            Background         = new SolidColorBrush(Color.Parse(Bg0)),
             BorderBrush        = Avalonia.Media.Brushes.Transparent,
             HorizontalAlignment            = Avalonia.Layout.HorizontalAlignment.Stretch,
             HorizontalContentAlignment     = Avalonia.Layout.HorizontalAlignment.Left,
@@ -395,7 +477,7 @@ public partial class MainWindow : Window
 
         return new Border
         {
-            BorderBrush     = new SolidColorBrush(Color.Parse("#1c1e24")),
+            BorderBrush     = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 0, 0, 1),
             Child           = outer
         };
@@ -407,22 +489,23 @@ public partial class MainWindow : Window
         _colorPicker = new HsvColorPicker
         {
             Height = 168,
-            Margin = new Thickness(10, 0, 10, 8)
+            Margin = new Thickness(12, 0, 12, 10)
         };
         _colorPicker.HsvChanged += OnPickerHsvChanged;
 
         _hexInput = new TextBox
         {
-            Width                    = 90,
-            Height                   = 26,
+            Width                    = 112,
+            Height                   = 30,
             FontSize                 = 12,
             FontFamily               = new FontFamily("Consolas, Courier New, monospace"),
-            Background               = new SolidColorBrush(Color.Parse("#0d0f14")),
-            Foreground               = new SolidColorBrush(Color.Parse("#b8bcc8")),
-            BorderBrush              = new SolidColorBrush(Color.Parse("#2a2d34")),
-            Padding                  = new Thickness(6, 0),
+            Background               = new SolidColorBrush(Color.Parse(Bg0)),
+            Foreground               = new SolidColorBrush(Color.Parse(TextPrimary)),
+            BorderBrush              = new SolidColorBrush(Color.Parse("#3a4250")),
+            BorderThickness          = new Thickness(1),
+            Padding                  = new Thickness(8, 0),
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            CaretBrush               = new SolidColorBrush(Color.Parse("#b8bcc8")),
+            CaretBrush               = new SolidColorBrush(Color.Parse(TextPrimary)),
             HorizontalAlignment      = Avalonia.Layout.HorizontalAlignment.Left
         };
         _hexInput.KeyDown   += (_, e) => { if (e.Key is Key.Enter or Key.Return) TryApplyHexColor(_hexInput.Text ?? ""); };
@@ -430,7 +513,7 @@ public partial class MainWindow : Window
 
         _swatchPanel = new WrapPanel
         {
-            Margin  = new Thickness(10, 4, 10, 8),
+            Margin  = new Thickness(12, 6, 12, 10),
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left
         };
 
@@ -439,7 +522,7 @@ public partial class MainWindow : Window
             Children =
             {
                 _colorPicker,
-                new Border { Margin = new Thickness(10, 0, 10, 6), Child = _hexInput },
+                new Border { Margin = new Thickness(12, 0, 12, 6), Child = _hexInput },
                 _swatchPanel
             }
         };
@@ -457,8 +540,8 @@ public partial class MainWindow : Window
 
         return new StackPanel
         {
-            Margin  = new Thickness(10, 0, 10, 8),
-            Spacing = 4,
+            Margin  = new Thickness(12, 0, 12, 10),
+            Spacing = 6,
             Children =
             {
                 LabelSlider("Size",      _sizeSlider),
@@ -474,8 +557,8 @@ public partial class MainWindow : Window
     // ── Library section ───────────────────────────────────────────────────────
     private Control BuildLibrarySection()
     {
-        _brushCategoryPanel = new StackPanel { Spacing = 3 };
-        _presetPanel        = new StackPanel { Spacing = 3 };
+        _brushCategoryPanel = new StackPanel { Spacing = 5 };
+        _presetPanel        = new StackPanel { Spacing = 5 };
         var importPngBtn = SmBtn("PNG", "Import brush tip PNG");
         _saveBrushButton = SmBtn("S", "Save brush");
         var duplicateBrushBtn = SmBtn("⎘", "Duplicate brush");
@@ -489,7 +572,7 @@ public partial class MainWindow : Window
         var brushTools = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
-            Spacing = 3,
+            Spacing = 6,
             Children = { importPngBtn, _saveBrushButton, duplicateBrushBtn }
         };
 
@@ -503,8 +586,8 @@ public partial class MainWindow : Window
 
         return new StackPanel
         {
-            Margin  = new Thickness(10, 0, 10, 8),
-            Spacing = 6,
+            Margin  = new Thickness(12, 0, 12, 10),
+            Spacing = 8,
             Children = { _brushCategoryPanel, brushTools, presetScroll }
         };
     }
@@ -527,8 +610,8 @@ public partial class MainWindow : Window
         var ctrlRow = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
-            Spacing     = 3,
-            Margin      = new Thickness(10, 0, 10, 4),
+            Spacing     = 6,
+            Margin      = new Thickness(12, 0, 12, 8),
             Children    = { addBtn, dupBtn, _deleteLayerButton, _moveLayerUpButton, _moveLayerDownButton }
         };
 
@@ -543,12 +626,12 @@ public partial class MainWindow : Window
 
         return new StackPanel
         {
-            Spacing = 4,
+            Spacing = 6,
             Children =
             {
                 ctrlRow,
-                new Border { Margin = new Thickness(10, 0, 10, 4), Child = LabelSlider("Opacity", _layerOpacitySlider) },
-                new Border { Margin = new Thickness(4, 0, 4, 8),   Child = _layerPanel }
+                new Border { Margin = new Thickness(12, 0, 12, 6), Child = LabelSlider("Opacity", _layerOpacitySlider) },
+                new Border { Margin = new Thickness(6, 0, 6, 10),   Child = _layerPanel }
             }
         };
     }
@@ -559,16 +642,16 @@ public partial class MainWindow : Window
         var btn = new Button
         {
             Content         = glyph,
-            Width           = 24,
-            Height          = 24,
+            Width           = 30,
+            Height          = 30,
             Padding         = new Thickness(0),
             FontSize        = 12,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalContentAlignment   = Avalonia.Layout.VerticalAlignment.Center,
-            Background      = new SolidColorBrush(Color.Parse("#1c1e24")),
-            BorderBrush     = new SolidColorBrush(Color.Parse("#2a2d34")),
+            Background      = new SolidColorBrush(Color.Parse(Bg2)),
+            BorderBrush     = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
-            CornerRadius    = new CornerRadius(4)
+            CornerRadius    = new CornerRadius(6)
         };
         ToolTip.SetTip(btn, tip);
         return btn;
@@ -576,7 +659,15 @@ public partial class MainWindow : Window
 
     private static Slider MkSlider(double min, double max, double value, string tip)
     {
-        var s = new Slider { Minimum = min, Maximum = max, Value = value, Height = 20 };
+        var s = new Slider
+        {
+            Minimum = min,
+            Maximum = max,
+            Value = value,
+            Height = 30,
+            MinHeight = 30,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+        };
         ToolTip.SetTip(s, tip);
         return s;
     }
@@ -587,8 +678,8 @@ public partial class MainWindow : Window
         {
             Text              = label,
             FontSize          = 11,
-            Foreground        = new SolidColorBrush(Color.Parse("#606470")),
-            Width             = 66,
+            Foreground        = new SolidColorBrush(Color.Parse(TextSecondary)),
+            Width             = 78,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
         var row = new DockPanel { LastChildFill = true };
@@ -699,9 +790,9 @@ public partial class MainWindow : Window
             var color = _swatches[i];
             var btn = new Button
             {
-                Width           = 18,
-                Height          = 18,
-                Margin          = new Thickness(0, 0, 4, 4),
+            Width           = 22,
+            Height          = 22,
+            Margin          = new Thickness(0, 0, 6, 6),
                 Background      = new SolidColorBrush(color),
                 BorderBrush     = new SolidColorBrush(Color.Parse("#333")),
                 BorderThickness = new Thickness(1),
@@ -725,11 +816,12 @@ public partial class MainWindow : Window
             {
                 Content            = cat.Label,
                 HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Left,
-                Padding            = new Thickness(10, 7),
-                Background         = new SolidColorBrush(selected ? Color.Parse("#2a6ef5") : Color.Parse("#1c1e24")),
-                Foreground         = new SolidColorBrush(selected ? Color.Parse("#ffffff") : Color.Parse("#888d9a")),
-                BorderBrush        = Avalonia.Media.Brushes.Transparent,
-                CornerRadius       = new CornerRadius(6),
+                Padding            = new Thickness(12, 9),
+                Background         = new SolidColorBrush(selected ? Color.Parse(AccentSoft) : Color.Parse(Bg2)),
+                Foreground         = new SolidColorBrush(selected ? Color.Parse(TextPrimary) : Color.Parse(TextSecondary)),
+                BorderBrush        = new SolidColorBrush(selected ? Color.Parse(Accent) : Color.Parse(Stroke)),
+                BorderThickness    = new Thickness(1),
+                CornerRadius       = new CornerRadius(7),
                 FontSize           = 11,
                 Tag                = cat.Kind
             };
@@ -757,23 +849,24 @@ public partial class MainWindow : Window
             var row = new Button
             {
                 HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
-                Background      = new SolidColorBrush(isActive ? Color.Parse("#2a6ef5") : Color.Parse("#1a1c22")),
-                BorderBrush     = Avalonia.Media.Brushes.Transparent,
-                CornerRadius    = new CornerRadius(6),
-                Padding         = new Thickness(9, 7),
+                Background      = new SolidColorBrush(isActive ? Color.Parse(AccentSoft) : Color.Parse(Bg2)),
+                BorderBrush     = new SolidColorBrush(isActive ? Color.Parse(Accent) : Color.Parse(Stroke)),
+                BorderThickness = new Thickness(1),
+                CornerRadius    = new CornerRadius(7),
+                Padding         = new Thickness(11, 9),
                 Tag             = asset
             };
             var nameText = new TextBlock
             {
                 Text       = preset.Name,
-                Foreground = new SolidColorBrush(isActive ? Color.Parse("#ffffff") : Color.Parse("#c8cdd8")),
+                Foreground = new SolidColorBrush(isActive ? Color.Parse("#ffffff") : Color.Parse(TextPrimary)),
                 FontWeight = FontWeight.SemiBold,
                 FontSize   = 11
             };
             var previewText = new TextBlock
             {
                 Text       = PreviewStroke(preset) + "  " + TipLabel(asset.Tip),
-                Foreground = new SolidColorBrush(isActive ? Color.Parse("#eef3ff") : Color.Parse("#505570")),
+                Foreground = new SolidColorBrush(isActive ? Color.Parse("#eef3ff") : Color.Parse(TextSecondary)),
                 FontSize   = 14,
                 Margin     = new Thickness(0, 2, 0, 0)
             };
@@ -925,6 +1018,17 @@ public partial class MainWindow : Window
         _canvas.SetTool(tool);
         _toolStatusText.Text   = tool == "eraser" ? "Eraser" : _canvas.Brush.Name;
         _footerStatusText.Text = tool == "eraser" ? "Eraser" : "Brush";
+        var eraser = tool == "eraser";
+        SetRailActive(_brushToolButton, !eraser);
+        SetRailActive(_eraserToolButton, eraser);
+    }
+
+    private static void SetRailActive(Button button, bool active)
+    {
+        button.Background = new SolidColorBrush(Color.Parse(active ? AccentSoft : "Transparent"));
+        button.BorderBrush = new SolidColorBrush(Color.Parse(active ? Accent : "Transparent"));
+        button.BorderThickness = new Thickness(active ? 1 : 0);
+        button.Padding = new Thickness(active ? 1 : 0);
     }
 
     // ── Layer panel ───────────────────────────────────────────────────────────
