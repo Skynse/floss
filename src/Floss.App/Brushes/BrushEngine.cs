@@ -1,12 +1,31 @@
 using System;
+using System.Collections.Generic;
 using Avalonia.Media;
 using Floss.App.Document;
 using Floss.App.Input;
+using SkiaSharp;
 
 namespace Floss.App.Brushes;
 
-public sealed class BrushEngine
+public sealed class BrushEngine : IDisposable
 {
+    private const int InitialStampCapacity = 256;
+    private readonly List<StampSample> _stamps = new(InitialStampCapacity);
+    private ActiveStroke? _activeStroke;
+
+    public void BeginStroke(BrushPreset brush, bool eraser, CanvasInputSample sample)
+    {
+        EndStroke();
+        _activeStroke = new ActiveStroke(brush, eraser, sample);
+    }
+
+    public void EndStroke()
+    {
+        _activeStroke?.Dispose();
+        _activeStroke = null;
+        _stamps.Clear();
+    }
+
     public PixelRegion RasterizeSegment(
         DrawingLayer layer,
         BrushPreset brush,
@@ -14,26 +33,18 @@ public sealed class BrushEngine
         CanvasInputSample from,
         CanvasInputSample to)
     {
-        if (from.Pressure <= 0 && to.Pressure <= 0) return PixelRegion.Empty;
+        EnsureStroke(brush, eraser, from);
+        var stroke = _activeStroke!;
+        _stamps.Clear();
 
-        var dx = to.X - from.X;
-        var dy = to.Y - from.Y;
-        var distance = Math.Sqrt(dx * dx + dy * dy);
-        var spacing = Math.Max(0.5, brush.Size * brush.Spacing);
-        var steps = Math.Max(1, (int)Math.Ceiling(distance / spacing));
-        var dirty = PixelRegion.Empty;
+        var dirty = BuildStamps(stroke, brush, from, to);
+        if (dirty.IsEmpty || _stamps.Count == 0) return PixelRegion.Empty;
 
-        for (var i = 1; i <= steps; i++)
-        {
-            var t = (double)i / steps;
-            var time = (long)(from.TimeMicros + (to.TimeMicros - from.TimeMicros) * t);
-            var pressure = from.Pressure + (to.Pressure - from.Pressure) * t;
-            var sample = from.WithPosition(from.X + dx * t, from.Y + dy * t, pressure, time);
-            var velocity = sample.DistanceTo(from) * 1_000_000 / Math.Max(1, sample.TimeMicros - from.TimeMicros);
-            dirty = dirty.Union(RasterizeDab(layer, brush, eraser, sample, velocity));
-        }
+        var clippedDirty = dirty.ClipTo(layer.Width, layer.Height);
+        if (clippedDirty.IsEmpty) return PixelRegion.Empty;
 
-        return dirty;
+        layer.Pixels.RenderWithSkia(clippedDirty, canvas => RenderPreparedStamps(stroke, canvas));
+        return clippedDirty;
     }
 
     public PixelRegion RasterizeDab(
@@ -43,85 +54,28 @@ public sealed class BrushEngine
         CanvasInputSample sample,
         double velocity)
     {
-        var pressure = Math.Pow(Math.Clamp(sample.Pressure, 0, 1), brush.PressureCurve);
-        if (pressure <= 0.001) return PixelRegion.Empty;
+        EnsureStroke(brush, eraser, sample);
+        var stroke = _activeStroke!;
+        _stamps.Clear();
 
-        var velocity01 = Math.Clamp(velocity / 5000, 0, 1);
-        var sizeFactor = brush.VelocityToSize
-            ? Math.Clamp(1 - velocity01 * brush.VelocitySize, 0.1, 1)
-            : 1.0;
-        var opacityFactor = brush.VelocityToOpacity
-            ? Math.Clamp(1 - velocity01 * brush.VelocityOpacity, 0.1, 1)
-            : 1.0;
-        var pressureSize = brush.PressureToSize ? pressure : 1.0;
-        var pressureOpacity = brush.PressureToOpacity ? pressure : 1.0;
-        var radius = Math.Max(0.5, brush.Size * pressureSize * sizeFactor * 0.5);
-        var alpha = (eraser ? 1.0 : brush.Opacity) * opacityFactor * pressureOpacity;
-        var grain = brush.Grain;
-        var hasGrain = grain > 0;
+        var velocity01 = (float)Math.Clamp(velocity / 5000.0, 0, 1);
+        var stamp = CreateStamp(stroke, brush, sample, velocity01);
+        _stamps.Add(stamp);
 
-        var bmpWidth = layer.Width;
-        var bmpHeight = layer.Height;
-        var minX = Math.Max(0, (int)Math.Floor(sample.X - radius));
-        var minY = Math.Max(0, (int)Math.Floor(sample.Y - radius));
-        var maxX = Math.Min(bmpWidth - 1, (int)Math.Ceiling(sample.X + radius));
-        var maxY = Math.Min(bmpHeight - 1, (int)Math.Ceiling(sample.Y + radius));
-        if (minX > maxX || minY > maxY) return PixelRegion.Empty;
+        var dirty = StampBounds(stamp).ClipTo(layer.Width, layer.Height);
+        if (dirty.IsEmpty) return PixelRegion.Empty;
 
-        for (var y = minY; y <= maxY; y++)
-        {
-            for (var x = minX; x <= maxX; x++)
-            {
-                var px = x + 0.5 - sample.X;
-                var py = y + 0.5 - sample.Y;
-                var dist = Math.Sqrt(px * px + py * py);
-                if (dist > radius) continue;
-
-                // Hard core (inner fraction = hardness) at full alpha,
-                // smooth S-curve falloff across the soft outer ring.
-                var t = dist / radius;
-                double localAlpha;
-                var h = Math.Max(0.001, brush.Hardness);
-                if (t < h)
-                {
-                    localAlpha = alpha * brush.Flow;
-                }
-                else
-                {
-                    var s = (t - h) / (1.0 - h);               // 0..1 across soft zone
-                    var fade = 1.0 - s * s * (3.0 - 2.0 * s);  // smoothstep
-                    localAlpha = alpha * fade * brush.Flow;
-                }
-
-                if (hasGrain)
-                {
-                    // Noise value [0,1]; high grain = more texture, lower average opacity
-                    var noise = GrainNoise(x, y);
-                    localAlpha *= 1.0 - grain * (1.0 - noise);
-                }
-
-                layer.Pixels.GetPixel(x, y, out var b, out var g, out var r, out var a);
-                if (eraser)
-                    Erase(ref b, ref g, ref r, ref a, localAlpha);
-                else
-                    Blend(ref b, ref g, ref r, ref a, brush.Color, localAlpha);
-                layer.Pixels.SetPixel(x, y, b, g, r, a);
-            }
-        }
-
-        return new PixelRegion(minX, minY, maxX - minX + 1, maxY - minY + 1);
+        layer.Pixels.RenderWithSkia(dirty, canvas => RenderPreparedStamps(stroke, canvas));
+        return dirty;
     }
 
     public PixelRegion EstimateSegmentRegion(DrawingLayer layer, BrushPreset brush, CanvasInputSample from, CanvasInputSample to)
     {
-        var maxPressure = Math.Max(Math.Clamp(from.Pressure, 0, 1), Math.Clamp(to.Pressure, 0, 1));
-        var pressure = Math.Pow(maxPressure, brush.PressureCurve);
-        var pressureSize = brush.PressureToSize ? pressure : 1.0;
-        var radius = Math.Max(0.5, brush.Size * pressureSize * 0.5);
-        var minX = (int)Math.Floor(Math.Min(from.X, to.X) - radius - 1);
-        var minY = (int)Math.Floor(Math.Min(from.Y, to.Y) - radius - 1);
-        var maxX = (int)Math.Ceiling(Math.Max(from.X, to.X) + radius + 1);
-        var maxY = (int)Math.Ceiling(Math.Max(from.Y, to.Y) + radius + 1);
+        var radius = Math.Max(1.0, brush.Size * 0.5 + brush.Size * Math.Max(0, brush.Spacing) + 2.0);
+        var minX = (int)Math.Floor(Math.Min(from.X, to.X) - radius);
+        var minY = (int)Math.Floor(Math.Min(from.Y, to.Y) - radius);
+        var maxX = (int)Math.Ceiling(Math.Max(from.X, to.X) + radius);
+        var maxY = (int)Math.Ceiling(Math.Max(from.Y, to.Y) + radius);
         return new PixelRegion(minX, minY, maxX - minX + 1, maxY - minY + 1)
             .ClipTo(layer.Width, layer.Height);
     }
@@ -129,8 +83,174 @@ public sealed class BrushEngine
     public PixelRegion EstimateDabRegion(DrawingLayer layer, BrushPreset brush, CanvasInputSample sample)
         => EstimateSegmentRegion(layer, brush, sample, sample);
 
-    // Hash-based white noise returning [0, 1]
-    private static double GrainNoise(int x, int y)
+    public void Dispose() => EndStroke();
+
+    private void EnsureStroke(BrushPreset brush, bool eraser, CanvasInputSample sample)
+    {
+        if (_activeStroke == null || !_activeStroke.Matches(brush, eraser))
+        {
+            BeginStroke(brush, eraser, sample);
+        }
+    }
+
+    private PixelRegion BuildStamps(ActiveStroke stroke, BrushPreset brush, CanvasInputSample from, CanvasInputSample to)
+    {
+        if (from.Pressure <= 0 && to.Pressure <= 0) return PixelRegion.Empty;
+
+        var dx = to.X - from.X;
+        var dy = to.Y - from.Y;
+        var distance = Math.Sqrt(dx * dx + dy * dy);
+        var subdivisions = Math.Max(8, Math.Min(96, (int)Math.Ceiling(distance / 2.0)));
+        var spacing = Math.Max(0.5f, (float)(brush.Size * brush.Spacing));
+
+        var p0 = new SplinePoint(
+            stroke.State.LastX,
+            stroke.State.LastY,
+            stroke.State.LastPressure,
+            stroke.State.LastTiltX,
+            stroke.State.LastTiltY,
+            (float)from.Twist);
+        var p1 = ToSplinePoint(from);
+        var p2 = ToSplinePoint(to);
+        var p3 = new SplinePoint(
+            (float)(to.X + (to.X - from.X)),
+            (float)(to.Y + (to.Y - from.Y)),
+            (float)to.Pressure,
+            (float)to.TiltX,
+            (float)to.TiltY,
+            (float)to.Twist);
+
+        var previous = p1;
+        var dirty = PixelRegion.Empty;
+
+        for (var i = 1; i <= subdivisions; i++)
+        {
+            var t = i / (float)subdivisions;
+            var current = CatmullRom(p0, p1, p2, p3, t);
+            var segmentDx = current.X - previous.X;
+            var segmentDy = current.Y - previous.Y;
+            var segmentLength = MathF.Sqrt(segmentDx * segmentDx + segmentDy * segmentDy);
+
+            if (segmentLength > 0.0001f)
+            {
+                var consumed = spacing - stroke.State.DistanceLeftover;
+                while (consumed <= segmentLength)
+                {
+                    var ratio = consumed / segmentLength;
+                    var sample = Lerp(previous, current, ratio, from, to);
+                    var velocity01 = Math.Clamp(segmentLength * subdivisions / 5000.0f, 0, 1);
+                    var stamp = CreateStamp(stroke, brush, sample, velocity01);
+                    _stamps.Add(stamp);
+                    dirty = dirty.Union(StampBounds(stamp));
+                    consumed += spacing;
+                }
+
+                stroke.State.DistanceLeftover = segmentLength - (consumed - spacing);
+                if (stroke.State.DistanceLeftover >= spacing) stroke.State.DistanceLeftover = 0;
+            }
+
+            previous = current;
+        }
+
+        stroke.State.LastX = (float)to.X;
+        stroke.State.LastY = (float)to.Y;
+        stroke.State.LastPressure = (float)to.Pressure;
+        stroke.State.LastTiltX = (float)to.TiltX;
+        stroke.State.LastTiltY = (float)to.TiltY;
+
+        return dirty;
+    }
+
+    private StampSample CreateStamp(ActiveStroke stroke, BrushPreset brush, CanvasInputSample sample, float velocity01)
+    {
+        var sizeModifier = stroke.Dynamics.Evaluate(DynamicOutputTarget.Size, sample, velocity01);
+        var opacityModifier = stroke.Dynamics.Evaluate(DynamicOutputTarget.Opacity, sample, velocity01);
+        var scatter = stroke.Dynamics.Evaluate(DynamicOutputTarget.Scatter, sample, velocity01) - 1.0f;
+        var size = Math.Max(0.5f, (float)brush.Size * sizeModifier);
+        var opacity = (float)Math.Clamp(brush.Opacity * brush.Flow * opacityModifier, 0, 1);
+        var angle = (float)sample.Twist + stroke.Dynamics.Evaluate(DynamicOutputTarget.Angle, sample, velocity01) - 1.0f;
+
+        var x = (float)sample.X;
+        var y = (float)sample.Y;
+        if (scatter > 0.001f)
+        {
+            var noise = Hash01((int)(x * 8), (int)(y * 8));
+            var radians = noise * MathF.Tau;
+            var amount = scatter * size;
+            x += MathF.Cos(radians) * amount;
+            y += MathF.Sin(radians) * amount;
+        }
+
+        return new StampSample(x, y, size, opacity, angle);
+    }
+
+    private void RenderPreparedStamps(ActiveStroke stroke, SKCanvas canvas)
+    {
+        for (var i = 0; i < _stamps.Count; i++)
+        {
+            var stamp = _stamps[i];
+            if (stamp.Opacity <= 0 || stamp.Size <= 0) continue;
+
+            stroke.UpdateOpacity(stamp.Opacity);
+            stroke.UpdateMatrix(stamp);
+
+            canvas.Save();
+            canvas.Concat(in stroke.Matrix);
+            canvas.DrawBitmap(stroke.Mask, 0, 0, stroke.Paint);
+            canvas.Restore();
+        }
+    }
+
+    private static PixelRegion StampBounds(StampSample stamp)
+    {
+        var radius = stamp.Size * 0.75f + 2.0f;
+        var left = (int)MathF.Floor(stamp.X - radius);
+        var top = (int)MathF.Floor(stamp.Y - radius);
+        var right = (int)MathF.Ceiling(stamp.X + radius);
+        var bottom = (int)MathF.Ceiling(stamp.Y + radius);
+        return new PixelRegion(left, top, right - left + 1, bottom - top + 1);
+    }
+
+    private static SplinePoint ToSplinePoint(CanvasInputSample sample)
+        => new((float)sample.X, (float)sample.Y, (float)sample.Pressure, (float)sample.TiltX, (float)sample.TiltY, (float)sample.Twist);
+
+    private static CanvasInputSample Lerp(SplinePoint a, SplinePoint b, float t, CanvasInputSample from, CanvasInputSample to)
+    {
+        var pressure = a.Pressure + (b.Pressure - a.Pressure) * t;
+        var tiltX = a.TiltX + (b.TiltX - a.TiltX) * t;
+        var tiltY = a.TiltY + (b.TiltY - a.TiltY) * t;
+        var twist = a.Twist + (b.Twist - a.Twist) * t;
+        var time = (long)(from.TimeMicros + (to.TimeMicros - from.TimeMicros) * t);
+        return new CanvasInputSample(
+            a.X + (b.X - a.X) * t,
+            a.Y + (b.Y - a.Y) * t,
+            pressure,
+            tiltX,
+            tiltY,
+            twist,
+            time,
+            to.PointerId,
+            to.Source,
+            to.Phase);
+    }
+
+    private static SplinePoint CatmullRom(SplinePoint p0, SplinePoint p1, SplinePoint p2, SplinePoint p3, float t)
+    {
+        var t2 = t * t;
+        var t3 = t2 * t;
+        return new SplinePoint(
+            Catmull(p0.X, p1.X, p2.X, p3.X, t, t2, t3),
+            Catmull(p0.Y, p1.Y, p2.Y, p3.Y, t, t2, t3),
+            Catmull(p0.Pressure, p1.Pressure, p2.Pressure, p3.Pressure, t, t2, t3),
+            Catmull(p0.TiltX, p1.TiltX, p2.TiltX, p3.TiltX, t, t2, t3),
+            Catmull(p0.TiltY, p1.TiltY, p2.TiltY, p3.TiltY, t, t2, t3),
+            Catmull(p0.Twist, p1.Twist, p2.Twist, p3.Twist, t, t2, t3));
+    }
+
+    private static float Catmull(float p0, float p1, float p2, float p3, float t, float t2, float t3)
+        => 0.5f * (2.0f * p1 + (-p0 + p2) * t + (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 + (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
+
+    private static float Hash01(int x, int y)
     {
         unchecked
         {
@@ -140,30 +260,72 @@ public sealed class BrushEngine
             h ^= h >> 13;
             h *= 0x9b2e1515u;
             h ^= h >> 16;
-            return (h & 0xFFFF) / 65535.0;
+            return (h & 0xFFFF) / 65535.0f;
         }
     }
 
-    private static void Blend(ref byte b, ref byte g, ref byte r, ref byte a, Color color, double alpha)
+    private sealed class ActiveStroke : IDisposable
     {
-        alpha = Math.Clamp(alpha, 0, 1);
-        var srcAlpha = alpha * color.A / 255.0;
-        var inv = 1 - srcAlpha;
-        var dstAlpha = a / 255.0;
-        var outAlpha = srcAlpha + dstAlpha * inv;
+        private readonly BrushPreset _brush;
+        private readonly bool _eraser;
+        private readonly SKColor _baseColor;
 
-        b = (byte)Math.Clamp(color.B * srcAlpha + b * inv, 0, 255);
-        g = (byte)Math.Clamp(color.G * srcAlpha + g * inv, 0, 255);
-        r = (byte)Math.Clamp(color.R * srcAlpha + r * inv, 0, 255);
-        a = (byte)Math.Clamp(outAlpha * 255, 0, 255);
+        public ActiveStroke(BrushPreset brush, bool eraser, CanvasInputSample sample)
+        {
+            _brush = brush;
+            _eraser = eraser;
+            State = new StrokeState((float)sample.X, (float)sample.Y, (float)sample.Pressure, (float)sample.TiltX, (float)sample.TiltY);
+            Dynamics = DynamicsMatrix.FromBrush(brush);
+            Mask = brush.Tip.GenerateMask(Math.Max(1, (int)Math.Ceiling(brush.Size)), (float)brush.Hardness);
+            _baseColor = ToSkColor(brush.Color);
+            Paint = new SKPaint
+            {
+                IsAntialias = true,
+                BlendMode = eraser ? SKBlendMode.DstOut : SKBlendMode.SrcOver,
+                Color = eraser ? SKColors.White : _baseColor,
+                ColorFilter = eraser ? null : SKColorFilter.CreateBlendMode(_baseColor, SKBlendMode.SrcIn)
+            };
+        }
+
+        public StrokeState State;
+        public DynamicsMatrix Dynamics { get; }
+        public SKBitmap Mask { get; }
+        public SKPaint Paint { get; }
+        public SKMatrix Matrix;
+
+        public bool Matches(BrushPreset brush, bool eraser)
+            => ReferenceEquals(_brush, brush) && _eraser == eraser;
+
+        public void UpdateOpacity(float opacity)
+        {
+            var alpha = (byte)Math.Clamp((int)(opacity * 255), 0, 255);
+            Paint.Color = _eraser
+                ? new SKColor(255, 255, 255, alpha)
+                : new SKColor(_baseColor.Red, _baseColor.Green, _baseColor.Blue, alpha);
+        }
+
+        public void UpdateMatrix(StampSample stamp)
+        {
+            var scale = stamp.Size / Math.Max(1, Mask.Width);
+            Matrix = SKMatrix.CreateTranslation(-Mask.Width * 0.5f, -Mask.Height * 0.5f);
+            Matrix = Matrix.PostConcat(SKMatrix.CreateScale(scale, scale));
+            if (Math.Abs(stamp.Angle) > 0.001f)
+                Matrix = Matrix.PostConcat(SKMatrix.CreateRotationDegrees(stamp.Angle));
+            Matrix = Matrix.PostConcat(SKMatrix.CreateTranslation(stamp.X, stamp.Y));
+        }
+
+        public void Dispose()
+        {
+            if (_brush.Tip is not ImageBrushTip)
+                Mask.Dispose();
+            Paint.ColorFilter?.Dispose();
+            Paint.Dispose();
+        }
+
+        private static SKColor ToSkColor(Color color)
+            => new(color.R, color.G, color.B, color.A);
     }
 
-    private static void Erase(ref byte b, ref byte g, ref byte r, ref byte a, double alpha)
-    {
-        var keep = 1 - Math.Clamp(alpha, 0, 1);
-        b = (byte)Math.Clamp(b * keep, 0, 255);
-        g = (byte)Math.Clamp(g * keep, 0, 255);
-        r = (byte)Math.Clamp(r * keep, 0, 255);
-        a = (byte)Math.Clamp(a * keep, 0, 255);
-    }
+    private readonly record struct StampSample(float X, float Y, float Size, float Opacity, float Angle);
+    private readonly record struct SplinePoint(float X, float Y, float Pressure, float TiltX, float TiltY, float Twist);
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using SkiaSharp;
 
 namespace Floss.App.Document;
 
@@ -87,6 +88,31 @@ public sealed class TiledPixelBuffer
                 WritePixel(x, y, src, (y * srcWidth + x) * BytesPerPixel);
             }
         }
+    }
+
+    public unsafe void RenderWithSkia(PixelRegion region, Action<SKCanvas> render)
+    {
+        var clipped = region.ClipTo(Width, Height);
+        if (clipped.IsEmpty) return;
+
+        ForEachTile(clipped, (tileX, tileY, tile, tileRegion) =>
+        {
+            fixed (byte* tilePtr = tile)
+            {
+                var info = new SKImageInfo(TileSize, TileSize, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+                using var bitmap = new SKBitmap();
+                if (!bitmap.InstallPixels(info, (IntPtr)tilePtr, TileSize * BytesPerPixel))
+                    return;
+
+                using var canvas = new SKCanvas(bitmap);
+                canvas.Translate(-tileX * TileSize, -tileY * TileSize);
+                canvas.ClipRect(new SKRect(tileRegion.X, tileRegion.Y, tileRegion.Right, tileRegion.Bottom));
+                render(canvas);
+                canvas.Flush();
+            }
+        }, create: true);
+
+        PruneTransparentTiles(clipped);
     }
 
     public void ReadPixel(int x, int y, byte[] dst, int dstOffset)

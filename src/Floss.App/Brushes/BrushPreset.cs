@@ -33,6 +33,7 @@ public sealed record BrushPreset(
     public double Grain { get; init; } = 0.0;
     // 0 = raw input, 1 = maximum streamline smoothing
     public double Smoothing { get; init; } = 0.3;
+    public IBrushTip Tip { get; init; } = new ProceduralBrushTip();
 
     public static IReadOnlyList<BrushPreset> Defaults { get; } =
     [

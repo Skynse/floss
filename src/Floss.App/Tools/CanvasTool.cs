@@ -43,6 +43,7 @@ public sealed class CanvasTool
         var layer = _document.ActiveLayer;
         var localSample = ToLayerSample(layer, sample);
         _lastSample = localSample;
+        _brushEngine.BeginStroke(brush, IsEraser(sample), localSample);
         RasterizeDabWithHistory(layer, brush, sample, localSample, 0);
     }
 
@@ -69,6 +70,7 @@ public sealed class CanvasTool
         _document.CommitLayerRegionMutation(_activeLayerIndex, _strokePatches, _strokeDirtyRegion);
         _strokePatches.Clear();
         _strokeDirtyRegion = PixelRegion.Empty;
+        _brushEngine.EndStroke();
         _document.CommitStroke();
     }
 
@@ -76,6 +78,7 @@ public sealed class CanvasTool
     {
         _active = false;
         ActiveSampleCount = 0;
+        _brushEngine.EndStroke();
     }
 
     // Exponential moving average toward the new sample ("Streamline" smoothing)
