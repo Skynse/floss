@@ -1,26 +1,24 @@
 # Floss
 
-Floss is a Flutter drawing app scaffold aimed at a Procreate-style workflow with room for native, tile-backed rendering later.
+Floss is now an Avalonia/C# desktop drawing app scaffold.
 
 ## Current Groundwork
 
-- Studio UI shell with canvas, tool rail, brush controls, layer placeholder, and status bar.
-- `BrushEngine` interface that isolates stroke/layer logic from Flutter widgets.
-- Prototype Dart brush engine with pressure-aware samples, Catmull-Rom resampling, and dirty tile tracking.
-- Canvas surface built from `Listener`, `RepaintBoundary`, and `CustomPaint` as a temporary renderer.
-- Tests covering app bootstrapping and brush-engine tile invalidation.
-- Rust core scaffold under `rust/` with the document, tile, brush, stroke, and FRB-facing API split.
+- Avalonia desktop app targeting `net10.0`.
+- Custom `DrawingCanvas` backed by an `Avalonia.Media.Imaging.WriteableBitmap`.
+- Pressure-aware brush samples from Avalonia pointer events.
+- Brush presets, color swatches, brush sliders, eraser mode, undo/redo, clear.
+- Keyboard shortcuts: `B`, `E`, `[`, `]`, `Ctrl+Z`, `Ctrl+Y`, `Ctrl+Shift+Z`, `Ctrl+0`.
+- Workspace pan with hold-space drag, zoom with `Ctrl+MouseWheel`.
+
+## Build
+
+```sh
+dotnet restore
+dotnet build
+dotnet run --project src/Floss.App
+```
 
 ## Performance Direction
 
-The prototype painter is intentionally disposable. The intended high-performance path is:
-
-1. Keep Flutter responsible for UI, pointer capture, panels, and composition.
-2. Move tile storage, brush stamping, layer compositing, and import/export into a native core.
-3. Use tile dirty ranges to update only changed 256x256 regions.
-4. Present the native canvas through a texture-backed renderer instead of moving full images through Dart.
-5. Keep brush input as compact stroke samples crossing the boundary, not pixel buffers.
-
-The central contract for that swap is `lib/src/engine/brush_engine.dart`.
-
-See `docs/engine_architecture.md` for the Rust/Flutter bridge plan.
+The first canvas backend is CPU raster into one `WriteableBitmap`. That is not the final architecture. The next pass should split the document into dirty tiles, update only changed tile regions, and introduce a real tool/brush pipeline before adding layers and transforms.
