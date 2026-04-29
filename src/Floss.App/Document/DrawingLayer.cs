@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
@@ -14,7 +15,7 @@ public sealed class DrawingLayer
             new PixelSize(width, height),
             new Vector(96, 96),
             PixelFormat.Bgra8888,
-            AlphaFormat.Premul);
+            AlphaFormat.Unpremul);
         Clear();
     }
 
@@ -22,6 +23,15 @@ public sealed class DrawingLayer
     public bool IsVisible { get; set; } = true;
     public bool IsLocked { get; set; }
     public double Opacity { get; set; } = 1.0;
+    public string BlendMode { get; set; } = "Normal";
+    public int OffsetX { get; set; }
+    public int OffsetY { get; set; }
+    public bool IsGroup { get; set; }
+    public bool IsOpen { get; set; } = true;
+    public bool IsClipping { get; set; }
+    public int IndentLevel { get; set; }
+    public DrawingLayer? Parent { get; set; }
+    public List<DrawingLayer> Children { get; } = [];
     public WriteableBitmap Bitmap { get; }
 
     public void Clear()

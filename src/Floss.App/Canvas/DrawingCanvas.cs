@@ -15,6 +15,7 @@ public sealed class DrawingCanvas : Control
 {
     private readonly DrawingDocument _document = new();
     private readonly CanvasTool _tool;
+    private readonly LayerCompositor _compositor;
     private BrushPreset _brush = BrushPreset.Defaults[0];
     private Color _paintColor = Color.Parse("#111111");
     private long _activePointerId = -1;
@@ -24,13 +25,19 @@ public sealed class DrawingCanvas : Control
         Focusable = true;
         ClipToBounds = true;
         _tool = new CanvasTool(_document, new BrushEngine());
+        _compositor = new LayerCompositor();
         _document.Changed += (_, _) =>
         {
+            _compositor.Invalidate();
             InvalidateVisual();
             StatsChanged?.Invoke(this, EventArgs.Empty);
         };
         _document.HistoryChanged += (_, _) => HistoryChanged?.Invoke(this, EventArgs.Empty);
-        _document.LayersChanged += (_, _) => LayersChanged?.Invoke(this, EventArgs.Empty);
+        _document.LayersChanged += (_, _) =>
+        {
+            _compositor.Invalidate();
+            LayersChanged?.Invoke(this, EventArgs.Empty);
+        };
     }
 
     public event EventHandler? StatsChanged;
@@ -45,8 +52,11 @@ public sealed class DrawingCanvas : Control
     public BrushPreset Brush => _brush;
     public Color PaintColor => _paintColor;
     public bool EraserEnabled => _tool.Kind == ToolKind.Eraser;
+    public DrawingDocument Document => _document;
     public IReadOnlyList<DrawingLayer> Layers => _document.Layers;
     public int ActiveLayerIndex => _document.ActiveLayerIndex;
+
+    public double CanvasRotation { get; set; }
 
     public void SetBrush(BrushPreset preset)
     {
@@ -66,10 +76,12 @@ public sealed class DrawingCanvas : Control
         }
     }
 
-    public void SetBrushSize(double size) => _brush = _brush with { Size = Math.Clamp(size, 1, 256) };
-    public void SetBrushOpacity(double opacity) => _brush = _brush with { Opacity = Math.Clamp(opacity, 0.01, 1) };
-    public void SetBrushHardness(double hardness) => _brush = _brush with { Hardness = Math.Clamp(hardness, 0, 1) };
-    public void SetBrushSpacing(double spacing) => _brush = _brush with { Spacing = Math.Clamp(spacing, 0.02, 1) };
+    public void SetBrushSize(double size)           => _brush = _brush with { Size      = Math.Clamp(size,      1,    256) };
+    public void SetBrushOpacity(double opacity)     => _brush = _brush with { Opacity   = Math.Clamp(opacity,   0.01, 1)   };
+    public void SetBrushHardness(double hardness)   => _brush = _brush with { Hardness  = Math.Clamp(hardness,  0,    1)   };
+    public void SetBrushSpacing(double spacing)     => _brush = _brush with { Spacing   = Math.Clamp(spacing,   0.02, 1)   };
+    public void SetBrushSmoothing(double smoothing) => _brush = _brush with { Smoothing = Math.Clamp(smoothing, 0,    0.95) };
+    public void SetBrushGrain(double grain)         => _brush = _brush with { Grain     = Math.Clamp(grain,     0,    1)   };
 
     public void SetTool(string tool)
     {
@@ -93,16 +105,9 @@ public sealed class DrawingCanvas : Control
     public override void Render(DrawingContext context)
     {
         base.Render(context);
+        _compositor.Composite(_document.Layers, _document.Width, _document.Height);
         var target = new Rect(Bounds.Size);
-        context.FillRectangle(new SolidColorBrush(DrawingDocument.PaperColor), target);
-        foreach (var layer in _document.Layers)
-        {
-            if (!layer.IsVisible || layer.Opacity <= 0) continue;
-            using (context.PushOpacity(layer.Opacity))
-            {
-                context.DrawImage(layer.Bitmap, target);
-            }
-        }
+        context.DrawImage(_compositor.Bitmap, target);
     }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
@@ -118,9 +123,10 @@ public sealed class DrawingCanvas : Control
         var sample = CanvasInputSample.FromPointerPoint(
             point,
             Bounds.Size,
-            DrawingDocument.CanvasWidth,
-            DrawingDocument.CanvasHeight,
-            CanvasInputPhase.Down);
+            _document.Width,
+            _document.Height,
+            CanvasInputPhase.Down,
+            CanvasRotation);
         if (sample.Source == CanvasInputSource.Eraser)
         {
             _tool.SetKind(ToolKind.Eraser);
@@ -146,9 +152,10 @@ public sealed class DrawingCanvas : Control
             CanvasInputSample.FromPointerPoint(
                 point,
                 Bounds.Size,
-                DrawingDocument.CanvasWidth,
-                DrawingDocument.CanvasHeight,
-                CanvasInputPhase.Move));
+                _document.Width,
+                _document.Height,
+                CanvasInputPhase.Move,
+                CanvasRotation));
         e.Handled = true;
     }
 
@@ -166,9 +173,10 @@ public sealed class DrawingCanvas : Control
             CanvasInputSample.FromPointerPoint(
                 point,
                 Bounds.Size,
-                DrawingDocument.CanvasWidth,
-                DrawingDocument.CanvasHeight,
-                CanvasInputPhase.Up));
+                _document.Width,
+                _document.Height,
+                CanvasInputPhase.Up,
+                CanvasRotation));
         _activePointerId = -1;
         e.Pointer.Capture(null);
         e.Handled = true;
@@ -179,6 +187,25 @@ public sealed class DrawingCanvas : Control
         base.OnPointerCaptureLost(e);
         _activePointerId = -1;
         _tool.Cancel();
+    }
+
+    private Point TransformPointer(Point point)
+    {
+        if (Math.Abs(CanvasRotation) < 0.01)
+            return point;
+
+        var cx = _document.Width / 2.0;
+        var cy = _document.Height / 2.0;
+        var angle = -CanvasRotation * Math.PI / 180.0;
+        var cos = Math.Cos(angle);
+        var sin = Math.Sin(angle);
+
+        var dx = point.X - cx;
+        var dy = point.Y - cy;
+
+        return new Point(
+            cx + dx * cos - dy * sin,
+            cy + dx * sin + dy * cos);
     }
 
     private static bool IsPaintInput(PointerPoint point)

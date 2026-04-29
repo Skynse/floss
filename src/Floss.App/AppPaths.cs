@@ -1,0 +1,28 @@
+using System;
+using System.IO;
+
+namespace Floss.App;
+
+public static class AppPaths
+{
+    public static string AppDirectory { get; } =
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "Floss");
+
+    public static string BrushesDirectory { get; } =
+        Path.Combine(AppDirectory, "Brushes");
+
+    public static string DocumentsDirectory { get; } =
+        Path.Combine(AppDirectory, "Documents");
+
+    public static string ConfigPath { get; } =
+        Path.Combine(AppDirectory, "config.json");
+
+    public static void EnsureDirectories()
+    {
+        Directory.CreateDirectory(AppDirectory);
+        Directory.CreateDirectory(BrushesDirectory);
+        Directory.CreateDirectory(DocumentsDirectory);
+    }
+}

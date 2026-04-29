@@ -53,7 +53,8 @@ public readonly record struct CanvasInputSample(
         Size surfaceSize,
         int canvasWidth,
         int canvasHeight,
-        CanvasInputPhase phase)
+        CanvasInputPhase phase,
+        double rotationDegrees = 0)
     {
         var properties = point.Properties;
         var source = SourceFromPointer(point);
@@ -63,9 +64,25 @@ public readonly record struct CanvasInputSample(
             pressure = 1;
         }
 
+        var x = point.Position.X / Math.Max(surfaceSize.Width, 1) * canvasWidth;
+        var y = point.Position.Y / Math.Max(surfaceSize.Height, 1) * canvasHeight;
+
+        if (Math.Abs(rotationDegrees) > 0.01)
+        {
+            var cx = canvasWidth / 2.0;
+            var cy = canvasHeight / 2.0;
+            var angle = -rotationDegrees * Math.PI / 180.0;
+            var cos = Math.Cos(angle);
+            var sin = Math.Sin(angle);
+            var dx = x - cx;
+            var dy = y - cy;
+            x = cx + dx * cos - dy * sin;
+            y = cy + dx * sin + dy * cos;
+        }
+
         return new CanvasInputSample(
-            X: Math.Clamp(point.Position.X / Math.Max(surfaceSize.Width, 1) * canvasWidth, 0, canvasWidth - 1),
-            Y: Math.Clamp(point.Position.Y / Math.Max(surfaceSize.Height, 1) * canvasHeight, 0, canvasHeight - 1),
+            X: Math.Clamp(x, 0, canvasWidth - 1),
+            Y: Math.Clamp(y, 0, canvasHeight - 1),
             Pressure: Math.Clamp(pressure, 0, 1),
             TiltX: properties.XTilt,
             TiltY: properties.YTilt,
