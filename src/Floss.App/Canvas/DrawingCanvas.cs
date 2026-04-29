@@ -4,6 +4,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Floss.App.Brushes;
 using Floss.App.Document;
 using Floss.App.Input;
@@ -24,18 +25,20 @@ public sealed class DrawingCanvas : Control
     {
         Focusable = true;
         ClipToBounds = true;
+        RenderOptions.SetBitmapInterpolationMode(this, BitmapInterpolationMode.None);
+        RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);
         _tool = new CanvasTool(_document, new BrushEngine());
         _compositor = new LayerCompositor();
-        _document.Changed += (_, _) =>
+        _document.Changed += (_, e) =>
         {
-            _compositor.Invalidate();
+            _compositor.Invalidate(e.DirtyRegion);
             InvalidateVisual();
             StatsChanged?.Invoke(this, EventArgs.Empty);
         };
         _document.HistoryChanged += (_, _) => HistoryChanged?.Invoke(this, EventArgs.Empty);
         _document.LayersChanged += (_, _) =>
         {
-            _compositor.Invalidate();
+            _compositor.Invalidate(null);
             LayersChanged?.Invoke(this, EventArgs.Empty);
         };
     }
@@ -107,7 +110,14 @@ public sealed class DrawingCanvas : Control
         base.Render(context);
         _compositor.Composite(_document.Layers, _document.Width, _document.Height);
         var target = new Rect(Bounds.Size);
-        context.DrawImage(_compositor.Bitmap, target);
+        using (context.PushRenderOptions(new RenderOptions
+        {
+            BitmapInterpolationMode = BitmapInterpolationMode.None,
+            EdgeMode = EdgeMode.Aliased
+        }))
+        {
+            context.DrawImage(_compositor.Bitmap, target);
+        }
     }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)

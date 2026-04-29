@@ -6,17 +6,16 @@ using Avalonia.Platform;
 
 namespace Floss.App.Document;
 
-public sealed class DrawingLayer
+public sealed class DrawingLayer : IDisposable
 {
+    private WriteableBitmap? _thumbnail;
+    private int _thumbnailSize;
+    private bool _thumbnailDirty = true;
+
     public DrawingLayer(string name, int width, int height)
     {
         Name = name;
-        Bitmap = new WriteableBitmap(
-            new PixelSize(width, height),
-            new Vector(96, 96),
-            PixelFormat.Bgra8888,
-            AlphaFormat.Unpremul);
-        Clear();
+        Pixels = new TiledPixelBuffer(width, height);
     }
 
     public string Name { get; set; }
@@ -32,63 +31,96 @@ public sealed class DrawingLayer
     public int IndentLevel { get; set; }
     public DrawingLayer? Parent { get; set; }
     public List<DrawingLayer> Children { get; } = [];
-    public WriteableBitmap Bitmap { get; }
+    public TiledPixelBuffer Pixels { get; }
+    public int Width => Pixels.Width;
+    public int Height => Pixels.Height;
 
-    public void Clear()
+    public void Dispose()
     {
-        using var frame = Bitmap.Lock();
+        _thumbnail?.Dispose();
+    }
+
+    public WriteableBitmap GetThumbnail(int size)
+    {
+        if (_thumbnail == null || _thumbnailSize != size)
+        {
+            _thumbnail?.Dispose();
+            _thumbnailSize = size;
+            _thumbnail = new WriteableBitmap(
+                new PixelSize(size, size),
+                new Vector(96, 96),
+                PixelFormat.Bgra8888,
+                AlphaFormat.Unpremul);
+            _thumbnailDirty = true;
+        }
+
+        if (_thumbnailDirty)
+        {
+            RefreshThumbnail();
+        }
+
+        return _thumbnail;
+    }
+
+    public void MarkThumbnailDirty() => _thumbnailDirty = true;
+
+    public void RefreshThumbnail()
+    {
+        if (_thumbnail == null) return;
+
+        using var dstFrame = _thumbnail.Lock();
         unsafe
         {
-            var pixels = (byte*)frame.Address;
-            for (var y = 0; y < frame.Size.Height; y++)
+            var dst = (byte*)dstFrame.Address;
+            var srcW = Width;
+            var srcH = Height;
+            var dstW = _thumbnail.PixelSize.Width;
+            var dstH = _thumbnail.PixelSize.Height;
+
+            for (var y = 0; y < dstH; y++)
             {
-                var row = pixels + y * frame.RowBytes;
-                for (var x = 0; x < frame.Size.Width * 4; x++)
+                var srcY = Math.Clamp((int)((y + 0.5) * srcH / dstH), 0, srcH - 1);
+                var dstRow = dst + y * dstFrame.RowBytes;
+
+                for (var x = 0; x < dstW; x++)
                 {
-                    row[x] = 0;
+                    var srcX = Math.Clamp((int)((x + 0.5) * srcW / dstW), 0, srcW - 1);
+                    var dstPx = dstRow + x * 4;
+                    Pixels.GetPixel(srcX, srcY, out var b, out var g, out var r, out var a);
+                    dstPx[0] = b;
+                    dstPx[1] = g;
+                    dstPx[2] = r;
+                    dstPx[3] = a;
                 }
             }
         }
+
+        _thumbnailDirty = false;
+    }
+
+    public void Clear()
+    {
+        Pixels.Clear();
+        MarkThumbnailDirty();
+    }
+
+    public void Clear(PixelRegion region)
+    {
+        Pixels.Clear(region);
+        MarkThumbnailDirty();
     }
 
     public byte[] CapturePixels()
-    {
-        var width = Bitmap.PixelSize.Width;
-        var height = Bitmap.PixelSize.Height;
-        var bytes = new byte[width * height * 4];
-        using var frame = Bitmap.Lock();
-        unsafe
-        {
-            var src = (byte*)frame.Address;
-            for (var y = 0; y < height; y++)
-            {
-                System.Runtime.InteropServices.Marshal.Copy(
-                    (IntPtr)(src + y * frame.RowBytes),
-                    bytes,
-                    y * width * 4,
-                    width * 4);
-            }
-        }
+        => CapturePixels(Pixels.Bounds);
 
-        return bytes;
-    }
+    public byte[] CapturePixels(PixelRegion region) => Pixels.Capture(region);
 
     public void RestorePixels(byte[] bytes)
+        => RestorePixels(Pixels.Bounds, bytes);
+
+    public void RestorePixels(PixelRegion region, byte[] bytes)
     {
-        var width = Bitmap.PixelSize.Width;
-        var height = Bitmap.PixelSize.Height;
-        using var frame = Bitmap.Lock();
-        unsafe
-        {
-            var dst = (byte*)frame.Address;
-            for (var y = 0; y < height; y++)
-            {
-                System.Runtime.InteropServices.Marshal.Copy(
-                    bytes,
-                    y * width * 4,
-                    (IntPtr)(dst + y * frame.RowBytes),
-                    width * 4);
-            }
-        }
+        Pixels.Restore(region, bytes);
+        MarkThumbnailDirty();
     }
 }

@@ -74,10 +74,10 @@ public static class PsdExporter
 
         var channelPositions = new List<long[]>();
         foreach (var layer in layers)
-            channelPositions.Add(WriteLayerRecord(layerW, layer, width, height));
+            channelPositions.Add(WriteLayerRecord(layerW, layer));
 
         for (int i = 0; i < layers.Count; i++)
-            WriteLayerChannels(layerW, layers[i], channelPositions[i], width, height);
+            WriteLayerChannels(layerW, layers[i], channelPositions[i]);
 
         var layerInfoData = layerInfoStream.ToArray();
         if (layerInfoData.Length % 2 != 0)
@@ -89,12 +89,15 @@ public static class PsdExporter
         w.WriteUInt32(0); // Global layer mask info: empty
     }
 
-    private static long[] WriteLayerRecord(PsdBinaryWriter w, DrawingLayer layer, int width, int height)
+    private static long[] WriteLayerRecord(PsdBinaryWriter w, DrawingLayer layer)
     {
-        w.WriteInt32(0);
-        w.WriteInt32(0);
-        w.WriteInt32(height);
-        w.WriteInt32(width);
+        var layerWidth = layer.Width;
+        var layerHeight = layer.Height;
+
+        w.WriteInt32(layer.OffsetY);
+        w.WriteInt32(layer.OffsetX);
+        w.WriteInt32(layer.OffsetY + layerHeight);
+        w.WriteInt32(layer.OffsetX + layerWidth);
 
         w.WriteUInt16(4); // 4 channels
 
@@ -110,7 +113,7 @@ public static class PsdExporter
         w.WriteAscii(BlendModeKey(layer.BlendMode));
         w.WriteByte((byte)Math.Clamp((int)(layer.Opacity * 255), 0, 255));
         w.WriteByte((byte)(layer.IsClipping ? 1 : 0));
-        w.WriteByte((byte)(layer.IsVisible ? 2 : 0)); // flags: bit 1 = visible (inverted)
+        w.WriteByte((byte)(layer.IsVisible ? 0 : 2)); // flags: bit 1 = hidden
         w.WriteByte(0); // filler
 
         // Extra data: just the layer name
@@ -129,15 +132,14 @@ public static class PsdExporter
         return positions;
     }
 
-    private static unsafe void WriteLayerChannels(PsdBinaryWriter w, DrawingLayer layer, long[] lengthPositions, int width, int height)
+    private static void WriteLayerChannels(PsdBinaryWriter w, DrawingLayer layer, long[] lengthPositions)
     {
-        using var frame = layer.Bitmap.Lock();
-        var pixels = (byte*)frame.Address;
-        var stride = frame.RowBytes;
+        var width = layer.Width;
+        var height = layer.Height;
 
         for (int ch = -1; ch < 3; ch++)
         {
-            var data = CompressChannelRle(pixels, stride, width, height, ch);
+            var data = CompressChannelRle(layer, width, height, ch);
 
             var savedPos = w.Position;
             w.Position = lengthPositions[ch + 1];
@@ -148,7 +150,7 @@ public static class PsdExporter
         }
     }
 
-    private static unsafe byte[] CompressChannelRle(byte* pixels, int stride, int width, int height, int channel)
+    private static byte[] CompressChannelRle(DrawingLayer layer, int width, int height, int channel)
     {
         var result = new MemoryStream();
         var w = new PsdBinaryWriter(result);
@@ -164,13 +166,18 @@ public static class PsdExporter
         for (int y = 0; y < height; y++)
         {
             var rowStart = (int)result.Position;
-            var row = pixels + y * stride;
             var values = new byte[width];
             for (int x = 0; x < width; x++)
             {
+                layer.Pixels.GetPixel(x, y, out var b, out var g, out var r, out var a);
                 values[x] = channel == -1
-                    ? row[x * 4 + 3]           // Alpha
-                    : row[x * 4 + (2 - channel)]; // R/G/B from BGR layout
+                    ? a
+                    : channel switch
+                    {
+                        0 => r,
+                        1 => g,
+                        _ => b
+                    };
             }
             PackBitsEncode(w, values);
             rowCounts[y] = (ushort)((int)result.Position - rowStart);

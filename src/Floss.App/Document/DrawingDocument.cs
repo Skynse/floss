@@ -10,8 +10,8 @@ public sealed class DrawingDocument
     public static readonly Color PaperColor = Color.Parse("#f7f4ed");
 
     private readonly List<DrawingLayer> _layers = [];
-    private readonly Stack<DocumentSnapshot> _undo = new();
-    private readonly Stack<DocumentSnapshot> _redo = new();
+    private readonly Stack<IHistoryState> _undo = new();
+    private readonly Stack<IHistoryState> _redo = new();
 
     public DrawingDocument(int width = 2048, int height = 2048)
     {
@@ -21,7 +21,7 @@ public sealed class DrawingDocument
         ActiveLayerIndex = 0;
     }
 
-    public event EventHandler? Changed;
+    public event EventHandler<DocumentChangedEventArgs>? Changed;
     public event EventHandler? HistoryChanged;
     public event EventHandler? LayersChanged;
 
@@ -43,28 +43,51 @@ public sealed class DrawingDocument
 
     public void BeginDocumentMutation()
     {
-        _undo.Push(CaptureSnapshot());
+        _undo.Push(new SnapshotHistoryState(CaptureSnapshot()));
         _redo.Clear();
         HistoryChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    public void CommitLayerRegionMutation(int layerIndex, IReadOnlyList<LayerRegionPatch> patches, PixelRegion dirtyRegion)
+    {
+        if (patches.Count == 0 || dirtyRegion.IsEmpty) return;
+        _undo.Push(new LayerRegionHistoryState(layerIndex, patches.ToArray(), dirtyRegion));
+        _redo.Clear();
+        HistoryChanged?.Invoke(this, EventArgs.Empty);
+        NotifyChanged(dirtyRegion);
+    }
+
     public void ClearForImport()
     {
+        foreach (var l in _layers) l.Dispose();
         _layers.Clear();
         _undo.Clear();
         _redo.Clear();
         CommittedStrokeCount = 0;
     }
 
-    public DrawingLayer AddLayerForImport(string name, bool isGroup = false)
+    public DrawingLayer AddLayerForImport(
+        string name,
+        bool isGroup = false,
+        int? bitmapWidth = null,
+        int? bitmapHeight = null)
     {
-        var layer = new DrawingLayer(name, Width, Height)
-        {
-            IsGroup = isGroup
-        };
+        var layer = CreateLayerForImport(name, isGroup, bitmapWidth, bitmapHeight);
         _layers.Add(layer);
         return layer;
     }
+
+    public DrawingLayer CreateLayerForImport(
+        string name,
+        bool isGroup = false,
+        int? bitmapWidth = null,
+        int? bitmapHeight = null)
+        => new(name, bitmapWidth ?? Width, bitmapHeight ?? Height)
+        {
+            IsGroup = isGroup
+        };
+
+    public void AppendLayerForImport(DrawingLayer layer) => _layers.Add(layer);
 
     public void FinalizeImport()
     {
@@ -77,7 +100,7 @@ public sealed class DrawingDocument
     public void CommitStroke()
     {
         CommittedStrokeCount += 1;
-        NotifyChanged();
+        HistoryChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public void ClearActiveLayer(bool pushHistory = true)
@@ -105,7 +128,10 @@ public sealed class DrawingDocument
     {
         BeginDocumentMutation();
         var source = ActiveLayer;
-        var copy = new DrawingLayer($"{source.Name} Copy", Width, Height)
+        var copy = new DrawingLayer(
+            $"{source.Name} Copy",
+            source.Width,
+            source.Height)
         {
             IsVisible = source.IsVisible,
             IsLocked = source.IsLocked,
@@ -123,8 +149,10 @@ public sealed class DrawingDocument
     public void DeleteActiveLayer()
     {
         if (_layers.Count <= 1) return;
-        BeginDocumentMutation();
+        BeginDocumentMutation(); // captures pixels as bytes before we dispose
+        var removed = _layers[ActiveLayerIndex];
         _layers.RemoveAt(ActiveLayerIndex);
+        removed.Dispose();
         ActiveLayerIndex = Math.Clamp(ActiveLayerIndex, 0, _layers.Count - 1);
         NotifyLayersChanged();
     }
@@ -175,8 +203,8 @@ public sealed class DrawingDocument
     public void Undo()
     {
         if (_undo.Count == 0) return;
-        _redo.Push(CaptureSnapshot());
-        RestoreSnapshot(_undo.Pop());
+        _redo.Push(new SnapshotHistoryState(CaptureSnapshot()));
+        _undo.Pop().Restore(this);
         CommittedStrokeCount = Math.Max(0, CommittedStrokeCount - 1);
         HistoryChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -184,21 +212,21 @@ public sealed class DrawingDocument
     public void Redo()
     {
         if (_redo.Count == 0) return;
-        _undo.Push(CaptureSnapshot());
-        RestoreSnapshot(_redo.Pop());
+        _undo.Push(new SnapshotHistoryState(CaptureSnapshot()));
+        _redo.Pop().Restore(this);
         CommittedStrokeCount += 1;
         HistoryChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    public void NotifyChanged()
+    public void NotifyChanged(PixelRegion? dirtyRegion = null)
     {
-        Changed?.Invoke(this, EventArgs.Empty);
+        Changed?.Invoke(this, new DocumentChangedEventArgs(dirtyRegion));
     }
 
     private void NotifyLayersChanged()
     {
         LayersChanged?.Invoke(this, EventArgs.Empty);
-        Changed?.Invoke(this, EventArgs.Empty);
+        Changed?.Invoke(this, new DocumentChangedEventArgs(null));
         HistoryChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -220,6 +248,9 @@ public sealed class DrawingDocument
                 layer.IsOpen,
                 layer.IsClipping,
                 layer.IndentLevel,
+                layer.Parent is null ? -1 : _layers.IndexOf(layer.Parent),
+                layer.Width,
+                layer.Height,
                 layer.CapturePixels())).ToArray());
     }
 
@@ -227,10 +258,14 @@ public sealed class DrawingDocument
     {
         Width = snapshot.Width;
         Height = snapshot.Height;
+        foreach (var l in _layers) l.Dispose();
         _layers.Clear();
         foreach (var layerSnapshot in snapshot.Layers)
         {
-            var layer = new DrawingLayer(layerSnapshot.Name, Width, Height)
+            var layer = new DrawingLayer(
+                layerSnapshot.Name,
+                layerSnapshot.BitmapWidth,
+                layerSnapshot.BitmapHeight)
             {
                 IsVisible = layerSnapshot.IsVisible,
                 IsLocked = layerSnapshot.IsLocked,
@@ -247,9 +282,20 @@ public sealed class DrawingDocument
             _layers.Add(layer);
         }
 
+        for (var i = 0; i < snapshot.Layers.Length; i++)
+        {
+            var parentIndex = snapshot.Layers[i].ParentIndex;
+            if (parentIndex < 0 || parentIndex >= _layers.Count) continue;
+
+            var layer = _layers[i];
+            var parent = _layers[parentIndex];
+            layer.Parent = parent;
+            parent.Children.Add(layer);
+        }
+
         ActiveLayerIndex = Math.Clamp(snapshot.ActiveLayerIndex, 0, _layers.Count - 1);
         LayersChanged?.Invoke(this, EventArgs.Empty);
-        Changed?.Invoke(this, EventArgs.Empty);
+        Changed?.Invoke(this, new DocumentChangedEventArgs(null));
     }
 
     private sealed record DocumentSnapshot(int Width, int Height, int ActiveLayerIndex, LayerSnapshot[] Layers);
@@ -266,5 +312,43 @@ public sealed class DrawingDocument
         bool IsOpen,
         bool IsClipping,
         int IndentLevel,
+        int ParentIndex,
+        int BitmapWidth,
+        int BitmapHeight,
         byte[] Pixels);
+
+    private interface IHistoryState
+    {
+        void Restore(DrawingDocument document);
+    }
+
+    private sealed record SnapshotHistoryState(DocumentSnapshot Snapshot) : IHistoryState
+    {
+        public void Restore(DrawingDocument document) => document.RestoreSnapshot(Snapshot);
+    }
+
+    private sealed record LayerRegionHistoryState(int LayerIndex, LayerRegionPatch[] Patches, PixelRegion DirtyRegion) : IHistoryState
+    {
+        public void Restore(DrawingDocument document)
+        {
+            if (LayerIndex < 0 || LayerIndex >= document._layers.Count) return;
+
+            var layer = document._layers[LayerIndex];
+            for (var i = Patches.Length - 1; i >= 0; i--)
+            {
+                var patch = Patches[i];
+                layer.RestorePixels(patch.Region, patch.BeforePixels);
+            }
+
+            document.LayersChanged?.Invoke(document, EventArgs.Empty);
+            document.Changed?.Invoke(document, new DocumentChangedEventArgs(DirtyRegion));
+        }
+    }
 }
+
+public sealed class DocumentChangedEventArgs(PixelRegion? dirtyRegion) : EventArgs
+{
+    public PixelRegion? DirtyRegion { get; } = dirtyRegion;
+}
+
+public readonly record struct LayerRegionPatch(PixelRegion Region, byte[] BeforePixels);

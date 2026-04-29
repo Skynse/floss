@@ -197,19 +197,19 @@ public static class PsdReader
         stream.Position = layerMaskEnd;
 
         // ── Build layer tree ─────────────────────────────────────────────────
-        // PSD spec: records[0] = bottom-most layer, records[N-1] = top-most.
-        // We scan top-to-bottom (reverse order) and use a stack to reconstruct groups.
+        // This reader normalizes PSD layer records into bottom-to-top order,
+        // which is the order expected by the compositor and layer panel.
         var doc = new PsdDocument { Width = width, Height = height };
         BuildTree(records, doc.Layers);
         return doc;
     }
 
-    // PSD spec: records[0] = bottommost layer, records[N-1] = topmost.
-    // Groups are encoded as:
-    //   [section-divider, type=3]  ← opens the group (bottommost z position of group's stack)
-    //   [child layers...]          ← group contents, bottom-to-top
-    //   [folder layer, type=1/2]   ← closes the group (topmost z position)
-    // Forward scan produces a bottom-to-top list — correct for the compositor.
+    // In the PSDs this importer targets, records arrive bottom-to-top. Groups
+    // are encoded as:
+    //   [section divider, type=3]      bottom/bounding marker
+    //   [child layers...]              group contents, bottom-to-top
+    //   [folder layer, type=1/2]       top/header with group metadata
+    // Forward scan therefore produces the compositor's bottom-to-top order.
     private static void BuildTree(LayerRecord[] records, List<PsdNode> root)
     {
         var stack = new Stack<(PsdGroupNode group, List<PsdNode> parent)>();

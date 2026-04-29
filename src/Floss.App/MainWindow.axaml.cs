@@ -11,6 +11,7 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Floss.App.Brushes;
 using Floss.App.Canvas;
+using Floss.App.Document;
 using Floss.App.Psd;
 
 namespace Floss.App;
@@ -158,12 +159,28 @@ public partial class MainWindow : Window
 
         var leftRail   = BuildLeftRail();
         var rightPanel = BuildRightPanel();
-        var root = new Grid { ColumnDefinitions = new ColumnDefinitions("48,*,268") };
+
+        var root = new Grid();
+        root.ColumnDefinitions.Add(new ColumnDefinition(48, GridUnitType.Pixel));
+        root.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 320 });
+        root.ColumnDefinitions.Add(new ColumnDefinition(5, GridUnitType.Pixel));
+        root.ColumnDefinitions.Add(new ColumnDefinition(290, GridUnitType.Pixel) { MinWidth = 180, MaxWidth = 600 });
+
+        var splitter = new GridSplitter
+        {
+            Width = 5,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+            VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Stretch,
+            Background          = new SolidColorBrush(Color.Parse("#1a1c22"))
+        };
+
         Grid.SetColumn(leftRail,   0);
         Grid.SetColumn(centerArea, 1);
-        Grid.SetColumn(rightPanel, 2);
+        Grid.SetColumn(splitter,   2);
+        Grid.SetColumn(rightPanel, 3);
         root.Children.Add(leftRail);
         root.Children.Add(centerArea);
+        root.Children.Add(splitter);
         root.Children.Add(rightPanel);
 
         Content = root;
@@ -299,16 +316,16 @@ public partial class MainWindow : Window
     private Control BuildRightPanel()
     {
         var stack = new StackPanel();
-        stack.Children.Add(PanelSection("Color",   BuildColorSection()));
-        stack.Children.Add(PanelSection("Brush",   BuildBrushSection()));
-        stack.Children.Add(PanelSection("Library", BuildLibrarySection()));
-        stack.Children.Add(PanelSection("Layers",  BuildLayersSection()));
+        stack.Children.Add(DockerSection("Color",   BuildColorSection(), startExpanded: true));
+        stack.Children.Add(DockerSection("Brush",   BuildBrushSection(), startExpanded: true));
+        stack.Children.Add(DockerSection("Library", BuildLibrarySection(), startExpanded: false));
+        stack.Children.Add(DockerSection("Layers",  BuildLayersSection(), startExpanded: true));
 
         return new Border
         {
             Background      = new SolidColorBrush(Color.Parse("#13151a")),
             BorderBrush     = new SolidColorBrush(Color.Parse("#22252e")),
-            BorderThickness = new Thickness(1, 0, 0, 0),
+            BorderThickness = new Thickness(0, 0, 0, 0),
             Child           = new ScrollViewer
             {
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
@@ -318,25 +335,62 @@ public partial class MainWindow : Window
         };
     }
 
-    private static Border PanelSection(string title, Control content)
+    // Collapsible docker section with a clickable header bar.
+    private static Border DockerSection(string title, Control content, bool startExpanded)
     {
-        var lbl = new TextBlock
+        var arrow = new TextBlock
         {
-            Text        = title.ToUpperInvariant(),
-            FontSize    = 9,
-            FontWeight  = FontWeight.SemiBold,
-            Foreground  = new SolidColorBrush(Color.Parse("#3a3e52")),
-            Margin      = new Thickness(10, 10, 10, 5),
-            LetterSpacing = 1
+            Text              = startExpanded ? "▾" : "▸",
+            FontSize          = 10,
+            Width             = 14,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Foreground        = new SolidColorBrush(Color.Parse("#50557a"))
         };
-        var inner = new StackPanel();
-        inner.Children.Add(lbl);
-        inner.Children.Add(content);
+        var titleText = new TextBlock
+        {
+            Text          = title.ToUpperInvariant(),
+            FontSize      = 9,
+            FontWeight    = FontWeight.SemiBold,
+            LetterSpacing = 1.2,
+            Foreground    = new SolidColorBrush(Color.Parse("#50557a")),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+        };
+        var headerRow = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            Spacing     = 5
+        };
+        headerRow.Children.Add(arrow);
+        headerRow.Children.Add(titleText);
+
+        var contentWrap = new Border { Child = content, IsVisible = startExpanded };
+
+        var headerBtn = new Button
+        {
+            Content            = headerRow,
+            Padding            = new Thickness(10, 7),
+            Background         = new SolidColorBrush(Color.Parse("#0d0f14")),
+            BorderBrush        = Avalonia.Media.Brushes.Transparent,
+            HorizontalAlignment            = Avalonia.Layout.HorizontalAlignment.Stretch,
+            HorizontalContentAlignment     = Avalonia.Layout.HorizontalAlignment.Left,
+            CornerRadius       = new CornerRadius(0)
+        };
+        headerBtn.Click += (_, _) =>
+        {
+            var open = !contentWrap.IsVisible;
+            contentWrap.IsVisible = open;
+            arrow.Text = open ? "▾" : "▸";
+        };
+
+        var outer = new StackPanel();
+        outer.Children.Add(headerBtn);
+        outer.Children.Add(contentWrap);
+
         return new Border
         {
             BorderBrush     = new SolidColorBrush(Color.Parse("#1c1e24")),
             BorderThickness = new Thickness(0, 0, 0, 1),
-            Child           = inner
+            Child           = outer
         };
     }
 
@@ -416,11 +470,19 @@ public partial class MainWindow : Window
         _brushCategoryPanel = new StackPanel { Spacing = 3 };
         _presetPanel        = new StackPanel { Spacing = 3 };
 
+        var presetScroll = new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
+            MaxHeight = 240,
+            Content   = _presetPanel
+        };
+
         return new StackPanel
         {
             Margin  = new Thickness(10, 0, 10, 8),
             Spacing = 6,
-            Children = { _brushCategoryPanel, _presetPanel }
+            Children = { _brushCategoryPanel, presetScroll }
         };
     }
 
@@ -544,7 +606,7 @@ public partial class MainWindow : Window
         _workspaceViewport.PointerMoved        += Workspace_OnPointerMoved;
         _workspaceViewport.PointerReleased     += Workspace_OnPointerReleased;
 
-        _canvas.StatsChanged   += (_, _) => UpdateStatus();
+        _canvas.StatsChanged   += (_, _) => { _layerPanel.InvalidateVisual(); UpdateStatus(); };
         _canvas.HistoryChanged += (_, _) => UpdateStatus();
         _canvas.LayersChanged  += (_, _) => { BuildLayerList(); UpdateStatus(); };
 
@@ -754,7 +816,7 @@ public partial class MainWindow : Window
                 Margin          = new Thickness(layer.IndentLevel * 12, 0, 0, 0)
             };
 
-            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("22,22,*,Auto") };
+            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("22,34,22,*,Auto") };
 
             var visBtn = new Button
             {
@@ -768,6 +830,8 @@ public partial class MainWindow : Window
             };
             ToolTip.SetTip(visBtn, "Toggle visibility");
             visBtn.Click += (_, _) => _canvas.ToggleLayerVisibility((int)visBtn.Tag!);
+
+            var preview = BuildLayerPreview(layer);
 
             var lockBtn = new Button
             {
@@ -806,10 +870,12 @@ public partial class MainWindow : Window
             };
 
             Grid.SetColumn(visBtn,      0);
-            Grid.SetColumn(lockBtn,     1);
-            Grid.SetColumn(nameBtn,     2);
-            Grid.SetColumn(opacityText, 3);
+            Grid.SetColumn(preview,     1);
+            Grid.SetColumn(lockBtn,     2);
+            Grid.SetColumn(nameBtn,     3);
+            Grid.SetColumn(opacityText, 4);
             grid.Children.Add(visBtn);
+            grid.Children.Add(preview);
             grid.Children.Add(lockBtn);
             grid.Children.Add(nameBtn);
             grid.Children.Add(opacityText);
@@ -823,6 +889,45 @@ public partial class MainWindow : Window
             _layerOpacitySlider.Value = layers[_canvas.ActiveLayerIndex].Opacity;
             _syncingLayerUi = false;
         }
+    }
+
+    private static Control BuildLayerPreview(DrawingLayer layer)
+    {
+        var frame = new Border
+        {
+            Width           = 28,
+            Height          = 28,
+            Margin          = new Thickness(2, 0, 4, 0),
+            Background      = new SolidColorBrush(Color.Parse("#252832")),
+            BorderBrush     = new SolidColorBrush(Color.Parse("#3a3f4d")),
+            BorderThickness = new Thickness(1),
+            CornerRadius    = new CornerRadius(3),
+            ClipToBounds    = true
+        };
+
+        if (layer.IsGroup)
+        {
+            frame.Child = new TextBlock
+            {
+                Text                = layer.IsOpen ? "▾" : "▸",
+                Foreground          = new SolidColorBrush(Color.Parse("#9aa6c1")),
+                FontSize            = 13,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+                VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center
+            };
+            return frame;
+        }
+
+        var image = new Image
+        {
+            Source              = layer.GetThumbnail(28),
+            Stretch             = Stretch.Uniform,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center
+        };
+        RenderOptions.SetBitmapInterpolationMode(image, Avalonia.Media.Imaging.BitmapInterpolationMode.None);
+        frame.Child = image;
+        return frame;
     }
 
     // ── Viewport ──────────────────────────────────────────────────────────────

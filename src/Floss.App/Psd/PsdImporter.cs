@@ -25,7 +25,7 @@ public static class PsdImporter
         {
             case PsdGroupNode group:
             {
-                var layer = document.AddLayerForImport(group.Name, isGroup: true);
+                var layer = document.CreateLayerForImport(group.Name, isGroup: true);
                 layer.Opacity   = group.Opacity / 255.0;
                 layer.IsVisible = group.IsVisible;
                 layer.BlendMode = MapBlendMode(group.BlendMode);
@@ -37,60 +37,41 @@ public static class PsdImporter
 
                 foreach (var child in group.Children)
                     ImportNode(document, child, layer, depth + 1);
+
+                document.AppendLayerForImport(layer);
                 break;
             }
 
             case PsdLayerNode psdLayer:
             {
-                var layer = document.AddLayerForImport(psdLayer.Name);
+                var layer = document.AddLayerForImport(
+                    psdLayer.Name,
+                    bitmapWidth: Math.Max(1, psdLayer.Width),
+                    bitmapHeight: Math.Max(1, psdLayer.Height));
                 layer.Opacity    = psdLayer.Opacity / 255.0;
                 layer.IsVisible  = psdLayer.IsVisible;
                 layer.BlendMode  = MapBlendMode(psdLayer.BlendMode);
-                layer.IsClipping = psdLayer.Clipping;
+                layer.IsClipping  = psdLayer.Clipping;
                 layer.IndentLevel = depth;
-                layer.OffsetX    = psdLayer.Left;
-                layer.OffsetY    = psdLayer.Top;
-                layer.Parent     = parent;
+                layer.OffsetX     = psdLayer.Left;
+                layer.OffsetY     = psdLayer.Top;
+                layer.Parent      = parent;
                 parent?.Children.Add(layer);
 
                 if (psdLayer.Bgra != null && psdLayer.Width > 0 && psdLayer.Height > 0)
-                    CopyPixels(layer, psdLayer, document.Width, document.Height);
+                {
+                    CopyPixels(layer, psdLayer);
+                    psdLayer.Bgra = null; // release decoded plane data immediately
+                }
                 break;
             }
         }
     }
 
-    private static unsafe void CopyPixels(DrawingLayer dst, PsdLayerNode src, int docW, int docH)
+    private static void CopyPixels(DrawingLayer dst, PsdLayerNode src)
     {
-        var srcW   = src.Width;
-        var srcH   = src.Height;
-        var left   = src.Left;
-        var top    = src.Top;
-        var srcBuf = src.Bgra!;
-
-        // Clip copy region to document bounds
-        var copyLeft   = Math.Max(0, -left);
-        var copyTop    = Math.Max(0, -top);
-        var copyRight  = Math.Min(srcW, docW - left);
-        var copyBottom = Math.Min(srcH, docH - top);
-        if (copyRight <= copyLeft || copyBottom <= copyTop) return;
-
-        var dstLeft = Math.Max(0, left);
-        var dstTop  = Math.Max(0, top);
-        var copyW   = copyRight - copyLeft;
-        var copyH   = copyBottom - copyTop;
-
-        using var frame = dst.Bitmap.Lock();
-        var dstPtr    = (byte*)frame.Address;
-        var dstStride = frame.RowBytes;
-        var srcStride = srcW * 4;
-
-        for (int y = 0; y < copyH; y++)
-        {
-            var srcSpan = srcBuf.AsSpan((copyTop + y) * srcStride + copyLeft * 4, copyW * 4);
-            var dstSpan = new Span<byte>(dstPtr + (dstTop + y) * dstStride + dstLeft * 4, copyW * 4);
-            srcSpan.CopyTo(dstSpan);
-        }
+        dst.Pixels.CopyFromBgra(src.Bgra!, src.Width, src.Height);
+        dst.MarkThumbnailDirty();
     }
 
     private static string MapBlendMode(string key) => key.TrimEnd() switch

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Floss.App.Brushes;
 using Floss.App.Document;
 using Floss.App.Input;
@@ -16,6 +17,9 @@ public sealed class CanvasTool
     private readonly BrushEngine _brushEngine;
     private CanvasInputSample _lastSample;
     private bool _active;
+    private int _activeLayerIndex;
+    private readonly List<LayerRegionPatch> _strokePatches = [];
+    private PixelRegion _strokeDirtyRegion;
 
     public CanvasTool(DrawingDocument document, BrushEngine brushEngine)
     {
@@ -31,32 +35,40 @@ public sealed class CanvasTool
     public void Begin(BrushPreset brush, CanvasInputSample sample)
     {
         if (!_document.CanPaintActiveLayer) return;
-        _document.BeginDocumentMutation();
         _active = true;
+        _activeLayerIndex = _document.ActiveLayerIndex;
+        _strokePatches.Clear();
+        _strokeDirtyRegion = PixelRegion.Empty;
         ActiveSampleCount = 1;
-        _lastSample = sample;
-        _brushEngine.RasterizeDab(_document.ActiveLayer.Bitmap, brush, IsEraser(sample), sample, 0);
-        _document.NotifyChanged();
+        var layer = _document.ActiveLayer;
+        var localSample = ToLayerSample(layer, sample);
+        _lastSample = localSample;
+        RasterizeDabWithHistory(layer, brush, sample, localSample, 0);
     }
 
     public void Update(BrushPreset brush, CanvasInputSample sample)
     {
         if (!_active) return;
-        var smoothed = ApplyStreamline(sample, brush.Smoothing);
-        _brushEngine.RasterizeSegment(_document.ActiveLayer.Bitmap, brush, IsEraser(sample), _lastSample, smoothed);
+        var layer = _document.ActiveLayer;
+        var localSample = ToLayerSample(layer, sample);
+        var smoothed = ApplyStreamline(localSample, brush.Smoothing);
+        RasterizeSegmentWithHistory(layer, brush, sample, _lastSample, smoothed);
         _lastSample = smoothed;
         ActiveSampleCount++;
-        _document.NotifyChanged();
     }
 
     public void End(BrushPreset brush, CanvasInputSample sample)
     {
         if (!_active) return;
+        var layer = _document.ActiveLayer;
+        var localSample = ToLayerSample(layer, sample);
         // Always draw the final segment so the stroke reaches the pen-up position
-        _brushEngine.RasterizeSegment(_document.ActiveLayer.Bitmap, brush, IsEraser(sample), _lastSample, sample);
-        _document.NotifyChanged();
+        RasterizeSegmentWithHistory(layer, brush, sample, _lastSample, localSample);
         _active = false;
         ActiveSampleCount = 0;
+        _document.CommitLayerRegionMutation(_activeLayerIndex, _strokePatches, _strokeDirtyRegion);
+        _strokePatches.Clear();
+        _strokeDirtyRegion = PixelRegion.Empty;
         _document.CommitStroke();
     }
 
@@ -76,6 +88,43 @@ public sealed class CanvasTool
             _lastSample.Y + (raw.Y - _lastSample.Y) * alpha,
             _lastSample.Pressure + (raw.Pressure - _lastSample.Pressure) * alpha,
             raw.TimeMicros);
+    }
+
+    private static CanvasInputSample ToLayerSample(DrawingLayer layer, CanvasInputSample sample)
+        => sample.WithPosition(sample.X - layer.OffsetX, sample.Y - layer.OffsetY, sample.Pressure, sample.TimeMicros);
+
+    private void RasterizeDabWithHistory(DrawingLayer layer, BrushPreset brush, CanvasInputSample sourceSample, CanvasInputSample localSample, double velocity)
+    {
+        var region = _brushEngine.EstimateDabRegion(layer, brush, localSample);
+        if (region.IsEmpty) return;
+
+        var before = layer.CapturePixels(region);
+        var dirty = _brushEngine.RasterizeDab(layer, brush, IsEraser(sourceSample), localSample, velocity);
+        if (dirty.IsEmpty) return;
+
+        layer.MarkThumbnailDirty();
+        layer.RefreshThumbnail();
+        _strokePatches.Add(new LayerRegionPatch(region, before));
+        var docDirty = region.Translate(layer.OffsetX, layer.OffsetY);
+        _strokeDirtyRegion = _strokeDirtyRegion.Union(docDirty);
+        _document.NotifyChanged(docDirty);
+    }
+
+    private void RasterizeSegmentWithHistory(DrawingLayer layer, BrushPreset brush, CanvasInputSample sourceSample, CanvasInputSample from, CanvasInputSample to)
+    {
+        var region = _brushEngine.EstimateSegmentRegion(layer, brush, from, to);
+        if (region.IsEmpty) return;
+
+        var before = layer.CapturePixels(region);
+        var dirty = _brushEngine.RasterizeSegment(layer, brush, IsEraser(sourceSample), from, to);
+        if (dirty.IsEmpty) return;
+
+        layer.MarkThumbnailDirty();
+        layer.RefreshThumbnail();
+        _strokePatches.Add(new LayerRegionPatch(region, before));
+        var docDirty = region.Translate(layer.OffsetX, layer.OffsetY);
+        _strokeDirtyRegion = _strokeDirtyRegion.Union(docDirty);
+        _document.NotifyChanged(docDirty);
     }
 
     private bool IsEraser(CanvasInputSample sample)
