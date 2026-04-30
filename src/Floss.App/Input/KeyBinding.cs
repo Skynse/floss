@@ -13,7 +13,8 @@ public sealed class KeyBinding
 
     public Key          Key       { get; }
     public KeyModifiers Modifiers { get; }
-    public bool         IsEmpty   => Key == Key.None;
+    public bool         IsEmpty   => Key == Key.None && Modifiers == KeyModifiers.None;
+    public bool         IsModifierOnly => Key == Key.None && Modifiers != KeyModifiers.None;
 
     public KeyBinding(Key key, KeyModifiers modifiers = KeyModifiers.None)
     {
@@ -22,10 +23,30 @@ public sealed class KeyBinding
     }
 
     public bool Matches(Key key, KeyModifiers mods) =>
-        !IsEmpty && Key == key && Modifiers == mods;
+        !IsEmpty && Modifiers == mods && (IsModifierOnly || Key == key);
 
     public bool Matches(KeyEventArgs e) =>
         Matches(e.Key, e.KeyModifiers);
+
+    public static KeyModifiers ModifiersWithKeyDown(Key key, KeyModifiers modifiers) =>
+        key switch
+        {
+            Key.LeftCtrl or Key.RightCtrl => modifiers | KeyModifiers.Control,
+            Key.LeftAlt or Key.RightAlt => modifiers | KeyModifiers.Alt,
+            Key.LeftShift or Key.RightShift => modifiers | KeyModifiers.Shift,
+            Key.LWin or Key.RWin => modifiers | KeyModifiers.Meta,
+            _ => modifiers
+        };
+
+    public static KeyModifiers ModifiersAfterKeyUp(Key key, KeyModifiers modifiers) =>
+        key switch
+        {
+            Key.LeftCtrl or Key.RightCtrl => modifiers & ~KeyModifiers.Control,
+            Key.LeftAlt or Key.RightAlt => modifiers & ~KeyModifiers.Alt,
+            Key.LeftShift or Key.RightShift => modifiers & ~KeyModifiers.Shift,
+            Key.LWin or Key.RWin => modifiers & ~KeyModifiers.Meta,
+            _ => modifiers
+        };
 
     public override string ToString()
     {
@@ -34,7 +55,7 @@ public sealed class KeyBinding
         if (Modifiers.HasFlag(KeyModifiers.Control)) parts.Add("Ctrl");
         if (Modifiers.HasFlag(KeyModifiers.Alt))     parts.Add("Alt");
         if (Modifiers.HasFlag(KeyModifiers.Shift))   parts.Add("Shift");
-        parts.Add(KeyToString(Key));
+        if (Key != Key.None) parts.Add(KeyToString(Key));
         return string.Join("+", parts);
     }
 
@@ -61,7 +82,8 @@ public sealed class KeyBinding
             }
         }
 
-        return key.HasValue && key.Value != Key.None ? new KeyBinding(key.Value, mods) : Empty;
+        if (key.HasValue && key.Value != Key.None) return new KeyBinding(key.Value, mods);
+        return mods != KeyModifiers.None ? new KeyBinding(Key.None, mods) : Empty;
     }
 
     // ── Key name tables ───────────────────────────────────────────────────────

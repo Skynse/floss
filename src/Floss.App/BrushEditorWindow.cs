@@ -10,6 +10,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Floss.App.Brushes;
+using IconPacks.Avalonia.Material;
 
 namespace Floss.App;
 
@@ -312,16 +313,14 @@ public sealed class BrushEditorWindow : Window
 
     // ── Row builders ──────────────────────────────────────────────────────────
 
-    // Slider row with dynamics button (≋)
     private Control DynSliderRow(string label, Slider slider, string fmt, Action openDyn)
     {
         var dynBtn = new Button
         {
-            Content         = "≋",
+            Content         = MaterialIcon(PackIconMaterialKind.TuneVertical, 14),
             Width           = 22,
             Height          = 22,
             Padding         = new Thickness(0),
-            FontSize        = 13,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment   = VerticalAlignment.Center,
             Background      = new SolidColorBrush(Color.Parse(Bg2)),
@@ -480,15 +479,8 @@ public sealed class BrushEditorWindow : Window
     {
         var layer = _stampLayers[index];
 
-        var icon = new TextBlock
-        {
-            Text              = layer.Tip is ImageBrushTip ? "⊞" : "○",
-            FontSize          = 12,
-            Width             = 18,
-            Foreground        = new SolidColorBrush(Color.Parse(TextSecondary)),
-            VerticalAlignment = VerticalAlignment.Center,
-            TextAlignment     = Avalonia.Media.TextAlignment.Center
-        };
+        var icon = MaterialIcon(layer.Tip is ImageBrushTip ? PackIconMaterialKind.ImageOutline : PackIconMaterialKind.ShapeOutline, 16);
+        icon.Width = 18;
 
         var typeLabel = new TextBlock
         {
@@ -533,11 +525,10 @@ public sealed class BrushEditorWindow : Window
 
         var deleteBtn = new Button
         {
-            Content         = "✕",
+            Content         = MaterialIcon(PackIconMaterialKind.Close, 13),
             Width           = 22,
             Height          = 22,
             Padding         = new Thickness(0),
-            FontSize        = 9,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment   = VerticalAlignment.Center,
             Background      = new SolidColorBrush(Color.Parse(Bg2)),
@@ -570,6 +561,16 @@ public sealed class BrushEditorWindow : Window
             }
         };
     }
+
+    private static PackIconMaterial MaterialIcon(PackIconMaterialKind kind, double size) => new()
+    {
+        Kind = kind,
+        Width = size,
+        Height = size,
+        Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+        VerticalAlignment = VerticalAlignment.Center,
+        HorizontalAlignment = HorizontalAlignment.Center
+    };
 
     // ── Sync ──────────────────────────────────────────────────────────────────
 

@@ -7,6 +7,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Floss.App.Input;
+using IconPacks.Avalonia.Material;
 using KeyBinding = Floss.App.Input.KeyBinding;
 
 namespace Floss.App;
@@ -40,6 +41,8 @@ public sealed class SettingsWindow : Window
     private TextBlock?          _recordingDisplay;
     private Border?             _recordingRow;
     private bool                _isRecording;
+    private bool                _recordingGesture;
+    private KeyModifiers        _recordingPendingModifiers;
 
     public SettingsWindow()
     {
@@ -65,6 +68,7 @@ public sealed class SettingsWindow : Window
         // Tunnel phase fires before any focused child (e.g. the Record button) can
         // consume the event, so combos like Ctrl+Space are captured correctly.
         AddHandler(KeyDownEvent, OnWindowKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        AddHandler(KeyUpEvent, OnWindowKeyUp, Avalonia.Interactivity.RoutingStrategies.Tunnel);
     }
 
     protected override void OnClosed(EventArgs e)
@@ -167,6 +171,10 @@ public sealed class SettingsWindow : Window
             v => { _sc.BrushSizeStepLarge = v; App.Shortcuts.Save(); }, "f1"));
         content.Children.Add(RowSlider("Opacity step", _sc.BrushOpacityStep, 0.01, 0.2,
             v => { _sc.BrushOpacityStep = v; App.Shortcuts.Save(); }, "f2"));
+
+        content.Children.Add(GroupHeader("Brush Cursor"));
+        content.Children.Add(RowBrushCursorPicker("Cursor style",
+            _cfg.BrushCursorMode, v => { _cfg.BrushCursorMode = v; App.Config.Save(); }));
 
         content.Children.Add(GroupHeader("Pen Gesture Sensitivity"));
         content.Children.Add(RowAxisPicker("Zoom axis",
@@ -292,11 +300,10 @@ public sealed class SettingsWindow : Window
 
         var clearBtn = new Button
         {
-            Content         = "✕",
+            Content         = MaterialIcon(PackIconMaterialKind.Close, 13),
             Width           = 22,
             Height          = 22,
             Padding         = new Thickness(0),
-            FontSize        = 10,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment   = VerticalAlignment.Center,
             Background      = new SolidColorBrush(Color.Parse(Bg2)),
@@ -350,7 +357,7 @@ public sealed class SettingsWindow : Window
                 return;
             }
             StopRecording();
-            StartRecording(rowBorder, keyDisplay, v =>
+            StartRecording(rowBorder, keyDisplay, gesture, v =>
             {
                 setter(v);
                 keyDisplay.Text       = v.Display();
@@ -360,6 +367,16 @@ public sealed class SettingsWindow : Window
 
         return rowBorder;
     }
+
+    private static PackIconMaterial MaterialIcon(PackIconMaterialKind kind, double size) => new()
+    {
+        Kind = kind,
+        Width = size,
+        Height = size,
+        Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+        VerticalAlignment = VerticalAlignment.Center,
+        HorizontalAlignment = HorizontalAlignment.Center
+    };
 
     private static Control RowNudger(string label, int currentValue, int min, int max, Action<double> setter)
     {
@@ -474,6 +491,47 @@ public sealed class SettingsWindow : Window
         return SettingRow(label, picker);
     }
 
+    private Control RowBrushCursorPicker(string label, BrushCursorMode current, Action<BrushCursorMode> setter)
+    {
+        Button MkBtn(BrushCursorMode mode, string text)
+        {
+            var active = current == mode;
+            var btn = new Button
+            {
+                Content         = text,
+                Height          = 24,
+                Padding         = new Thickness(10, 0),
+                FontSize        = 10,
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                VerticalContentAlignment   = VerticalAlignment.Center,
+                Background      = new SolidColorBrush(Color.Parse(active ? AccentSoft : Bg2)),
+                BorderBrush     = new SolidColorBrush(Color.Parse(active ? Accent : Stroke)),
+                BorderThickness = new Thickness(1),
+                Foreground      = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted)),
+                CornerRadius    = new CornerRadius(3)
+            };
+            btn.Click += (_, _) =>
+            {
+                setter(mode);
+                SelectPage(0);
+            };
+            return btn;
+        }
+
+        var picker = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing     = 4,
+            Children =
+            {
+                MkBtn(BrushCursorMode.Outline, "Size"),
+                MkBtn(BrushCursorMode.Dot, "Dot"),
+                MkBtn(BrushCursorMode.DotAndOutline, "Dot + size")
+            }
+        };
+        return SettingRow(label, picker);
+    }
+
     private static string Format(double v, string fmt) => fmt switch
     {
         "f1" => $"{v:0.0}",
@@ -484,9 +542,11 @@ public sealed class SettingsWindow : Window
 
     // ── Recording ─────────────────────────────────────────────────────────────
 
-    private void StartRecording(Border rowBorder, TextBlock display, Action<KeyBinding> setter)
+    private void StartRecording(Border rowBorder, TextBlock display, bool gesture, Action<KeyBinding> setter)
     {
         _isRecording      = true;
+        _recordingGesture = gesture;
+        _recordingPendingModifiers = KeyModifiers.None;
         _recordingSetter  = setter;
         _recordingDisplay = display;
         _recordingRow     = rowBorder;
@@ -508,19 +568,32 @@ public sealed class SettingsWindow : Window
         _recordingSetter  = null;
         _recordingDisplay = null;
         _recordingRow     = null;
+        _recordingGesture = false;
+        _recordingPendingModifiers = KeyModifiers.None;
         Cursor = Cursor.Default;
     }
 
     private void OnWindowKeyDown(object? sender, KeyEventArgs e)
     {
         if (!_isRecording) return;
+        var mods = KeyBinding.ModifiersWithKeyDown(e.Key, e.KeyModifiers);
 
-        // Ignore lone modifier presses — wait for a real key
+        // Normal keyboard shortcuts need a real key. Gesture bindings may use
+        // modifiers only, so holding Ctrl+Alt can become a pen-drag gesture.
         if (e.Key is Key.LeftCtrl  or Key.RightCtrl or
                      Key.LeftShift or Key.RightShift or
                      Key.LeftAlt   or Key.RightAlt   or
                      Key.LWin      or Key.RWin)
+        {
+            if (_recordingGesture && mods != KeyModifiers.None)
+            {
+                _recordingPendingModifiers = mods;
+                if (_recordingDisplay != null)
+                    _recordingDisplay.Text = new KeyBinding(Key.None, _recordingPendingModifiers).Display();
+                e.Handled = true;
+            }
             return;
+        }
 
         var setter  = _recordingSetter;
         var display = _recordingDisplay;
@@ -543,7 +616,7 @@ public sealed class SettingsWindow : Window
         }
         else
         {
-            newBinding = new KeyBinding(e.Key, e.KeyModifiers);
+            newBinding = new KeyBinding(e.Key, mods);
         }
 
         setter?.Invoke(newBinding);
@@ -552,6 +625,35 @@ public sealed class SettingsWindow : Window
         // Rebuild so all display labels are consistent
         SelectPage(_activePage);
         e.Handled = true;
+    }
+
+    private void OnWindowKeyUp(object? sender, KeyEventArgs e)
+    {
+        if (!_isRecording || !_recordingGesture || _recordingPendingModifiers == KeyModifiers.None)
+            return;
+
+        if (CountModifiers(_recordingPendingModifiers) < 2)
+        {
+            if (_recordingDisplay != null)
+                _recordingDisplay.Text = "Press chord...";
+            e.Handled = true;
+            return;
+        }
+
+        _recordingSetter?.Invoke(new KeyBinding(Key.None, _recordingPendingModifiers));
+        StopRecording();
+        SelectPage(_activePage);
+        e.Handled = true;
+    }
+
+    private static int CountModifiers(KeyModifiers modifiers)
+    {
+        var count = 0;
+        if (modifiers.HasFlag(KeyModifiers.Control)) count++;
+        if (modifiers.HasFlag(KeyModifiers.Alt)) count++;
+        if (modifiers.HasFlag(KeyModifiers.Shift)) count++;
+        if (modifiers.HasFlag(KeyModifiers.Meta)) count++;
+        return count;
     }
 
     // ── Section headers ───────────────────────────────────────────────────────

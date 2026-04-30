@@ -113,7 +113,7 @@ public sealed class ShortcutsConfig
     public KeyBinding GesturePan       { get; set; } = new(Key.Space);
     public KeyBinding GestureZoom      { get; set; } = new(Key.Z, KeyModifiers.Alt);
     public KeyBinding GestureRotate    { get; set; } = new(Key.R, KeyModifiers.Alt);
-    public KeyBinding GestureBrushSize { get; set; } = new(Key.S, KeyModifiers.Alt);
+    public KeyBinding GestureBrushSize { get; set; } = new(Key.None, KeyModifiers.Control | KeyModifiers.Alt);
 
     // ── Misc ──────────────────────────────────────────────────────────────────
 
@@ -134,7 +134,11 @@ public sealed class ShortcutsConfig
         {
             var path = AppPaths.ShortcutsConfigPath;
             if (File.Exists(path))
-                return JsonSerializer.Deserialize<ShortcutsConfig>(File.ReadAllText(path), JsonOpts) ?? new();
+            {
+                var config = JsonSerializer.Deserialize<ShortcutsConfig>(File.ReadAllText(path), JsonOpts) ?? new();
+                config.RepairLegacyGestureBindings();
+                return config;
+            }
         }
         catch { }
         return new();
@@ -144,5 +148,13 @@ public sealed class ShortcutsConfig
     {
         try { File.WriteAllText(AppPaths.ShortcutsConfigPath, JsonSerializer.Serialize(this, JsonOpts)); }
         catch { }
+    }
+
+    private void RepairLegacyGestureBindings()
+    {
+        if (GestureBrushSize.IsModifierOnly && GestureBrushSize.Modifiers == KeyModifiers.Control)
+        {
+            GestureBrushSize = new KeyBinding(Key.None, KeyModifiers.Control | KeyModifiers.Alt);
+        }
     }
 }

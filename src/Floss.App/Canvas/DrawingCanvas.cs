@@ -21,7 +21,10 @@ public sealed class DrawingCanvas : Control
     private Color _paintColor = Color.Parse("#111111");
     private long _activePointerId = -1;
     private Point _pointerPos;
+    private Point _lockedPointerPos;
     private bool _isPointerOver;
+    private bool _isCursorPreviewLocked;
+    private bool _forceBrushOutlineCursor;
 
     private static readonly IBrush CursorOuterBrush = new SolidColorBrush(Color.FromArgb(160, 0, 0, 0));
     private static readonly IBrush CursorInnerBrush = new SolidColorBrush(Colors.White);
@@ -77,6 +80,7 @@ public sealed class DrawingCanvas : Control
         {
             _tool.SetKind(ToolKind.Eraser);
         }
+        InvalidateVisual();
     }
 
     public void SetPaintColor(Color color)
@@ -86,20 +90,66 @@ public sealed class DrawingCanvas : Control
         {
             _brush = _brush with { Color = color };
         }
+        InvalidateVisual();
     }
 
-    public void SetBrushSize(double size)           => _brush = _brush with { Size      = Math.Clamp(size,      1,    256) };
-    public void SetBrushOpacity(double opacity)     => _brush = _brush with { Opacity   = Math.Clamp(opacity,   0.01, 1)   };
-    public void SetBrushHardness(double hardness)   => _brush = _brush with { Hardness  = Math.Clamp(hardness,  0,    1)   };
-    public void SetBrushSpacing(double spacing)     => _brush = _brush with { Spacing   = Math.Clamp(spacing,   0.02, 1)   };
-    public void SetBrushSmoothing(double smoothing) => _brush = _brush with { Smoothing = Math.Clamp(smoothing, 0,    0.95) };
-    public void SetBrushGrain(double grain)         => _brush = _brush with { Grain     = Math.Clamp(grain,     0,    1)   };
+    public void SetBrushSize(double size)
+    {
+        _brush = _brush with { Size = Math.Clamp(size, 1, 2000) };
+        InvalidateVisual();
+    }
+
+    public void SetBrushOpacity(double opacity)
+    {
+        _brush = _brush with { Opacity = Math.Clamp(opacity, 0.01, 1) };
+        InvalidateVisual();
+    }
+
+    public void SetBrushHardness(double hardness)
+    {
+        _brush = _brush with { Hardness = Math.Clamp(hardness, 0, 1) };
+        InvalidateVisual();
+    }
+
+    public void SetBrushSpacing(double spacing)
+    {
+        _brush = _brush with { Spacing = Math.Clamp(spacing, 0.02, 1) };
+        InvalidateVisual();
+    }
+
+    public void SetBrushSmoothing(double smoothing)
+    {
+        _brush = _brush with { Smoothing = Math.Clamp(smoothing, 0, 0.95) };
+        InvalidateVisual();
+    }
+
+    public void SetBrushGrain(double grain)
+    {
+        _brush = _brush with { Grain = Math.Clamp(grain, 0, 1) };
+        InvalidateVisual();
+    }
 
     public void SetTool(string tool)
     {
         _tool.SetKind(tool.Equals("eraser", StringComparison.OrdinalIgnoreCase)
             ? ToolKind.Eraser
             : ToolKind.Brush);
+    }
+
+    public void LockCursorPreview(Point position, bool forceBrushOutline)
+    {
+        _lockedPointerPos = position;
+        _isCursorPreviewLocked = true;
+        _forceBrushOutlineCursor = forceBrushOutline;
+        InvalidateVisual();
+    }
+
+    public void UnlockCursorPreview()
+    {
+        if (!_isCursorPreviewLocked) return;
+        _isCursorPreviewLocked = false;
+        _forceBrushOutlineCursor = false;
+        InvalidateVisual();
     }
 
     public void Clear(bool pushHistory = true) => _document.ClearActiveLayer(pushHistory);
@@ -130,12 +180,24 @@ public sealed class DrawingCanvas : Control
             context.DrawImage(_compositor.Bitmap, target);
         }
 
-        if (_isPointerOver)
+        if (_isPointerOver || _isCursorPreviewLocked)
         {
-            var r = _brush.Size * 0.5;
+            var mode = App.Config.BrushCursorMode;
+            var pos = _isCursorPreviewLocked ? _lockedPointerPos : _pointerPos;
             var t = Math.Max(0.5, 1.5 / CanvasZoom);
-            context.DrawEllipse(null, new Pen(CursorOuterBrush, t * 3), _pointerPos, r, r);
-            context.DrawEllipse(null, new Pen(CursorInnerBrush, t),     _pointerPos, r, r);
+            if (_forceBrushOutlineCursor || mode is BrushCursorMode.Outline or BrushCursorMode.DotAndOutline)
+            {
+                var r = _brush.Size * 0.5;
+                context.DrawEllipse(null, new Pen(CursorOuterBrush, t * 3), pos, r, r);
+                context.DrawEllipse(null, new Pen(CursorInnerBrush, t), pos, r, r);
+            }
+
+            if (mode is BrushCursorMode.Dot or BrushCursorMode.DotAndOutline)
+            {
+                var r = Math.Max(2.5 / CanvasZoom, t * 2);
+                context.DrawEllipse(CursorOuterBrush, null, pos, r, r);
+                context.DrawEllipse(CursorInnerBrush, null, pos, Math.Max(0.5 / CanvasZoom, r * 0.45), Math.Max(0.5 / CanvasZoom, r * 0.45));
+            }
         }
     }
 

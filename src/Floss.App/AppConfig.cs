@@ -5,6 +5,13 @@ using System.Text.Json;
 
 namespace Floss.App;
 
+public enum BrushCursorMode
+{
+    Outline,
+    Dot,
+    DotAndOutline
+}
+
 public sealed class AppConfig
 {
     public int NewCanvasWidth { get; set; } = 2048;
@@ -15,6 +22,7 @@ public sealed class AppConfig
     public double LastBrushOpacity { get; set; } = 1.0;
     public double LastBrushHardness { get; set; } = 0.95;
     public double LastBrushSpacing { get; set; } = 0.10;
+    public BrushCursorMode BrushCursorMode { get; set; } = BrushCursorMode.Outline;
     public string[] RecentFiles { get; set; } = [];
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
