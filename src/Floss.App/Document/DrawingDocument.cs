@@ -405,7 +405,6 @@ public sealed class DrawingDocument
     {
         public IHistoryState CaptureRedo(DrawingDocument document)
         {
-            var snap = document.CaptureLayerSnapshot(document._layers[RemovedIndex]);
             return new InsertLayerHistoryState(RemovedIndex, document.ActiveLayerIndex);
         }
 

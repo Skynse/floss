@@ -170,6 +170,7 @@ public partial class MainWindow : Window
     private Key         _gestureKey = Key.None;
     private bool        _isPanning;
     private Point       _lastPanPoint;
+    private Point       _gestureStartPoint;
     private SettingsWindow? _settingsWindow;
 
     private ScaleTransform     _canvasScale  = null!;
@@ -1667,6 +1668,7 @@ public partial class MainWindow : Window
         if (!middle && _activeGesture == GestureMode.None) return;
         _isPanning    = true;
         _lastPanPoint = e.GetPosition(_workspaceViewport);
+        _gestureStartPoint = _lastPanPoint;
         e.Pointer.Capture(_workspaceViewport);
         e.Handled = true;
     }
@@ -1688,7 +1690,8 @@ public partial class MainWindow : Window
                 ClampCanvasPan();
                 break;
             case GestureMode.Zoom:
-                SetZoom(_zoom * Math.Pow(sc.GestureZoomSensitivity, -d.Y), null);
+                var axisDelta = sc.GestureZoomAxis == GestureAxis.Horizontal ? d.X : -d.Y;
+                SetZoom(_zoom * Math.Pow(sc.GestureZoomSensitivity, axisDelta), _gestureStartPoint);
                 break;
             case GestureMode.Rotate:
                 SetRotation(_rotation + d.X * sc.GestureRotateSensitivity);

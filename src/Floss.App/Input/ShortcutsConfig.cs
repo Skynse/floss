@@ -6,6 +6,8 @@ using Avalonia.Input;
 
 namespace Floss.App.Input;
 
+public enum GestureAxis { Vertical, Horizontal }
+
 /// <summary>
 /// All configurable shortcuts and canvas behaviour tuning.
 /// Serialised to %AppData%/Floss/shortcuts.json as a human-readable JSON file
@@ -34,8 +36,12 @@ public sealed class ShortcutsConfig
     public double BrushOpacityStep         { get; set; } = 0.05;
 
     /// Zoom change per pixel of pen drag (gesture zoom).
-    /// Formula: zoom *= pow(GestureZoomSensitivity, -deltaY)
+    /// Formula: zoom *= pow(GestureZoomSensitivity, axisDelta)
     public double GestureZoomSensitivity   { get; set; } = 1.012;
+
+    /// Which axis of pen movement controls zoom during the Zoom gesture.
+    /// Vertical = drag up/down (up = zoom in), Horizontal = drag left/right (right = zoom in).
+    public GestureAxis GestureZoomAxis     { get; set; } = GestureAxis.Vertical;
 
     /// Canvas rotation per pixel of horizontal pen drag (gesture rotate, degrees/px).
     public double GestureRotateSensitivity { get; set; } = 0.40;
