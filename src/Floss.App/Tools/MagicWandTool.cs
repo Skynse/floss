@@ -18,12 +18,7 @@ public sealed class MagicWandTool : ITool
 
     public void PointerDown(ToolContext ctx, CanvasInputSample s)
     {
-        var layer = ctx.ActiveLayer;
-        if (layer == null) return;
-        int x = (int)s.X - layer.OffsetX;
-        int y = (int)s.Y - layer.OffsetY;
-        ctx.Selection.SetFromFloodFill(layer.Pixels, x, y, Tolerance, Op);
-        ctx.InvalidateRender();
+        new MagicWandOperation(ctx, Tolerance, Op).Commit(s);
     }
 
     public void PointerMove(ToolContext ctx, CanvasInputSample s) { }

@@ -56,6 +56,11 @@ public sealed class BrushEditorWindow : Window
     // ── Open dynamics popups ──────────────────────────────────────────────────
     private DynamicsPopupWindow? _sizeDynPopup;
     private DynamicsPopupWindow? _opacDynPopup;
+    private DynamicsPopupWindow? _flowDynPopup;
+    private DynamicsPopupWindow? _hardnessDynPopup;
+    private DynamicsPopupWindow? _spacingDynPopup;
+    private DynamicsPopupWindow? _scatterDynPopup;
+    private DynamicsPopupWindow? _rotationDynPopup;
 
     // ── Cached category panels (built once to avoid re-parenting sliders) ────
     private ScrollViewer _brushSizePanel  = null!;
@@ -208,14 +213,14 @@ public sealed class BrushEditorWindow : Window
         Children =
         {
             DynSliderRow("Opacity", _opacitySlider, "%", () => OpenOpacityDynamics()),
-            PlainSliderRow("Flow",  _flowSlider,    "%")
+            DynSliderRow("Flow",    _flowSlider,    "%", () => OpenFlowDynamics())
         }
     };
 
     private Control BuildAntiAliasingContent() => new StackPanel
     {
         Spacing  = 0,
-        Children = { PlainSliderRow("Hardness", _hardnessSlider, "%") }
+        Children = { DynSliderRow("Hardness", _hardnessSlider, "%", () => OpenHardnessDynamics()) }
     };
 
     private Control BuildBrushTipContent()
@@ -277,7 +282,9 @@ public sealed class BrushEditorWindow : Window
         Spacing = 0,
         Children =
         {
-            PlainSliderRow("Spacing",   _spacingSlider,   "%"),
+            DynSliderRow("Spacing",   _spacingSlider,   "%", () => OpenSpacingDynamics()),
+            DynButtonRow("Scatter",   () => OpenScatterDynamics()),
+            DynButtonRow("Rotation",  () => OpenRotationDynamics()),
             PlainSliderRow("Smoothing", _smoothingSlider, "%")
         }
     };
@@ -337,6 +344,42 @@ public sealed class BrushEditorWindow : Window
 
     private Control PlainSliderRow(string label, Slider slider, string fmt)
         => BuildSliderRow(label, slider, fmt, null);
+
+    private Control DynButtonRow(string label, Action openDyn)
+    {
+        var lbl = new TextBlock
+        {
+            Text              = label,
+            FontSize          = 11,
+            Width             = 68,
+            Foreground        = new SolidColorBrush(Color.Parse(TextSecondary)),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var dynBtn = new Button
+        {
+            Content         = MaterialIcon(Icons.TuneVertical, 14),
+            Width           = 22,
+            Height          = 22,
+            Padding         = new Thickness(0),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment   = VerticalAlignment.Center,
+            Background      = new SolidColorBrush(Color.Parse(Bg2)),
+            Foreground      = new SolidColorBrush(Color.Parse(TextMuted)),
+            BorderBrush     = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(1),
+            CornerRadius    = new CornerRadius(3),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        ToolTip.SetTip(dynBtn, "Edit dynamics curve");
+        dynBtn.Click += (_, _) => openDyn();
+
+        var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 3, 0, 3) };
+        DockPanel.SetDock(lbl, Dock.Left);
+        DockPanel.SetDock(dynBtn, Dock.Right);
+        row.Children.Add(lbl);
+        row.Children.Add(dynBtn);
+        return row;
+    }
 
     private static Control PlainSliderRowRaw(Slider slider, string fmt)
     {
@@ -423,6 +466,66 @@ public sealed class BrushEditorWindow : Window
         _opacDynPopup.Closed += (_, _) => _opacDynPopup = null;
         PositionPopup(_opacDynPopup);
         _opacDynPopup.Show(this);
+    }
+
+    private void OpenFlowDynamics()
+    {
+        if (_flowDynPopup != null) { _flowDynPopup.Activate(); return; }
+        _flowDynPopup = new DynamicsPopupWindow("Flow", BrushDynamics.ToParameterDynamics(_preset.Dynamics.Flow), dyn =>
+        {
+            Commit(p => p with { Dynamics = WithDynamics(p.Dynamics, d => d.Flow = BrushDynamics.ToCurveOption(dyn)) });
+        });
+        _flowDynPopup.Closed += (_, _) => _flowDynPopup = null;
+        PositionPopup(_flowDynPopup);
+        _flowDynPopup.Show(this);
+    }
+
+    private void OpenHardnessDynamics()
+    {
+        if (_hardnessDynPopup != null) { _hardnessDynPopup.Activate(); return; }
+        _hardnessDynPopup = new DynamicsPopupWindow("Hardness", BrushDynamics.ToParameterDynamics(_preset.Dynamics.Hardness), dyn =>
+        {
+            Commit(p => p with { Dynamics = WithDynamics(p.Dynamics, d => d.Hardness = BrushDynamics.ToCurveOption(dyn)) });
+        });
+        _hardnessDynPopup.Closed += (_, _) => _hardnessDynPopup = null;
+        PositionPopup(_hardnessDynPopup);
+        _hardnessDynPopup.Show(this);
+    }
+
+    private void OpenSpacingDynamics()
+    {
+        if (_spacingDynPopup != null) { _spacingDynPopup.Activate(); return; }
+        _spacingDynPopup = new DynamicsPopupWindow("Spacing", BrushDynamics.ToParameterDynamics(_preset.Dynamics.Spacing), dyn =>
+        {
+            Commit(p => p with { Dynamics = WithDynamics(p.Dynamics, d => d.Spacing = BrushDynamics.ToCurveOption(dyn)) });
+        });
+        _spacingDynPopup.Closed += (_, _) => _spacingDynPopup = null;
+        PositionPopup(_spacingDynPopup);
+        _spacingDynPopup.Show(this);
+    }
+
+    private void OpenScatterDynamics()
+    {
+        if (_scatterDynPopup != null) { _scatterDynPopup.Activate(); return; }
+        _scatterDynPopup = new DynamicsPopupWindow("Scatter", BrushDynamics.ToParameterDynamics(_preset.Dynamics.Scatter), dyn =>
+        {
+            Commit(p => p with { Dynamics = WithDynamics(p.Dynamics, d => d.Scatter = BrushDynamics.ToCurveOption(dyn)) });
+        });
+        _scatterDynPopup.Closed += (_, _) => _scatterDynPopup = null;
+        PositionPopup(_scatterDynPopup);
+        _scatterDynPopup.Show(this);
+    }
+
+    private void OpenRotationDynamics()
+    {
+        if (_rotationDynPopup != null) { _rotationDynPopup.Activate(); return; }
+        _rotationDynPopup = new DynamicsPopupWindow("Rotation", BrushDynamics.ToParameterDynamics(_preset.Dynamics.Rotation), dyn =>
+        {
+            Commit(p => p with { Dynamics = WithDynamics(p.Dynamics, d => d.Rotation = BrushDynamics.ToCurveOption(dyn)) });
+        });
+        _rotationDynPopup.Closed += (_, _) => _rotationDynPopup = null;
+        PositionPopup(_rotationDynPopup);
+        _rotationDynPopup.Show(this);
     }
 
     private void PositionPopup(Window popup)
@@ -618,6 +721,11 @@ public sealed class BrushEditorWindow : Window
         // Sync open popup windows
         _sizeDynPopup?.SyncFromDynamics(preset.SizeDynamics);
         _opacDynPopup?.SyncFromDynamics(preset.OpacityDynamics);
+        _flowDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.Flow));
+        _hardnessDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.Hardness));
+        _spacingDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.Spacing));
+        _scatterDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.Scatter));
+        _rotationDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.Rotation));
 
         RebuildStampPanel();
         // Refresh sidebar highlight without rebuilding cached slider panels.
@@ -645,6 +753,13 @@ public sealed class BrushEditorWindow : Window
         };
         ToolTip.SetTip(s, tip);
         return s;
+    }
+
+    private static BrushDynamics WithDynamics(BrushDynamics source, Action<BrushDynamics> update)
+    {
+        var dynamics = source.Clone();
+        update(dynamics);
+        return dynamics;
     }
 
     private static TextBlock SectionHeader(string text) => new()

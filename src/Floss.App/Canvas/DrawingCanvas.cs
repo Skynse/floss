@@ -18,10 +18,10 @@ public sealed class DrawingCanvas : Control
     private readonly CanvasTool _canvasTool;
     private readonly LayerCompositor _compositor;
     private readonly ToolContext _ctx;
+    private readonly ToolController _toolController;
 
     private readonly BrushTool _brushTool;
     private readonly BrushTool _eraserTool;
-    private ITool _activeTool;
 
     private BrushPreset _brush = BrushPreset.Defaults[0];
     private Color _paintColor = Color.Parse("#111111");
@@ -64,7 +64,7 @@ public sealed class DrawingCanvas : Control
 
         _brushTool = new BrushTool(_canvasTool, isEraser: false);
         _eraserTool = new BrushTool(_canvasTool, isEraser: true);
-        _activeTool = _brushTool;
+        _toolController = new ToolController(_ctx, _brushTool);
 
         _document.Changed += (_, e) =>
         {
@@ -94,11 +94,11 @@ public sealed class DrawingCanvas : Control
     public bool CanDeleteLayer => _document.CanDeleteLayer;
     public BrushPreset Brush => _brush;
     public Color PaintColor => _paintColor;
-    public bool EraserEnabled => _activeTool == _eraserTool;
+    public bool EraserEnabled => _toolController.ActiveTool == _eraserTool;
     public DrawingDocument Document => _document;
     public IReadOnlyList<DrawingLayer> Layers => _document.Layers;
     public int ActiveLayerIndex => _document.ActiveLayerIndex;
-    public ITool ActiveTool => _activeTool;
+    public ITool ActiveTool => _toolController.ActiveTool;
     public BrushTool BrushTool => _brushTool;
     public BrushTool EraserTool => _eraserTool;
 
@@ -108,10 +108,7 @@ public sealed class DrawingCanvas : Control
 
     public void SetActiveTool(ITool tool)
     {
-        if (_activeTool == tool) return;
-        _activeTool.Deactivate(_ctx);
-        _activeTool = tool;
-        _activeTool.Activate(_ctx);
+        _toolController.SetActiveTool(tool);
         InvalidateVisual();
     }
 
@@ -196,14 +193,14 @@ public sealed class DrawingCanvas : Control
 
     public void CancelActiveTool()
     {
-        _activeTool.Cancel(_ctx);
+        _toolController.Cancel();
         InvalidateVisual();
     }
 
     public void CommitActiveTool()
     {
-        if (_activeTool is SelectTool st) st.CommitPolyline(_ctx);
-        else if (_activeTool is PolylineTool pt) pt.Commit(_ctx);
+        if (_toolController.ActiveTool is SelectTool st) st.CommitPolyline(_ctx);
+        else if (_toolController.ActiveTool is PolylineTool pt) pt.Commit(_ctx);
         InvalidateVisual();
     }
 
@@ -235,14 +232,14 @@ public sealed class DrawingCanvas : Control
             context.DrawImage(_compositor.Bitmap, target);
         }
 
-        _activeTool.RenderOverlay(context, _ctx, CanvasZoom);
+        _toolController.RenderOverlay(context, CanvasZoom);
 
         if (_isPointerOver || _isCursorPreviewLocked)
         {
             var mode = App.Config.BrushCursorMode;
             var pos = _isCursorPreviewLocked ? _lockedPointerPos : _pointerPos;
             var t = Math.Max(0.5, 1.5 / CanvasZoom);
-            bool isBrushLike = _activeTool is BrushTool;
+            bool isBrushLike = _toolController.ActiveTool is BrushTool;
             if (_forceBrushOutlineCursor || (isBrushLike && mode is BrushCursorMode.Outline or BrushCursorMode.DotAndOutline))
             {
                 var r = _brush.Size * 0.5;
@@ -271,11 +268,11 @@ public sealed class DrawingCanvas : Control
         var sample = MakeSample(point, CanvasInputPhase.Down);
 
         // Auto-switch to eraser when pen eraser tip is used.
-        if (sample.Source == CanvasInputSource.Eraser && _activeTool is BrushTool b && !b.IsEraser)
+        if (sample.Source == CanvasInputSource.Eraser && _toolController.ActiveTool is BrushTool b && !b.IsEraser)
             SetActiveTool(_eraserTool);
 
         _activePointerId = point.Pointer.Id;
-        _activeTool.PointerDown(_ctx, sample);
+        _toolController.Dispatch(new ToolInputEvent(ToolInputEventKind.Down, sample));
         e.Pointer.Capture(this);
         e.Handled = true;
     }
@@ -308,7 +305,7 @@ public sealed class DrawingCanvas : Control
             if (_activePointerId >= 0)
             {
                 _activePointerId = -1;
-                _activeTool.Cancel(_ctx);
+                _toolController.Cancel();
                 e.Pointer.Capture(null);
             }
             InvalidateVisual();
@@ -317,7 +314,7 @@ public sealed class DrawingCanvas : Control
 
         if (point.Pointer.Id == _activePointerId && IsPaintInput(point))
         {
-            _activeTool.PointerMove(_ctx, MakeSample(point, CanvasInputPhase.Move));
+            _toolController.Dispatch(new ToolInputEvent(ToolInputEventKind.Move, MakeSample(point, CanvasInputPhase.Move)));
             e.Handled = true;
         }
         else
@@ -332,7 +329,7 @@ public sealed class DrawingCanvas : Control
         var point = e.GetCurrentPoint(this);
         if (point.Pointer.Id != _activePointerId) return;
 
-        _activeTool.PointerUp(_ctx, MakeSample(point, CanvasInputPhase.Up));
+        _toolController.Dispatch(new ToolInputEvent(ToolInputEventKind.Up, MakeSample(point, CanvasInputPhase.Up)));
         _activePointerId = -1;
         e.Pointer.Capture(null);
         e.Handled = true;
@@ -342,7 +339,7 @@ public sealed class DrawingCanvas : Control
     {
         base.OnPointerCaptureLost(e);
         _activePointerId = -1;
-        _activeTool.Cancel(_ctx);
+        _toolController.Cancel();
     }
 
     private CanvasInputSample MakeSample(PointerPoint point, CanvasInputPhase phase)

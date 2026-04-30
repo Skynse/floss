@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Avalonia.Media;
 
 namespace Floss.App.Brushes;
@@ -24,7 +23,7 @@ public sealed record BrushPreset(
 
     public ParameterDynamics SizeDynamics
     {
-        get => ToParameterDynamics(Dynamics.Size);
+        get => BrushDynamics.ToParameterDynamics(Dynamics.Size);
         init
         {
             var dynamics = Dynamics.Clone();
@@ -35,7 +34,7 @@ public sealed record BrushPreset(
 
     public ParameterDynamics OpacityDynamics
     {
-        get => ToParameterDynamics(Dynamics.Opacity);
+        get => BrushDynamics.ToParameterDynamics(Dynamics.Opacity);
         init
         {
             var dynamics = Dynamics.Clone();
@@ -92,27 +91,4 @@ public sealed record BrushPreset(
             Flow = 0.25, Smoothing = 0.65, Grain = 0.04
         },
     ];
-
-    private static ParameterDynamics ToParameterDynamics(CurveOption option)
-    {
-        var pressure = option.Sensors.FirstOrDefault(s => s.Type == SensorType.Pressure);
-        var speed = option.Sensors.FirstOrDefault(s => s.Type == SensorType.Speed);
-
-        return new ParameterDynamics
-        {
-            PressureEnabled = option.IsEnabled && pressure != null,
-            Kind = ResponseCurveKind.Power,
-            Gamma = pressure == null ? 1.25f : EstimateGamma(pressure.Curve),
-            Min = option.MinOutput,
-            Max = option.MaxOutput,
-            VelocityEnabled = option.IsEnabled && speed != null,
-            VelocityStrength = speed == null ? 0.3f : Math.Clamp(1f - speed.Curve.Evaluate(1f), 0f, 1f)
-        };
-    }
-
-    private static float EstimateGamma(CubicCurve curve)
-    {
-        var y = Math.Clamp(curve.Evaluate(0.5f), 0.001f, 1f);
-        return Math.Clamp(MathF.Log(y) / MathF.Log(0.5f), 0.1f, 4f);
-    }
 }

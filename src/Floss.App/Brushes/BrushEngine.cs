@@ -72,7 +72,7 @@ public sealed class BrushEngine : IDisposable
 
     public PixelRegion EstimateSegmentRegion(DrawingLayer layer, BrushPreset brush, CanvasInputSample from, CanvasInputSample to)
     {
-        var radius = Math.Max(1.0, brush.Size * 0.5 + brush.Size * Math.Max(0, brush.Spacing) + 2.0);
+        var radius = EstimateBrushRadius(brush);
         var minX = (int)Math.Floor(Math.Min(from.X, to.X) - radius);
         var minY = (int)Math.Floor(Math.Min(from.Y, to.Y) - radius);
         var maxX = (int)Math.Ceiling(Math.Max(from.X, to.X) + radius);
@@ -175,7 +175,8 @@ public sealed class BrushEngine : IDisposable
     private static float StampSpacing(BrushPreset brush, StampSample stamp)
     {
         var flow = Math.Clamp((float)brush.Flow, 0.01f, 1.0f);
-        return Math.Max(0.5f, stamp.Size * Math.Max(0.01f, (float)brush.Spacing) * MathF.Sqrt(flow));
+        var spacing = Math.Clamp((float)brush.Spacing * stamp.SpacingMultiplier, 0.005f, 4f);
+        return Math.Max(0.5f, stamp.Size * spacing * MathF.Sqrt(flow));
     }
 
     private static StampSample CreateStamp(ActiveStroke stroke, BrushPreset brush, in StrokePoint sp)
@@ -183,24 +184,37 @@ public sealed class BrushEngine : IDisposable
         var dyn = brush.Dynamics;
         var sizeMul    = dyn.EvalSize(sp);
         var opacMul    = dyn.EvalOpacity(sp);
-        var scatter    = dyn.EvalScatter(sp) - 1.0f;
+        var flowMul    = dyn.EvalFlow(sp);
+        var hardness   = dyn.Hardness.IsEnabled ? dyn.EvalHardness(sp) : (float)brush.Hardness;
+        var spacingMul = dyn.EvalSpacing(sp);
+        var scatter    = dyn.Scatter.IsEnabled ? dyn.EvalScatter(sp) : 0f;
         var rotDeg     = dyn.EvalRotationDeg(sp);
         var size       = Math.Max(0.5f, (float)brush.Size * sizeMul);
-        var opacity    = (float)Math.Clamp(brush.Opacity * brush.Flow * opacMul, 0, 1);
+        var opacity    = (float)Math.Clamp(brush.Opacity * brush.Flow * opacMul * flowMul, 0, 1);
         var angle      = (float)sp.Twist + rotDeg;
 
         var x = sp.X;
         var y = sp.Y;
         if (scatter > 0.001f)
         {
-            var noise = Hash01((int)(x * 8), (int)(y * 8));
-            var radians = noise * MathF.Tau;
-            var amount = scatter * size;
+            var radians = sp.Random * MathF.Tau;
+            var amount = (Hash01(sp.DabSeqNo, (int)(sp.StrokeRandom * 100_000f)) * 2f - 1f) * scatter * size;
             x += MathF.Cos(radians) * amount;
             y += MathF.Sin(radians) * amount;
         }
 
-        return new StampSample(x, y, size, opacity, angle);
+        return new StampSample(
+            x, y, size, opacity, angle,
+            Math.Clamp(hardness, 0.001f, 1f),
+            Math.Clamp(spacingMul, 0.05f, 4f));
+    }
+
+    private static double EstimateBrushRadius(BrushPreset brush)
+    {
+        var maxSize = brush.Size * Math.Max(1.0, brush.Dynamics.Size.MaxOutput);
+        var spacing = maxSize * Math.Max(0.01, brush.Spacing) * Math.Max(1.0, brush.Dynamics.Spacing.MaxOutput);
+        var scatter = brush.Dynamics.Scatter.IsEnabled ? maxSize * Math.Max(0.0, brush.Dynamics.Scatter.MaxOutput) : 0.0;
+        return Math.Max(1.0, maxSize * 0.75 + spacing + scatter + 3.0);
     }
 
     private void RenderPreparedStamps(ActiveStroke stroke, SKCanvas canvas)
@@ -212,11 +226,14 @@ public sealed class BrushEngine : IDisposable
 
             stroke.UpdateOpacity(stamp.Opacity);
             stroke.UpdateMatrix(stamp);
+            var mask = stroke.MaskFor(stamp.Hardness);
 
             canvas.Save();
             canvas.Concat(in stroke.Matrix);
-            canvas.DrawBitmap(stroke.Mask, 0, 0, stroke.Paint);
+            canvas.DrawBitmap(mask, 0, 0, stroke.Paint);
             canvas.Restore();
+
+            stroke.ReleaseMask(mask);
         }
     }
 
@@ -292,10 +309,15 @@ public sealed class BrushEngine : IDisposable
                 (float)sample.TiltX, (float)sample.TiltY, (float)sample.Twist,
                 0, 0, 0, 0, 0, StrokeRandom);
             var initSizeMul = brush.Dynamics.EvalSize(sp);
+            var initSpacingMul = brush.Dynamics.EvalSpacing(sp);
             State.NextStampDistance = Math.Max(0.5f,
-                (float)brush.Size * Math.Max(0.5f, initSizeMul) * Math.Max(0.01f, (float)brush.Spacing));
+                (float)brush.Size
+                * Math.Max(0.5f, initSizeMul)
+                * Math.Max(0.01f, (float)brush.Spacing)
+                * Math.Clamp(initSpacingMul, 0.05f, 4f));
 
-            Mask = brush.Tip.GenerateMask(Math.Max(1, (int)Math.Ceiling(brush.Size)), (float)brush.Hardness);
+            BaseMaskSize = Math.Max(1, (int)Math.Ceiling(brush.Size));
+            Mask = brush.Tip.GenerateMask(BaseMaskSize, (float)brush.Hardness);
             _baseColor = ToSkColor(brush.Color);
             Paint = new SKPaint
             {
@@ -308,6 +330,7 @@ public sealed class BrushEngine : IDisposable
 
         public float StrokeRandom { get; }
         public StrokeState State;
+        public int BaseMaskSize { get; }
         public SKBitmap Mask { get; }
         public SKPaint  Paint { get; }
         public SKMatrix Matrix;
@@ -325,12 +348,20 @@ public sealed class BrushEngine : IDisposable
 
         public void UpdateMatrix(StampSample stamp)
         {
-            var scale = stamp.Size / Math.Max(1, Mask.Width);
-            Matrix = SKMatrix.CreateTranslation(-Mask.Width * 0.5f, -Mask.Height * 0.5f);
+            var scale = stamp.Size / Math.Max(1, BaseMaskSize);
+            Matrix = SKMatrix.CreateTranslation(-BaseMaskSize * 0.5f, -BaseMaskSize * 0.5f);
             Matrix = Matrix.PostConcat(SKMatrix.CreateScale(scale, scale));
             if (Math.Abs(stamp.Angle) > 0.001f)
                 Matrix = Matrix.PostConcat(SKMatrix.CreateRotationDegrees(stamp.Angle));
             Matrix = Matrix.PostConcat(SKMatrix.CreateTranslation(stamp.X, stamp.Y));
+        }
+
+        public SKBitmap MaskFor(float hardness) => _brush.Tip.GenerateMask(BaseMaskSize, hardness);
+
+        public void ReleaseMask(SKBitmap mask)
+        {
+            if (!ReferenceEquals(mask, Mask) && _brush.Tip is CompoundBrushTip)
+                mask.Dispose();
         }
 
         public void Dispose()
@@ -356,6 +387,13 @@ public sealed class BrushEngine : IDisposable
         }
     }
 
-    private readonly record struct StampSample(float X, float Y, float Size, float Opacity, float Angle);
+    private readonly record struct StampSample(
+        float X,
+        float Y,
+        float Size,
+        float Opacity,
+        float Angle,
+        float Hardness,
+        float SpacingMultiplier);
     private readonly record struct SplinePoint(float X, float Y, float Pressure, float TiltX, float TiltY, float Twist);
 }

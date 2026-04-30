@@ -109,6 +109,36 @@ public sealed partial class BrushDynamics
         return opt;
     }
 
+    internal static ParameterDynamics ToParameterDynamics(CurveOption option)
+    {
+        SensorConfig? pressure = null;
+        SensorConfig? speed = null;
+        foreach (var sensor in option.Sensors)
+        {
+            if (sensor.Type == SensorType.Pressure && pressure == null)
+                pressure = sensor;
+            else if (sensor.Type == SensorType.Speed && speed == null)
+                speed = sensor;
+        }
+
+        return new ParameterDynamics
+        {
+            PressureEnabled = option.IsEnabled && pressure != null,
+            Kind = ResponseCurveKind.Power,
+            Gamma = pressure == null ? 1.25f : EstimateGamma(pressure.Curve),
+            Min = option.MinOutput,
+            Max = option.MaxOutput,
+            VelocityEnabled = option.IsEnabled && speed != null,
+            VelocityStrength = speed == null ? 0.3f : Math.Clamp(1f - speed.Curve.Evaluate(1f), 0f, 1f)
+        };
+    }
+
+    private static float EstimateGamma(CubicCurve curve)
+    {
+        var y = Math.Clamp(curve.Evaluate(0.5f), 0.001f, 1f);
+        return Math.Clamp(MathF.Log(y) / MathF.Log(0.5f), 0.1f, 4f);
+    }
+
     private static CubicCurve GammaCurve(float gamma)
     {
         const int steps = 9;
