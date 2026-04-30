@@ -13,6 +13,8 @@ public sealed class SelectTool : ITool
     public SelectOp   Op    { get; set; } = SelectOp.Replace;
 
     private SelectionToolOperation? _operation;
+    public bool HasPendingOperation => _operation != null;
+    public bool CanCommitFromClick => _operation is PolylineSelectionOperation;
 
     public void Activate(ToolContext ctx)
     {
@@ -66,7 +68,7 @@ public sealed class SelectTool : ITool
     public void CommitPolyline(ToolContext ctx)
     {
         if (_operation is PolylineSelectionOperation polyline)
-            polyline.Commit(default);
+            polyline.CommitCurrent();
         else
             ctx.InvalidateRender();
         _operation = null;
@@ -81,6 +83,5 @@ public sealed class SelectTool : ITool
     public void RenderOverlay(DrawingContext dc, ToolContext ctx, double zoom)
     {
         _operation?.RenderOverlay(dc, zoom);
-        ctx.Selection.RenderOverlay(dc, zoom);
     }
 }

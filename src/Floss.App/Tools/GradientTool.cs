@@ -11,6 +11,7 @@ public sealed class GradientTool : ITool
     public GradientType GradientType { get; set; } = GradientType.Linear;
 
     private GradientToolOperation? _operation;
+    public bool HasPendingOperation => _operation != null;
 
     public void Activate(ToolContext ctx) { }
     public void Deactivate(ToolContext ctx) { }

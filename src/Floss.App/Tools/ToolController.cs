@@ -24,6 +24,7 @@ public sealed class ToolController
     }
 
     public ITool ActiveTool { get; private set; }
+    public bool HasPendingOperation => ActiveTool.HasPendingOperation;
 
     public void SetActiveTool(ITool tool)
     {
@@ -49,7 +50,12 @@ public sealed class ToolController
         }
     }
 
-    public void Cancel() => ActiveTool.Cancel(_context);
+    public bool Cancel()
+    {
+        var hadPendingOperation = ActiveTool.HasPendingOperation;
+        ActiveTool.Cancel(_context);
+        return hadPendingOperation;
+    }
 
     public void RenderOverlay(DrawingContext dc, double zoom)
         => ActiveTool.RenderOverlay(dc, _context, zoom);

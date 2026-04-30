@@ -14,6 +14,7 @@ public interface ITool
     void PointerMove(ToolContext ctx, CanvasInputSample s);
     void PointerUp(ToolContext ctx, CanvasInputSample s);
     void Cancel(ToolContext ctx);
+    bool HasPendingOperation => false;
     // Draw real-time UI on top of the composited canvas (selection outline, shape preview, etc.)
     void RenderOverlay(DrawingContext dc, ToolContext ctx, double zoom);
     // Called when the tool becomes active or inactive
@@ -30,6 +31,7 @@ public sealed class ToolContext
     public SelectionMask Selection { get; } = new();
     public Action InvalidateRender { get; init; } = () => { };
     public Action<Color> OnColorSampled { get; init; } = _ => { };
+    public Func<int, int, Color?> SampleDocumentColor { get; init; } = (_, _) => null;
 
     public DrawingLayer? ActiveLayer =>
         Document.ActiveLayerIndex >= 0 && Document.ActiveLayerIndex < Document.Layers.Count

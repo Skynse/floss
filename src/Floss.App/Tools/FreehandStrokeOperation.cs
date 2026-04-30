@@ -8,10 +8,14 @@ namespace Floss.App.Tools;
 
 public sealed class FreehandStrokeOperation : IToolOperation
 {
+    private const double MinimumMoveDistance = 0.25;
+    private const double MinimumPressureDelta = 0.01;
+
     private readonly DrawingDocument _document;
     private readonly BrushEngine _brushEngine;
     private readonly BrushPreset _brush;
     private readonly bool _eraser;
+    private readonly SelectionMask _selection;
     private readonly int _activeLayerIndex;
     private readonly Dictionary<(int X, int Y), byte[]?> _beforeTiles = [];
 
@@ -24,12 +28,14 @@ public sealed class FreehandStrokeOperation : IToolOperation
         BrushEngine brushEngine,
         BrushPreset brush,
         bool eraser,
+        SelectionMask selection,
         CanvasInputSample firstSample)
     {
         _document = document;
         _brushEngine = brushEngine;
         _brush = brush;
         _eraser = eraser;
+        _selection = selection;
         _activeLayerIndex = document.ActiveLayerIndex;
         SampleCount = 1;
 
@@ -47,6 +53,13 @@ public sealed class FreehandStrokeOperation : IToolOperation
         if (!_active) return;
         var layer = _document.ActiveLayer;
         var localSample = ToLayerSample(layer, sample);
+        if (sample.Phase == CanvasInputPhase.Move &&
+            _lastSample.DistanceTo(localSample) < MinimumMoveDistance &&
+            Math.Abs(_lastSample.Pressure - localSample.Pressure) < MinimumPressureDelta)
+        {
+            return;
+        }
+
         var smoothed = ApplyStreamline(localSample, _brush.Smoothing);
         RasterizeSegmentWithHistory(layer, sample, _lastSample, smoothed);
         _lastSample = smoothed;
@@ -99,6 +112,7 @@ public sealed class FreehandStrokeOperation : IToolOperation
         CaptureBeforeTiles(layer, region);
         var dirty = _brushEngine.RasterizeDab(layer, _brush, _eraser || sourceSample.Source == CanvasInputSource.Eraser, localSample, velocity);
         if (dirty.IsEmpty) return;
+        RestoreUnselectedPixels(layer, dirty);
 
         layer.MarkThumbnailDirty();
         var docDirty = dirty.Translate(layer.OffsetX, layer.OffsetY);
@@ -114,6 +128,7 @@ public sealed class FreehandStrokeOperation : IToolOperation
         CaptureBeforeTiles(layer, region);
         var dirty = _brushEngine.RasterizeSegment(layer, _brush, _eraser || sourceSample.Source == CanvasInputSource.Eraser, from, to);
         if (dirty.IsEmpty) return;
+        RestoreUnselectedPixels(layer, dirty);
 
         layer.MarkThumbnailDirty();
         var docDirty = dirty.Translate(layer.OffsetX, layer.OffsetY);
@@ -124,5 +139,36 @@ public sealed class FreehandStrokeOperation : IToolOperation
     private void CaptureBeforeTiles(DrawingLayer layer, PixelRegion region)
     {
         layer.CaptureTiles(region, _beforeTiles);
+    }
+
+    private void RestoreUnselectedPixels(DrawingLayer layer, PixelRegion dirty)
+    {
+        var clipped = dirty.ClipTo(layer.Width, layer.Height);
+        if (clipped.IsEmpty || !_selection.HasSelection) return;
+
+        const int bytesPerPixel = 4;
+        const int tileSize = TiledPixelBuffer.TileSize;
+
+        for (var y = clipped.Y; y < clipped.Bottom; y++)
+        {
+            for (var x = clipped.X; x < clipped.Right; x++)
+            {
+                if (_selection.IsSelected(x + layer.OffsetX, y + layer.OffsetY)) continue;
+
+                var tileKey = (x / tileSize, y / tileSize);
+                var localX = x - tileKey.Item1 * tileSize;
+                var localY = y - tileKey.Item2 * tileSize;
+                var offset = (localY * tileSize + localX) * bytesPerPixel;
+
+                if (_beforeTiles.TryGetValue(tileKey, out var before) && before != null)
+                {
+                    layer.Pixels.SetPixel(x, y, before[offset + 0], before[offset + 1], before[offset + 2], before[offset + 3]);
+                }
+                else
+                {
+                    layer.Pixels.SetPixel(x, y, 0, 0, 0, 0);
+                }
+            }
+        }
     }
 }

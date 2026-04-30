@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Floss.App.Brushes;
 using Floss.App.Document;
 using Floss.App.Input;
@@ -14,6 +15,8 @@ namespace Floss.App.Canvas;
 
 public sealed class DrawingCanvas : Control
 {
+    private const double PenPressureThreshold = 0.02;
+
     private readonly DrawingDocument _document = new();
     private readonly CanvasTool _canvasTool;
     private readonly LayerCompositor _compositor;
@@ -58,7 +61,8 @@ public sealed class DrawingCanvas : Control
                 _ctx.Brush = _brush;
                 ColorSampled?.Invoke(this, c);
                 InvalidateVisual();
-            }
+            },
+            SampleDocumentColor = SampleDocumentColor
         };
         _ctx.Selection.Resize(_document.Width, _document.Height);
 
@@ -75,6 +79,7 @@ public sealed class DrawingCanvas : Control
         _document.HistoryChanged += (_, _) => HistoryChanged?.Invoke(this, EventArgs.Empty);
         _document.LayersChanged += (_, _) =>
         {
+            _ctx.Selection.Resize(_document.Width, _document.Height);
             _compositor.Invalidate(null);
             LayersChanged?.Invoke(this, EventArgs.Empty);
         };
@@ -101,6 +106,7 @@ public sealed class DrawingCanvas : Control
     public ITool ActiveTool => _toolController.ActiveTool;
     public BrushTool BrushTool => _brushTool;
     public BrushTool EraserTool => _eraserTool;
+    public bool HasSelection => _ctx.Selection.HasSelection;
 
     public double CanvasRotation { get; set; }
     public bool PaintInputSuspended { get; set; }
@@ -193,7 +199,8 @@ public sealed class DrawingCanvas : Control
 
     public void CancelActiveTool()
     {
-        _toolController.Cancel();
+        if (!_toolController.Cancel() && _ctx.Selection.HasSelection)
+            _ctx.Selection.Clear();
         InvalidateVisual();
     }
 
@@ -233,6 +240,7 @@ public sealed class DrawingCanvas : Control
         }
 
         _toolController.RenderOverlay(context, CanvasZoom);
+        _ctx.Selection.RenderOverlay(context, CanvasZoom);
 
         if (_isPointerOver || _isCursorPreviewLocked)
         {
@@ -273,7 +281,17 @@ public sealed class DrawingCanvas : Control
 
         _activePointerId = point.Pointer.Id;
         _toolController.Dispatch(new ToolInputEvent(ToolInputEventKind.Down, sample));
-        e.Pointer.Capture(this);
+
+        if (e.ClickCount > 1 && CanCommitActiveToolFromClick())
+        {
+            CommitActiveTool();
+            _activePointerId = -1;
+        }
+        else
+        {
+            e.Pointer.Capture(this);
+        }
+
         e.Handled = true;
     }
 
@@ -298,7 +316,8 @@ public sealed class DrawingCanvas : Control
     {
         base.OnPointerMoved(e);
         var point = e.GetCurrentPoint(this);
-        _pointerPos = point.Position;
+        if (!_isCursorPreviewLocked)
+            _pointerPos = point.Position;
 
         if (PaintInputSuspended)
         {
@@ -312,13 +331,24 @@ public sealed class DrawingCanvas : Control
             return;
         }
 
-        if (point.Pointer.Id == _activePointerId && IsPaintInput(point))
+        if (point.Pointer.Id == _activePointerId)
         {
-            _toolController.Dispatch(new ToolInputEvent(ToolInputEventKind.Move, MakeSample(point, CanvasInputPhase.Move)));
+            if (IsPaintInput(point))
+            {
+                _toolController.Dispatch(new ToolInputEvent(ToolInputEventKind.Move, MakeSample(point, CanvasInputPhase.Move)));
+            }
+            else
+            {
+                _toolController.Dispatch(new ToolInputEvent(ToolInputEventKind.Up, MakeSample(point, CanvasInputPhase.Up)));
+                _activePointerId = -1;
+                e.Pointer.Capture(null);
+            }
+
             e.Handled = true;
         }
-        else
+        else if (_activePointerId < 0)
         {
+            _toolController.Dispatch(new ToolInputEvent(ToolInputEventKind.Move, MakeSample(point, CanvasInputPhase.Move)));
             InvalidateVisual();
         }
     }
@@ -338,9 +368,18 @@ public sealed class DrawingCanvas : Control
     protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
     {
         base.OnPointerCaptureLost(e);
+        if (_activePointerId < 0) return;
         _activePointerId = -1;
         _toolController.Cancel();
     }
+
+    private bool CanCommitActiveToolFromClick() =>
+        _toolController.ActiveTool switch
+        {
+            SelectTool selectTool => selectTool.CanCommitFromClick,
+            PolylineTool polylineTool => polylineTool.CanCommitFromClick,
+            _ => false
+        };
 
     private CanvasInputSample MakeSample(PointerPoint point, CanvasInputPhase phase)
         => CanvasInputSample.FromPointerPoint(
@@ -348,16 +387,29 @@ public sealed class DrawingCanvas : Control
             _document.Width, _document.Height,
             phase, CanvasRotation);
 
+    private unsafe Color? SampleDocumentColor(int x, int y)
+    {
+        if ((uint)x >= (uint)_document.Width || (uint)y >= (uint)_document.Height) return null;
+
+        _compositor.Composite(_document.Layers, _document.Width, _document.Height);
+        using var frame = _compositor.Bitmap.Lock();
+        if (_compositor.Bitmap.Format != PixelFormat.Bgra8888) return null;
+
+        var row = (byte*)frame.Address + y * frame.RowBytes;
+        var px = row + x * 4;
+        return Color.FromArgb(px[3], px[2], px[1], px[0]);
+    }
+
     private static bool IsPaintInput(PointerPoint point)
     {
         var properties = point.Properties;
         if (properties.IsEraser)
-            return properties.Pressure > 0 || properties.IsLeftButtonPressed;
+            return properties.IsLeftButtonPressed || properties.Pressure >= PenPressureThreshold;
 
         return point.Pointer.Type switch
         {
-            PointerType.Pen   => properties.Pressure > 0 || properties.IsLeftButtonPressed,
-            PointerType.Touch => properties.Pressure > 0 || properties.IsLeftButtonPressed,
+            PointerType.Pen   => properties.IsLeftButtonPressed || properties.Pressure >= PenPressureThreshold,
+            PointerType.Touch => properties.IsLeftButtonPressed || properties.Pressure >= PenPressureThreshold,
             PointerType.Mouse => properties.IsLeftButtonPressed,
             _ => false
         };

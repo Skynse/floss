@@ -10,6 +10,8 @@ public sealed class PolylineTool : ITool
     public bool ClosePath { get; set; } = false;
 
     private PolylineToolOperation? _operation;
+    public bool HasPendingOperation => _operation != null;
+    public bool CanCommitFromClick => _operation != null;
 
     public void Activate(ToolContext ctx) { }
 
@@ -37,7 +39,7 @@ public sealed class PolylineTool : ITool
     // Called from MainWindow on double-click or Enter.
     public void Commit(ToolContext ctx)
     {
-        _operation?.Commit(default);
+        _operation?.CommitCurrent();
         _operation = null;
     }
 

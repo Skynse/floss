@@ -12,6 +12,8 @@ using Avalonia.Platform.Storage;
 using Floss.App.Brushes;
 using Floss.App.Canvas;
 using Floss.App.Document;
+using Floss.App.FlossFiles;
+using Floss.App.ImageFiles;
 using Floss.App.Input;
 using Floss.App.Psd;
 using Floss.App.Tools;
@@ -20,6 +22,8 @@ namespace Floss.App;
 
 public partial class MainWindow : Window
 {
+    private const double ResetViewOutset = 80.0;
+
     private const string Bg0 = "#0f0f10";
     private const string Bg1 = "#161618";
     private const string Bg2 = "#1e1e20";
@@ -347,10 +351,12 @@ public partial class MainWindow : Window
             Header = "_File",
             ItemsSource = new object[]
             {
-                MenuAction("_Open PSD...", async () => await OpenPsdAsync()),
+                MenuAction("_Open...", async () => await OpenDocumentAsync()),
+                MenuAction("_Save Floss...", async () => await SaveFlossAsync()),
                 MenuAction("_Save PSD...", async () => await SavePsdAsync()),
+                MenuAction("_Export Image...", async () => await ExportImageAsync()),
                 new Separator(),
-                MenuAction("_Reset View", () => { SetZoom(1.0, null); SetRotation(0); }),
+                MenuAction("_Reset View", ResetView),
                 new Separator(),
                 MenuAction("_Settings...", OpenSettings)
             }
@@ -421,7 +427,7 @@ public partial class MainWindow : Window
         var zoomFit = TbarBtn(Icons.FitToScreenOutline, "Fit to screen  (Ctrl+0)");
         zoomOut.Click += (_, _) => SetZoom(_zoom / 1.2, null);
         zoomIn.Click += (_, _) => SetZoom(_zoom * 1.2, null);
-        zoomFit.Click += (_, _) => { SetZoom(1.0, null); SetRotation(0); };
+        zoomFit.Click += (_, _) => ResetView();
 
         var rotLeft = TbarBtn(Icons.RotateLeftVariant, "Rotate left 15°  (Shift+[)");
         var rotRight = TbarBtn(Icons.RotateRightVariant, "Rotate right 15°  (Shift+])");
@@ -435,10 +441,14 @@ public partial class MainWindow : Window
         undoTb.Click += (_, _) => _canvas.Undo();
         redoTb.Click += (_, _) => _canvas.Redo();
 
-        var openTb = TbarBtn(Icons.FolderOpenOutline, "Open PSD  (Ctrl+O)");
-        var saveTb = TbarBtn(Icons.ContentSaveOutline, "Save PSD  (Ctrl+S)");
-        openTb.Click += async (_, _) => await OpenPsdAsync();
+        var openTb = TbarBtn(Icons.FolderOpenOutline, "Open PSD or image  (Ctrl+O)");
+        var saveFlossTb = TbarBtn(Icons.ContentSaveOutline, "Save Floss document  (Ctrl+S)");
+        var saveTb = TbarBtn(Icons.ContentSaveOutline, "Save PSD");
+        var exportTb = TbarBtn(Icons.ContentSaveOutline, "Export image");
+        openTb.Click += async (_, _) => await OpenDocumentAsync();
+        saveFlossTb.Click += async (_, _) => await SaveFlossAsync();
         saveTb.Click += async (_, _) => await SavePsdAsync();
+        exportTb.Click += async (_, _) => await ExportImageAsync();
 
         var row = new StackPanel
         {
@@ -448,7 +458,9 @@ public partial class MainWindow : Window
             Margin = new Thickness(8, 0)
         };
         row.Children.Add(openTb);
+        row.Children.Add(saveFlossTb);
         row.Children.Add(saveTb);
+        row.Children.Add(exportTb);
         row.Children.Add(TbarSep());
         row.Children.Add(undoTb);
         row.Children.Add(redoTb);
@@ -539,24 +551,40 @@ public partial class MainWindow : Window
         _brushToolButton   = RailBtn(Icons.BrushOutline,       "Brush  (B)");
         _eraserToolButton  = RailBtn(Icons.Eraser,             "Eraser  (E)");
         _moveToolButton    = RailBtn(Icons.ArrowAll,           "Move layer  (V)");
-        _selectToolButton  = RailBtn(Icons.SelectionRect,      "Select  (S)");
+        _selectToolButton  = RailBtn(Icons.SelectionRect,      "Select  (S). Click again: rect/lasso/polyline");
         _wandToolButton    = RailBtn(Icons.AutoFix,            "Magic Wand  (W)");
         _fillToolButton    = RailBtn(Icons.FormatColorFill,    "Fill  (G)");
         _eyedropToolButton = RailBtn(Icons.Eyedropper,         "Eyedropper  (I)");
-        _gradientToolButton= RailBtn(Icons.GradientHorizontal, "Gradient");
-        _shapeToolButton   = RailBtn(Icons.RectangleOutline,   "Shape");
-        _polylineToolButton= RailBtn(Icons.VectorPolyline,     "Polyline");
+        _gradientToolButton= RailBtn(Icons.GradientHorizontal, "Gradient. Click again: linear/radial");
+        _shapeToolButton   = RailBtn(Icons.RectangleOutline,   "Shape. Click again: rectangle/ellipse/line");
+        _polylineToolButton= RailBtn(Icons.VectorPolyline,     "Polyline. Click again: open/closed");
 
         _brushToolButton.Click   += (_, _) => ActivateTool(_canvas.BrushTool,  _brushToolButton);
         _eraserToolButton.Click  += (_, _) => ActivateTool(_canvas.EraserTool, _eraserToolButton);
         _moveToolButton.Click    += (_, _) => ActivateTool(_moveTool,           _moveToolButton);
-        _selectToolButton.Click  += (_, _) => ActivateTool(_selectTool,         _selectToolButton);
+        _selectToolButton.Click  += (_, _) =>
+        {
+            if (ReferenceEquals(_canvas.ActiveTool, _selectTool)) CycleSelectMode();
+            else ActivateTool(_selectTool, _selectToolButton);
+        };
         _wandToolButton.Click    += (_, _) => ActivateTool(_magicWandTool,      _wandToolButton);
         _fillToolButton.Click    += (_, _) => ActivateTool(_fillTool,           _fillToolButton);
         _eyedropToolButton.Click += (_, _) => ActivateTool(_eyedropperTool,     _eyedropToolButton);
-        _gradientToolButton.Click+= (_, _) => ActivateTool(_gradientTool,       _gradientToolButton);
-        _shapeToolButton.Click   += (_, _) => ActivateTool(_shapeTool,          _shapeToolButton);
-        _polylineToolButton.Click+= (_, _) => ActivateTool(_polylineTool,       _polylineToolButton);
+        _gradientToolButton.Click+= (_, _) =>
+        {
+            if (ReferenceEquals(_canvas.ActiveTool, _gradientTool)) CycleGradientMode();
+            else ActivateTool(_gradientTool, _gradientToolButton);
+        };
+        _shapeToolButton.Click   += (_, _) =>
+        {
+            if (ReferenceEquals(_canvas.ActiveTool, _shapeTool)) CycleShapeMode();
+            else ActivateTool(_shapeTool, _shapeToolButton);
+        };
+        _polylineToolButton.Click+= (_, _) =>
+        {
+            if (ReferenceEquals(_canvas.ActiveTool, _polylineTool)) TogglePolylineClosePath();
+            else ActivateTool(_polylineTool, _polylineToolButton);
+        };
 
         _toolButtons.AddRange([
             _brushToolButton, _eraserToolButton, _moveToolButton,
@@ -1419,15 +1447,51 @@ public partial class MainWindow : Window
     {
         BrushTool bt  => bt.IsEraser ? "Eraser" : _canvas.Brush.Name,
         MoveTool      => "Move",
-        SelectTool    => "Select",
+        SelectTool    => $"Select: {_selectTool.Mode}",
         MagicWandTool => "Magic Wand",
         FillTool      => "Fill",
         EyedropperTool=> "Eyedropper",
-        GradientTool  => "Gradient",
-        ShapeTool     => "Shape",
-        PolylineTool  => "Polyline",
+        GradientTool  => $"Gradient: {_gradientTool.GradientType}",
+        ShapeTool     => $"Shape: {_shapeTool.Kind}",
+        PolylineTool  => _polylineTool.ClosePath ? "Polyline: Closed" : "Polyline: Open",
         _             => "Tool"
     };
+
+    private void CycleSelectMode()
+    {
+        _selectTool.Mode = _selectTool.Mode switch
+        {
+            SelectMode.Rect => SelectMode.Lasso,
+            SelectMode.Lasso => SelectMode.PolylineLasso,
+            _ => SelectMode.Rect
+        };
+        _footerStatusText.Text = ToolDisplayName(_selectTool);
+    }
+
+    private void CycleGradientMode()
+    {
+        _gradientTool.GradientType = _gradientTool.GradientType == GradientType.Linear
+            ? GradientType.Radial
+            : GradientType.Linear;
+        _footerStatusText.Text = ToolDisplayName(_gradientTool);
+    }
+
+    private void CycleShapeMode()
+    {
+        _shapeTool.Kind = _shapeTool.Kind switch
+        {
+            ShapeKind.Rectangle => ShapeKind.Ellipse,
+            ShapeKind.Ellipse => ShapeKind.Line,
+            _ => ShapeKind.Rectangle
+        };
+        _footerStatusText.Text = ToolDisplayName(_shapeTool);
+    }
+
+    private void TogglePolylineClosePath()
+    {
+        _polylineTool.ClosePath = !_polylineTool.ClosePath;
+        _footerStatusText.Text = ToolDisplayName(_polylineTool);
+    }
 
     private void SetTool(string tool)
     {
@@ -1715,17 +1779,7 @@ public partial class MainWindow : Window
         _canvasFrame.Height = h;
 
         if (fitToViewport)
-        {
-            var vw = Math.Max(1, _workspaceViewport.Bounds.Width - 80);
-            var vh = Math.Max(1, _workspaceViewport.Bounds.Height - 80);
-            _zoom = Math.Clamp(Math.Min(vw / w, vh / h), 0.05, 1.0);
-            _canvasScale.ScaleX = _zoom;
-            _canvasScale.ScaleY = _zoom;
-            _canvasPan.X = 0;
-            _canvasPan.Y = 0;
-            ClampCanvasPan();
-            UpdateStatus();
-        }
+            ResetView();
     }
 
     private void Workspace_OnPointerWheelChanged(object? sender, PointerWheelEventArgs e)
@@ -1835,6 +1889,33 @@ public partial class MainWindow : Window
         UpdateStatus();
     }
 
+    private void ResetView()
+    {
+        _rotation = 0;
+        _canvasRotate.Angle = 0;
+        _canvas.CanvasRotation = 0;
+
+        var w = Math.Max(1, _canvas.Document.Width);
+        var h = Math.Max(1, _canvas.Document.Height);
+        var vpW = Math.Max(1, _workspaceViewport.Bounds.Width);
+        var vpH = Math.Max(1, _workspaceViewport.Bounds.Height);
+        var outset = Math.Min(ResetViewOutset, Math.Min(vpW, vpH) * 0.2);
+        var availableW = Math.Max(1, vpW - outset * 2);
+        var availableH = Math.Max(1, vpH - outset * 2);
+
+        _zoom = Math.Clamp(Math.Min(availableW / w, availableH / h), 0.05, 16.0);
+        _canvasScale.ScaleX = _zoom;
+        _canvasScale.ScaleY = _zoom;
+        _canvas.CanvasZoom = _zoom;
+        _canvasPan.X = 0;
+        _canvasPan.Y = 0;
+        ClampCanvasPan();
+
+        _zoomDisplay.Text = $"{Math.Round(_zoom * 100)}%";
+        _rotDisplay.Text = "0°";
+        UpdateStatus();
+    }
+
     private void ClampCanvasPan()
     {
         var vpW = Math.Max(1, _workspaceViewport.Bounds.Width);
@@ -1877,14 +1958,14 @@ public partial class MainWindow : Window
         if (sc.Undo.Matches(key, mods)) { _canvas.Undo(); e.Handled = true; }
         else if (sc.Redo.Matches(key, mods)) { _canvas.Redo(); e.Handled = true; }
         else if (sc.RedoAlt.Matches(key, mods)) { _canvas.Redo(); e.Handled = true; }
-        else if (sc.FileSave.Matches(key, mods)) { _ = SavePsdAsync(); e.Handled = true; }
-        else if (sc.FileOpen.Matches(key, mods)) { _ = OpenPsdAsync(); e.Handled = true; }
+        else if (sc.FileSave.Matches(key, mods)) { _ = SaveFlossAsync(); e.Handled = true; }
+        else if (sc.FileOpen.Matches(key, mods)) { _ = OpenDocumentAsync(); e.Handled = true; }
         else if (sc.LayerNew.Matches(key, mods)) { _canvas.AddLayer(); e.Handled = true; }
         else if (sc.LayerDuplicate.Matches(key, mods)) { _canvas.DuplicateLayer(); e.Handled = true; }
         else if (sc.LayerDelete.Matches(key, mods)) { _canvas.DeleteLayer(); e.Handled = true; }
         else if (sc.LayerMoveUp.Matches(key, mods)) { _canvas.MoveActiveLayer(1); e.Handled = true; }
         else if (sc.LayerMoveDown.Matches(key, mods)) { _canvas.MoveActiveLayer(-1); e.Handled = true; }
-        else if (sc.ZoomReset.Matches(key, mods)) { SetZoom(1.0, null); SetRotation(0); e.Handled = true; }
+        else if (sc.ZoomReset.Matches(key, mods)) { ResetView(); e.Handled = true; }
         else if (sc.ZoomFit.Matches(key, mods)) { SyncCanvasFrameToDocument(fitToViewport: true); e.Handled = true; }
         else if (sc.ZoomIn.Matches(key, mods) || sc.ZoomInAlt.Matches(key, mods))
         { SetZoom(_zoom * sc.ZoomKeyFactor, null); e.Handled = true; }
@@ -1900,7 +1981,7 @@ public partial class MainWindow : Window
         else if (key == Key.W && mods == KeyModifiers.None) { ActivateTool(_magicWandTool, _wandToolButton); e.Handled = true; }
         else if (key == Key.G && mods == KeyModifiers.None) { ActivateTool(_fillTool, _fillToolButton); e.Handled = true; }
         else if (key == Key.I && mods == KeyModifiers.None) { ActivateTool(_eyedropperTool, _eyedropToolButton); e.Handled = true; }
-        else if (key == Key.Escape && _canvas.ActiveTool is SelectTool or PolylineTool)
+        else if (key == Key.Escape)
         { _canvas.CancelActiveTool(); e.Handled = true; }
         else if ((key == Key.Return || key == Key.Enter) && _canvas.ActiveTool is SelectTool or PolylineTool)
         { _canvas.CommitActiveTool(); e.Handled = true; }
@@ -1974,9 +2055,12 @@ public partial class MainWindow : Window
         _gestureKey = binding?.IsModifierOnly == true ? Key.None : key;
         _gestureModifiers = binding?.Modifiers ?? KeyModifiers.None;
         _canvas.PaintInputSuspended = true;
-        Cursor = gesture == GestureMode.Pan
-            ? new Cursor(StandardCursorType.SizeAll)
-            : new Cursor(StandardCursorType.Arrow);
+        Cursor = gesture switch
+        {
+            GestureMode.Pan => new Cursor(StandardCursorType.SizeAll),
+            GestureMode.BrushSize => new Cursor(StandardCursorType.None),
+            _ => new Cursor(StandardCursorType.Arrow)
+        };
     }
 
     private void OpenSettings()
@@ -2013,13 +2097,33 @@ public partial class MainWindow : Window
     }
 
     // ── File I/O ──────────────────────────────────────────────────────────────
-    private async System.Threading.Tasks.Task OpenPsdAsync()
+    private static readonly FilePickerFileType DocumentFileType = new("Supported Documents")
+    {
+        Patterns = ["*.floss", "*.psd", "*.png", "*.jpg", "*.jpeg", "*.jpe", "*.webp", "*.bmp", "*.dib", "*.gif", "*.tif", "*.tiff", "*.ico", "*.wbmp"]
+    };
+
+    private static readonly FilePickerFileType FlossFileType = new("Floss Document")
+    {
+        Patterns = ["*.floss"]
+    };
+
+    private static readonly FilePickerFileType PsdFileType = new("Photoshop Document")
+    {
+        Patterns = ["*.psd"]
+    };
+
+    private static readonly FilePickerFileType RasterImageFileType = new("Image Files")
+    {
+        Patterns = ["*.png", "*.jpg", "*.jpeg", "*.jpe", "*.webp", "*.bmp", "*.dib", "*.gif", "*.tif", "*.tiff", "*.ico", "*.wbmp"]
+    };
+
+    private async System.Threading.Tasks.Task OpenDocumentAsync()
     {
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title = "Open PSD",
+            Title = "Open",
             AllowMultiple = false,
-            FileTypeFilter = [new FilePickerFileType("Photoshop Document") { Patterns = ["*.psd"] }]
+            FileTypeFilter = [DocumentFileType, FlossFileType, PsdFileType, RasterImageFileType]
         });
         if (files.Count == 0) return;
 
@@ -2027,18 +2131,73 @@ public partial class MainWindow : Window
         {
             var path = files[0].Path.LocalPath;
             await using var stream = await files[0].OpenReadAsync();
-            var imported = await System.Threading.Tasks.Task.Run(() => PsdImporter.Load(stream));
-            _canvas.Document.ReplaceWith(imported);
-            App.Config.AddRecentFile(path);
-            SyncCanvasFrameToDocument(fitToViewport: true);
-            BuildLayerList();
-            UpdateStatus();
-            _footerStatusText.Text =
-                $"Opened {_canvas.Document.Width}×{_canvas.Document.Height}  {Path.GetFileName(path)}";
+            var imported = await System.Threading.Tasks.Task.Run(() => LoadDocumentFromStream(stream, path));
+            ApplyOpenedDocument(imported, path);
         }
         catch (Exception ex)
         {
             _footerStatusText.Text = $"Error: {ex.Message}";
+        }
+    }
+
+    private async System.Threading.Tasks.Task OpenPsdAsync() => await OpenDocumentAsync();
+
+    public async System.Threading.Tasks.Task OpenDocumentFromPathAsync(string path)
+    {
+        try
+        {
+            if (!File.Exists(path))
+            {
+                _footerStatusText.Text = $"Open error: file not found {path}";
+                return;
+            }
+
+            await using var stream = File.OpenRead(path);
+            var imported = await System.Threading.Tasks.Task.Run(() => LoadDocumentFromStream(stream, path));
+            ApplyOpenedDocument(imported, path);
+        }
+        catch (Exception ex)
+        {
+            _footerStatusText.Text = $"Open error: {ex.Message}";
+        }
+    }
+
+    private static DrawingDocument LoadDocumentFromStream(Stream stream, string path)
+        => IsFlossPath(path) ? FlossFileFormat.Load(stream)
+            : IsPsdPath(path) ? PsdImporter.Load(stream)
+            : ImageFileImporter.Load(stream, path);
+
+    private void ApplyOpenedDocument(DrawingDocument imported, string path)
+    {
+        _canvas.Document.ReplaceWith(imported);
+        App.Config.AddRecentFile(path);
+        SyncCanvasFrameToDocument(fitToViewport: true);
+        BuildLayerList();
+        UpdateStatus();
+        _footerStatusText.Text =
+            $"Opened {_canvas.Document.Width}x{_canvas.Document.Height}  {Path.GetFileName(path)}";
+    }
+
+    private async System.Threading.Tasks.Task SaveFlossAsync()
+    {
+        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = "Save Floss Document",
+            FileTypeChoices = [FlossFileType],
+            SuggestedFileName = "untitled.floss"
+        });
+        if (file == null) return;
+
+        try
+        {
+            await using var stream = await file.OpenWriteAsync();
+            FlossFileFormat.Save(stream, _canvas.Document);
+            App.Config.AddRecentFile(file.Path.LocalPath);
+            _footerStatusText.Text = $"Saved {Path.GetFileName(file.Path.LocalPath)}";
+        }
+        catch (Exception ex)
+        {
+            _footerStatusText.Text = $"Save error: {ex.Message}";
         }
     }
 
@@ -2047,7 +2206,7 @@ public partial class MainWindow : Window
         var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
             Title = "Save PSD",
-            FileTypeChoices = [new FilePickerFileType("Photoshop Document") { Patterns = ["*.psd"] }]
+            FileTypeChoices = [PsdFileType]
         });
         if (file == null) return;
 
@@ -2063,6 +2222,44 @@ public partial class MainWindow : Window
             _footerStatusText.Text = $"Save error: {ex.Message}";
         }
     }
+
+    private async System.Threading.Tasks.Task ExportImageAsync()
+    {
+        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = "Export Image",
+            FileTypeChoices =
+            [
+                new FilePickerFileType("PNG Image") { Patterns = ["*.png"] },
+                new FilePickerFileType("JPEG Image") { Patterns = ["*.jpg", "*.jpeg"] },
+                new FilePickerFileType("WebP Image") { Patterns = ["*.webp"] },
+                new FilePickerFileType("Bitmap Image") { Patterns = ["*.bmp"] },
+                new FilePickerFileType("GIF Image") { Patterns = ["*.gif"] },
+                new FilePickerFileType("Icon") { Patterns = ["*.ico"] },
+                new FilePickerFileType("Wireless Bitmap") { Patterns = ["*.wbmp"] }
+            ],
+            SuggestedFileName = "floss-export.png"
+        });
+        if (file == null) return;
+
+        try
+        {
+            var path = file.Path.LocalPath;
+            await using var stream = await file.OpenWriteAsync();
+            ImageFileExporter.Export(stream, _canvas.Document, path);
+            _footerStatusText.Text = $"Exported {Path.GetFileName(path)}";
+        }
+        catch (Exception ex)
+        {
+            _footerStatusText.Text = $"Export error: {ex.Message}";
+        }
+    }
+
+    private static bool IsPsdPath(string path)
+        => string.Equals(Path.GetExtension(path), ".psd", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsFlossPath(string path)
+        => string.Equals(Path.GetExtension(path), FlossFileFormat.Extension, StringComparison.OrdinalIgnoreCase);
 
     // ── HSV ↔ RGB helpers ─────────────────────────────────────────────────────
     private static (double h, double s, double v) RgbToHsv(double r, double g, double b)

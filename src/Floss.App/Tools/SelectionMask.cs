@@ -62,18 +62,18 @@ public sealed class SelectionMask
     public void SetFromRect(int x, int y, int w, int h, SelectOp op = SelectOp.Replace)
     {
         EnsureMaskExists();
-        var next = op == SelectOp.Replace ? new byte[_docW * _docH] : (byte[])_mask!.Clone();
+        var next = CreateBaseMask(op);
 
-        int x1 = Math.Clamp(Math.Min(x, x + w), 0, _docW - 1);
-        int y1 = Math.Clamp(Math.Min(y, y + h), 0, _docH - 1);
-        int x2 = Math.Clamp(Math.Max(x, x + w), 0, _docW - 1);
-        int y2 = Math.Clamp(Math.Max(y, y + h), 0, _docH - 1);
+        int x1 = Math.Clamp(Math.Min(x, x + w), 0, _docW);
+        int y1 = Math.Clamp(Math.Min(y, y + h), 0, _docH);
+        int x2 = Math.Clamp(Math.Max(x, x + w), 0, _docW);
+        int y2 = Math.Clamp(Math.Max(y, y + h), 0, _docH);
 
-        for (int py = y1; py <= y2; py++)
-            for (int px = x1; px <= x2; px++)
+        for (int py = y1; py < y2; py++)
+            for (int px = x1; px < x2; px++)
                 Apply(next, px, py, op, true);
 
-        _mask = next;
+        CommitMask(next);
         _geoType = SelectionGeometry.Rect;
         _geoRect = new SKRectI(x1, y1, x2, y2);
     }
@@ -97,47 +97,61 @@ public sealed class SelectionMask
         int x2 = Math.Clamp((int)Math.Ceiling(bounds.Right),  0, _docW - 1);
         int y2 = Math.Clamp((int)Math.Ceiling(bounds.Bottom), 0, _docH - 1);
 
-        var next = op == SelectOp.Replace ? new byte[_docW * _docH] : (byte[])(_mask ?? CreateFull()).Clone();
+        var next = CreateBaseMask(op);
         for (int py = y1; py <= y2; py++)
             for (int px = x1; px <= x2; px++)
                 Apply(next, px, py, op, region.Contains(px, py));
 
-        _mask = next;
+        CommitMask(next);
         _geoType = SelectionGeometry.Polygon;
         _geoPoly = new List<SKPoint>(points);
     }
 
     public void SetFromFloodFill(TiledPixelBuffer pixels, int srcX, int srcY,
         double tolerance, SelectOp op = SelectOp.Replace)
+        => SetFromFloodFill(pixels, srcX, srcY, 0, 0, tolerance, op);
+
+    public void SetFromFloodFill(
+        TiledPixelBuffer pixels,
+        int srcX,
+        int srcY,
+        int offsetX,
+        int offsetY,
+        double tolerance,
+        SelectOp op = SelectOp.Replace)
     {
-        if ((uint)srcX >= (uint)_docW || (uint)srcY >= (uint)_docH) return;
+        if ((uint)srcX >= (uint)pixels.Width || (uint)srcY >= (uint)pixels.Height) return;
         EnsureMaskExists();
 
         pixels.GetPixel(srcX, srcY, out byte refB, out byte refG, out byte refR, out byte refA);
         int tolInt = (int)(tolerance * 255 * 4);
 
-        var next = op == SelectOp.Replace ? new byte[_docW * _docH] : (byte[])(_mask ?? CreateFull()).Clone();
-        var visited = new bool[_docW * _docH];
+        var next = CreateBaseMask(op);
+        var visited = new bool[pixels.Width * pixels.Height];
         var queue = new Queue<(int x, int y)>();
         queue.Enqueue((srcX, srcY));
 
         while (queue.Count > 0)
         {
             var (cx, cy) = queue.Dequeue();
-            if ((uint)cx >= (uint)_docW || (uint)cy >= (uint)_docH) continue;
-            int idx = cy * _docW + cx;
+            if ((uint)cx >= (uint)pixels.Width || (uint)cy >= (uint)pixels.Height) continue;
+            int idx = cy * pixels.Width + cx;
             if (visited[idx]) continue;
             visited[idx] = true;
 
             pixels.GetPixel(cx, cy, out byte b, out byte g, out byte r, out byte a);
             if (Math.Abs(b - refB) + Math.Abs(g - refG) + Math.Abs(r - refR) + Math.Abs(a - refA) > tolInt) continue;
 
-            Apply(next, cx, cy, op, true);
+            var docX = cx + offsetX;
+            var docY = cy + offsetY;
+            if ((uint)docX < (uint)_docW && (uint)docY < (uint)_docH)
+                Apply(next, docX, docY, op, true);
+
             queue.Enqueue((cx + 1, cy)); queue.Enqueue((cx - 1, cy));
             queue.Enqueue((cx, cy + 1)); queue.Enqueue((cx, cy - 1));
         }
 
-        _mask = next;
+        CommitMask(next);
         _geoType = SelectionGeometry.Polygon; // no simpler geo; render bounding box
         _geoPoly.Clear();
     }
@@ -182,11 +196,24 @@ public sealed class SelectionMask
             throw new InvalidOperationException("Call Resize() before selection operations.");
     }
 
-    private byte[] CreateFull()
+    private byte[] CreateBaseMask(SelectOp op)
     {
-        var m = new byte[_docW * _docH];
-        Array.Fill(m, (byte)255);
-        return m;
+        if (op != SelectOp.Replace && _mask != null)
+            return (byte[])_mask.Clone();
+
+        return new byte[_docW * _docH];
+    }
+
+    private void CommitMask(byte[] mask)
+    {
+        for (var i = 0; i < mask.Length; i++)
+        {
+            if (mask[i] == 0) continue;
+            _mask = mask;
+            return;
+        }
+
+        Clear();
     }
 
     private void Apply(byte[] mask, int x, int y, SelectOp op, bool inside)

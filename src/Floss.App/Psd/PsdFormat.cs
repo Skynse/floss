@@ -239,8 +239,8 @@ public static class PsdExporter
         var pixels = (byte*)frame.Address;
         var stride = frame.RowBytes;
 
-        // PSD composite: R, G, B channels planar
-        int[] channelBytes = [2, 1, 0]; // BGRA → R, G, B
+        // PSD composite: R, G, B, A channels planar. Header declares four channels.
+        int[] channelBytes = [2, 1, 0, 3]; // BGRA → R, G, B, A
         foreach (var ch in channelBytes)
         {
             for (int y = 0; y < height; y++)

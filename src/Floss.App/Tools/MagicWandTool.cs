@@ -24,6 +24,5 @@ public sealed class MagicWandTool : ITool
     public void PointerMove(ToolContext ctx, CanvasInputSample s) { }
     public void PointerUp(ToolContext ctx, CanvasInputSample s) { }
     public void Cancel(ToolContext ctx) { }
-    public void RenderOverlay(DrawingContext dc, ToolContext ctx, double zoom)
-        => ctx.Selection.RenderOverlay(dc, zoom);
+    public void RenderOverlay(DrawingContext dc, ToolContext ctx, double zoom) { }
 }

@@ -30,6 +30,9 @@ public sealed class PolylineToolOperation : IToolOperation
     public void AddPoint(CanvasInputSample sample)
     {
         _cursorPoint = Pt(sample);
+        if (_points.Count > 0 && DistanceSquared(_points[^1], _cursorPoint) < 0.25f)
+            return;
+
         _points.Add(_cursorPoint);
         SampleCount++;
         _context.InvalidateRender();
@@ -42,6 +45,11 @@ public sealed class PolylineToolOperation : IToolOperation
     }
 
     public void Commit(CanvasInputSample sample)
+    {
+        CommitCurrent();
+    }
+
+    public void CommitCurrent()
     {
         if (_points.Count >= 2)
             Apply();
@@ -82,9 +90,7 @@ public sealed class PolylineToolOperation : IToolOperation
     private void Apply()
     {
         var layer = _context.ActiveLayer;
-        if (layer == null || layer.IsLocked) return;
-
-        var beforeTiles = layer.Pixels.CaptureTiles(layer.Pixels.Bounds);
+        if (layer == null || !_context.Document.CanPaintActiveLayer) return;
 
         using var bmp = new SKBitmap(layer.Width, layer.Height, SKColorType.Bgra8888, SKAlphaType.Unpremul);
         using var canvas = new SKCanvas(bmp);
@@ -110,9 +116,13 @@ public sealed class PolylineToolOperation : IToolOperation
         if (_closePath) path.Close();
         canvas.DrawPath(path, paint);
 
-        for (int py = 0; py < layer.Height; py++)
+        var dirty = FindPaintedBounds(layer, bmp);
+        if (dirty.IsEmpty) return;
+
+        var beforeTiles = layer.Pixels.CaptureTiles(dirty);
+        for (int py = dirty.Y; py < dirty.Bottom; py++)
         {
-            for (int px = 0; px < layer.Width; px++)
+            for (int px = dirty.X; px < dirty.Right; px++)
             {
                 if (!_context.Selection.IsSelected(px + layer.OffsetX, py + layer.OffsetY)) continue;
                 var pix = bmp.GetPixel(px, py);
@@ -122,9 +132,37 @@ public sealed class PolylineToolOperation : IToolOperation
         }
 
         layer.MarkThumbnailDirty();
-        var dirty = new PixelRegion(layer.OffsetX, layer.OffsetY, layer.Width, layer.Height);
-        _context.CommitMutation(_context.ActiveLayerIndex, beforeTiles, dirty);
+        _context.CommitMutation(_context.ActiveLayerIndex, beforeTiles, dirty.Translate(layer.OffsetX, layer.OffsetY));
     }
 
     private static SKPoint Pt(CanvasInputSample s) => new((float)s.X, (float)s.Y);
+    private static float DistanceSquared(SKPoint a, SKPoint b)
+    {
+        var dx = a.X - b.X;
+        var dy = a.Y - b.Y;
+        return dx * dx + dy * dy;
+    }
+
+    private PixelRegion FindPaintedBounds(DrawingLayer layer, SKBitmap bmp)
+    {
+        var minX = layer.Width;
+        var minY = layer.Height;
+        var maxX = -1;
+        var maxY = -1;
+
+        for (var y = 0; y < layer.Height; y++)
+        {
+            for (var x = 0; x < layer.Width; x++)
+            {
+                if (!_context.Selection.IsSelected(x + layer.OffsetX, y + layer.OffsetY)) continue;
+                if (bmp.GetPixel(x, y).Alpha == 0) continue;
+                minX = Math.Min(minX, x);
+                minY = Math.Min(minY, y);
+                maxX = Math.Max(maxX, x);
+                maxY = Math.Max(maxY, y);
+            }
+        }
+
+        return maxX < minX ? PixelRegion.Empty : new PixelRegion(minX, minY, maxX - minX + 1, maxY - minY + 1);
+    }
 }

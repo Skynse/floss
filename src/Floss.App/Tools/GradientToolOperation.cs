@@ -35,7 +35,7 @@ public sealed class GradientToolOperation : DragToolOperation
     protected override void Apply()
     {
         var layer = Context.ActiveLayer;
-        if (layer == null || layer.IsLocked) return;
+        if (layer == null || !Context.Document.CanPaintActiveLayer) return;
 
         int w = layer.Width;
         int h = layer.Height;

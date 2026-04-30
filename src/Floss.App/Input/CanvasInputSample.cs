@@ -33,6 +33,8 @@ public readonly record struct CanvasInputSample(
     CanvasInputSource Source,
     CanvasInputPhase Phase)
 {
+    private const double PressureFloor = 0.02;
+
     public CanvasInputSample WithPosition(double x, double y, double pressure, long timeMicros)
     {
         return new CanvasInputSample(
@@ -62,6 +64,10 @@ public readonly record struct CanvasInputSample(
         if (pressure <= 0 && source == CanvasInputSource.Mouse && properties.IsLeftButtonPressed)
         {
             pressure = 1;
+        }
+        else if (source is CanvasInputSource.Pen or CanvasInputSource.Eraser or CanvasInputSource.Touch && pressure < PressureFloor)
+        {
+            pressure = 0;
         }
 
         var x = point.Position.X / Math.Max(surfaceSize.Width, 1) * canvasWidth;

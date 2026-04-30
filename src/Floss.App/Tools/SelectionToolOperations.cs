@@ -128,6 +128,9 @@ public sealed class PolylineSelectionOperation : SelectionToolOperation
     public void AddPoint(CanvasInputSample sample)
     {
         _cursor = Pt(sample);
+        if (_points.Count > 0 && DistanceSquared(_points[^1], _cursor) < 0.25f)
+            return;
+
         _points.Add(_cursor);
         SampleCount++;
         Context.InvalidateRender();
@@ -142,6 +145,11 @@ public sealed class PolylineSelectionOperation : SelectionToolOperation
     public override void Commit(CanvasInputSample sample)
     {
         _cursor = Pt(sample);
+        CommitCurrent();
+    }
+
+    public void CommitCurrent()
+    {
         if (_points.Count >= 3) Context.Selection.SetFromPolygon(_points, Op);
         else Context.Selection.Clear();
         _points.Clear();
@@ -165,6 +173,12 @@ public sealed class PolylineSelectionOperation : SelectionToolOperation
     }
 
     private static SKPoint Pt(CanvasInputSample s) => new((float)s.X, (float)s.Y);
+    private static float DistanceSquared(SKPoint a, SKPoint b)
+    {
+        var dx = a.X - b.X;
+        var dy = a.Y - b.Y;
+        return dx * dx + dy * dy;
+    }
 }
 
 file static class SelectionOverlayHelpers

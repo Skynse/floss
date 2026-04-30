@@ -25,7 +25,7 @@ public sealed class FillToolOperation : IToolOperation
     {
         SampleCount = 1;
         var layer = _context.ActiveLayer;
-        if (layer == null || layer.IsLocked) return;
+        if (layer == null || !_context.Document.CanPaintActiveLayer) return;
 
         int docX = (int)sample.X;
         int docY = (int)sample.Y;
@@ -102,10 +102,18 @@ public sealed class ColorSampleOperation : IToolOperation
     private void Sample(CanvasInputSample sample)
     {
         SampleCount++;
+        var docX = (int)sample.X;
+        var docY = (int)sample.Y;
+        if (_context.SampleDocumentColor(docX, docY) is { } sampled)
+        {
+            _context.OnColorSampled(sampled);
+            return;
+        }
+
         var layer = _context.ActiveLayer;
-        if (layer == null) return;
-        int x = (int)sample.X - layer.OffsetX;
-        int y = (int)sample.Y - layer.OffsetY;
+        if (layer == null || layer.IsGroup) return;
+        int x = docX - layer.OffsetX;
+        int y = docY - layer.OffsetY;
         if ((uint)x >= (uint)layer.Width || (uint)y >= (uint)layer.Height) return;
         layer.Pixels.GetPixel(x, y, out byte b, out byte g, out byte r, out byte a);
         if (a == 0) return;
@@ -136,7 +144,7 @@ public sealed class MagicWandOperation : IToolOperation
         if (layer == null) return;
         int x = (int)sample.X - layer.OffsetX;
         int y = (int)sample.Y - layer.OffsetY;
-        _context.Selection.SetFromFloodFill(layer.Pixels, x, y, _tolerance, _op);
+        _context.Selection.SetFromFloodFill(layer.Pixels, x, y, layer.OffsetX, layer.OffsetY, _tolerance, _op);
         SampleCount = 0;
         _context.InvalidateRender();
     }

@@ -27,11 +27,11 @@ public sealed class CanvasTool
 
     public void SetKind(ToolKind kind) => Kind = kind;
 
-    public void Begin(BrushPreset brush, CanvasInputSample sample)
+    public void Begin(BrushPreset brush, SelectionMask selection, CanvasInputSample sample)
     {
         if (!_document.CanPaintActiveLayer) return;
         _activeOperation?.Cancel();
-        _activeOperation = new FreehandStrokeOperation(_document, _brushEngine, brush, IsEraser(sample), sample);
+        _activeOperation = new FreehandStrokeOperation(_document, _brushEngine, brush, IsEraser(sample), selection, sample);
     }
 
     public void Update(BrushPreset brush, CanvasInputSample sample)

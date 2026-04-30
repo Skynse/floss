@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-floss">
+    <comment>Floss Document</comment>
+    <comment xml:lang="en">Floss Document</comment>
+    <acronym>FLOSS</acronym>
+    <expanded-acronym>Floss Document</expanded-acronym>
+    <glob pattern="*.floss"/>
+  </mime-type>
+</mime-info>

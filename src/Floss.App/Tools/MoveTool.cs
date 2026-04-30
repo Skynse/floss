@@ -7,6 +7,7 @@ namespace Floss.App.Tools;
 public sealed class MoveTool : ITool
 {
     private MoveToolOperation? _operation;
+    public bool HasPendingOperation => _operation != null;
 
     public void Activate(ToolContext ctx) { }
     public void Deactivate(ToolContext ctx) { }

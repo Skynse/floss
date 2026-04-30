@@ -11,6 +11,8 @@ public sealed class MoveToolOperation : IToolOperation
     private readonly int _layerIndex;
     private readonly int _origOffsetX;
     private readonly int _origOffsetY;
+    private int _currentOffsetX;
+    private int _currentOffsetY;
     private bool _didMove;
 
     public MoveToolOperation(ToolContext context, CanvasInputSample firstSample)
@@ -22,6 +24,8 @@ public sealed class MoveToolOperation : IToolOperation
         _startY = firstSample.Y;
         _origOffsetX = layer?.OffsetX ?? 0;
         _origOffsetY = layer?.OffsetY ?? 0;
+        _currentOffsetX = _origOffsetX;
+        _currentOffsetY = _origOffsetY;
         SampleCount = 1;
     }
 
@@ -36,14 +40,11 @@ public sealed class MoveToolOperation : IToolOperation
         int dy = (int)Math.Round(sample.Y - _startY);
         if (dx == 0 && dy == 0) return;
 
-        if (!_didMove)
-        {
-            _context.Document.BeginDocumentMutation();
-            _didMove = true;
-        }
-
-        layer.OffsetX = _origOffsetX + dx;
-        layer.OffsetY = _origOffsetY + dy;
+        _didMove = true;
+        _currentOffsetX = _origOffsetX + dx;
+        _currentOffsetY = _origOffsetY + dy;
+        layer.OffsetX = _currentOffsetX;
+        layer.OffsetY = _currentOffsetY;
         SampleCount++;
         _context.Document.NotifyChanged(null, _context.ActiveLayerIndex);
     }
@@ -51,6 +52,8 @@ public sealed class MoveToolOperation : IToolOperation
     public void Commit(CanvasInputSample sample)
     {
         Update(sample);
+        if (_didMove)
+            _context.Document.CommitLayerOffsetMutation(_layerIndex, _origOffsetX, _origOffsetY, _currentOffsetX, _currentOffsetY);
         SampleCount = 0;
     }
 

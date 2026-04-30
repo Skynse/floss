@@ -14,6 +14,7 @@ public sealed class ShapeTool : ITool
     public float StrokeWidth { get; set; } = 4f;
 
     private ShapeToolOperation? _operation;
+    public bool HasPendingOperation => _operation != null;
 
     public void Activate(ToolContext ctx) { }
     public void Deactivate(ToolContext ctx) { }

@@ -37,14 +37,12 @@ public sealed class ShapeToolOperation : DragToolOperation
     protected override void Apply()
     {
         var layer = Context.ActiveLayer;
-        if (layer == null || layer.IsLocked) return;
+        if (layer == null || !Context.Document.CanPaintActiveLayer) return;
 
         float lsx = (float)StartSample.X - layer.OffsetX;
         float lsy = (float)StartSample.Y - layer.OffsetY;
         float lex = (float)CurrentSample.X - layer.OffsetX;
         float ley = (float)CurrentSample.Y - layer.OffsetY;
-
-        var beforeTiles = layer.Pixels.CaptureTiles(layer.Pixels.Bounds);
 
         using var bmp = new SKBitmap(layer.Width, layer.Height, SKColorType.Bgra8888, SKAlphaType.Unpremul);
         using var canvas = new SKCanvas(bmp);
@@ -75,9 +73,13 @@ public sealed class ShapeToolOperation : DragToolOperation
                 break;
         }
 
-        for (int py = 0; py < layer.Height; py++)
+        var dirty = FindPaintedBounds(layer, bmp);
+        if (dirty.IsEmpty) return;
+
+        var beforeTiles = layer.Pixels.CaptureTiles(dirty);
+        for (int py = dirty.Y; py < dirty.Bottom; py++)
         {
-            for (int px = 0; px < layer.Width; px++)
+            for (int px = dirty.X; px < dirty.Right; px++)
             {
                 if (!Context.Selection.IsSelected(px + layer.OffsetX, py + layer.OffsetY)) continue;
                 var pix = bmp.GetPixel(px, py);
@@ -87,8 +89,7 @@ public sealed class ShapeToolOperation : DragToolOperation
         }
 
         layer.MarkThumbnailDirty();
-        var dirty = new PixelRegion(layer.OffsetX, layer.OffsetY, layer.Width, layer.Height);
-        Context.CommitMutation(Context.ActiveLayerIndex, beforeTiles, dirty);
+        Context.CommitMutation(Context.ActiveLayerIndex, beforeTiles, dirty.Translate(layer.OffsetX, layer.OffsetY));
     }
 
     private void DrawPreview(DrawingContext dc, Pen penW, Pen penK)
@@ -114,4 +115,27 @@ public sealed class ShapeToolOperation : DragToolOperation
     private static Rect MakeRect(CanvasInputSample a, CanvasInputSample b) => new(
         Math.Min(a.X, b.X), Math.Min(a.Y, b.Y),
         Math.Abs(b.X - a.X), Math.Abs(b.Y - a.Y));
+
+    private PixelRegion FindPaintedBounds(DrawingLayer layer, SKBitmap bmp)
+    {
+        var minX = layer.Width;
+        var minY = layer.Height;
+        var maxX = -1;
+        var maxY = -1;
+
+        for (var y = 0; y < layer.Height; y++)
+        {
+            for (var x = 0; x < layer.Width; x++)
+            {
+                if (!Context.Selection.IsSelected(x + layer.OffsetX, y + layer.OffsetY)) continue;
+                if (bmp.GetPixel(x, y).Alpha == 0) continue;
+                minX = Math.Min(minX, x);
+                minY = Math.Min(minY, y);
+                maxX = Math.Max(maxX, x);
+                maxY = Math.Max(maxY, y);
+            }
+        }
+
+        return maxX < minX ? PixelRegion.Empty : new PixelRegion(minX, minY, maxX - minX + 1, maxY - minY + 1);
+    }
 }

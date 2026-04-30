@@ -23,7 +23,7 @@ public sealed class BrushTool : ITool
     public void PointerDown(ToolContext ctx, CanvasInputSample s)
     {
         _inner.SetKind(IsEraser || s.Source == CanvasInputSource.Eraser ? ToolKind.Eraser : ToolKind.Brush);
-        _inner.Begin(ctx.Brush, s);
+        _inner.Begin(ctx.Brush, ctx.Selection, s);
     }
 
     public void PointerMove(ToolContext ctx, CanvasInputSample s) => _inner.Update(ctx.Brush, s);
@@ -35,4 +35,5 @@ public sealed class BrushTool : ITool
     public void RenderOverlay(DrawingContext dc, ToolContext ctx, double zoom) { }
 
     public int ActiveSampleCount => _inner.ActiveSampleCount;
+    public bool HasPendingOperation => ActiveSampleCount > 0;
 }

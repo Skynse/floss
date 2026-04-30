@@ -133,9 +133,11 @@ public sealed class DrawingDocument
 
     public void AppendLayerForImport(DrawingLayer layer) => _layers.Add(layer);
 
-    public void FinalizeImport()
+    public void FinalizeImport(int? activeLayerIndex = null)
     {
-        ActiveLayerIndex = _layers.Count > 0 ? 0 : -1;
+        ActiveLayerIndex = _layers.Count > 0
+            ? Math.Clamp(activeLayerIndex ?? 0, 0, _layers.Count - 1)
+            : -1;
         NotifyLayersChanged();
     }
 
@@ -299,6 +301,30 @@ public sealed class DrawingDocument
         _redo.Clear();
         ActiveLayer.Name = name;
         NotifyLayerMetadataChanged(null, ActiveLayerIndex);
+    }
+
+    public void CommitLayerOffsetMutation(int layerIndex, int oldOffsetX, int oldOffsetY, int newOffsetX, int newOffsetY)
+    {
+        if (layerIndex < 0 || layerIndex >= _layers.Count) return;
+        if (oldOffsetX == newOffsetX && oldOffsetY == newOffsetY) return;
+
+        var layer = _layers[layerIndex];
+        var currentOffsetX = layer.OffsetX;
+        var currentOffsetY = layer.OffsetY;
+        layer.OffsetX = oldOffsetX;
+        layer.OffsetY = oldOffsetY;
+        var oldRegion = LayerDirtyRegion(layerIndex);
+        layer.OffsetX = newOffsetX;
+        layer.OffsetY = newOffsetY;
+        var newRegion = LayerDirtyRegion(layerIndex);
+        var dirtyRegion = oldRegion.Union(newRegion);
+        layer.OffsetX = currentOffsetX;
+        layer.OffsetY = currentOffsetY;
+
+        _undo.Push(new LayerOffsetHistoryState(layerIndex, oldOffsetX, oldOffsetY, newOffsetX, newOffsetY, dirtyRegion));
+        _redo.Clear();
+        HistoryChanged?.Invoke(this, EventArgs.Empty);
+        NotifyLayerMetadataChanged(dirtyRegion, layerIndex);
     }
 
     public void MoveActiveLayer(int delta)
@@ -490,6 +516,27 @@ public sealed class DrawingDocument
             document._layers.Insert(ToIndex, layer);
             document.ActiveLayerIndex = ToIndex;
             document.NotifyLayersChanged();
+        }
+    }
+
+    private sealed record LayerOffsetHistoryState(
+        int LayerIndex,
+        int OldOffsetX,
+        int OldOffsetY,
+        int NewOffsetX,
+        int NewOffsetY,
+        PixelRegion DirtyRegion) : IHistoryState
+    {
+        public IHistoryState CaptureRedo(DrawingDocument document)
+            => new LayerOffsetHistoryState(LayerIndex, NewOffsetX, NewOffsetY, OldOffsetX, OldOffsetY, DirtyRegion);
+
+        public void Restore(DrawingDocument document)
+        {
+            if (LayerIndex < 0 || LayerIndex >= document._layers.Count) return;
+            var layer = document._layers[LayerIndex];
+            layer.OffsetX = OldOffsetX;
+            layer.OffsetY = OldOffsetY;
+            document.NotifyLayerMetadataChanged(DirtyRegion, LayerIndex);
         }
     }
 
