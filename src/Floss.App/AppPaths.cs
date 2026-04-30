@@ -22,6 +22,9 @@ public static class AppPaths
     public static string ShortcutsConfigPath { get; } =
         Path.Combine(AppDirectory, "shortcuts.json");
 
+    public static string BrushPaletteConfigPath { get; } =
+        Path.Combine(AppDirectory, "brush-palette.json");
+
     public static void EnsureDirectories()
     {
         Directory.CreateDirectory(AppDirectory);

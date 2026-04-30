@@ -83,14 +83,8 @@ public partial class MainWindow : Window
         Color.Parse("#2d0015"),
     ];
 
-    private readonly IReadOnlyList<(string Label, BrushKind? Kind)> _brushCategories =
-    [
-        ("Recent",   null),
-        ("Pencils",  BrushKind.Pencil),
-        ("Pens",     BrushKind.Ink),
-        ("Markers",  BrushKind.Marker),
-        ("Airbrush", BrushKind.Airbrush)
-    ];
+    private BrushPaletteConfig _brushPaletteConfig = new();
+    private string? _selectedBrushCategory;
 
     // ── Blend modes ───────────────────────────────────────────────────────────
     private static readonly string[] BlendModes =
@@ -191,7 +185,7 @@ public partial class MainWindow : Window
     private double _zoom = 1.0;
     private double _rotation;
     private int _swatchIndex;
-    private BrushKind? _selectedBrushKind;
+
     private BrushPreset? _activePreset;
     private BrushAsset? _activeBrushAsset;
     private BrushLibrary _brushLibrary = null!;
@@ -238,6 +232,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         _brushLibrary = new BrushLibrary(AppPaths.BrushesDirectory);
+        _brushPaletteConfig = BrushPaletteConfig.Load(AppPaths.BrushPaletteConfigPath);
         BuildUi();
         WireControls();
         RestoreFromConfig();
@@ -709,23 +704,54 @@ public partial class MainWindow : Window
     // ── Right panel ───────────────────────────────────────────────────────────
     private Control BuildRightPanel()
     {
-        var stack = new StackPanel();
-        stack.Children.Add(PanelSection("Color", BuildColorSection()));
-        stack.Children.Add(PanelSection("Brush", BuildBrushSection()));
-        stack.Children.Add(PanelSection("Tool Property", BuildToolPropertySection()));
-        stack.Children.Add(PanelSection("Layers", BuildLayersSection()));
+        var leftStack = new StackPanel();
+        leftStack.Children.Add(PanelSection("Brush", BuildBrushSection()));
+        leftStack.Children.Add(PanelSection("Tool Property", BuildToolPropertySection()));
+        leftStack.Children.Add(PanelSection("Layers", BuildLayersSection()));
+
+        var leftScroll = new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = leftStack
+        };
+
+        var rightStack = new StackPanel();
+        rightStack.Children.Add(PanelSection("Color", BuildColorSection()));
+
+        var rightScroll = new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = rightStack
+        };
+
+        var splitter = new GridSplitter
+        {
+            Width = 5,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
+            Background = new SolidColorBrush(Color.Parse(Stroke))
+        };
+
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
+        grid.ColumnDefinitions.Add(new ColumnDefinition(5, GridUnitType.Pixel));
+        grid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
+
+        Grid.SetColumn(leftScroll, 0);
+        Grid.SetColumn(splitter, 1);
+        Grid.SetColumn(rightScroll, 2);
+        grid.Children.Add(leftScroll);
+        grid.Children.Add(splitter);
+        grid.Children.Add(rightScroll);
 
         return new Border
         {
             Background = new SolidColorBrush(Color.Parse(Bg1)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0),
-            Child = new ScrollViewer
-            {
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                Content = stack
-            }
+            Child = grid
         };
     }
 
@@ -1495,12 +1521,12 @@ public partial class MainWindow : Window
     private void BuildBrushCategories()
     {
         _brushCategoryPanel.Children.Clear();
-        foreach (var cat in _brushCategories)
+        foreach (var cat in _brushPaletteConfig.Categories)
         {
-            var selected = cat.Kind == _selectedBrushKind;
+            var selected = cat == _selectedBrushCategory;
             var btn = new Button
             {
-                Content = cat.Label,
+                Content = cat,
                 HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
                 Padding = new Thickness(10, 6),
                 Height = 30,
@@ -1510,24 +1536,54 @@ public partial class MainWindow : Window
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(6),
                 FontSize = 11,
-                Tag = cat.Kind
+                Tag = cat
             };
             btn.Click += (_, _) =>
             {
-                _selectedBrushKind = btn.Tag is BrushKind k ? k : null;
+                _selectedBrushCategory = cat;
                 BuildBrushCategories();
                 BuildPresets();
             };
+            EnableCategoryDrop(btn, cat);
             _brushCategoryPanel.Children.Add(btn);
         }
+
+        // "New category" button / drop zone
+        var newCatBtn = new Button
+        {
+            Content = "+",
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            Padding = new Thickness(10, 6),
+            Height = 30,
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            FontSize = 11
+        };
+        newCatBtn.Click += (_, _) =>
+        {
+            var name = PromptForNewCategory();
+            if (!string.IsNullOrWhiteSpace(name) && !_brushPaletteConfig.Categories.Contains(name))
+            {
+                _brushPaletteConfig.Categories.Add(name);
+                _brushPaletteConfig.Save(AppPaths.BrushPaletteConfigPath);
+                _selectedBrushCategory = name;
+                BuildBrushCategories();
+                BuildPresets();
+            }
+        };
+        EnableNewCategoryDrop(newCatBtn);
+        _brushCategoryPanel.Children.Add(newCatBtn);
     }
 
     private void BuildPresets()
     {
         _presetPanel.Children.Clear();
-        var assets = _selectedBrushKind is null
+        var assets = _selectedBrushCategory == null || _selectedBrushCategory == "Recent"
             ? _brushAssets
-            : _brushAssets.Where(p => p.Preset.Kind == _selectedBrushKind).ToArray();
+            : _brushAssets.Where(p => _brushPaletteConfig.BrushCategory.GetValueOrDefault(p.Id) == _selectedBrushCategory).ToArray();
 
         foreach (var asset in assets)
         {
@@ -1588,8 +1644,115 @@ public partial class MainWindow : Window
                 Tag = asset
             };
             row.Click += (_, _) => ApplyBrushAsset(asset);
+            EnablePresetDrag(row, asset);
             _presetPanel.Children.Add(row);
         }
+    }
+
+    // ── Drag-and-drop helpers ────────────────────────────────────────────────
+
+    private static readonly DataFormat<string> BrushIdFormat = DataFormat.CreateInProcessFormat<string>("x-floss-brush");
+
+    private static void EnablePresetDrag(Control source, BrushAsset asset)
+    {
+        DragDrop.SetAllowDrop(source, true);
+        source.AddHandler(DragDrop.DropEvent, (_, e) =>
+        {
+            if (e.DataTransfer.Contains(BrushIdFormat))
+                e.Handled = true;
+        });
+        source.AddHandler(DragDrop.DragOverEvent, (_, e) =>
+        {
+            if (e.DataTransfer.Contains(BrushIdFormat))
+                e.DragEffects = DragDropEffects.Move;
+        });
+
+        source.PointerPressed += (_, e) =>
+        {
+            if (e.GetCurrentPoint(source).Properties.IsLeftButtonPressed)
+            {
+                var item = new DataTransferItem();
+                item.Set(BrushIdFormat, asset.Id);
+                var data = new DataTransfer();
+                data.Add(item);
+                _ = DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
+            }
+        };
+    }
+
+    private void EnableCategoryDrop(Control target, string category)
+    {
+        DragDrop.SetAllowDrop(target, true);
+        target.AddHandler(DragDrop.DragOverEvent, (_, e) =>
+        {
+            if (e.DataTransfer.Contains(BrushIdFormat))
+            {
+                e.DragEffects = DragDropEffects.Move;
+                e.Handled = true;
+            }
+        });
+        target.AddHandler(DragDrop.DropEvent, (_, e) =>
+        {
+            if (!e.DataTransfer.Contains(BrushIdFormat)) return;
+            var brushId = e.DataTransfer.TryGetValue<string>(BrushIdFormat);
+            if (string.IsNullOrWhiteSpace(brushId)) return;
+
+            _brushPaletteConfig.BrushCategory[brushId] = category;
+            _brushPaletteConfig.Save(AppPaths.BrushPaletteConfigPath);
+            BuildPresets();
+            e.Handled = true;
+        });
+    }
+
+    private void EnableNewCategoryDrop(Control target)
+    {
+        DragDrop.SetAllowDrop(target, true);
+        target.AddHandler(DragDrop.DragOverEvent, (_, e) =>
+        {
+            if (e.DataTransfer.Contains(BrushIdFormat))
+            {
+                e.DragEffects = DragDropEffects.Move;
+                e.Handled = true;
+            }
+        });
+        target.AddHandler(DragDrop.DropEvent, (_, e) =>
+        {
+            if (!e.DataTransfer.Contains(BrushIdFormat)) return;
+            var brushId = e.DataTransfer.TryGetValue<string>(BrushIdFormat);
+            if (string.IsNullOrWhiteSpace(brushId)) return;
+
+            var name = PromptForNewCategory();
+            if (!string.IsNullOrWhiteSpace(name) && !_brushPaletteConfig.Categories.Contains(name))
+            {
+                _brushPaletteConfig.Categories.Add(name);
+                _brushPaletteConfig.BrushCategory[brushId] = name;
+                _brushPaletteConfig.Save(AppPaths.BrushPaletteConfigPath);
+                _selectedBrushCategory = name;
+                BuildBrushCategories();
+                BuildPresets();
+            }
+            e.Handled = true;
+        });
+    }
+
+    private string? PromptForNewCategory()
+    {
+        var dialog = new Window
+        {
+            Title = "New Category",
+            Width = 280,
+            Height = 140,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = new SolidColorBrush(Color.Parse(Bg0))
+        };
+        var tb = new TextBox { Margin = new Thickness(12), PlaceholderText = "Category name" };
+        var ok = new Button { Content = "Create", Margin = new Thickness(12, 0, 12, 12) };
+        var result = (string?)null;
+        ok.Click += (_, _) => { result = tb.Text; dialog.Close(); };
+        tb.KeyDown += (_, e) => { if (e.Key == Key.Enter) { result = tb.Text; dialog.Close(); } };
+        dialog.Content = new StackPanel { Children = { tb, ok } };
+        dialog.ShowDialog(this);
+        return result;
     }
 
     private static string KindTag(BrushKind kind) => kind switch
@@ -1605,6 +1768,8 @@ public partial class MainWindow : Window
     private void LoadBrushAssets()
     {
         _brushAssets = _brushLibrary.Load();
+        _brushPaletteConfig.SyncWithAssets(_brushAssets);
+        _brushPaletteConfig.Save(AppPaths.BrushPaletteConfigPath);
         BuildPresets();
     }
 
