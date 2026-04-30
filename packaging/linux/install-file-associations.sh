@@ -35,8 +35,10 @@ fi
 
 if command -v xdg-mime >/dev/null 2>&1; then
   xdg-mime default floss.desktop application/x-floss
+  xdg-mime default floss.desktop application/x-kra
 fi
 
 echo "Registered .floss as application/x-floss"
+echo "Registered .kra as application/x-kra"
 echo "Desktop file: $desktop_file"
 echo "Executable: $app_exec"

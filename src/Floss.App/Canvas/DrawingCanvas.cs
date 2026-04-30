@@ -261,6 +261,15 @@ public sealed class DrawingCanvas : Control
                 context.DrawEllipse(CursorOuterBrush, null, pos, r, r);
                 context.DrawEllipse(CursorInnerBrush, null, pos, Math.Max(0.5 / CanvasZoom, r * 0.45), Math.Max(0.5 / CanvasZoom, r * 0.45));
             }
+
+            if (_toolController.ActiveTool is EyedropperTool)
+            {
+                var swatchR = 10.0 / CanvasZoom;
+                var swatchPos = new Point(pos.X + swatchR * 1.6, pos.Y - swatchR * 1.6);
+                var colorBrush = new SolidColorBrush(_paintColor);
+                context.DrawEllipse(colorBrush, new Pen(CursorOuterBrush, t * 2), swatchPos, swatchR, swatchR);
+                context.DrawEllipse(null, new Pen(CursorInnerBrush, t), swatchPos, swatchR, swatchR);
+            }
         }
     }
 

@@ -15,6 +15,7 @@ using Floss.App.Document;
 using Floss.App.FlossFiles;
 using Floss.App.ImageFiles;
 using Floss.App.Input;
+using Floss.App.Kra;
 using Floss.App.Psd;
 using Floss.App.Tools;
 
@@ -191,17 +192,18 @@ public partial class MainWindow : Window
     private BrushLibrary _brushLibrary = null!;
     private IReadOnlyList<BrushAsset> _brushAssets = [];
     private readonly Dictionary<int, LayerRowRefs> _layerRows = new();
+    private string? _currentFlossPath;
 
     // ── Tool instances ────────────────────────────────────────────────────────
-    private readonly SelectTool    _selectTool    = new();
+    private readonly SelectTool _selectTool = new();
     private readonly MagicWandTool _magicWandTool = new();
-    private readonly FillTool      _fillTool      = new();
+    private readonly FillTool _fillTool = new();
     private readonly EyedropperTool _eyedropperTool = new();
-    private readonly MoveTool      _moveTool      = new();
-    private readonly GradientTool  _gradientTool  = new();
-    private readonly ShapeTool     _shapeTool     = new();
-    private readonly PolylineTool  _polylineTool  = new();
-    private readonly List<Button>  _toolButtons   = [];
+    private readonly MoveTool _moveTool = new();
+    private readonly GradientTool _gradientTool = new();
+    private readonly ShapeTool _shapeTool = new();
+    private readonly PolylineTool _polylineTool = new();
+    private readonly List<Button> _toolButtons = [];
 
     private enum GestureMode { None, Pan, Zoom, Rotate, BrushSize }
     private GestureMode _activeGesture;
@@ -218,6 +220,8 @@ public partial class MainWindow : Window
 
     private bool _syncingLayerUi;
     private bool _syncingBrushUi;
+    private ITool? _preAltTool;
+    private Button? _preAltToolButton;
 
     // ── Constructor ───────────────────────────────────────────────────────────
     public MainWindow()
@@ -352,7 +356,8 @@ public partial class MainWindow : Window
             ItemsSource = new object[]
             {
                 MenuAction("_Open...", async () => await OpenDocumentAsync()),
-                MenuAction("_Save Floss...", async () => await SaveFlossAsync()),
+                MenuAction("_Save Floss", async () => await SaveFlossAsync()),
+                MenuAction("_Save Floss As...", async () => await SaveFlossAsAsync()),
                 MenuAction("_Save PSD...", async () => await SavePsdAsync()),
                 MenuAction("_Export Image...", async () => await ExportImageAsync()),
                 new Separator(),
@@ -548,39 +553,39 @@ public partial class MainWindow : Window
         ToolTip.SetTip(colorBtn, "Cycle color  (X)");
         colorBtn.Click += (_, _) => CycleColor();
 
-        _brushToolButton   = RailBtn(Icons.BrushOutline,       "Brush  (B)");
-        _eraserToolButton  = RailBtn(Icons.Eraser,             "Eraser  (E)");
-        _moveToolButton    = RailBtn(Icons.ArrowAll,           "Move layer  (V)");
-        _selectToolButton  = RailBtn(Icons.SelectionRect,      "Select  (S). Click again: rect/lasso/polyline");
-        _wandToolButton    = RailBtn(Icons.AutoFix,            "Magic Wand  (W)");
-        _fillToolButton    = RailBtn(Icons.FormatColorFill,    "Fill  (G)");
-        _eyedropToolButton = RailBtn(Icons.Eyedropper,         "Eyedropper  (I)");
-        _gradientToolButton= RailBtn(Icons.GradientHorizontal, "Gradient. Click again: linear/radial");
-        _shapeToolButton   = RailBtn(Icons.RectangleOutline,   "Shape. Click again: rectangle/ellipse/line");
-        _polylineToolButton= RailBtn(Icons.VectorPolyline,     "Polyline. Click again: open/closed");
+        _brushToolButton = RailBtn(Icons.BrushOutline, "Brush  (B)");
+        _eraserToolButton = RailBtn(Icons.Eraser, "Eraser  (E)");
+        _moveToolButton = RailBtn(Icons.ArrowAll, "Move layer  (V)");
+        _selectToolButton = RailBtn(Icons.SelectionRect, "Select  (S). Click again: rect/lasso/polyline");
+        _wandToolButton = RailBtn(Icons.AutoFix, "Magic Wand  (W)");
+        _fillToolButton = RailBtn(Icons.FormatColorFill, "Fill  (G)");
+        _eyedropToolButton = RailBtn(Icons.Eyedropper, "Eyedropper  (I)");
+        _gradientToolButton = RailBtn(Icons.GradientHorizontal, "Gradient. Click again: linear/radial");
+        _shapeToolButton = RailBtn(Icons.RectangleOutline, "Shape. Click again: rectangle/ellipse/line");
+        _polylineToolButton = RailBtn(Icons.VectorPolyline, "Polyline. Click again: open/closed");
 
-        _brushToolButton.Click   += (_, _) => ActivateTool(_canvas.BrushTool,  _brushToolButton);
-        _eraserToolButton.Click  += (_, _) => ActivateTool(_canvas.EraserTool, _eraserToolButton);
-        _moveToolButton.Click    += (_, _) => ActivateTool(_moveTool,           _moveToolButton);
-        _selectToolButton.Click  += (_, _) =>
+        _brushToolButton.Click += (_, _) => ActivateTool(_canvas.BrushTool, _brushToolButton);
+        _eraserToolButton.Click += (_, _) => ActivateTool(_canvas.EraserTool, _eraserToolButton);
+        _moveToolButton.Click += (_, _) => ActivateTool(_moveTool, _moveToolButton);
+        _selectToolButton.Click += (_, _) =>
         {
             if (ReferenceEquals(_canvas.ActiveTool, _selectTool)) CycleSelectMode();
             else ActivateTool(_selectTool, _selectToolButton);
         };
-        _wandToolButton.Click    += (_, _) => ActivateTool(_magicWandTool,      _wandToolButton);
-        _fillToolButton.Click    += (_, _) => ActivateTool(_fillTool,           _fillToolButton);
-        _eyedropToolButton.Click += (_, _) => ActivateTool(_eyedropperTool,     _eyedropToolButton);
-        _gradientToolButton.Click+= (_, _) =>
+        _wandToolButton.Click += (_, _) => ActivateTool(_magicWandTool, _wandToolButton);
+        _fillToolButton.Click += (_, _) => ActivateTool(_fillTool, _fillToolButton);
+        _eyedropToolButton.Click += (_, _) => ActivateTool(_eyedropperTool, _eyedropToolButton);
+        _gradientToolButton.Click += (_, _) =>
         {
             if (ReferenceEquals(_canvas.ActiveTool, _gradientTool)) CycleGradientMode();
             else ActivateTool(_gradientTool, _gradientToolButton);
         };
-        _shapeToolButton.Click   += (_, _) =>
+        _shapeToolButton.Click += (_, _) =>
         {
             if (ReferenceEquals(_canvas.ActiveTool, _shapeTool)) CycleShapeMode();
             else ActivateTool(_shapeTool, _shapeToolButton);
         };
-        _polylineToolButton.Click+= (_, _) =>
+        _polylineToolButton.Click += (_, _) =>
         {
             if (ReferenceEquals(_canvas.ActiveTool, _polylineTool)) TogglePolylineClosePath();
             else ActivateTool(_polylineTool, _polylineToolButton);
@@ -969,9 +974,9 @@ public partial class MainWindow : Window
 
     private static void SetToggleActive(Button btn, bool active)
     {
-        btn.Background  = new SolidColorBrush(Color.Parse(active ? AccentSoft : "Transparent"));
+        btn.Background = new SolidColorBrush(Color.Parse(active ? AccentSoft : "Transparent"));
         btn.BorderBrush = new SolidColorBrush(Color.Parse(active ? Accent : "Transparent"));
-        btn.Foreground  = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted));
+        btn.Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted));
     }
 
     private static Button SmBtn(string glyph, string tip)
@@ -1087,7 +1092,7 @@ public partial class MainWindow : Window
         _canvas.HistoryChanged += (_, _) => UpdateStatus();
         _canvas.LayersChanged += (_, _) => { BuildLayerList(); UpdateStatus(); };
         _canvas.LayerMetadataChanged += (_, e) => { UpdateLayerRow(e.LayerIndex); UpdateStatus(); };
-        _canvas.ColorSampled += (_, c) => SetColor(c, syncPicker: true);
+        _canvas.ColorSampled += (_, c) => SetColor(c, syncPicker: true, switchToBrush: false);
 
         SliderChanged(_sizeSlider, v => UpdateCurrentBrush(p => p with { Size = v }));
         SliderChanged(_opacitySlider, v => UpdateCurrentBrush(p => p with { Opacity = v }));
@@ -1115,7 +1120,7 @@ public partial class MainWindow : Window
         var (r, g, b) = HsvToRgb(h, s, v);
         var color = Color.FromRgb((byte)(r * 255), (byte)(g * 255), (byte)(b * 255));
         _hexInput.Text = $"#{color.R:X2}{color.G:X2}{color.B:X2}";
-        SetColor(color, syncPicker: false);
+        SetColor(color, syncPicker: false, switchToBrush: true);
     }
 
     private void SyncPickerFromColor(Color color)
@@ -1129,22 +1134,22 @@ public partial class MainWindow : Window
     {
         hex = hex.Trim().TrimStart('#');
         if (hex.Length == 6 && uint.TryParse(hex, NumberStyles.HexNumber, null, out var rgb))
-            SetColor(Color.FromRgb((byte)(rgb >> 16), (byte)((rgb >> 8) & 0xFF), (byte)(rgb & 0xFF)));
+            SetColor(Color.FromRgb((byte)(rgb >> 16), (byte)((rgb >> 8) & 0xFF), (byte)(rgb & 0xFF)), switchToBrush: true);
     }
 
     // ── Color application ─────────────────────────────────────────────────────
-    private void SetColor(Color color, bool syncPicker = true)
+    private void SetColor(Color color, bool syncPicker = true, bool switchToBrush = false)
     {
         _colorWell.Background = new SolidColorBrush(color);
         _canvas.SetPaintColor(color);
-        SetTool("brush");
+        if (switchToBrush) SetTool("brush");
         if (syncPicker) SyncPickerFromColor(color);
     }
 
     private void CycleColor()
     {
         _swatchIndex = (_swatchIndex + 1) % _swatches.Length;
-        SetColor(_swatches[_swatchIndex]);
+        SetColor(_swatches[_swatchIndex], switchToBrush: true);
     }
 
     // ── Swatch panel ──────────────────────────────────────────────────────────
@@ -1170,7 +1175,7 @@ public partial class MainWindow : Window
                 Padding = new Thickness(0)
             };
             ToolTip.SetTip(btn, $"#{color.R:X2}{color.G:X2}{color.B:X2}");
-            btn.Click += (_, _) => { _swatchIndex = idx; SetColor(color); };
+            btn.Click += (_, _) => { _swatchIndex = idx; SetColor(color, switchToBrush: true); };
             _swatchPanel.Children.Add(btn);
         }
     }
@@ -1436,25 +1441,28 @@ public partial class MainWindow : Window
     }
 
     // ── Tool selection ────────────────────────────────────────────────────────
+    private Button? _activeToolButton;
+
     private void ActivateTool(ITool tool, Button button)
     {
         _canvas.SetActiveTool(tool);
+        _activeToolButton = button;
         foreach (var b in _toolButtons) SetRailActive(b, b == button);
         _footerStatusText.Text = ToolDisplayName(tool);
     }
 
     private string ToolDisplayName(ITool tool) => tool switch
     {
-        BrushTool bt  => bt.IsEraser ? "Eraser" : _canvas.Brush.Name,
-        MoveTool      => "Move",
-        SelectTool    => $"Select: {_selectTool.Mode}",
+        BrushTool bt => bt.IsEraser ? "Eraser" : _canvas.Brush.Name,
+        MoveTool => "Move",
+        SelectTool => $"Select: {_selectTool.Mode}",
         MagicWandTool => "Magic Wand",
-        FillTool      => "Fill",
-        EyedropperTool=> "Eyedropper",
-        GradientTool  => $"Gradient: {_gradientTool.GradientType}",
-        ShapeTool     => $"Shape: {_shapeTool.Kind}",
-        PolylineTool  => _polylineTool.ClosePath ? "Polyline: Closed" : "Polyline: Open",
-        _             => "Tool"
+        FillTool => "Fill",
+        EyedropperTool => "Eyedropper",
+        GradientTool => $"Gradient: {_gradientTool.GradientType}",
+        ShapeTool => $"Shape: {_shapeTool.Kind}",
+        PolylineTool => _polylineTool.ClosePath ? "Polyline: Closed" : "Polyline: Open",
+        _ => "Tool"
     };
 
     private void CycleSelectMode()
@@ -1498,7 +1506,7 @@ public partial class MainWindow : Window
         var (itool, btn) = tool switch
         {
             "eraser" => ((ITool)_canvas.EraserTool, _eraserToolButton),
-            _        => (_canvas.BrushTool, _brushToolButton)
+            _ => (_canvas.BrushTool, _brushToolButton)
         };
         ActivateTool(itool, btn);
     }
@@ -1981,6 +1989,16 @@ public partial class MainWindow : Window
         else if (key == Key.W && mods == KeyModifiers.None) { ActivateTool(_magicWandTool, _wandToolButton); e.Handled = true; }
         else if (key == Key.G && mods == KeyModifiers.None) { ActivateTool(_fillTool, _fillToolButton); e.Handled = true; }
         else if (key == Key.I && mods == KeyModifiers.None) { ActivateTool(_eyedropperTool, _eyedropToolButton); e.Handled = true; }
+        else if (key == Key.LeftAlt || key == Key.RightAlt)
+        {
+            if (_preAltTool == null && _canvas.ActiveTool != _eyedropperTool)
+            {
+                _preAltTool = _canvas.ActiveTool;
+                _preAltToolButton = _activeToolButton ?? _brushToolButton;
+                ActivateTool(_eyedropperTool, _eyedropToolButton);
+            }
+            e.Handled = true;
+        }
         else if (key == Key.Escape)
         { _canvas.CancelActiveTool(); e.Handled = true; }
         else if ((key == Key.Return || key == Key.Enter) && _canvas.ActiveTool is SelectTool or PolylineTool)
@@ -2036,6 +2054,14 @@ public partial class MainWindow : Window
             _canvas.UnlockCursorPreview();
             _canvas.PaintInputSuspended = false;
             Cursor = Cursor.Default;
+            e.Handled = true;
+        }
+
+        if ((e.Key == Key.LeftAlt || e.Key == Key.RightAlt) && _preAltTool != null)
+        {
+            ActivateTool(_preAltTool, _preAltToolButton ?? _brushToolButton);
+            _preAltTool = null;
+            _preAltToolButton = null;
             e.Handled = true;
         }
     }
@@ -2099,7 +2125,12 @@ public partial class MainWindow : Window
     // ── File I/O ──────────────────────────────────────────────────────────────
     private static readonly FilePickerFileType DocumentFileType = new("Supported Documents")
     {
-        Patterns = ["*.floss", "*.psd", "*.png", "*.jpg", "*.jpeg", "*.jpe", "*.webp", "*.bmp", "*.dib", "*.gif", "*.tif", "*.tiff", "*.ico", "*.wbmp"]
+        Patterns = ["*.floss", "*.psd", "*.kra", "*.png", "*.jpg", "*.jpeg", "*.jpe", "*.webp", "*.bmp", "*.dib", "*.gif", "*.tif", "*.tiff", "*.ico", "*.wbmp"]
+    };
+
+    private static readonly FilePickerFileType KraFileType = new("Krita Document")
+    {
+        Patterns = ["*.kra"]
     };
 
     private static readonly FilePickerFileType FlossFileType = new("Floss Document")
@@ -2123,7 +2154,7 @@ public partial class MainWindow : Window
         {
             Title = "Open",
             AllowMultiple = false,
-            FileTypeFilter = [DocumentFileType, FlossFileType, PsdFileType, RasterImageFileType]
+            FileTypeFilter = [DocumentFileType, FlossFileType, PsdFileType, KraFileType, RasterImageFileType]
         });
         if (files.Count == 0) return;
 
@@ -2165,12 +2196,14 @@ public partial class MainWindow : Window
     private static DrawingDocument LoadDocumentFromStream(Stream stream, string path)
         => IsFlossPath(path) ? FlossFileFormat.Load(stream)
             : IsPsdPath(path) ? PsdImporter.Load(stream)
+            : IsKraPath(path) ? KraImporter.Load(stream)
             : ImageFileImporter.Load(stream, path);
 
     private void ApplyOpenedDocument(DrawingDocument imported, string path)
     {
         _canvas.Document.ReplaceWith(imported);
         App.Config.AddRecentFile(path);
+        if (IsFlossPath(path)) _currentFlossPath = path;
         SyncCanvasFrameToDocument(fitToViewport: true);
         BuildLayerList();
         UpdateStatus();
@@ -2179,6 +2212,26 @@ public partial class MainWindow : Window
     }
 
     private async System.Threading.Tasks.Task SaveFlossAsync()
+    {
+        if (_currentFlossPath != null)
+        {
+            try
+            {
+                await using var stream = File.Open(_currentFlossPath, FileMode.Create, FileAccess.Write);
+                FlossFileFormat.Save(stream, _canvas.Document);
+                _footerStatusText.Text = $"Saved {Path.GetFileName(_currentFlossPath)}";
+            }
+            catch (Exception ex)
+            {
+                _footerStatusText.Text = $"Save error: {ex.Message}";
+            }
+            return;
+        }
+
+        await SaveFlossAsAsync();
+    }
+
+    private async System.Threading.Tasks.Task SaveFlossAsAsync()
     {
         var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
@@ -2192,6 +2245,7 @@ public partial class MainWindow : Window
         {
             await using var stream = await file.OpenWriteAsync();
             FlossFileFormat.Save(stream, _canvas.Document);
+            _currentFlossPath = file.Path.LocalPath;
             App.Config.AddRecentFile(file.Path.LocalPath);
             _footerStatusText.Text = $"Saved {Path.GetFileName(file.Path.LocalPath)}";
         }
@@ -2257,6 +2311,9 @@ public partial class MainWindow : Window
 
     private static bool IsPsdPath(string path)
         => string.Equals(Path.GetExtension(path), ".psd", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsKraPath(string path)
+        => string.Equals(Path.GetExtension(path), ".kra", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsFlossPath(string path)
         => string.Equals(Path.GetExtension(path), FlossFileFormat.Extension, StringComparison.OrdinalIgnoreCase);
