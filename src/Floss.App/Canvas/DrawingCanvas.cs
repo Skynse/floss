@@ -20,6 +20,11 @@ public sealed class DrawingCanvas : Control
     private BrushPreset _brush = BrushPreset.Defaults[0];
     private Color _paintColor = Color.Parse("#111111");
     private long _activePointerId = -1;
+    private Point _pointerPos;
+    private bool _isPointerOver;
+
+    private static readonly IBrush CursorOuterBrush = new SolidColorBrush(Color.FromArgb(160, 0, 0, 0));
+    private static readonly IBrush CursorInnerBrush = new SolidColorBrush(Colors.White);
 
     public DrawingCanvas()
     {
@@ -63,6 +68,7 @@ public sealed class DrawingCanvas : Control
 
     public double CanvasRotation { get; set; }
     public bool PaintInputSuspended { get; set; }
+    public double CanvasZoom { get; set; } = 1.0;
 
     public void SetBrush(BrushPreset preset)
     {
@@ -107,6 +113,8 @@ public sealed class DrawingCanvas : Control
     public void ToggleLayerLock(int index) => _document.ToggleLayerLock(index);
     public void MoveActiveLayer(int delta) => _document.MoveActiveLayer(delta);
     public void SetActiveLayerOpacity(double opacity) => _document.SetActiveLayerOpacity(opacity);
+    public void SetActiveLayerBlendMode(string blendMode) => _document.SetActiveLayerBlendMode(blendMode);
+    public void SetActiveLayerName(string name) => _document.SetActiveLayerName(name);
 
     public override void Render(DrawingContext context)
     {
@@ -120,6 +128,14 @@ public sealed class DrawingCanvas : Control
         }))
         {
             context.DrawImage(_compositor.Bitmap, target);
+        }
+
+        if (_isPointerOver)
+        {
+            var r = _brush.Size * 0.5;
+            var t = Math.Max(0.5, 1.5 / CanvasZoom);
+            context.DrawEllipse(null, new Pen(CursorOuterBrush, t * 3), _pointerPos, r, r);
+            context.DrawEllipse(null, new Pen(CursorInnerBrush, t),     _pointerPos, r, r);
         }
     }
 
@@ -156,9 +172,29 @@ public sealed class DrawingCanvas : Control
         e.Handled = true;
     }
 
+    protected override void OnPointerEntered(PointerEventArgs e)
+    {
+        base.OnPointerEntered(e);
+        _isPointerOver = true;
+        Cursor = new Cursor(StandardCursorType.None);
+        _pointerPos = e.GetCurrentPoint(this).Position;
+        InvalidateVisual();
+    }
+
+    protected override void OnPointerExited(PointerEventArgs e)
+    {
+        base.OnPointerExited(e);
+        _isPointerOver = false;
+        Cursor = Cursor.Default;
+        InvalidateVisual();
+    }
+
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
+        var point = e.GetCurrentPoint(this);
+        _pointerPos = point.Position;
+
         if (PaintInputSuspended)
         {
             if (_activePointerId >= 0)
@@ -167,29 +203,27 @@ public sealed class DrawingCanvas : Control
                 _tool.Cancel();
                 e.Pointer.Capture(null);
             }
+            InvalidateVisual();
             return;
         }
 
-        var point = e.GetCurrentPoint(this);
-        if (point.Pointer.Id != _activePointerId)
+        if (point.Pointer.Id == _activePointerId && IsPaintInput(point))
         {
-            return;
+            _tool.Update(
+                _brush,
+                CanvasInputSample.FromPointerPoint(
+                    point,
+                    Bounds.Size,
+                    _document.Width,
+                    _document.Height,
+                    CanvasInputPhase.Move,
+                    CanvasRotation));
+            e.Handled = true;
         }
-        if (!IsPaintInput(point))
+        else
         {
-            return;
+            InvalidateVisual();
         }
-
-        _tool.Update(
-            _brush,
-            CanvasInputSample.FromPointerPoint(
-                point,
-                Bounds.Size,
-                _document.Width,
-                _document.Height,
-                CanvasInputPhase.Move,
-                CanvasRotation));
-        e.Handled = true;
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)

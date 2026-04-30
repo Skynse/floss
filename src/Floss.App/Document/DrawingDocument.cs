@@ -220,6 +220,33 @@ public sealed class DrawingDocument
         NotifyLayerMetadataChanged(LayerDirtyRegion(ActiveLayerIndex), ActiveLayerIndex);
     }
 
+    public void SetActiveLayerBlendMode(string blendMode)
+    {
+        if (ActiveLayer.BlendMode == blendMode) return;
+        var oldMode = ActiveLayer.BlendMode;
+        var dirtyRegion = LayerDirtyRegion(ActiveLayerIndex);
+        _undo.Push(new LayerPropertyHistoryState<string>(
+            ActiveLayerIndex, oldMode, blendMode,
+            (layer, value) => layer.BlendMode = value,
+            true, dirtyRegion));
+        _redo.Clear();
+        ActiveLayer.BlendMode = blendMode;
+        NotifyLayerMetadataChanged(dirtyRegion, ActiveLayerIndex);
+    }
+
+    public void SetActiveLayerName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name) || ActiveLayer.Name == name) return;
+        var oldName = ActiveLayer.Name;
+        _undo.Push(new LayerPropertyHistoryState<string>(
+            ActiveLayerIndex, oldName, name,
+            (layer, value) => layer.Name = value,
+            false, PixelRegion.Empty));
+        _redo.Clear();
+        ActiveLayer.Name = name;
+        NotifyLayerMetadataChanged(null, ActiveLayerIndex);
+    }
+
     public void MoveActiveLayer(int delta)
     {
         var from = ActiveLayerIndex;

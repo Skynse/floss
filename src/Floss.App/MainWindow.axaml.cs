@@ -30,12 +30,49 @@ public partial class MainWindow : Window
     private const string AccentSoft = "#22355f";
 
     // ── Palette ───────────────────────────────────────────────────────────────
-    private readonly Color[] _swatches =
+    // 10-column × 8-row palette: grays | red | orange | yellow | lime | green | teal | blue | purple | pink
+    private static readonly Color[] _swatches =
     [
-        Color.Parse("#111111"), Color.Parse("#ffffff"), Color.Parse("#e53935"),
-        Color.Parse("#ff8f00"), Color.Parse("#ffeb3b"), Color.Parse("#43a047"),
-        Color.Parse("#00acc1"), Color.Parse("#1e88e5"), Color.Parse("#5e35b1"),
-        Color.Parse("#d81b60"), Color.Parse("#795548"), Color.Parse("#78909c")
+        // row 0 – near-white / pastels
+        Color.Parse("#ffffff"), Color.Parse("#ffe6e6"), Color.Parse("#fff0e6"),
+        Color.Parse("#ffffe6"), Color.Parse("#f0ffe6"), Color.Parse("#e6ffe6"),
+        Color.Parse("#e6fff0"), Color.Parse("#e6f0ff"), Color.Parse("#eee6ff"),
+        Color.Parse("#ffe6f8"),
+        // row 1 – light
+        Color.Parse("#d4d4d4"), Color.Parse("#ffb3b3"), Color.Parse("#ffd0a0"),
+        Color.Parse("#ffff99"), Color.Parse("#ccf099"), Color.Parse("#99ee99"),
+        Color.Parse("#99eecc"), Color.Parse("#99ccff"), Color.Parse("#c0aeff"),
+        Color.Parse("#ffaadd"),
+        // row 2 – medium-light
+        Color.Parse("#a0a0a0"), Color.Parse("#ff6666"), Color.Parse("#ffa040"),
+        Color.Parse("#ffee44"), Color.Parse("#aadd33"), Color.Parse("#44cc55"),
+        Color.Parse("#33ccaa"), Color.Parse("#4499ff"), Color.Parse("#9966ff"),
+        Color.Parse("#ff55bb"),
+        // row 3 – medium
+        Color.Parse("#747474"), Color.Parse("#ff2222"), Color.Parse("#ff7700"),
+        Color.Parse("#ffdd00"), Color.Parse("#88cc00"), Color.Parse("#00bb33"),
+        Color.Parse("#00aa88"), Color.Parse("#1166ee"), Color.Parse("#7733ff"),
+        Color.Parse("#ff22aa"),
+        // row 4 – vivid
+        Color.Parse("#505050"), Color.Parse("#ee0000"), Color.Parse("#ff5500"),
+        Color.Parse("#eebb00"), Color.Parse("#66aa00"), Color.Parse("#009933"),
+        Color.Parse("#009977"), Color.Parse("#0044dd"), Color.Parse("#5500ee"),
+        Color.Parse("#dd0088"),
+        // row 5 – medium-dark
+        Color.Parse("#383838"), Color.Parse("#aa0000"), Color.Parse("#cc4400"),
+        Color.Parse("#aa8800"), Color.Parse("#448800"), Color.Parse("#006622"),
+        Color.Parse("#006655"), Color.Parse("#0033aa"), Color.Parse("#3300aa"),
+        Color.Parse("#aa0066"),
+        // row 6 – dark
+        Color.Parse("#222222"), Color.Parse("#660000"), Color.Parse("#883300"),
+        Color.Parse("#665500"), Color.Parse("#224400"), Color.Parse("#003311"),
+        Color.Parse("#003333"), Color.Parse("#001177"), Color.Parse("#220066"),
+        Color.Parse("#660033"),
+        // row 7 – near-black
+        Color.Parse("#0d0d0d"), Color.Parse("#2d0000"), Color.Parse("#3d1800"),
+        Color.Parse("#2d2600"), Color.Parse("#0f1e00"), Color.Parse("#001508"),
+        Color.Parse("#001515"), Color.Parse("#000633"), Color.Parse("#0d0022"),
+        Color.Parse("#2d0015"),
     ];
 
     private readonly IReadOnlyList<(string Label, BrushKind? Kind)> _brushCategories =
@@ -46,6 +83,37 @@ public partial class MainWindow : Window
         ("Markers",  BrushKind.Marker),
         ("Airbrush", BrushKind.Airbrush)
     ];
+
+    // ── Blend modes ───────────────────────────────────────────────────────────
+    private static readonly string[] BlendModes =
+    [
+        "Normal", "Dissolve",
+        "Multiply", "Screen", "Overlay", "SoftLight", "HardLight",
+        "ColorDodge", "ColorBurn", "LinearDodge", "LinearBurn",
+        "Darken", "Lighten", "DarkerColor", "LighterColor",
+        "Difference", "Exclusion", "Subtract", "Divide",
+        "Hue", "Saturation", "Color", "Luminosity",
+        "VividLight", "LinearLight", "PinLight", "HardMix",
+    ];
+
+    private static string BlendAbbr(string mode) => mode switch
+    {
+        "Normal"       => "Nrm", "Dissolve"     => "Dis",
+        "Multiply"     => "Mul", "Screen"        => "Scr",
+        "Overlay"      => "Ovl", "SoftLight"     => "SL",
+        "HardLight"    => "HL",  "ColorDodge"    => "CDg",
+        "ColorBurn"    => "CBn", "LinearDodge"   => "LDg",
+        "LinearBurn"   => "LBn", "Darken"        => "Drk",
+        "Lighten"      => "Lgt", "DarkerColor"   => "DC",
+        "LighterColor" => "LC",  "Difference"    => "Dif",
+        "Exclusion"    => "Exc", "Subtract"      => "Sub",
+        "Divide"       => "Div", "Hue"           => "Hue",
+        "Saturation"   => "Sat", "Color"         => "Col",
+        "Luminosity"   => "Lum", "VividLight"    => "VL",
+        "LinearLight"  => "LL",  "PinLight"      => "PL",
+        "HardMix"      => "HM",  "PassThrough"   => "PT",
+        _ => mode[..Math.Min(3, mode.Length)]
+    };
 
     // ── Controls ──────────────────────────────────────────────────────────────
     private DrawingCanvas      _canvas              = null!;
@@ -65,6 +133,8 @@ public partial class MainWindow : Window
     private Slider             _smoothingSlider     = null!;
     private Slider             _grainSlider         = null!;
     private Slider             _layerOpacitySlider  = null!;
+    private ComboBox           _blendModeComboBox   = null!;
+    private TextBox            _layerNameBox        = null!;
     private Button             _undoButton          = null!;
     private Button             _redoButton          = null!;
     private Button             _brushToolButton     = null!;
@@ -75,6 +145,8 @@ public partial class MainWindow : Window
     private TextBlock          _toolStatusText      = null!;
     private TextBlock          _footerStatusText    = null!;
     private TextBlock          _canvasStatusText    = null!;
+    private TextBlock          _zoomDisplay         = null!;
+    private TextBlock          _rotDisplay          = null!;
     private Button             _saveBrushButton     = null!;
 
     // ── State ─────────────────────────────────────────────────────────────────
@@ -204,11 +276,14 @@ public partial class MainWindow : Window
         root.Children.Add(splitter);
         root.Children.Add(rightPanel);
 
-        var shell = new Grid { RowDefinitions = new RowDefinitions("30,*") };
-        var menu = BuildMenuBar();
-        Grid.SetRow(menu, 0);
-        Grid.SetRow(root, 1);
+        var shell = new Grid { RowDefinitions = new RowDefinitions("30,34,*") };
+        var menu    = BuildMenuBar();
+        var toolbar = BuildToolbar();
+        Grid.SetRow(menu,    0);
+        Grid.SetRow(toolbar, 1);
+        Grid.SetRow(root,    2);
         shell.Children.Add(menu);
+        shell.Children.Add(toolbar);
         shell.Children.Add(root);
 
         Content = shell;
@@ -273,6 +348,110 @@ public partial class MainWindow : Window
             }
         };
     }
+
+    private Control BuildToolbar()
+    {
+        _zoomDisplay = new TextBlock
+        {
+            Text              = "100%",
+            Width             = 46,
+            FontSize          = 11,
+            TextAlignment     = TextAlignment.Center,
+            Foreground        = new SolidColorBrush(Color.Parse(TextSecondary)),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+        };
+        _rotDisplay = new TextBlock
+        {
+            Text              = "0°",
+            Width             = 36,
+            FontSize          = 11,
+            TextAlignment     = TextAlignment.Center,
+            Foreground        = new SolidColorBrush(Color.Parse(TextSecondary)),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+        };
+
+        var zoomOut = TbarBtn("−", "Zoom out  (Ctrl+−)");
+        var zoomIn  = TbarBtn("+", "Zoom in  (Ctrl++)");
+        var zoomFit = TbarBtn("⊙", "Fit to screen  (Ctrl+0)");
+        zoomOut.Click += (_, _) => SetZoom(_zoom / 1.2, null);
+        zoomIn.Click  += (_, _) => SetZoom(_zoom * 1.2, null);
+        zoomFit.Click += (_, _) => { SetZoom(1.0, null); SetRotation(0); };
+
+        var rotLeft  = TbarBtn("↺", "Rotate left 15°  (Shift+[)");
+        var rotRight = TbarBtn("↻", "Rotate right 15°  (Shift+])");
+        var rotReset = TbarBtn("⊕", "Reset rotation");
+        rotLeft.Click  += (_, _) => SetRotation(_rotation - 15);
+        rotRight.Click += (_, _) => SetRotation(_rotation + 15);
+        rotReset.Click += (_, _) => SetRotation(0);
+
+        var undoTb = TbarBtn("↩", "Undo  (Ctrl+Z)");
+        var redoTb = TbarBtn("↪", "Redo  (Ctrl+Shift+Z)");
+        undoTb.Click += (_, _) => _canvas.Undo();
+        redoTb.Click += (_, _) => _canvas.Redo();
+
+        var openTb = TbarBtn("⊞", "Open PSD  (Ctrl+O)");
+        var saveTb = TbarBtn("⊟", "Save PSD  (Ctrl+S)");
+        openTb.Click += async (_, _) => await OpenPsdAsync();
+        saveTb.Click += async (_, _) => await SavePsdAsync();
+
+        var row = new StackPanel
+        {
+            Orientation         = Avalonia.Layout.Orientation.Horizontal,
+            VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+            Spacing             = 2,
+            Margin              = new Thickness(8, 0)
+        };
+        row.Children.Add(openTb);
+        row.Children.Add(saveTb);
+        row.Children.Add(TbarSep());
+        row.Children.Add(undoTb);
+        row.Children.Add(redoTb);
+        row.Children.Add(TbarSep());
+        row.Children.Add(zoomOut);
+        row.Children.Add(_zoomDisplay);
+        row.Children.Add(zoomIn);
+        row.Children.Add(zoomFit);
+        row.Children.Add(TbarSep());
+        row.Children.Add(rotLeft);
+        row.Children.Add(_rotDisplay);
+        row.Children.Add(rotRight);
+        row.Children.Add(rotReset);
+
+        return new Border
+        {
+            Background      = new SolidColorBrush(Color.Parse(Bg2)),
+            BorderBrush     = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Child           = row
+        };
+    }
+
+    private static Button TbarBtn(string glyph, string tip)
+    {
+        var btn = new Button
+        {
+            Content         = glyph,
+            Width           = 28,
+            Height          = 26,
+            Padding         = new Thickness(0),
+            FontSize        = 13,
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            VerticalContentAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+            Background      = Avalonia.Media.Brushes.Transparent,
+            BorderBrush     = Avalonia.Media.Brushes.Transparent,
+            CornerRadius    = new CornerRadius(5)
+        };
+        ToolTip.SetTip(btn, tip);
+        return btn;
+    }
+
+    private static Border TbarSep() => new()
+    {
+        Width           = 1,
+        Height          = 18,
+        Background      = new SolidColorBrush(Color.Parse(Stroke)),
+        Margin          = new Thickness(6, 0)
+    };
 
     private static MenuItem MenuAction(string header, Action action)
     {
@@ -514,8 +693,10 @@ public partial class MainWindow : Window
 
         _swatchPanel = new WrapPanel
         {
-            Margin  = new Thickness(12, 6, 12, 10),
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left
+            Margin  = new Thickness(12, 4, 12, 8),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+            ItemWidth  = SwatchSize + 2,
+            ItemHeight = SwatchSize + 2
         };
 
         return new StackPanel
@@ -596,14 +777,69 @@ public partial class MainWindow : Window
     // ── Layers section ────────────────────────────────────────────────────────
     private Control BuildLayersSection()
     {
-        var addBtn  = SmBtn("+", "Add layer  (Ctrl+Shift+N)");
-        var dupBtn  = SmBtn("⎘", "Duplicate  (Ctrl+J)");
+        // Layer name
+        _layerNameBox = new TextBox
+        {
+            PlaceholderText         = "Layer name",
+            FontSize                = 11,
+            Height                  = 28,
+            Background              = new SolidColorBrush(Color.Parse(Bg0)),
+            Foreground              = new SolidColorBrush(Color.Parse(TextPrimary)),
+            CaretBrush              = new SolidColorBrush(Color.Parse(TextPrimary)),
+            BorderBrush             = new SolidColorBrush(Color.Parse("#3a4250")),
+            BorderThickness         = new Thickness(1),
+            Padding                 = new Thickness(8, 0),
+            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
+        };
+        _layerNameBox.KeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Enter) return;
+            ApplyLayerName();
+            e.Handled = true;
+        };
+        _layerNameBox.LostFocus += (_, _) => ApplyLayerName();
+
+        // Blend mode
+        _blendModeComboBox = new ComboBox
+        {
+            ItemsSource             = BlendModes,
+            SelectedItem            = "Normal",
+            FontSize                = 11,
+            Padding                 = new Thickness(6, 0),
+            HorizontalAlignment     = Avalonia.Layout.HorizontalAlignment.Stretch,
+            VerticalAlignment       = Avalonia.Layout.VerticalAlignment.Center,
+        };
+        _blendModeComboBox.SelectionChanged += (_, _) =>
+        {
+            if (_syncingLayerUi) return;
+            if (_blendModeComboBox.SelectedItem is string mode)
+                _canvas.SetActiveLayerBlendMode(mode);
+        };
+
+        // Opacity
+        _layerOpacitySlider = MkSlider(0, 1, 1, "Layer opacity");
+        _layerOpacitySlider.PropertyChanged += (_, e) =>
+        {
+            if (_syncingLayerUi || e.Property != Slider.ValueProperty) return;
+            _canvas.SetActiveLayerOpacity(_layerOpacitySlider.Value);
+        };
+
+        // Blend + Opacity row
+        var blendOpRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,6,*") };
+        Grid.SetColumn(_blendModeComboBox, 0);
+        Grid.SetColumn(_layerOpacitySlider, 2);
+        blendOpRow.Children.Add(_blendModeComboBox);
+        blendOpRow.Children.Add(_layerOpacitySlider);
+
+        // Action buttons
+        var addBtn           = SmBtn("+", "Add layer  (Ctrl+Shift+N)");
+        var dupBtn           = SmBtn("⎘", "Duplicate  (Ctrl+J)");
         _deleteLayerButton   = SmBtn("✕", "Delete  (Ctrl+Delete)");
         _moveLayerUpButton   = SmBtn("↑", "Move up  (Ctrl+Up)");
         _moveLayerDownButton = SmBtn("↓", "Move down  (Ctrl+Down)");
 
-        addBtn.Click                 += (_, _) => _canvas.AddLayer();
-        dupBtn.Click                 += (_, _) => _canvas.DuplicateLayer();
+        addBtn.Click                += (_, _) => _canvas.AddLayer();
+        dupBtn.Click                += (_, _) => _canvas.DuplicateLayer();
         _deleteLayerButton.Click    += (_, _) => _canvas.DeleteLayer();
         _moveLayerUpButton.Click    += (_, _) => _canvas.MoveActiveLayer(1);
         _moveLayerDownButton.Click  += (_, _) => _canvas.MoveActiveLayer(-1);
@@ -612,29 +848,30 @@ public partial class MainWindow : Window
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
             Spacing     = 6,
-            Margin      = new Thickness(12, 0, 12, 8),
             Children    = { addBtn, dupBtn, _deleteLayerButton, _moveLayerUpButton, _moveLayerDownButton }
-        };
-
-        _layerOpacitySlider = MkSlider(0, 1, 1, "Layer opacity");
-        _layerOpacitySlider.PropertyChanged += (_, e) =>
-        {
-            if (_syncingLayerUi || e.Property != Slider.ValueProperty) return;
-            _canvas.SetActiveLayerOpacity(_layerOpacitySlider.Value);
         };
 
         _layerPanel = new StackPanel { Spacing = 2 };
 
         return new StackPanel
         {
-            Spacing = 6,
+            Spacing = 5,
+            Margin  = new Thickness(8, 0, 8, 10),
             Children =
             {
+                _layerNameBox,
+                blendOpRow,
                 ctrlRow,
-                new Border { Margin = new Thickness(12, 0, 12, 6), Child = LabelSlider("Opacity", _layerOpacitySlider) },
-                new Border { Margin = new Thickness(6, 0, 6, 10),   Child = _layerPanel }
+                _layerPanel
             }
         };
+    }
+
+    private void ApplyLayerName()
+    {
+        var name = _layerNameBox.Text?.Trim();
+        if (!string.IsNullOrEmpty(name))
+            _canvas.SetActiveLayerName(name);
     }
 
     // ── Widget helpers ────────────────────────────────────────────────────────
@@ -784,24 +1021,28 @@ public partial class MainWindow : Window
     }
 
     // ── Swatch panel ──────────────────────────────────────────────────────────
+    private const int SwatchColumns = 10;
+    private const int SwatchSize   = 20;
+
     private void BuildSwatches()
     {
+        _swatchPanel.Children.Clear();
         for (var i = 0; i < _swatches.Length; i++)
         {
             var idx   = i;
             var color = _swatches[i];
             var btn = new Button
             {
-            Width           = 22,
-            Height          = 22,
-            Margin          = new Thickness(0, 0, 6, 6),
+                Width           = SwatchSize,
+                Height          = SwatchSize,
+                Margin          = new Thickness(0, 0, 2, 2),
                 Background      = new SolidColorBrush(color),
-                BorderBrush     = new SolidColorBrush(Color.Parse("#333")),
+                BorderBrush     = new SolidColorBrush(Color.Parse("#2a2d35")),
                 BorderThickness = new Thickness(1),
-                CornerRadius    = new CornerRadius(9),
+                CornerRadius    = new CornerRadius(3),
                 Padding         = new Thickness(0)
             };
-            ToolTip.SetTip(btn, color.ToString());
+            ToolTip.SetTip(btn, $"#{color.R:X2}{color.G:X2}{color.B:X2}");
             btn.Click += (_, _) => { _swatchIndex = idx; SetColor(color); };
             _swatchPanel.Children.Add(btn);
         }
@@ -1044,91 +1285,155 @@ public partial class MainWindow : Window
         {
             var layer    = layers[i];
             var isActive = i == _canvas.ActiveLayerIndex;
+            var dimColor = isActive ? Color.Parse("#5a80c8") : Color.Parse("#383d47");
+            var fgColor  = isActive ? Color.Parse("#d8e0f0") : Color.Parse("#7a8494");
 
             var row = new Border
             {
-                Background      = new SolidColorBrush(isActive ? Color.Parse("#1a2a50") : Color.Parse("#1a1c22")),
-                BorderBrush     = new SolidColorBrush(isActive ? Color.Parse("#2e5fb8") : Color.Parse("#22252e")),
+                Background      = new SolidColorBrush(isActive ? Color.Parse("#1a2a50") : Color.Parse("#16181f")),
+                BorderBrush     = new SolidColorBrush(isActive ? Color.Parse("#2e5fb8") : Color.Parse("#1e2128")),
                 BorderThickness = new Thickness(1),
-                CornerRadius    = new CornerRadius(5),
-                Padding         = new Thickness(5, 4),
+                CornerRadius    = new CornerRadius(4),
+                Padding         = new Thickness(4, 3),
                 Margin          = new Thickness(layer.IndentLevel * 12, 0, 0, 0)
             };
 
-            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("22,34,22,*,Auto") };
+            // cols: vis | thumb | lock | name | blend | opacity
+            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("18,34,18,*,30,32") };
 
             var visBtn = new Button
             {
                 Content  = layer.IsVisible ? "●" : "○",
-                Width    = 18, Height = 18,
-                Padding  = new Thickness(0),
-                FontSize = 10,
-                Tag      = i,
-                Background  = Avalonia.Media.Brushes.Transparent,
-                BorderBrush = Avalonia.Media.Brushes.Transparent
+                Width = 16, Height = 16, Padding = new Thickness(0), FontSize = 9,
+                Tag = i, Background = Avalonia.Media.Brushes.Transparent,
+                BorderBrush = Avalonia.Media.Brushes.Transparent,
+                Foreground = new SolidColorBrush(layer.IsVisible ? Color.Parse("#6a9fd8") : Color.Parse("#404550")),
             };
             ToolTip.SetTip(visBtn, "Toggle visibility");
             visBtn.Click += (_, _) => _canvas.ToggleLayerVisibility((int)visBtn.Tag!);
 
-            var preview = BuildLayerPreview(layer);
+            var (preview, previewImage) = BuildLayerPreview(layer);
 
             var lockBtn = new Button
             {
-                Content  = layer.IsLocked ? "L" : "·",
-                Width    = 18, Height = 18,
-                Padding  = new Thickness(0),
-                FontSize = 11,
-                Tag      = i,
-                Background  = Avalonia.Media.Brushes.Transparent,
-                BorderBrush = Avalonia.Media.Brushes.Transparent
+                Content  = layer.IsLocked ? "🔒" : "·",
+                Width = 16, Height = 16, Padding = new Thickness(0), FontSize = layer.IsLocked ? 8 : 12,
+                Tag = i, Background = Avalonia.Media.Brushes.Transparent,
+                BorderBrush = Avalonia.Media.Brushes.Transparent,
+                Foreground = new SolidColorBrush(layer.IsLocked ? Color.Parse("#c89050") : Color.Parse("#404550")),
             };
             ToolTip.SetTip(lockBtn, "Toggle lock");
             lockBtn.Click += (_, _) => _canvas.ToggleLayerLock((int)lockBtn.Tag!);
 
-            var prefix = (layer.IsGroup ? (layer.IsOpen ? "▾ " : "▸ ") : "") + (layer.IsClipping ? "⤷ " : "");
+            var prefix  = (layer.IsGroup ? (layer.IsOpen ? "▾ " : "▸ ") : "") + (layer.IsClipping ? "⤷ " : "");
             var nameBtn = new Button
             {
-                Content            = prefix + layer.Name,
+                Content = prefix + layer.Name,
                 HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Left,
-                Background         = Avalonia.Media.Brushes.Transparent,
-                BorderBrush        = Avalonia.Media.Brushes.Transparent,
-                Foreground         = new SolidColorBrush(isActive ? Color.Parse("#d8e0f0") : Color.Parse("#909aa8")),
-                Padding            = new Thickness(5, 1),
-                FontSize           = 11,
-                Tag                = i
+                Background = Avalonia.Media.Brushes.Transparent,
+                BorderBrush = Avalonia.Media.Brushes.Transparent,
+                Foreground = new SolidColorBrush(fgColor),
+                Padding = new Thickness(4, 1), FontSize = 11,
+                Tag = i
             };
             nameBtn.Click += (_, _) => _canvas.SelectLayer((int)nameBtn.Tag!);
 
+            var blendText = new TextBlock
+            {
+                Text = BlendAbbr(layer.BlendMode),
+                Foreground = new SolidColorBrush(dimColor),
+                FontSize = 9,
+                FontFamily = new FontFamily("Consolas, Courier New, monospace"),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+                Margin = new Thickness(0, 0, 2, 0)
+            };
+
             var opacityText = new TextBlock
             {
-                Text              = $"{Math.Round(layer.Opacity * 100)}%",
-                Foreground        = new SolidColorBrush(isActive ? Color.Parse("#5a80c8") : Color.Parse("#404550")),
-                FontSize          = 10,
+                Text = $"{Math.Round(layer.Opacity * 100):0}%",
+                Foreground = new SolidColorBrush(dimColor),
+                FontSize = 9,
+                FontFamily = new FontFamily("Consolas, Courier New, monospace"),
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-                Margin            = new Thickness(3, 0, 2, 0)
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+                Margin = new Thickness(0, 0, 2, 0)
             };
 
             Grid.SetColumn(visBtn,      0);
             Grid.SetColumn(preview,     1);
             Grid.SetColumn(lockBtn,     2);
             Grid.SetColumn(nameBtn,     3);
-            Grid.SetColumn(opacityText, 4);
+            Grid.SetColumn(blendText,   4);
+            Grid.SetColumn(opacityText, 5);
             grid.Children.Add(visBtn);
             grid.Children.Add(preview);
             grid.Children.Add(lockBtn);
             grid.Children.Add(nameBtn);
+            grid.Children.Add(blendText);
             grid.Children.Add(opacityText);
             row.Child = grid;
             _layerPanel.Children.Add(row);
-            _layerRows[i] = new LayerRowRefs(row, visBtn, lockBtn, nameBtn, opacityText);
+            _layerRows[i] = new LayerRowRefs(row, visBtn, lockBtn, nameBtn, blendText, opacityText, previewImage);
         }
+
+        // Paper row — always at the bottom, non-interactive
+        _layerPanel.Children.Add(BuildPaperRow());
 
         if (layers.Count > 0)
         {
+            var active = layers[_canvas.ActiveLayerIndex];
             _syncingLayerUi = true;
-            _layerOpacitySlider.Value = layers[_canvas.ActiveLayerIndex].Opacity;
+            _layerOpacitySlider.Value    = active.Opacity;
+            _blendModeComboBox.SelectedItem = active.BlendMode;
+            _layerNameBox.Text           = active.Name;
             _syncingLayerUi = false;
         }
+    }
+
+    private static Control BuildPaperRow()
+    {
+        var paperSwatch = new Border
+        {
+            Width = 30, Height = 30,
+            Margin = new Thickness(1, 0, 3, 0),
+            Background      = new SolidColorBrush(Colors.White),
+            BorderBrush     = new SolidColorBrush(Color.Parse("#3a4050")),
+            BorderThickness = new Thickness(1),
+            CornerRadius    = new CornerRadius(3)
+        };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("18,34,18,*,30,32") };
+        var nameLabel = new TextBlock
+        {
+            Text              = "Paper",
+            FontSize          = 11,
+            Foreground        = new SolidColorBrush(Color.Parse("#4a5468")),
+            Padding           = new Thickness(4, 1),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+        };
+        var eyeLabel = new TextBlock
+        {
+            Text              = "●",
+            FontSize          = 9,
+            Foreground        = new SolidColorBrush(Color.Parse("#3a4458")),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center
+        };
+        Grid.SetColumn(eyeLabel,   0);
+        Grid.SetColumn(paperSwatch, 1);
+        Grid.SetColumn(nameLabel,  3);
+        grid.Children.Add(eyeLabel);
+        grid.Children.Add(paperSwatch);
+        grid.Children.Add(nameLabel);
+        return new Border
+        {
+            Background      = new SolidColorBrush(Color.Parse("#0f1016")),
+            BorderBrush     = new SolidColorBrush(Color.Parse("#1a1c22")),
+            BorderThickness = new Thickness(1),
+            CornerRadius    = new CornerRadius(4),
+            Padding         = new Thickness(4, 3),
+            Child           = grid
+        };
     }
 
     private void UpdateLayerRow(int index)
@@ -1140,34 +1445,44 @@ public partial class MainWindow : Window
             return;
         }
 
-        var layer = layers[index];
+        var layer    = layers[index];
         var isActive = index == _canvas.ActiveLayerIndex;
+        var dimColor = isActive ? Color.Parse("#5a80c8") : Color.Parse("#383d47");
+        var fgColor  = isActive ? Color.Parse("#d8e0f0") : Color.Parse("#7a8494");
 
-        refs.Row.Background = new SolidColorBrush(isActive ? Color.Parse("#1a2a50") : Color.Parse("#1a1c22"));
-        refs.Row.BorderBrush = new SolidColorBrush(isActive ? Color.Parse("#2e5fb8") : Color.Parse("#22252e"));
-        refs.VisibilityButton.Content = layer.IsVisible ? "●" : "○";
-        refs.LockButton.Content = layer.IsLocked ? "L" : "·";
-        refs.NameButton.Foreground = new SolidColorBrush(isActive ? Color.Parse("#d8e0f0") : Color.Parse("#909aa8"));
-        refs.OpacityText.Text = $"{Math.Round(layer.Opacity * 100)}%";
-        refs.OpacityText.Foreground = new SolidColorBrush(isActive ? Color.Parse("#5a80c8") : Color.Parse("#404550"));
+        refs.Row.Background  = new SolidColorBrush(isActive ? Color.Parse("#1a2a50") : Color.Parse("#16181f"));
+        refs.Row.BorderBrush = new SolidColorBrush(isActive ? Color.Parse("#2e5fb8") : Color.Parse("#1e2128"));
+
+        refs.VisibilityButton.Content    = layer.IsVisible ? "●" : "○";
+        refs.VisibilityButton.Foreground = new SolidColorBrush(layer.IsVisible ? Color.Parse("#6a9fd8") : Color.Parse("#404550"));
+        refs.LockButton.Content          = layer.IsLocked ? "🔒" : "·";
+        refs.LockButton.FontSize         = layer.IsLocked ? 8 : 12;
+        refs.LockButton.Foreground       = new SolidColorBrush(layer.IsLocked ? Color.Parse("#c89050") : Color.Parse("#404550"));
+        refs.NameButton.Content          = (layer.IsGroup ? (layer.IsOpen ? "▾ " : "▸ ") : "") + (layer.IsClipping ? "⤷ " : "") + layer.Name;
+        refs.NameButton.Foreground       = new SolidColorBrush(fgColor);
+        refs.BlendText.Text              = BlendAbbr(layer.BlendMode);
+        refs.BlendText.Foreground        = new SolidColorBrush(dimColor);
+        refs.OpacityText.Text            = $"{Math.Round(layer.Opacity * 100):0}%";
+        refs.OpacityText.Foreground      = new SolidColorBrush(dimColor);
 
         if (isActive && !_syncingLayerUi)
         {
             _syncingLayerUi = true;
-            _layerOpacitySlider.Value = layer.Opacity;
+            _layerOpacitySlider.Value       = layer.Opacity;
+            _blendModeComboBox.SelectedItem = layer.BlendMode;
+            _layerNameBox.Text              = layer.Name;
             _syncingLayerUi = false;
         }
     }
 
-    private static Control BuildLayerPreview(DrawingLayer layer)
+    private static (Control Frame, Image? PreviewImage) BuildLayerPreview(DrawingLayer layer)
     {
         var frame = new Border
         {
-            Width           = 28,
-            Height          = 28,
-            Margin          = new Thickness(2, 0, 4, 0),
-            Background      = new SolidColorBrush(Color.Parse("#252832")),
-            BorderBrush     = new SolidColorBrush(Color.Parse("#3a3f4d")),
+            Width = 30, Height = 30,
+            Margin = new Thickness(1, 0, 3, 0),
+            Background      = new SolidColorBrush(Color.Parse("#1e2028")),
+            BorderBrush     = new SolidColorBrush(Color.Parse("#2e3340")),
             BorderThickness = new Thickness(1),
             CornerRadius    = new CornerRadius(3),
             ClipToBounds    = true
@@ -1178,24 +1493,24 @@ public partial class MainWindow : Window
             frame.Child = new TextBlock
             {
                 Text                = layer.IsOpen ? "▾" : "▸",
-                Foreground          = new SolidColorBrush(Color.Parse("#9aa6c1")),
+                Foreground          = new SolidColorBrush(Color.Parse("#6a7a96")),
                 FontSize            = 13,
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
                 VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center
             };
-            return frame;
+            return (frame, null);
         }
 
         var image = new Image
         {
-            Source              = layer.GetThumbnail(28),
+            Source              = layer.GetThumbnail(30),
             Stretch             = Stretch.Uniform,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center
         };
         RenderOptions.SetBitmapInterpolationMode(image, Avalonia.Media.Imaging.BitmapInterpolationMode.None);
         frame.Child = image;
-        return frame;
+        return (frame, image);
     }
 
     private sealed record LayerRowRefs(
@@ -1203,7 +1518,9 @@ public partial class MainWindow : Window
         Button VisibilityButton,
         Button LockButton,
         Button NameButton,
-        TextBlock OpacityText);
+        TextBlock BlendText,
+        TextBlock OpacityText,
+        Image? PreviewImage);
 
     // ── Viewport ──────────────────────────────────────────────────────────────
     private void SyncCanvasFrameToDocument(bool fitToViewport)
@@ -1271,6 +1588,7 @@ public partial class MainWindow : Window
         _zoom = Math.Clamp(newZoom, 0.05, 16.0);
         _canvasScale.ScaleX = _zoom;
         _canvasScale.ScaleY = _zoom;
+        _canvas.CanvasZoom  = _zoom;
 
         if (cursor.HasValue && oldZoom > 0)
         {
@@ -1283,6 +1601,7 @@ public partial class MainWindow : Window
         }
 
         ClampCanvasPan();
+        _zoomDisplay.Text = $"{Math.Round(_zoom * 100)}%";
         UpdateStatus();
     }
 
@@ -1292,6 +1611,7 @@ public partial class MainWindow : Window
         _canvasRotate.Angle      = _rotation;
         _canvas.CanvasRotation   = _rotation;
         ClampCanvasPan();
+        _rotDisplay.Text = $"{Math.Round(_rotation)}°";
         UpdateStatus();
     }
 
@@ -1383,16 +1703,24 @@ public partial class MainWindow : Window
     {
         var layers = _canvas.Layers;
         if (layers.Count == 0) return;
-        var layer = layers[_canvas.ActiveLayerIndex];
+        var activeIdx = _canvas.ActiveLayerIndex;
+        var layer     = layers[activeIdx];
         _canvasStatusText.Text =
             $"{Math.Round(_zoom * 100)}%  {Math.Round(_rotation)}°  " +
-            $"layer {_canvas.ActiveLayerIndex + 1}/{layers.Count}  " +
+            $"layer {activeIdx + 1}/{layers.Count}  " +
             $"{layer.BlendMode}";
-        _undoButton.IsEnabled         = _canvas.CanUndo;
-        _redoButton.IsEnabled         = _canvas.CanRedo;
-        _deleteLayerButton.IsEnabled  = _canvas.CanDeleteLayer;
-        _moveLayerUpButton.IsEnabled  = _canvas.ActiveLayerIndex < layers.Count - 1;
-        _moveLayerDownButton.IsEnabled = _canvas.ActiveLayerIndex > 0;
+        _undoButton.IsEnabled          = _canvas.CanUndo;
+        _redoButton.IsEnabled          = _canvas.CanRedo;
+        _deleteLayerButton.IsEnabled   = _canvas.CanDeleteLayer;
+        _moveLayerUpButton.IsEnabled   = activeIdx < layers.Count - 1;
+        _moveLayerDownButton.IsEnabled = activeIdx > 0;
+
+        if (_layerRows.TryGetValue(activeIdx, out var refs) && refs.PreviewImage != null)
+        {
+            layer.MarkThumbnailDirty();
+            layer.RefreshThumbnail();
+            refs.PreviewImage.InvalidateVisual();
+        }
     }
 
     // ── File I/O ──────────────────────────────────────────────────────────────
