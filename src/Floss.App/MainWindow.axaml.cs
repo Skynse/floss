@@ -169,6 +169,7 @@ public partial class MainWindow : Window
     private Button _selectToolButton = null!;
     private Button _wandToolButton = null!;
     private Button _fillToolButton = null!;
+    private Button _lassoFillToolButton = null!;
     private Button _eyedropToolButton = null!;
     private Button _gradientToolButton = null!;
     private Button _shapeToolButton = null!;
@@ -206,6 +207,7 @@ public partial class MainWindow : Window
     private readonly SelectTool _selectTool = new();
     private readonly MagicWandTool _magicWandTool = new();
     private readonly FillTool _fillTool = new();
+    private readonly LassoFillTool _lassoFillTool = new();
     private readonly EyedropperTool _eyedropperTool = new();
     private readonly MoveTool _moveTool = new();
     private readonly GradientTool _gradientTool = new();
@@ -589,6 +591,7 @@ public partial class MainWindow : Window
         _selectToolButton = RailBtn(Icons.SelectionRect, "Select  (S). Click again: rect/lasso/polyline");
         _wandToolButton = RailBtn(Icons.AutoFix, "Magic Wand  (W)");
         _fillToolButton = RailBtn(Icons.FormatColorFill, "Fill  (G)");
+        _lassoFillToolButton = RailBtn(Icons.Lasso, "Lasso Fill  (L)");
         _eyedropToolButton = RailBtn(Icons.Eyedropper, "Eyedropper  (I)");
         _gradientToolButton = RailBtn(Icons.GradientHorizontal, "Gradient. Click again: linear/radial");
         _shapeToolButton = RailBtn(Icons.RectangleOutline, "Shape. Click again: rectangle/ellipse/line");
@@ -604,6 +607,7 @@ public partial class MainWindow : Window
         };
         _wandToolButton.Click += (_, _) => ActivateTool(_magicWandTool, _wandToolButton);
         _fillToolButton.Click += (_, _) => ActivateTool(_fillTool, _fillToolButton);
+        _lassoFillToolButton.Click += (_, _) => ActivateTool(_lassoFillTool, _lassoFillToolButton);
         _eyedropToolButton.Click += (_, _) => ActivateTool(_eyedropperTool, _eyedropToolButton);
         _gradientToolButton.Click += (_, _) =>
         {
@@ -623,7 +627,7 @@ public partial class MainWindow : Window
 
         _toolButtons.AddRange([
             _brushToolButton, _eraserToolButton, _moveToolButton,
-            _selectToolButton, _wandToolButton, _fillToolButton,
+            _selectToolButton, _wandToolButton, _fillToolButton, _lassoFillToolButton,
             _eyedropToolButton, _gradientToolButton, _shapeToolButton, _polylineToolButton
         ]);
 
@@ -650,6 +654,7 @@ public partial class MainWindow : Window
         stack.Children.Add(_wandToolButton);
         stack.Children.Add(RailSep());
         stack.Children.Add(_fillToolButton);
+        stack.Children.Add(_lassoFillToolButton);
         stack.Children.Add(_gradientToolButton);
         stack.Children.Add(_shapeToolButton);
         stack.Children.Add(_polylineToolButton);
@@ -2618,6 +2623,7 @@ public partial class MainWindow : Window
         else if (key == Key.S && mods == KeyModifiers.None) { ActivateTool(_selectTool, _selectToolButton); e.Handled = true; }
         else if (key == Key.W && mods == KeyModifiers.None) { ActivateTool(_magicWandTool, _wandToolButton); e.Handled = true; }
         else if (key == Key.G && mods == KeyModifiers.None) { ActivateTool(_fillTool, _fillToolButton); e.Handled = true; }
+        else if (key == Key.L && mods == KeyModifiers.None) { ActivateTool(_lassoFillTool, _lassoFillToolButton); e.Handled = true; }
         else if (key == Key.I && mods == KeyModifiers.None) { ActivateTool(_eyedropperTool, _eyedropToolButton); e.Handled = true; }
         else if (key == Key.LeftAlt || key == Key.RightAlt)
         {

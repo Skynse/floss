@@ -340,6 +340,46 @@ public sealed class TiledPixelBuffer
         return found;
     }
 
+    public PixelRegion ComputeContentBounds()
+    {
+        if (_tiles.Count == 0) return PixelRegion.Empty;
+
+        var minX = int.MaxValue;
+        var minY = int.MaxValue;
+        var maxX = int.MinValue;
+        var maxY = int.MinValue;
+        var found = false;
+
+        foreach (var (key, tile) in _tiles)
+        {
+            var tileBaseX = key.X * TileSize;
+            var tileBaseY = key.Y * TileSize;
+
+            for (var y = 0; y < TileSize; y++)
+            {
+                var py = tileBaseY + y;
+                if ((uint)py >= (uint)Height) continue;
+
+                for (var x = 0; x < TileSize; x++)
+                {
+                    var px = tileBaseX + x;
+                    if ((uint)px >= (uint)Width) continue;
+
+                    var offset = (y * TileSize + x) * BytesPerPixel + 3;
+                    if (tile[offset] == 0) continue;
+
+                    if (px < minX) minX = px;
+                    if (py < minY) minY = py;
+                    if (px > maxX) maxX = px;
+                    if (py > maxY) maxY = py;
+                    found = true;
+                }
+            }
+        }
+
+        return found ? new PixelRegion(minX, minY, maxX - minX + 1, maxY - minY + 1) : PixelRegion.Empty;
+    }
+
     public bool HasContentTiles(PixelRegion region)
     {
         var clipped = region.ClipTo(Width, Height);

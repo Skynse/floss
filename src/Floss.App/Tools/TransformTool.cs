@@ -110,19 +110,32 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
 
     public static SelectionTransformOperation? TryCreate(ToolContext ctx)
     {
-        if (!ctx.Selection.HasSelection) return null;
         var layer = ctx.ActiveLayer;
         if (layer == null || layer.IsGroup || layer.IsLocked) return null;
 
-        var bounds = ctx.Selection.GetMaskBounds();
-        if (bounds == null) return null;
+        PixelRegion b;
+        bool usingSelection;
 
-        var b = bounds.Value;
+        if (ctx.Selection.HasSelection)
+        {
+            var bounds = ctx.Selection.GetMaskBounds();
+            if (bounds == null) return null;
+            b = new PixelRegion(bounds.Value.Left, bounds.Value.Top, bounds.Value.Width, bounds.Value.Height);
+            usingSelection = true;
+        }
+        else
+        {
+            var contentBounds = layer.Pixels.ComputeContentBounds();
+            if (contentBounds.IsEmpty) return null;
+            b = contentBounds.Translate(layer.OffsetX, layer.OffsetY);
+            usingSelection = false;
+        }
+
         if (b.Width <= 0 || b.Height <= 0) return null;
 
         var layerBounds = new PixelRegion(
-            b.Left - layer.OffsetX,
-            b.Top - layer.OffsetY,
+            b.X - layer.OffsetX,
+            b.Y - layer.OffsetY,
             b.Width,
             b.Height).ClipTo(layer.Width, layer.Height);
         if (layerBounds.IsEmpty) return null;
@@ -131,20 +144,20 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         var beforeTiles = layer.Pixels.CaptureTiles(layerBounds);
         var hasPixels = false;
 
-        for (var docY = b.Top; docY < b.Bottom; docY++)
+        for (var docY = b.Y; docY < b.Bottom; docY++)
         {
             var layY = docY - layer.OffsetY;
             if ((uint)layY >= (uint)layer.Height) continue;
-            for (var docX = b.Left; docX < b.Right; docX++)
+            for (var docX = b.X; docX < b.Right; docX++)
             {
-                if (!ctx.Selection.IsSelected(docX, docY)) continue;
+                if (usingSelection && !ctx.Selection.IsSelected(docX, docY)) continue;
 
                 var layX = docX - layer.OffsetX;
                 if ((uint)layX >= (uint)layer.Width) continue;
                 layer.Pixels.GetPixel(layX, layY, out var pxB, out var pxG, out var pxR, out var pxA);
                 if (pxA == 0) continue;
 
-                var fi = ((docY - b.Top) * b.Width + (docX - b.Left)) * 4;
+                var fi = ((docY - b.Y) * b.Width + (docX - b.X)) * 4;
                 floatPixels[fi] = pxB;
                 floatPixels[fi + 1] = pxG;
                 floatPixels[fi + 2] = pxR;
@@ -157,8 +170,8 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         if (!hasPixels) return null;
 
         layer.MarkThumbnailDirty();
-        ctx.Document.NotifyChanged(new PixelRegion(b.Left, b.Top, b.Width, b.Height), ctx.ActiveLayerIndex);
-        return new SelectionTransformOperation(ctx, ctx.ActiveLayerIndex, b.Left, b.Top, b.Width, b.Height, floatPixels, beforeTiles);
+        ctx.Document.NotifyChanged(b, ctx.ActiveLayerIndex);
+        return new SelectionTransformOperation(ctx, ctx.ActiveLayerIndex, b.X, b.Y, b.Width, b.Height, floatPixels, beforeTiles);
     }
 
     public void PointerDown(CanvasInputSample sample)
