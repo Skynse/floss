@@ -25,6 +25,7 @@ public sealed class DrawingCanvas : Control
 
     private readonly BrushTool _brushTool;
     private readonly BrushTool _eraserTool;
+    private readonly TransformTool _transformTool = new();
 
     private BrushPreset _brush = BrushPreset.Defaults[0];
     private Color _paintColor = Color.Parse("#111111");
@@ -106,6 +107,7 @@ public sealed class DrawingCanvas : Control
     public ITool ActiveTool => _toolController.ActiveTool;
     public BrushTool BrushTool => _brushTool;
     public BrushTool EraserTool => _eraserTool;
+    public TransformTool TransformTool => _transformTool;
     public bool HasSelection => _ctx.Selection.HasSelection;
 
     public double CanvasRotation { get; set; }
@@ -208,7 +210,19 @@ public sealed class DrawingCanvas : Control
     {
         if (_toolController.ActiveTool is SelectTool st) st.CommitPolyline(_ctx);
         else if (_toolController.ActiveTool is PolylineTool pt) pt.Commit(_ctx);
+        else if (_toolController.ActiveTool is TransformTool tt) tt.Commit(_ctx);
         InvalidateVisual();
+    }
+
+    public bool BeginSelectionTransform()
+    {
+        var previousTool = _toolController.ActiveTool;
+        SetActiveTool(_transformTool);
+        if (_transformTool.BeginTransform(_ctx))
+            return true;
+
+        SetActiveTool(previousTool);
+        return false;
     }
 
     public void Clear(bool pushHistory = true) => _document.ClearActiveLayer(pushHistory);
@@ -254,7 +268,8 @@ public sealed class DrawingCanvas : Control
         }
 
         _toolController.RenderOverlay(context, CanvasZoom);
-        _ctx.Selection.RenderOverlay(context, CanvasZoom);
+        if (_toolController.ActiveTool is not Floss.App.Tools.TransformTool)
+            _ctx.Selection.RenderOverlay(context, CanvasZoom);
 
         if ((_isPointerOver || _isCursorPreviewLocked) && !IsPaintBlockedByLock)
         {

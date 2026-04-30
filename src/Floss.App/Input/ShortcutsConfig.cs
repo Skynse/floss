@@ -78,6 +78,7 @@ public sealed class ShortcutsConfig
 
     public KeyBinding ToolBrush  { get; set; } = new(Key.B);
     public KeyBinding ToolEraser { get; set; } = new(Key.E);
+    public KeyBinding ToolTransform { get; set; } = new(Key.T, KeyModifiers.Control);
 
     // ── Brush — size ──────────────────────────────────────────────────────────
 

@@ -228,6 +228,7 @@ public sealed class SettingsWindow : Window
         content.Children.Add(GroupHeader("Tools"));
         content.Children.Add(BindingRow("Brush tool",  sc.ToolBrush,  v => sc.ToolBrush  = v));
         content.Children.Add(BindingRow("Eraser tool", sc.ToolEraser, v => sc.ToolEraser = v));
+        content.Children.Add(BindingRow("Transform selection", sc.ToolTransform, v => sc.ToolTransform = v));
 
         content.Children.Add(GroupHeader("Brush — Size"));
         content.Children.Add(BindingRow("Size decrease (small)", sc.BrushSizeDecrease,      v => sc.BrushSizeDecrease      = v));

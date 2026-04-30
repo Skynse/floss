@@ -1765,6 +1765,7 @@ public partial class MainWindow : Window
         BrushTool bt => bt.IsEraser ? "Eraser" : _canvas.Brush.Name,
         MoveTool => "Move",
         SelectTool => $"Select: {_selectTool.Mode}",
+        TransformTool => "Transform",
         MagicWandTool => "Magic Wand",
         FillTool => "Fill",
         EyedropperTool => "Eyedropper",
@@ -2612,6 +2613,7 @@ public partial class MainWindow : Window
         else if (sc.RotateRight.Matches(key, mods)) { SetRotation(_rotation + sc.RotateKeyStep); e.Handled = true; }
         else if (sc.ToolBrush.Matches(key, mods)) { SetTool("brush"); e.Handled = true; }
         else if (sc.ToolEraser.Matches(key, mods)) { SetTool("eraser"); e.Handled = true; }
+        else if (sc.ToolTransform.Matches(key, mods)) { _canvas.BeginSelectionTransform(); UpdateStatus(); e.Handled = true; }
         else if (key == Key.V && mods == KeyModifiers.None) { ActivateTool(_moveTool, _moveToolButton); e.Handled = true; }
         else if (key == Key.S && mods == KeyModifiers.None) { ActivateTool(_selectTool, _selectToolButton); e.Handled = true; }
         else if (key == Key.W && mods == KeyModifiers.None) { ActivateTool(_magicWandTool, _wandToolButton); e.Handled = true; }
@@ -2629,7 +2631,7 @@ public partial class MainWindow : Window
         }
         else if (key == Key.Escape)
         { _canvas.CancelActiveTool(); e.Handled = true; }
-        else if ((key == Key.Return || key == Key.Enter) && _canvas.ActiveTool is SelectTool or PolylineTool)
+        else if ((key == Key.Return || key == Key.Enter) && _canvas.ActiveTool is SelectTool or PolylineTool or TransformTool)
         { _canvas.CommitActiveTool(); e.Handled = true; }
         else if (sc.ColorCycle.Matches(key, mods)) { CycleColor(); e.Handled = true; }
         else if (sc.ColorDefault.Matches(key, mods)) { SetColor(Color.Parse("#111111")); e.Handled = true; }
