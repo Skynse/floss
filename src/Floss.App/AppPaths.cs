@@ -19,6 +19,9 @@ public static class AppPaths
     public static string ConfigPath { get; } =
         Path.Combine(AppDirectory, "config.json");
 
+    public static string ShortcutsConfigPath { get; } =
+        Path.Combine(AppDirectory, "shortcuts.json");
+
     public static void EnsureDirectories()
     {
         Directory.CreateDirectory(AppDirectory);

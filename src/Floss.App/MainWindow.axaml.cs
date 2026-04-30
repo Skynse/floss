@@ -12,6 +12,7 @@ using Avalonia.Platform.Storage;
 using Floss.App.Brushes;
 using Floss.App.Canvas;
 using Floss.App.Document;
+using Floss.App.Input;
 using Floss.App.Psd;
 
 namespace Floss.App;
@@ -164,9 +165,12 @@ public partial class MainWindow : Window
     private IReadOnlyList<BrushAsset> _brushAssets = [];
     private readonly Dictionary<int, LayerRowRefs> _layerRows = new();
 
-    private bool  _spacePanning;
-    private bool  _isPanning;
-    private Point _lastPanPoint;
+    private enum GestureMode { None, Pan, Zoom, Rotate, BrushSize }
+    private GestureMode _activeGesture;
+    private Key         _gestureKey = Key.None;
+    private bool        _isPanning;
+    private Point       _lastPanPoint;
+    private SettingsWindow? _settingsWindow;
 
     private ScaleTransform     _canvasScale  = null!;
     private RotateTransform    _canvasRotate = null!;
@@ -310,7 +314,9 @@ public partial class MainWindow : Window
                 MenuAction("_Open PSD...", async () => await OpenPsdAsync()),
                 MenuAction("_Save PSD...", async () => await SavePsdAsync()),
                 new Separator(),
-                MenuAction("_Reset View", () => { SetZoom(1.0, null); SetRotation(0); })
+                MenuAction("_Reset View", () => { SetZoom(1.0, null); SetRotation(0); }),
+                new Separator(),
+                MenuAction("_Settings...", OpenSettings)
             }
         };
 
@@ -1648,15 +1654,17 @@ public partial class MainWindow : Window
 
     private void Workspace_OnPointerWheelChanged(object? sender, PointerWheelEventArgs e)
     {
-        var factor = e.Delta.Y > 0 ? 1.12 : 1.0 / 1.12;
+        var f = App.Shortcuts.ZoomScrollFactor;
+        var factor = e.Delta.Y > 0 ? f : 1.0 / f;
         SetZoom(_zoom * factor, e.GetPosition(_workspaceViewport));
         e.Handled = true;
     }
 
     private void Workspace_OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        var pt = e.GetCurrentPoint(_workspaceViewport);
-        if (!_spacePanning && !pt.Properties.IsMiddleButtonPressed) return;
+        var pt     = e.GetCurrentPoint(_workspaceViewport);
+        var middle = pt.Properties.IsMiddleButtonPressed;
+        if (!middle && _activeGesture == GestureMode.None) return;
         _isPanning    = true;
         _lastPanPoint = e.GetPosition(_workspaceViewport);
         e.Pointer.Capture(_workspaceViewport);
@@ -1668,10 +1676,29 @@ public partial class MainWindow : Window
         if (!_isPanning) return;
         var pt = e.GetPosition(_workspaceViewport);
         var d  = pt - _lastPanPoint;
-        _canvasPan.X  += d.X;
-        _canvasPan.Y  += d.Y;
-        ClampCanvasPan();
-        _lastPanPoint  = pt;
+        _lastPanPoint = pt;
+        var sc = App.Shortcuts;
+
+        switch (_activeGesture)
+        {
+            case GestureMode.Pan:
+            case GestureMode.None: // middle-mouse pan
+                _canvasPan.X += d.X;
+                _canvasPan.Y += d.Y;
+                ClampCanvasPan();
+                break;
+            case GestureMode.Zoom:
+                SetZoom(_zoom * Math.Pow(sc.GestureZoomSensitivity, -d.Y), null);
+                break;
+            case GestureMode.Rotate:
+                SetRotation(_rotation + d.X * sc.GestureRotateSensitivity);
+                break;
+            case GestureMode.BrushSize:
+                _sizeSlider.Value = Math.Clamp(
+                    _sizeSlider.Value + d.X * sc.GestureSizeSensitivity,
+                    _sizeSlider.Minimum, _sizeSlider.Maximum);
+                break;
+        }
         e.Handled = true;
     }
 
@@ -1743,61 +1770,109 @@ public partial class MainWindow : Window
     // ── Keyboard ──────────────────────────────────────────────────────────────
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
-        var mod   = e.KeyModifiers;
-        var ctrl  = mod.HasFlag(KeyModifiers.Control);
-        var shift = mod.HasFlag(KeyModifiers.Shift);
-        var none  = mod == KeyModifiers.None;
+        var key  = e.Key;
+        var mods = e.KeyModifiers;
+        var sc   = App.Shortcuts;
 
-        if (none && e.Key == Key.Space)
+        // Pen gestures take priority — they suspend drawing and activate a drag mode
+        var gesture = DetectGesture(key, mods, sc);
+        if (gesture != GestureMode.None)
         {
-            _spacePanning = true;
+            _activeGesture = gesture;
+            _gestureKey    = key;
             _canvas.PaintInputSuspended = true;
-            Cursor = new Cursor(StandardCursorType.SizeAll);
+            Cursor = gesture == GestureMode.Pan
+                ? new Cursor(StandardCursorType.SizeAll)
+                : new Cursor(StandardCursorType.Arrow);
             e.Handled = true;
             return;
         }
 
-        if      (ctrl && shift && e.Key == Key.Z)         { _canvas.Redo();                    e.Handled = true; }
-        else if (ctrl && e.Key == Key.Z)                  { _canvas.Undo();                    e.Handled = true; }
-        else if (ctrl && e.Key == Key.Y)                  { _canvas.Redo();                    e.Handled = true; }
-        else if (ctrl && e.Key == Key.S)                  { _ = SavePsdAsync();                e.Handled = true; }
-        else if (ctrl && e.Key == Key.O)                  { _ = OpenPsdAsync();                e.Handled = true; }
-        else if (ctrl && shift && e.Key == Key.N)         { _canvas.AddLayer();                e.Handled = true; }
-        else if (ctrl && e.Key == Key.J)                  { _canvas.DuplicateLayer();          e.Handled = true; }
-        else if (ctrl && e.Key == Key.Delete)             { _canvas.DeleteLayer();             e.Handled = true; }
-        else if (ctrl && e.Key == Key.Up)                 { _canvas.MoveActiveLayer(1);        e.Handled = true; }
-        else if (ctrl && e.Key == Key.Down)               { _canvas.MoveActiveLayer(-1);       e.Handled = true; }
-        else if (ctrl && e.Key == Key.D0)                 { SetZoom(1.0, null); SetRotation(0); e.Handled = true; }
-        else if (ctrl && e.Key == Key.Add)                { SetZoom(_zoom * 1.2, null);        e.Handled = true; }
-        else if (ctrl && e.Key == Key.Subtract)           { SetZoom(_zoom / 1.2, null);        e.Handled = true; }
-        else if (none && e.Key == Key.B)                  { SetTool("brush");                  e.Handled = true; }
-        else if (none && e.Key == Key.E)                  { SetTool("eraser");                 e.Handled = true; }
-        else if (none && e.Key == Key.X)                  { CycleColor();                      e.Handled = true; }
-        else if (none && e.Key == Key.D)                  { SetColor(Color.Parse("#111111"));  e.Handled = true; }
-        else if (none && e.Key == Key.OemOpenBrackets)
+        if      (sc.Undo.Matches(key, mods))                  { _canvas.Undo();                      e.Handled = true; }
+        else if (sc.Redo.Matches(key, mods))                  { _canvas.Redo();                      e.Handled = true; }
+        else if (sc.RedoAlt.Matches(key, mods))               { _canvas.Redo();                      e.Handled = true; }
+        else if (sc.FileSave.Matches(key, mods))              { _ = SavePsdAsync();                  e.Handled = true; }
+        else if (sc.FileOpen.Matches(key, mods))              { _ = OpenPsdAsync();                  e.Handled = true; }
+        else if (sc.LayerNew.Matches(key, mods))              { _canvas.AddLayer();                  e.Handled = true; }
+        else if (sc.LayerDuplicate.Matches(key, mods))        { _canvas.DuplicateLayer();            e.Handled = true; }
+        else if (sc.LayerDelete.Matches(key, mods))           { _canvas.DeleteLayer();               e.Handled = true; }
+        else if (sc.LayerMoveUp.Matches(key, mods))           { _canvas.MoveActiveLayer(1);          e.Handled = true; }
+        else if (sc.LayerMoveDown.Matches(key, mods))         { _canvas.MoveActiveLayer(-1);         e.Handled = true; }
+        else if (sc.ZoomReset.Matches(key, mods))             { SetZoom(1.0, null); SetRotation(0);  e.Handled = true; }
+        else if (sc.ZoomFit.Matches(key, mods))               { SyncCanvasFrameToDocument(fitToViewport: true); e.Handled = true; }
+        else if (sc.ZoomIn.Matches(key, mods) || sc.ZoomInAlt.Matches(key, mods))
+            { SetZoom(_zoom * sc.ZoomKeyFactor, null);        e.Handled = true; }
+        else if (sc.ZoomOut.Matches(key, mods))
+            { SetZoom(_zoom / sc.ZoomKeyFactor, null);        e.Handled = true; }
+        else if (sc.RotateReset.Matches(key, mods))           { SetRotation(0);                      e.Handled = true; }
+        else if (sc.RotateLeft.Matches(key, mods))            { SetRotation(_rotation - sc.RotateKeyStep); e.Handled = true; }
+        else if (sc.RotateRight.Matches(key, mods))           { SetRotation(_rotation + sc.RotateKeyStep); e.Handled = true; }
+        else if (sc.ToolBrush.Matches(key, mods))             { SetTool("brush");                    e.Handled = true; }
+        else if (sc.ToolEraser.Matches(key, mods))            { SetTool("eraser");                   e.Handled = true; }
+        else if (sc.ColorCycle.Matches(key, mods))            { CycleColor();                        e.Handled = true; }
+        else if (sc.ColorDefault.Matches(key, mods))          { SetColor(Color.Parse("#111111"));    e.Handled = true; }
+        else if (sc.OpenSettings.Matches(key, mods))          { OpenSettings();                      e.Handled = true; }
+        else if (sc.OpenBrushEditor.Matches(key, mods))       { OpenBrushEditor();                   e.Handled = true; }
+        else if (sc.BrushSizeDecrease.Matches(key, mods))
         {
-            _sizeSlider.Value = Math.Max(_sizeSlider.Minimum, _sizeSlider.Value - 2);
+            _sizeSlider.Value = Math.Max(_sizeSlider.Minimum, _sizeSlider.Value - sc.BrushSizeStep);
             e.Handled = true;
         }
-        else if (none && e.Key == Key.OemCloseBrackets)
+        else if (sc.BrushSizeIncrease.Matches(key, mods))
         {
-            _sizeSlider.Value = Math.Min(_sizeSlider.Maximum, _sizeSlider.Value + 2);
+            _sizeSlider.Value = Math.Min(_sizeSlider.Maximum, _sizeSlider.Value + sc.BrushSizeStep);
             e.Handled = true;
         }
-        else if (shift && e.Key == Key.OemOpenBrackets)  { SetRotation(_rotation - 15);       e.Handled = true; }
-        else if (shift && e.Key == Key.OemCloseBrackets) { SetRotation(_rotation + 15);       e.Handled = true; }
+        else if (sc.BrushSizeDecreaseLarge.Matches(key, mods))
+        {
+            _sizeSlider.Value = Math.Max(_sizeSlider.Minimum, _sizeSlider.Value - sc.BrushSizeStepLarge);
+            e.Handled = true;
+        }
+        else if (sc.BrushSizeIncreaseLarge.Matches(key, mods))
+        {
+            _sizeSlider.Value = Math.Min(_sizeSlider.Maximum, _sizeSlider.Value + sc.BrushSizeStepLarge);
+            e.Handled = true;
+        }
+        else if (sc.BrushOpacityDecrease.Matches(key, mods))
+        {
+            _opacitySlider.Value = Math.Max(_opacitySlider.Minimum, _opacitySlider.Value - sc.BrushOpacityStep);
+            e.Handled = true;
+        }
+        else if (sc.BrushOpacityIncrease.Matches(key, mods))
+        {
+            _opacitySlider.Value = Math.Min(_opacitySlider.Maximum, _opacitySlider.Value + sc.BrushOpacityStep);
+            e.Handled = true;
+        }
     }
 
     private void OnKeyUp(object? sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Space)
+        if (_activeGesture != GestureMode.None && e.Key == _gestureKey)
         {
-            _spacePanning = false;
-            _isPanning    = false;
+            _activeGesture              = GestureMode.None;
+            _gestureKey                 = Key.None;
+            _isPanning                  = false;
             _canvas.PaintInputSuspended = false;
-            Cursor        = Cursor.Default;
-            e.Handled     = true;
+            Cursor                      = Cursor.Default;
+            e.Handled                   = true;
         }
+    }
+
+    private static GestureMode DetectGesture(Key key, KeyModifiers mods, ShortcutsConfig sc)
+    {
+        if (sc.GesturePan.Matches(key, mods))       return GestureMode.Pan;
+        if (sc.GestureZoom.Matches(key, mods))      return GestureMode.Zoom;
+        if (sc.GestureRotate.Matches(key, mods))    return GestureMode.Rotate;
+        if (sc.GestureBrushSize.Matches(key, mods)) return GestureMode.BrushSize;
+        return GestureMode.None;
+    }
+
+    private void OpenSettings()
+    {
+        if (_settingsWindow != null) { _settingsWindow.Activate(); return; }
+        _settingsWindow = new SettingsWindow();
+        _settingsWindow.Closed += (_, _) => _settingsWindow = null;
+        _settingsWindow.Show(this);
     }
 
     // ── Status ────────────────────────────────────────────────────────────────

@@ -57,6 +57,13 @@ public sealed class BrushEditorWindow : Window
     private DynamicsPopupWindow? _sizeDynPopup;
     private DynamicsPopupWindow? _opacDynPopup;
 
+    // ── Cached category panels (built once to avoid re-parenting sliders) ────
+    private ScrollViewer _brushSizePanel  = null!;
+    private ScrollViewer _inkPanel        = null!;
+    private ScrollViewer _aaPanel         = null!;
+    private ScrollViewer _strokePanel     = null!;
+    private ScrollViewer _texturePanel    = null!;
+
     // ── Constructor ───────────────────────────────────────────────────────────
 
     public BrushEditorWindow(BrushPreset preset, Action<BrushPreset> onChange)
@@ -75,6 +82,14 @@ public sealed class BrushEditorWindow : Window
 
         _catButtons = Categories.Select((_, i) => MakeCatBtn(i)).ToArray();
         _stampPanel = new StackPanel { Spacing = 4 };
+
+        // Build slider-containing panels exactly once so sliders are never
+        // re-parented when the user switches categories.
+        _brushSizePanel = WrapContent(BuildBrushSizeContent());
+        _inkPanel       = WrapContent(BuildInkContent());
+        _aaPanel        = WrapContent(BuildAntiAliasingContent());
+        _strokePanel    = WrapContent(BuildStrokeContent());
+        _texturePanel   = WrapContent(BuildTextureContent());
 
         Content = BuildShell();
         SyncFromPreset(preset);
@@ -138,27 +153,34 @@ public sealed class BrushEditorWindow : Window
         return btn;
     }
 
-    private void SelectCategory(int index)
+    private void HighlightActiveCategory()
     {
-        _activeCategory = index;
         for (var i = 0; i < _catButtons.Length; i++)
         {
-            var active = i == index;
+            var active = i == _activeCategory;
             _catButtons[i].Background = active
                 ? new SolidColorBrush(Color.Parse(AccentSoft))
                 : new SolidColorBrush(Colors.Transparent);
             _catButtons[i].Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted));
         }
-        _contentHost.Child = WrapContent(index switch
+    }
+
+    private void SelectCategory(int index)
+    {
+        _activeCategory = index;
+        HighlightActiveCategory();
+        // BrushTip is rebuilt fresh (preset-dependent, no shared sliders).
+        // All others are pre-built cached panels to avoid re-parenting sliders.
+        _contentHost.Child = index switch
         {
-            0 => BuildBrushSizeContent(),
-            1 => BuildInkContent(),
-            2 => BuildAntiAliasingContent(),
-            3 => BuildBrushTipContent(),
-            4 => BuildStrokeContent(),
-            5 => BuildTextureContent(),
+            0 => _brushSizePanel,
+            1 => _inkPanel,
+            2 => _aaPanel,
+            3 => WrapContent(BuildBrushTipContent()),
+            4 => _strokePanel,
+            5 => _texturePanel,
             _ => new Border()
-        });
+        };
     }
 
     private static ScrollViewer WrapContent(Control content) => new()
@@ -605,7 +627,11 @@ public sealed class BrushEditorWindow : Window
         _opacDynPopup?.SyncFromDynamics(preset.OpacityDynamics);
 
         RebuildStampPanel();
-        SelectCategory(_activeCategory);
+        // Refresh sidebar highlight without rebuilding cached slider panels.
+        // Only the Brush Tip panel needs a live rebuild (it reflects preset state).
+        HighlightActiveCategory();
+        if (_activeCategory == 3)
+            _contentHost.Child = WrapContent(BuildBrushTipContent());
         _preview.Brush = preset;
         _preview.InvalidateBitmap();
         Title = $"Edit Brush — {preset.Name}";
