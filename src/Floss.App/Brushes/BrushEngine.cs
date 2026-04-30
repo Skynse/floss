@@ -59,7 +59,8 @@ public sealed class BrushEngine : IDisposable
         _stamps.Clear();
 
         var velocity01 = (float)Math.Clamp(velocity / 5000.0, 0, 1);
-        var stamp = CreateStamp(stroke, brush, sample, velocity01);
+        var sp = BuildStrokePoint(stroke, sample, velocity01);
+        var stamp = CreateStamp(stroke, brush, sp);
         _stamps.Add(stamp);
 
         var dirty = StampBounds(stamp).ClipTo(layer.Width, layer.Height);
@@ -88,9 +89,7 @@ public sealed class BrushEngine : IDisposable
     private void EnsureStroke(BrushPreset brush, bool eraser, CanvasInputSample sample)
     {
         if (_activeStroke == null || !_activeStroke.Matches(brush, eraser))
-        {
             BeginStroke(brush, eraser, sample);
-        }
     }
 
     private PixelRegion BuildStamps(ActiveStroke stroke, BrushPreset brush, CanvasInputSample from, CanvasInputSample to)
@@ -103,22 +102,18 @@ public sealed class BrushEngine : IDisposable
         var elapsedSeconds = Math.Max(0.001, (to.TimeMicros - from.TimeMicros) / 1_000_000.0);
         var velocity01 = Math.Clamp((float)(distance / elapsedSeconds / 5000.0), 0, 1);
         var subdivisions = Math.Max(8, Math.Min(96, (int)Math.Ceiling(distance / 2.0)));
+
+        if (distance > 0.001)
+            stroke.State.DrawingAngle = MathF.Atan2((float)dy, (float)dx);
+
         var p0 = new SplinePoint(
-            stroke.State.LastX,
-            stroke.State.LastY,
-            stroke.State.LastPressure,
-            stroke.State.LastTiltX,
-            stroke.State.LastTiltY,
-            (float)from.Twist);
+            stroke.State.LastX, stroke.State.LastY, stroke.State.LastPressure,
+            stroke.State.LastTiltX, stroke.State.LastTiltY, (float)from.Twist);
         var p1 = ToSplinePoint(from);
         var p2 = ToSplinePoint(to);
         var p3 = new SplinePoint(
-            (float)(to.X + (to.X - from.X)),
-            (float)(to.Y + (to.Y - from.Y)),
-            (float)to.Pressure,
-            (float)to.TiltX,
-            (float)to.TiltY,
-            (float)to.Twist);
+            (float)(to.X + (to.X - from.X)), (float)(to.Y + (to.Y - from.Y)),
+            (float)to.Pressure, (float)to.TiltX, (float)to.TiltY, (float)to.Twist);
 
         var previous = p1;
         var dirty = PixelRegion.Empty;
@@ -127,26 +122,30 @@ public sealed class BrushEngine : IDisposable
         {
             var t = i / (float)subdivisions;
             var current = CatmullRom(p0, p1, p2, p3, t);
-            var segmentDx = current.X - previous.X;
-            var segmentDy = current.Y - previous.Y;
-            var segmentLength = MathF.Sqrt(segmentDx * segmentDx + segmentDy * segmentDy);
+            var segDx = current.X - previous.X;
+            var segDy = current.Y - previous.Y;
+            var segLen = MathF.Sqrt(segDx * segDx + segDy * segDy);
 
-            if (segmentLength > 0.0001f)
+            if (segLen > 0.0001f)
             {
                 var consumed = stroke.State.NextStampDistance - stroke.State.DistanceLeftover;
-                while (consumed <= segmentLength)
+                while (consumed <= segLen)
                 {
-                    var ratio = consumed / segmentLength;
+                    var ratio = consumed / segLen;
                     var sample = Lerp(previous, current, ratio, from, to);
-                    var stamp = CreateStamp(stroke, brush, sample, velocity01);
+                    var sp = BuildStrokePoint(stroke, sample, velocity01);
+                    var stamp = CreateStamp(stroke, brush, sp);
                     _stamps.Add(stamp);
                     dirty = dirty.Union(StampBounds(stamp));
+                    stroke.State.TotalDistance += stroke.State.NextStampDistance;
+                    stroke.State.DabSeqNo++;
                     stroke.State.NextStampDistance = StampSpacing(brush, stamp);
                     consumed += stroke.State.NextStampDistance;
                 }
 
-                stroke.State.DistanceLeftover = segmentLength - (consumed - stroke.State.NextStampDistance);
-                if (stroke.State.DistanceLeftover >= stroke.State.NextStampDistance) stroke.State.DistanceLeftover = 0;
+                stroke.State.DistanceLeftover = segLen - (consumed - stroke.State.NextStampDistance);
+                if (stroke.State.DistanceLeftover >= stroke.State.NextStampDistance)
+                    stroke.State.DistanceLeftover = 0;
             }
 
             previous = current;
@@ -161,24 +160,37 @@ public sealed class BrushEngine : IDisposable
         return dirty;
     }
 
+    private static StrokePoint BuildStrokePoint(ActiveStroke stroke, CanvasInputSample sample, float velocity01)
+        => new(
+            x: (float)sample.X, y: (float)sample.Y,
+            pressure: (float)sample.Pressure,
+            tiltX: (float)sample.TiltX, tiltY: (float)sample.TiltY, twist: (float)sample.Twist,
+            drawingAngle: stroke.State.DrawingAngle,
+            speed: velocity01,
+            totalDistance: stroke.State.TotalDistance,
+            dabSeqNo: stroke.State.DabSeqNo,
+            random: Hash01((int)(sample.X * 7919f), (int)(sample.Y * 6353f)),
+            strokeRandom: stroke.StrokeRandom);
+
     private static float StampSpacing(BrushPreset brush, StampSample stamp)
     {
         var flow = Math.Clamp((float)brush.Flow, 0.01f, 1.0f);
-        var flowCompensation = MathF.Sqrt(flow);
-        return Math.Max(0.5f, stamp.Size * Math.Max(0.01f, (float)brush.Spacing) * flowCompensation);
+        return Math.Max(0.5f, stamp.Size * Math.Max(0.01f, (float)brush.Spacing) * MathF.Sqrt(flow));
     }
 
-    private StampSample CreateStamp(ActiveStroke stroke, BrushPreset brush, CanvasInputSample sample, float velocity01)
+    private static StampSample CreateStamp(ActiveStroke stroke, BrushPreset brush, in StrokePoint sp)
     {
-        var sizeModifier = stroke.Dynamics.Evaluate(DynamicOutputTarget.Size, sample, velocity01);
-        var opacityModifier = stroke.Dynamics.Evaluate(DynamicOutputTarget.Opacity, sample, velocity01);
-        var scatter = stroke.Dynamics.Evaluate(DynamicOutputTarget.Scatter, sample, velocity01) - 1.0f;
-        var size = Math.Max(0.5f, (float)brush.Size * sizeModifier);
-        var opacity = (float)Math.Clamp(brush.Opacity * brush.Flow * opacityModifier, 0, 1);
-        var angle = (float)sample.Twist + stroke.Dynamics.Evaluate(DynamicOutputTarget.Angle, sample, velocity01) - 1.0f;
+        var dyn = brush.Dynamics;
+        var sizeMul    = dyn.EvalSize(sp);
+        var opacMul    = dyn.EvalOpacity(sp);
+        var scatter    = dyn.EvalScatter(sp) - 1.0f;
+        var rotDeg     = dyn.EvalRotationDeg(sp);
+        var size       = Math.Max(0.5f, (float)brush.Size * sizeMul);
+        var opacity    = (float)Math.Clamp(brush.Opacity * brush.Flow * opacMul, 0, 1);
+        var angle      = (float)sp.Twist + rotDeg;
 
-        var x = (float)sample.X;
-        var y = (float)sample.Y;
+        var x = sp.X;
+        var y = sp.Y;
         if (scatter > 0.001f)
         {
             var noise = Hash01((int)(x * 8), (int)(y * 8));
@@ -211,61 +223,50 @@ public sealed class BrushEngine : IDisposable
     private static PixelRegion StampBounds(StampSample stamp)
     {
         var radius = stamp.Size * 0.75f + 2.0f;
-        var left = (int)MathF.Floor(stamp.X - radius);
-        var top = (int)MathF.Floor(stamp.Y - radius);
-        var right = (int)MathF.Ceiling(stamp.X + radius);
+        var left   = (int)MathF.Floor(stamp.X - radius);
+        var top    = (int)MathF.Floor(stamp.Y - radius);
+        var right  = (int)MathF.Ceiling(stamp.X + radius);
         var bottom = (int)MathF.Ceiling(stamp.Y + radius);
         return new PixelRegion(left, top, right - left + 1, bottom - top + 1);
     }
 
-    private static SplinePoint ToSplinePoint(CanvasInputSample sample)
-        => new((float)sample.X, (float)sample.Y, (float)sample.Pressure, (float)sample.TiltX, (float)sample.TiltY, (float)sample.Twist);
+    private static SplinePoint ToSplinePoint(CanvasInputSample s)
+        => new((float)s.X, (float)s.Y, (float)s.Pressure, (float)s.TiltX, (float)s.TiltY, (float)s.Twist);
 
     private static CanvasInputSample Lerp(SplinePoint a, SplinePoint b, float t, CanvasInputSample from, CanvasInputSample to)
     {
-        var pressure = a.Pressure + (b.Pressure - a.Pressure) * t;
-        var tiltX = a.TiltX + (b.TiltX - a.TiltX) * t;
-        var tiltY = a.TiltY + (b.TiltY - a.TiltY) * t;
-        var twist = a.Twist + (b.Twist - a.Twist) * t;
         var time = (long)(from.TimeMicros + (to.TimeMicros - from.TimeMicros) * t);
         return new CanvasInputSample(
-            a.X + (b.X - a.X) * t,
-            a.Y + (b.Y - a.Y) * t,
-            pressure,
-            tiltX,
-            tiltY,
-            twist,
-            time,
-            to.PointerId,
-            to.Source,
-            to.Phase);
+            a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t,
+            a.Pressure + (b.Pressure - a.Pressure) * t,
+            a.TiltX + (b.TiltX - a.TiltX) * t,
+            a.TiltY + (b.TiltY - a.TiltY) * t,
+            a.Twist + (b.Twist - a.Twist) * t,
+            time, to.PointerId, to.Source, to.Phase);
     }
 
     private static SplinePoint CatmullRom(SplinePoint p0, SplinePoint p1, SplinePoint p2, SplinePoint p3, float t)
     {
-        var t2 = t * t;
-        var t3 = t2 * t;
+        var t2 = t * t; var t3 = t2 * t;
         return new SplinePoint(
-            Catmull(p0.X, p1.X, p2.X, p3.X, t, t2, t3),
-            Catmull(p0.Y, p1.Y, p2.Y, p3.Y, t, t2, t3),
+            Catmull(p0.X,        p1.X,        p2.X,        p3.X,        t, t2, t3),
+            Catmull(p0.Y,        p1.Y,        p2.Y,        p3.Y,        t, t2, t3),
             Catmull(p0.Pressure, p1.Pressure, p2.Pressure, p3.Pressure, t, t2, t3),
-            Catmull(p0.TiltX, p1.TiltX, p2.TiltX, p3.TiltX, t, t2, t3),
-            Catmull(p0.TiltY, p1.TiltY, p2.TiltY, p3.TiltY, t, t2, t3),
-            Catmull(p0.Twist, p1.Twist, p2.Twist, p3.Twist, t, t2, t3));
+            Catmull(p0.TiltX,    p1.TiltX,    p2.TiltX,    p3.TiltX,    t, t2, t3),
+            Catmull(p0.TiltY,    p1.TiltY,    p2.TiltY,    p3.TiltY,    t, t2, t3),
+            Catmull(p0.Twist,    p1.Twist,    p2.Twist,    p3.Twist,    t, t2, t3));
     }
 
     private static float Catmull(float p0, float p1, float p2, float p3, float t, float t2, float t3)
-        => 0.5f * (2.0f * p1 + (-p0 + p2) * t + (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 + (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
+        => 0.5f * (2f * p1 + (-p0 + p2) * t + (2f * p0 - 5f * p1 + 4f * p2 - p3) * t2 + (-p0 + 3f * p1 - 3f * p2 + p3) * t3);
 
     private static float Hash01(int x, int y)
     {
         unchecked
         {
             uint h = (uint)(x * 1619 + y * 31337);
-            h ^= h >> 17;
-            h *= 0xbf324c81u;
-            h ^= h >> 13;
-            h *= 0x9b2e1515u;
+            h ^= h >> 17; h *= 0xbf324c81u;
+            h ^= h >> 13; h *= 0x9b2e1515u;
             h ^= h >> 16;
             return (h & 0xFFFF) / 65535.0f;
         }
@@ -281,26 +282,34 @@ public sealed class BrushEngine : IDisposable
         {
             _brush = brush;
             _eraser = eraser;
-            State = new StrokeState((float)sample.X, (float)sample.Y, (float)sample.Pressure, (float)sample.TiltX, (float)sample.TiltY);
-            Dynamics = DynamicsMatrix.FromBrush(brush);
-            State.NextStampDistance = StampSpacing(
-                brush,
-                new StampSample(0, 0, Math.Max(0.5f, (float)brush.Size * Dynamics.Evaluate(DynamicOutputTarget.Size, sample, 0)), 1, 0));
+            StrokeRandom = Hash01((int)(sample.X * 997), (int)(sample.Y * 991));
+            State = new StrokeState(
+                (float)sample.X, (float)sample.Y,
+                (float)sample.Pressure, (float)sample.TiltX, (float)sample.TiltY);
+
+            var sp = new StrokePoint(
+                (float)sample.X, (float)sample.Y, (float)sample.Pressure,
+                (float)sample.TiltX, (float)sample.TiltY, (float)sample.Twist,
+                0, 0, 0, 0, 0, StrokeRandom);
+            var initSizeMul = brush.Dynamics.EvalSize(sp);
+            State.NextStampDistance = Math.Max(0.5f,
+                (float)brush.Size * Math.Max(0.5f, initSizeMul) * Math.Max(0.01f, (float)brush.Spacing));
+
             Mask = brush.Tip.GenerateMask(Math.Max(1, (int)Math.Ceiling(brush.Size)), (float)brush.Hardness);
             _baseColor = ToSkColor(brush.Color);
             Paint = new SKPaint
             {
                 IsAntialias = true,
-                BlendMode = eraser ? SKBlendMode.DstOut : SKBlendMode.SrcOver,
-                Color = eraser ? SKColors.White : _baseColor,
+                BlendMode   = eraser ? SKBlendMode.DstOut : SKBlendMode.SrcOver,
+                Color       = eraser ? SKColors.White : _baseColor,
                 ColorFilter = eraser ? null : SKColorFilter.CreateBlendMode(_baseColor, SKBlendMode.SrcIn)
             };
         }
 
+        public float StrokeRandom { get; }
         public StrokeState State;
-        public DynamicsMatrix Dynamics { get; }
         public SKBitmap Mask { get; }
-        public SKPaint Paint { get; }
+        public SKPaint  Paint { get; }
         public SKMatrix Matrix;
 
         public bool Matches(BrushPreset brush, bool eraser)
@@ -332,8 +341,19 @@ public sealed class BrushEngine : IDisposable
             Paint.Dispose();
         }
 
-        private static SKColor ToSkColor(Color color)
-            => new(color.R, color.G, color.B, color.A);
+        private static SKColor ToSkColor(Color c) => new(c.R, c.G, c.B, c.A);
+
+        private static float Hash01(int x, int y)
+        {
+            unchecked
+            {
+                uint h = (uint)(x * 1619 + y * 31337);
+                h ^= h >> 17; h *= 0xbf324c81u;
+                h ^= h >> 13; h *= 0x9b2e1515u;
+                h ^= h >> 16;
+                return (h & 0xFFFF) / 65535.0f;
+            }
+        }
     }
 
     private readonly record struct StampSample(float X, float Y, float Size, float Opacity, float Angle);

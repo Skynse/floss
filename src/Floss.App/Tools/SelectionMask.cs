@@ -1,0 +1,203 @@
+using System;
+using System.Collections.Generic;
+using Avalonia.Media;
+using Floss.App.Document;
+using SkiaSharp;
+
+namespace Floss.App.Tools;
+
+public enum SelectOp { Replace, Add, Subtract }
+
+// Global selection state — null mask means "everything selected".
+// Stored in ToolContext and inspected by brush, fill, gradient, etc.
+public sealed class SelectionMask
+{
+    private byte[]? _mask;       // null = nothing restricted (all pixels writable)
+    private int _docW, _docH;
+
+    // The geometry used to make the last selection (for rendering the outline).
+    private SKRectI _geoRect;
+    private List<SKPoint> _geoPoly = [];
+    private SelectionGeometry _geoType = SelectionGeometry.None;
+
+    private enum SelectionGeometry { None, Rect, Polygon }
+
+    public bool HasSelection => _mask != null;
+
+    public void Resize(int w, int h)
+    {
+        if (_docW == w && _docH == h) return;
+        _docW = w; _docH = h;
+        Clear();
+    }
+
+    public void Clear()
+    {
+        _mask = null;
+        _geoType = SelectionGeometry.None;
+        _geoPoly.Clear();
+    }
+
+    public bool IsSelected(int x, int y)
+    {
+        if (_mask == null) return true;
+        if ((uint)x >= (uint)_docW || (uint)y >= (uint)_docH) return false;
+        return _mask[y * _docW + x] > 0;
+    }
+
+    public void Invert()
+    {
+        if (_mask == null)
+        {
+            _mask = new byte[_docW * _docH]; // all zeros = nothing selected
+        }
+        else
+        {
+            for (int i = 0; i < _mask.Length; i++)
+                _mask[i] = _mask[i] > 0 ? (byte)0 : (byte)255;
+        }
+        _geoType = SelectionGeometry.None;
+    }
+
+    public void SetFromRect(int x, int y, int w, int h, SelectOp op = SelectOp.Replace)
+    {
+        EnsureMaskExists();
+        var next = op == SelectOp.Replace ? new byte[_docW * _docH] : (byte[])_mask!.Clone();
+
+        int x1 = Math.Clamp(Math.Min(x, x + w), 0, _docW - 1);
+        int y1 = Math.Clamp(Math.Min(y, y + h), 0, _docH - 1);
+        int x2 = Math.Clamp(Math.Max(x, x + w), 0, _docW - 1);
+        int y2 = Math.Clamp(Math.Max(y, y + h), 0, _docH - 1);
+
+        for (int py = y1; py <= y2; py++)
+            for (int px = x1; px <= x2; px++)
+                Apply(next, px, py, op, true);
+
+        _mask = next;
+        _geoType = SelectionGeometry.Rect;
+        _geoRect = new SKRectI(x1, y1, x2, y2);
+    }
+
+    public void SetFromPolygon(IReadOnlyList<SKPoint> points, SelectOp op = SelectOp.Replace)
+    {
+        if (points.Count < 3) return;
+        EnsureMaskExists();
+
+        using var path = new SKPath();
+        path.MoveTo(points[0]);
+        for (int i = 1; i < points.Count; i++) path.LineTo(points[i]);
+        path.Close();
+
+        using var region = new SKRegion();
+        region.SetPath(path, new SKRegion(new SKRectI(0, 0, _docW, _docH)));
+
+        var bounds = path.Bounds;
+        int x1 = Math.Clamp((int)bounds.Left,         0, _docW - 1);
+        int y1 = Math.Clamp((int)bounds.Top,          0, _docH - 1);
+        int x2 = Math.Clamp((int)Math.Ceiling(bounds.Right),  0, _docW - 1);
+        int y2 = Math.Clamp((int)Math.Ceiling(bounds.Bottom), 0, _docH - 1);
+
+        var next = op == SelectOp.Replace ? new byte[_docW * _docH] : (byte[])(_mask ?? CreateFull()).Clone();
+        for (int py = y1; py <= y2; py++)
+            for (int px = x1; px <= x2; px++)
+                Apply(next, px, py, op, region.Contains(px, py));
+
+        _mask = next;
+        _geoType = SelectionGeometry.Polygon;
+        _geoPoly = new List<SKPoint>(points);
+    }
+
+    public void SetFromFloodFill(TiledPixelBuffer pixels, int srcX, int srcY,
+        double tolerance, SelectOp op = SelectOp.Replace)
+    {
+        if ((uint)srcX >= (uint)_docW || (uint)srcY >= (uint)_docH) return;
+        EnsureMaskExists();
+
+        pixels.GetPixel(srcX, srcY, out byte refB, out byte refG, out byte refR, out byte refA);
+        int tolInt = (int)(tolerance * 255 * 4);
+
+        var next = op == SelectOp.Replace ? new byte[_docW * _docH] : (byte[])(_mask ?? CreateFull()).Clone();
+        var visited = new bool[_docW * _docH];
+        var queue = new Queue<(int x, int y)>();
+        queue.Enqueue((srcX, srcY));
+
+        while (queue.Count > 0)
+        {
+            var (cx, cy) = queue.Dequeue();
+            if ((uint)cx >= (uint)_docW || (uint)cy >= (uint)_docH) continue;
+            int idx = cy * _docW + cx;
+            if (visited[idx]) continue;
+            visited[idx] = true;
+
+            pixels.GetPixel(cx, cy, out byte b, out byte g, out byte r, out byte a);
+            if (Math.Abs(b - refB) + Math.Abs(g - refG) + Math.Abs(r - refR) + Math.Abs(a - refA) > tolInt) continue;
+
+            Apply(next, cx, cy, op, true);
+            queue.Enqueue((cx + 1, cy)); queue.Enqueue((cx - 1, cy));
+            queue.Enqueue((cx, cy + 1)); queue.Enqueue((cx, cy - 1));
+        }
+
+        _mask = next;
+        _geoType = SelectionGeometry.Polygon; // no simpler geo; render bounding box
+        _geoPoly.Clear();
+    }
+
+    // Render the committed selection outline as marching-ants double-dash.
+    public void RenderOverlay(DrawingContext dc, double zoom)
+    {
+        if (!HasSelection || _geoType == SelectionGeometry.None) return;
+
+        var t = Math.Max(0.5, 1.0 / zoom);
+        var dash1 = new DashStyle([4, 4], 0);
+        var dash2 = new DashStyle([4, 4], 4);
+        var penW = new Pen(Avalonia.Media.Brushes.White, t, dash1);
+        var penK = new Pen(Avalonia.Media.Brushes.Black, t, dash2);
+
+        if (_geoType == SelectionGeometry.Rect)
+        {
+            var r = new Avalonia.Rect(_geoRect.Left, _geoRect.Top, _geoRect.Width, _geoRect.Height);
+            dc.DrawRectangle(null, penW, r);
+            dc.DrawRectangle(null, penK, r);
+        }
+        else if (_geoType == SelectionGeometry.Polygon && _geoPoly.Count >= 2)
+        {
+            var geo = new StreamGeometry();
+            using (var c = geo.Open())
+            {
+                c.BeginFigure(new Avalonia.Point(_geoPoly[0].X, _geoPoly[0].Y), true);
+                for (int i = 1; i < _geoPoly.Count; i++)
+                    c.LineTo(new Avalonia.Point(_geoPoly[i].X, _geoPoly[i].Y));
+                c.EndFigure(true);
+            }
+            dc.DrawGeometry(null, penW, geo);
+            dc.DrawGeometry(null, penK, geo);
+        }
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private void EnsureMaskExists()
+    {
+        if (_docW == 0 || _docH == 0)
+            throw new InvalidOperationException("Call Resize() before selection operations.");
+    }
+
+    private byte[] CreateFull()
+    {
+        var m = new byte[_docW * _docH];
+        Array.Fill(m, (byte)255);
+        return m;
+    }
+
+    private void Apply(byte[] mask, int x, int y, SelectOp op, bool inside)
+    {
+        int idx = y * _docW + x;
+        bool cur = mask[idx] > 0;
+        mask[idx] = (op switch
+        {
+            SelectOp.Add      => cur || inside,
+            SelectOp.Subtract => cur && !inside,
+            _                 => inside,
+        }) ? (byte)255 : (byte)0;
+    }
+}

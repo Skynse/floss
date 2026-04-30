@@ -5,16 +5,165 @@
 
     <Application.Styles>
         <FluentTheme />
-        <StyleInclude Source="avares://IconPacks.Avalonia.Core/PackIcon.axaml" />
 
-        <!-- ── Compact horizontal slider ───────────────────────────────────── -->
-        <Style Selector="Slider:horizontal">
-            <Setter Property="MinHeight" Value="28"/>
+        <!-- ══════════════════════════════════════════════════════════════════
+             FLAT BUTTON — replaces the Fluent "elevated card" look with a
+             dead-simple transparent container that adds a white overlay on
+             hover/press.  All explicitly-set Background/Border values on
+             individual buttons are preserved because the outer Border binds
+             to TemplateBinding, not a hard-coded resource.
+        ══════════════════════════════════════════════════════════════════ -->
+        <Style Selector="Button">
+            <Setter Property="Background"    Value="Transparent"/>
+            <Setter Property="BorderBrush"   Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="CornerRadius"  Value="3"/>
+            <Setter Property="Padding"       Value="6,4"/>
+            <Setter Property="Cursor"        Value="Hand"/>
+            <Setter Property="Foreground"    Value="#A0AAB4"/>
             <Setter Property="Template">
                 <ControlTemplate>
-                    <Grid MinHeight="28" VerticalAlignment="Center">
-                        <!-- unfilled track -->
-                        <Border VerticalAlignment="Center" Height="3" CornerRadius="1.5"
+                    <!-- Outer Border supplies the button's own bg/border/radius.
+                         ClipToBounds ensures children respect the corner radius. -->
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="{TemplateBinding CornerRadius}"
+                            ClipToBounds="True">
+                        <Panel>
+                            <!-- Additive hover/press overlay — does not disturb
+                                 any explicit Background set on the button itself. -->
+                            <Border Name="Overlay" IsHitTestVisible="False"
+                                    Background="Transparent"/>
+                            <ContentPresenter Padding="{TemplateBinding Padding}"
+                                              HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              Content="{TemplateBinding Content}"
+                                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                                              Foreground="{TemplateBinding Foreground}"/>
+                        </Panel>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+        </Style>
+        <Style Selector="Button:pointerover /template/ Border#Overlay">
+            <Setter Property="Background" Value="#18ffffff"/>
+        </Style>
+        <Style Selector="Button:pressed /template/ Border#Overlay">
+            <Setter Property="Background" Value="#2cffffff"/>
+        </Style>
+        <Style Selector="Button:disabled">
+            <Setter Property="Opacity" Value="0.35"/>
+        </Style>
+
+        <!-- ── ToggleButton inherits the flat button look ─────────────────── -->
+        <Style Selector="ToggleButton">
+            <Setter Property="Background"    Value="Transparent"/>
+            <Setter Property="BorderBrush"   Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="CornerRadius"  Value="3"/>
+            <Setter Property="Padding"       Value="6,4"/>
+            <Setter Property="Cursor"        Value="Hand"/>
+            <Setter Property="Foreground"    Value="#A0AAB4"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="{TemplateBinding CornerRadius}"
+                            ClipToBounds="True">
+                        <Panel>
+                            <Border Name="Overlay" IsHitTestVisible="False"
+                                    Background="Transparent"/>
+                            <ContentPresenter Padding="{TemplateBinding Padding}"
+                                              HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              Content="{TemplateBinding Content}"
+                                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                                              Foreground="{TemplateBinding Foreground}"/>
+                        </Panel>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+        </Style>
+        <Style Selector="ToggleButton:pointerover /template/ Border#Overlay">
+            <Setter Property="Background" Value="#18ffffff"/>
+        </Style>
+        <Style Selector="ToggleButton:pressed /template/ Border#Overlay">
+            <Setter Property="Background" Value="#2cffffff"/>
+        </Style>
+
+        <!-- ── TextBox — sharp corners, no Fluent glow ───────────────────── -->
+        <Style Selector="TextBox">
+            <Setter Property="CornerRadius"  Value="2"/>
+            <Setter Property="Foreground"    Value="#d7dde8"/>
+            <Setter Property="CaretBrush"    Value="#d7dde8"/>
+            <Setter Property="SelectionBrush" Value="#3d6fd8"/>
+            <Setter Property="SelectionForegroundBrush" Value="#ffffff"/>
+        </Style>
+        <!-- Kill the Fluent "focus glow" border colour -->
+        <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
+            <Setter Property="BorderBrush" Value="#3d6fd8"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+        <Style Selector="TextBox:pointerover /template/ Border#PART_BorderElement">
+            <Setter Property="BorderBrush" Value="#4a5568"/>
+        </Style>
+
+        <!-- ── ComboBox — flatten ─────────────────────────────────────────── -->
+        <Style Selector="ComboBox">
+            <Setter Property="CornerRadius"  Value="2"/>
+            <Setter Property="Foreground"    Value="#A0AAB4"/>
+            <Setter Property="Background"    Value="#13151a"/>
+            <Setter Property="BorderBrush"   Value="#2b303b"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding"       Value="6,0"/>
+        </Style>
+        <Style Selector="ComboBox:pointerover">
+            <Setter Property="BorderBrush" Value="#4a5568"/>
+        </Style>
+        <Style Selector="ComboBox:focus">
+            <Setter Property="BorderBrush" Value="#3d6fd8"/>
+        </Style>
+        <Style Selector="ComboBoxItem">
+            <Setter Property="Foreground"    Value="#A0AAB4"/>
+            <Setter Property="Background"    Value="Transparent"/>
+            <Setter Property="Padding"       Value="8,5"/>
+            <Setter Property="FontSize"      Value="11"/>
+        </Style>
+        <Style Selector="ComboBoxItem:selected">
+            <Setter Property="Background" Value="#22355f"/>
+            <Setter Property="Foreground" Value="#d7dde8"/>
+        </Style>
+        <Style Selector="ComboBoxItem:pointerover">
+            <Setter Property="Background" Value="#1a1c22"/>
+        </Style>
+
+        <!-- ── Menu / MenuItem ────────────────────────────────────────────── -->
+        <Style Selector="Menu">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#A0AAB4"/>
+        </Style>
+        <Style Selector="MenuItem">
+            <Setter Property="Foreground" Value="#A0AAB4"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding"    Value="10,6"/>
+            <Setter Property="FontSize"   Value="12"/>
+        </Style>
+        <Style Selector="MenuItem:selected">
+            <Setter Property="Background" Value="#1a1c22"/>
+        </Style>
+        <Style Selector="MenuItem:pointerover">
+            <Setter Property="Background" Value="#1a1c22"/>
+        </Style>
+
+        <!-- ── Horizontal slider ──────────────────────────────────────────── -->
+        <Style Selector="Slider:horizontal">
+            <Setter Property="MinHeight" Value="26"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Grid MinHeight="26" VerticalAlignment="Center">
+                        <Border VerticalAlignment="Center" Height="2" CornerRadius="1"
                                 Background="#1c2030" IsHitTestVisible="False"/>
                         <Track Name="PART_Track" Orientation="Horizontal"
                                Minimum="{TemplateBinding Minimum}"
@@ -24,8 +173,8 @@
                                 <RepeatButton Name="PART_DecreaseButton" Focusable="False" Cursor="Arrow">
                                     <RepeatButton.Template>
                                         <ControlTemplate>
-                                            <Border Height="3" VerticalAlignment="Center"
-                                                    CornerRadius="1.5" Background="#3d6fd8"/>
+                                            <Border Height="2" VerticalAlignment="Center"
+                                                    CornerRadius="1" Background="#3d6fd8"/>
                                         </ControlTemplate>
                                     </RepeatButton.Template>
                                 </RepeatButton>
@@ -35,8 +184,8 @@
                                     <Thumb.Template>
                                         <ControlTemplate>
                                             <Ellipse Name="ThumbEllipse"
-                                                     Fill="#6888d8"
-                                                     Width="13" Height="13"/>
+                                                     Fill="#5580d8"
+                                                     Width="11" Height="11"/>
                                         </ControlTemplate>
                                     </Thumb.Template>
                                 </Thumb>
@@ -45,7 +194,7 @@
                                 <RepeatButton Name="PART_IncreaseButton" Focusable="False" Cursor="Arrow">
                                     <RepeatButton.Template>
                                         <ControlTemplate>
-                                            <Border Height="3" VerticalAlignment="Center" Background="Transparent"/>
+                                            <Border Height="2" VerticalAlignment="Center" Background="Transparent"/>
                                         </ControlTemplate>
                                     </RepeatButton.Template>
                                 </RepeatButton>
@@ -55,20 +204,29 @@
                 </ControlTemplate>
             </Setter>
         </Style>
-
-        <!-- Thumb hover/press states -->
         <Style Selector="Slider:horizontal:pointerover /template/ Thumb /template/ Ellipse#ThumbEllipse">
-            <Setter Property="Fill" Value="#8aabe8"/>
+            <Setter Property="Fill" Value="#7aa0e8"/>
+            <Setter Property="Width" Value="13"/>
+            <Setter Property="Height" Value="13"/>
         </Style>
         <Style Selector="Slider:horizontal:pressed /template/ Thumb /template/ Ellipse#ThumbEllipse">
-            <Setter Property="Fill" Value="#aec4f8"/>
-            <Setter Property="Width" Value="15"/>
-            <Setter Property="Height" Value="15"/>
+            <Setter Property="Fill" Value="#a0c0f8"/>
+            <Setter Property="Width" Value="13"/>
+            <Setter Property="Height" Value="13"/>
         </Style>
 
-        <!-- ── ScrollBar: keep it minimal ─────────────────────────────────── -->
+        <!-- ── ScrollBar: keep it minimal ────────────────────────────────── -->
         <Style Selector="ScrollBar">
-            <Setter Property="Opacity" Value="0.5"/>
+            <Setter Property="Opacity" Value="0.4"/>
+        </Style>
+
+        <!-- ── ListBox / ListBoxItem ──────────────────────────────────────── -->
+        <Style Selector="ListBoxItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding"    Value="0"/>
+        </Style>
+        <Style Selector="ListBoxItem:selected">
+            <Setter Property="Background" Value="Transparent"/>
         </Style>
 
     </Application.Styles>

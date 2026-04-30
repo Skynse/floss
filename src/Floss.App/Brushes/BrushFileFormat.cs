@@ -10,7 +10,7 @@ public static class BrushFileFormat
 {
     public const string Extension = ".flbr";
     private const uint Magic   = 0x52424C46; // FLBR, little endian
-    private const int  Version = 4;
+    private const int  Version = 5;
 
     public static BrushAsset Load(string path)
     {
@@ -25,38 +25,52 @@ public static class BrushFileFormat
 
         var asset = new BrushAsset { Id = reader.ReadString(), FilePath = path };
 
-        var name    = reader.ReadString();
-        var kind    = (BrushKind)reader.ReadInt32();
-        var size    = reader.ReadDouble();
-        var opacity = reader.ReadDouble();
+        var name     = reader.ReadString();
+        var kind     = (BrushKind)reader.ReadInt32();
+        var size     = reader.ReadDouble();
+        var opacity  = reader.ReadDouble();
         var hardness = reader.ReadDouble();
         var spacing  = reader.ReadDouble();
 
-        ParameterDynamics sizeDyn, opacDyn;
-
-        if (version >= 4)
+        if (version >= 5)
         {
-            // Compact core fields (no legacy dynamics blob)
             var color     = Color.FromUInt32(reader.ReadUInt32());
             var flow      = reader.ReadDouble();
             var grain     = reader.ReadDouble();
             var smoothing = reader.ReadDouble();
-            sizeDyn  = ReadParameterDynamics(reader);
-            opacDyn  = ReadParameterDynamics(reader);
-            asset.Tip    = ReadTip(reader);
+            var dynJson   = reader.ReadString();
+            var dynamics  = BrushDynamics.Deserialize(dynJson);
+            asset.Tip = ReadTip(reader);
             asset.Preset = new BrushPreset(name, kind, size, opacity, hardness, spacing, color)
             {
-                SizeDynamics    = sizeDyn,
-                OpacityDynamics = opacDyn,
-                Flow            = flow,
-                Grain           = grain,
-                Smoothing       = smoothing,
-                Tip             = asset.Tip.CreateTip()
+                Dynamics  = dynamics,
+                Flow      = flow,
+                Grain     = grain,
+                Smoothing = smoothing,
+                Tip       = asset.Tip.CreateTip()
+            };
+        }
+        else if (version == 4)
+        {
+            var color     = Color.FromUInt32(reader.ReadUInt32());
+            var flow      = reader.ReadDouble();
+            var grain     = reader.ReadDouble();
+            var smoothing = reader.ReadDouble();
+            var sizeDyn   = ReadParameterDynamics(reader);
+            var opacDyn   = ReadParameterDynamics(reader);
+            asset.Tip = ReadTip(reader);
+            asset.Preset = new BrushPreset(name, kind, size, opacity, hardness, spacing, color)
+            {
+                Dynamics  = BrushDynamics.FromLegacy(sizeDyn, opacDyn),
+                Flow      = flow,
+                Grain     = grain,
+                Smoothing = smoothing,
+                Tip       = asset.Tip.CreateTip()
             };
         }
         else
         {
-            // Legacy v1-v3: read old monolithic fields and map to ParameterDynamics
+            // Legacy v1-v3
             var pressureCurve = reader.ReadDouble();
             var velocitySize  = reader.ReadDouble();
             var velocityOpac  = reader.ReadDouble();
@@ -89,7 +103,7 @@ public static class BrushFileFormat
                 by2 = reader.ReadSingle();
             }
 
-            sizeDyn = new ParameterDynamics
+            var sizeDyn = new ParameterDynamics
             {
                 PressureEnabled  = pressToSize,
                 Kind             = curveKind,
@@ -100,7 +114,7 @@ public static class BrushFileFormat
                 VelocityEnabled  = velToSize,
                 VelocityStrength = (float)velocitySize
             };
-            opacDyn = new ParameterDynamics
+            var opacDyn = new ParameterDynamics
             {
                 PressureEnabled  = pressToOpac,
                 Kind             = curveKind,
@@ -112,15 +126,14 @@ public static class BrushFileFormat
                 VelocityStrength = (float)velocityOpac
             };
 
-            asset.Tip    = ReadTip(reader);
+            asset.Tip = ReadTip(reader);
             asset.Preset = new BrushPreset(name, kind, size, opacity, hardness, spacing, color)
             {
-                SizeDynamics    = sizeDyn,
-                OpacityDynamics = opacDyn,
-                Flow            = flow,
-                Grain           = grain,
-                Smoothing       = smoothing,
-                Tip             = asset.Tip.CreateTip()
+                Dynamics  = BrushDynamics.FromLegacy(sizeDyn, opacDyn),
+                Flow      = flow,
+                Grain     = grain,
+                Smoothing = smoothing,
+                Tip       = asset.Tip.CreateTip()
             };
         }
 
@@ -147,22 +160,11 @@ public static class BrushFileFormat
         writer.Write(p.Flow);
         writer.Write(p.Grain);
         writer.Write(p.Smoothing);
-        WriteParameterDynamics(writer, p.SizeDynamics);
-        WriteParameterDynamics(writer, p.OpacityDynamics);
+        writer.Write(p.Dynamics.Serialize());
         WriteTip(writer, asset.Tip);
     }
 
-    private static void WriteParameterDynamics(BinaryWriter w, ParameterDynamics d)
-    {
-        w.Write(d.PressureEnabled);
-        w.Write((int)d.Kind);
-        w.Write(d.Gamma);
-        w.Write(d.X1); w.Write(d.Y1);
-        w.Write(d.X2); w.Write(d.Y2);
-        w.Write(d.Min); w.Write(d.Max);
-        w.Write(d.VelocityEnabled);
-        w.Write(d.VelocityStrength);
-    }
+    // ── Helpers (kept for legacy reading) ────────────────────────────────────
 
     private static ParameterDynamics ReadParameterDynamics(BinaryReader r) => new()
     {
@@ -187,13 +189,7 @@ public static class BrushFileFormat
         var pngLen = reader.ReadInt32();
         var png    = pngLen > 0 ? reader.ReadBytes(pngLen) : [];
 
-        var tip = new BrushTipData
-        {
-            Kind        = kind,
-            Shape       = shape,
-            AspectRatio = aspect,
-            PngBytes    = png
-        };
+        var tip = new BrushTipData { Kind = kind, Shape = shape, AspectRatio = aspect, PngBytes = png };
 
         if (kind == BrushTipStorageKind.Compound)
         {
@@ -207,11 +203,7 @@ public static class BrushFileFormat
                 var subTip   = ReadTip(reader);
                 tip.SubLayers.Add(new StampLayerData
                 {
-                    Tip      = subTip,
-                    Blend    = blend,
-                    Opacity  = layerOpc,
-                    Scale    = scale,
-                    Rotation = rotation
+                    Tip = subTip, Blend = blend, Opacity = layerOpc, Scale = scale, Rotation = rotation
                 });
             }
         }

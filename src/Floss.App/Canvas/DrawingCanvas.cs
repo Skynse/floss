@@ -15,8 +15,14 @@ namespace Floss.App.Canvas;
 public sealed class DrawingCanvas : Control
 {
     private readonly DrawingDocument _document = new();
-    private readonly CanvasTool _tool;
+    private readonly CanvasTool _canvasTool;
     private readonly LayerCompositor _compositor;
+    private readonly ToolContext _ctx;
+
+    private readonly BrushTool _brushTool;
+    private readonly BrushTool _eraserTool;
+    private ITool _activeTool;
+
     private BrushPreset _brush = BrushPreset.Defaults[0];
     private Color _paintColor = Color.Parse("#111111");
     private long _activePointerId = -1;
@@ -35,8 +41,31 @@ public sealed class DrawingCanvas : Control
         ClipToBounds = true;
         RenderOptions.SetBitmapInterpolationMode(this, BitmapInterpolationMode.None);
         RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);
-        _tool = new CanvasTool(_document, new BrushEngine());
+
+        _canvasTool = new CanvasTool(_document, new BrushEngine());
         _compositor = new LayerCompositor();
+
+        _ctx = new ToolContext(_document)
+        {
+            Brush = _brush,
+            PaintColor = _paintColor,
+            InvalidateRender = InvalidateVisual,
+            OnColorSampled = c =>
+            {
+                _paintColor = c;
+                _brush = _brush with { Color = c };
+                _ctx!.PaintColor = c;
+                _ctx.Brush = _brush;
+                ColorSampled?.Invoke(this, c);
+                InvalidateVisual();
+            }
+        };
+        _ctx.Selection.Resize(_document.Width, _document.Height);
+
+        _brushTool = new BrushTool(_canvasTool, isEraser: false);
+        _eraserTool = new BrushTool(_canvasTool, isEraser: true);
+        _activeTool = _brushTool;
+
         _document.Changed += (_, e) =>
         {
             _compositor.Invalidate(e.DirtyRegion, _document.Layers, e.LayerIndex);
@@ -56,39 +85,53 @@ public sealed class DrawingCanvas : Control
     public event EventHandler? HistoryChanged;
     public event EventHandler? LayersChanged;
     public event EventHandler<LayerMetadataChangedEventArgs>? LayerMetadataChanged;
+    public event EventHandler<Color>? ColorSampled;
 
-    public int ActiveSampleCount => _tool.ActiveSampleCount;
+    public int ActiveSampleCount => _canvasTool.ActiveSampleCount;
     public int CommittedStrokeCount => _document.CommittedStrokeCount;
     public bool CanUndo => _document.CanUndo;
     public bool CanRedo => _document.CanRedo;
     public bool CanDeleteLayer => _document.CanDeleteLayer;
     public BrushPreset Brush => _brush;
     public Color PaintColor => _paintColor;
-    public bool EraserEnabled => _tool.Kind == ToolKind.Eraser;
+    public bool EraserEnabled => _activeTool == _eraserTool;
     public DrawingDocument Document => _document;
     public IReadOnlyList<DrawingLayer> Layers => _document.Layers;
     public int ActiveLayerIndex => _document.ActiveLayerIndex;
+    public ITool ActiveTool => _activeTool;
+    public BrushTool BrushTool => _brushTool;
+    public BrushTool EraserTool => _eraserTool;
 
     public double CanvasRotation { get; set; }
     public bool PaintInputSuspended { get; set; }
     public double CanvasZoom { get; set; } = 1.0;
 
+    public void SetActiveTool(ITool tool)
+    {
+        if (_activeTool == tool) return;
+        _activeTool.Deactivate(_ctx);
+        _activeTool = tool;
+        _activeTool.Activate(_ctx);
+        InvalidateVisual();
+    }
+
     public void SetBrush(BrushPreset preset)
     {
         _brush = preset with { Color = _paintColor };
+        _ctx.Brush = _brush;
         if (preset.Kind == BrushKind.Eraser)
-        {
-            _tool.SetKind(ToolKind.Eraser);
-        }
+            SetActiveTool(_eraserTool);
         InvalidateVisual();
     }
 
     public void SetPaintColor(Color color)
     {
         _paintColor = color;
+        _ctx.PaintColor = color;
         if (!EraserEnabled)
         {
             _brush = _brush with { Color = color };
+            _ctx.Brush = _brush;
         }
         InvalidateVisual();
     }
@@ -96,44 +139,43 @@ public sealed class DrawingCanvas : Control
     public void SetBrushSize(double size)
     {
         _brush = _brush with { Size = Math.Clamp(size, 1, 2000) };
+        _ctx.Brush = _brush;
         InvalidateVisual();
     }
 
     public void SetBrushOpacity(double opacity)
     {
         _brush = _brush with { Opacity = Math.Clamp(opacity, 0.01, 1) };
+        _ctx.Brush = _brush;
         InvalidateVisual();
     }
 
     public void SetBrushHardness(double hardness)
     {
         _brush = _brush with { Hardness = Math.Clamp(hardness, 0, 1) };
+        _ctx.Brush = _brush;
         InvalidateVisual();
     }
 
     public void SetBrushSpacing(double spacing)
     {
         _brush = _brush with { Spacing = Math.Clamp(spacing, 0.02, 1) };
+        _ctx.Brush = _brush;
         InvalidateVisual();
     }
 
     public void SetBrushSmoothing(double smoothing)
     {
         _brush = _brush with { Smoothing = Math.Clamp(smoothing, 0, 0.95) };
+        _ctx.Brush = _brush;
         InvalidateVisual();
     }
 
     public void SetBrushGrain(double grain)
     {
         _brush = _brush with { Grain = Math.Clamp(grain, 0, 1) };
+        _ctx.Brush = _brush;
         InvalidateVisual();
-    }
-
-    public void SetTool(string tool)
-    {
-        _tool.SetKind(tool.Equals("eraser", StringComparison.OrdinalIgnoreCase)
-            ? ToolKind.Eraser
-            : ToolKind.Brush);
     }
 
     public void LockCursorPreview(Point position, bool forceBrushOutline)
@@ -149,6 +191,19 @@ public sealed class DrawingCanvas : Control
         if (!_isCursorPreviewLocked) return;
         _isCursorPreviewLocked = false;
         _forceBrushOutlineCursor = false;
+        InvalidateVisual();
+    }
+
+    public void CancelActiveTool()
+    {
+        _activeTool.Cancel(_ctx);
+        InvalidateVisual();
+    }
+
+    public void CommitActiveTool()
+    {
+        if (_activeTool is SelectTool st) st.CommitPolyline(_ctx);
+        else if (_activeTool is PolylineTool pt) pt.Commit(_ctx);
         InvalidateVisual();
     }
 
@@ -180,19 +235,22 @@ public sealed class DrawingCanvas : Control
             context.DrawImage(_compositor.Bitmap, target);
         }
 
+        _activeTool.RenderOverlay(context, _ctx, CanvasZoom);
+
         if (_isPointerOver || _isCursorPreviewLocked)
         {
             var mode = App.Config.BrushCursorMode;
             var pos = _isCursorPreviewLocked ? _lockedPointerPos : _pointerPos;
             var t = Math.Max(0.5, 1.5 / CanvasZoom);
-            if (_forceBrushOutlineCursor || mode is BrushCursorMode.Outline or BrushCursorMode.DotAndOutline)
+            bool isBrushLike = _activeTool is BrushTool;
+            if (_forceBrushOutlineCursor || (isBrushLike && mode is BrushCursorMode.Outline or BrushCursorMode.DotAndOutline))
             {
                 var r = _brush.Size * 0.5;
                 context.DrawEllipse(null, new Pen(CursorOuterBrush, t * 3), pos, r, r);
                 context.DrawEllipse(null, new Pen(CursorInnerBrush, t), pos, r, r);
             }
 
-            if (mode is BrushCursorMode.Dot or BrushCursorMode.DotAndOutline)
+            if (!isBrushLike || mode is BrushCursorMode.Dot or BrushCursorMode.DotAndOutline)
             {
                 var r = Math.Max(2.5 / CanvasZoom, t * 2);
                 context.DrawEllipse(CursorOuterBrush, null, pos, r, r);
@@ -204,32 +262,20 @@ public sealed class DrawingCanvas : Control
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
-        if (PaintInputSuspended)
-        {
-            return;
-        }
+        if (PaintInputSuspended) return;
 
         var point = e.GetCurrentPoint(this);
-        if (!IsPaintInput(point))
-        {
-            return;
-        }
+        if (!IsPaintInput(point)) return;
 
         Focus();
-        var sample = CanvasInputSample.FromPointerPoint(
-            point,
-            Bounds.Size,
-            _document.Width,
-            _document.Height,
-            CanvasInputPhase.Down,
-            CanvasRotation);
-        if (sample.Source == CanvasInputSource.Eraser)
-        {
-            _tool.SetKind(ToolKind.Eraser);
-        }
+        var sample = MakeSample(point, CanvasInputPhase.Down);
+
+        // Auto-switch to eraser when pen eraser tip is used.
+        if (sample.Source == CanvasInputSource.Eraser && _activeTool is BrushTool b && !b.IsEraser)
+            SetActiveTool(_eraserTool);
 
         _activePointerId = point.Pointer.Id;
-        _tool.Begin(_brush, sample);
+        _activeTool.PointerDown(_ctx, sample);
         e.Pointer.Capture(this);
         e.Handled = true;
     }
@@ -262,7 +308,7 @@ public sealed class DrawingCanvas : Control
             if (_activePointerId >= 0)
             {
                 _activePointerId = -1;
-                _tool.Cancel();
+                _activeTool.Cancel(_ctx);
                 e.Pointer.Capture(null);
             }
             InvalidateVisual();
@@ -271,15 +317,7 @@ public sealed class DrawingCanvas : Control
 
         if (point.Pointer.Id == _activePointerId && IsPaintInput(point))
         {
-            _tool.Update(
-                _brush,
-                CanvasInputSample.FromPointerPoint(
-                    point,
-                    Bounds.Size,
-                    _document.Width,
-                    _document.Height,
-                    CanvasInputPhase.Move,
-                    CanvasRotation));
+            _activeTool.PointerMove(_ctx, MakeSample(point, CanvasInputPhase.Move));
             e.Handled = true;
         }
         else
@@ -292,20 +330,9 @@ public sealed class DrawingCanvas : Control
     {
         base.OnPointerReleased(e);
         var point = e.GetCurrentPoint(this);
-        if (point.Pointer.Id != _activePointerId)
-        {
-            return;
-        }
+        if (point.Pointer.Id != _activePointerId) return;
 
-        _tool.End(
-            _brush,
-            CanvasInputSample.FromPointerPoint(
-                point,
-                Bounds.Size,
-                _document.Width,
-                _document.Height,
-                CanvasInputPhase.Up,
-                CanvasRotation));
+        _activeTool.PointerUp(_ctx, MakeSample(point, CanvasInputPhase.Up));
         _activePointerId = -1;
         e.Pointer.Capture(null);
         e.Handled = true;
@@ -315,27 +342,14 @@ public sealed class DrawingCanvas : Control
     {
         base.OnPointerCaptureLost(e);
         _activePointerId = -1;
-        _tool.Cancel();
+        _activeTool.Cancel(_ctx);
     }
 
-    private Point TransformPointer(Point point)
-    {
-        if (Math.Abs(CanvasRotation) < 0.01)
-            return point;
-
-        var cx = _document.Width / 2.0;
-        var cy = _document.Height / 2.0;
-        var angle = -CanvasRotation * Math.PI / 180.0;
-        var cos = Math.Cos(angle);
-        var sin = Math.Sin(angle);
-
-        var dx = point.X - cx;
-        var dy = point.Y - cy;
-
-        return new Point(
-            cx + dx * cos - dy * sin,
-            cy + dx * sin + dy * cos);
-    }
+    private CanvasInputSample MakeSample(PointerPoint point, CanvasInputPhase phase)
+        => CanvasInputSample.FromPointerPoint(
+            point, Bounds.Size,
+            _document.Width, _document.Height,
+            phase, CanvasRotation);
 
     private static bool IsPaintInput(PointerPoint point)
     {
@@ -345,7 +359,7 @@ public sealed class DrawingCanvas : Control
 
         return point.Pointer.Type switch
         {
-            PointerType.Pen => properties.Pressure > 0 || properties.IsLeftButtonPressed,
+            PointerType.Pen   => properties.Pressure > 0 || properties.IsLeftButtonPressed,
             PointerType.Touch => properties.Pressure > 0 || properties.IsLeftButtonPressed,
             PointerType.Mouse => properties.IsLeftButtonPressed,
             _ => false

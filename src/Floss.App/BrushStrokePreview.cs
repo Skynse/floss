@@ -77,7 +77,6 @@ public sealed class BrushStrokePreview : Control
         var skColor = new SKColor(color.R, color.G, color.B, color.A);
         var baseSize = Math.Max(1.0, brush.Size);
         var spacing = Math.Max(0.5, baseSize * brush.Spacing);
-        var dynamics = DynamicsMatrix.FromBrush(brush);
 
         var mask = brush.Tip.GenerateMask(Math.Max(1, (int)Math.Ceiling(baseSize)), (float)brush.Hardness);
         var colorFilter = SKColorFilter.CreateBlendMode(skColor, SKBlendMode.SrcIn);
@@ -114,9 +113,18 @@ public sealed class BrushStrokePreview : Control
                 var sx = prevX + dx * ratio;
                 var sy = prevY + dy * ratio;
 
-                var sample = new CanvasInputSample(sx, sy, pressure, 0, 0, 0, 0, 0, CanvasInputSource.Pen, CanvasInputPhase.Move);
-                var sizeM  = dynamics.Evaluate(DynamicOutputTarget.Size,    sample, 0.25f);
-                var opacM  = dynamics.Evaluate(DynamicOutputTarget.Opacity, sample, 0.25f);
+                var sp = new StrokePoint(
+                    x: (float)sx, y: (float)sy,
+                    pressure: pressure,
+                    tiltX: 0, tiltY: 0, twist: 0,
+                    drawingAngle: (float)Math.Atan2(dy, dx),
+                    speed: 0.25f,
+                    totalDistance: (float)(t * w),
+                    dabSeqNo: i,
+                    random: 0.5f,
+                    strokeRandom: 0.5f);
+                var sizeM = brush.Dynamics.EvalSize(sp);
+                var opacM = brush.Dynamics.EvalOpacity(sp);
 
                 var stampSize = (float)Math.Max(0.5, baseSize * sizeM);
                 var opacity   = (float)Math.Clamp(brush.Opacity * brush.Flow * opacM, 0, 1);

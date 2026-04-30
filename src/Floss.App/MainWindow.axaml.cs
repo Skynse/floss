@@ -14,22 +14,22 @@ using Floss.App.Canvas;
 using Floss.App.Document;
 using Floss.App.Input;
 using Floss.App.Psd;
-using IconPacks.Avalonia.Material;
+using Floss.App.Tools;
 
 namespace Floss.App;
 
 public partial class MainWindow : Window
 {
-    private const string Bg0 = "#0d0f14";
-    private const string Bg1 = "#13151a";
-    private const string Bg2 = "#1a1c22";
-    private const string Bg3 = "#20232b";
-    private const string Stroke = "#2b303b";
-    private const string TextPrimary = "#d7dde8";
-    private const string TextSecondary = "#A0AAB4";
-    private const string TextMuted = "#6f7888";
-    private const string Accent = "#3d6fd8";
-    private const string AccentSoft = "#22355f";
+    private const string Bg0 = "#0f0f10";
+    private const string Bg1 = "#161618";
+    private const string Bg2 = "#1e1e20";
+    private const string Bg3 = "#252527";
+    private const string Stroke = "#2e2e32";
+    private const string TextPrimary = "#dde1e8";
+    private const string TextSecondary = "#9ea8b4";
+    private const string TextMuted = "#5e6878";
+    private const string Accent = "#4878d8";
+    private const string AccentSoft = "#1e2e52";
 
     // ── Palette ───────────────────────────────────────────────────────────────
     // 10-column × 8-row palette: grays | red | orange | yellow | lime | green | teal | blue | purple | pink
@@ -157,6 +157,14 @@ public partial class MainWindow : Window
     private Button _redoButton = null!;
     private Button _brushToolButton = null!;
     private Button _eraserToolButton = null!;
+    private Button _moveToolButton = null!;
+    private Button _selectToolButton = null!;
+    private Button _wandToolButton = null!;
+    private Button _fillToolButton = null!;
+    private Button _eyedropToolButton = null!;
+    private Button _gradientToolButton = null!;
+    private Button _shapeToolButton = null!;
+    private Button _polylineToolButton = null!;
     private Button _deleteLayerButton = null!;
     private Button _moveLayerUpButton = null!;
     private Button _moveLayerDownButton = null!;
@@ -179,6 +187,17 @@ public partial class MainWindow : Window
     private BrushLibrary _brushLibrary = null!;
     private IReadOnlyList<BrushAsset> _brushAssets = [];
     private readonly Dictionary<int, LayerRowRefs> _layerRows = new();
+
+    // ── Tool instances ────────────────────────────────────────────────────────
+    private readonly SelectTool    _selectTool    = new();
+    private readonly MagicWandTool _magicWandTool = new();
+    private readonly FillTool      _fillTool      = new();
+    private readonly EyedropperTool _eyedropperTool = new();
+    private readonly MoveTool      _moveTool      = new();
+    private readonly GradientTool  _gradientTool  = new();
+    private readonly ShapeTool     _shapeTool     = new();
+    private readonly PolylineTool  _polylineTool  = new();
+    private readonly List<Button>  _toolButtons   = [];
 
     private enum GestureMode { None, Pan, Zoom, Rotate, BrushSize }
     private GestureMode _activeGesture;
@@ -240,7 +259,7 @@ public partial class MainWindow : Window
         _workspaceViewport = new Grid
         {
             ClipToBounds = true,
-            Background = new SolidColorBrush(Color.Parse("#101113"))
+            Background = new SolidColorBrush(Color.Parse("#111112"))
         };
         _workspaceViewport.Children.Add(_canvasFrame);
 
@@ -279,7 +298,7 @@ public partial class MainWindow : Window
         var rightPanel = BuildRightPanel();
 
         var root = new Grid();
-        root.ColumnDefinitions.Add(new ColumnDefinition(56, GridUnitType.Pixel));
+        root.ColumnDefinitions.Add(new ColumnDefinition(48, GridUnitType.Pixel));
         root.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 320 });
         root.ColumnDefinitions.Add(new ColumnDefinition(5, GridUnitType.Pixel));
         root.ColumnDefinitions.Add(new ColumnDefinition(290, GridUnitType.Pixel) { MinWidth = 180, MaxWidth = 600 });
@@ -397,27 +416,27 @@ public partial class MainWindow : Window
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
 
-        var zoomOut = TbarBtn(PackIconMaterialKind.MagnifyMinus, "Zoom out  (Ctrl+−)");
-        var zoomIn = TbarBtn(PackIconMaterialKind.MagnifyPlus, "Zoom in  (Ctrl++)");
-        var zoomFit = TbarBtn(PackIconMaterialKind.FitToScreenOutline, "Fit to screen  (Ctrl+0)");
+        var zoomOut = TbarBtn(Icons.MagnifyMinus, "Zoom out  (Ctrl+−)");
+        var zoomIn = TbarBtn(Icons.MagnifyPlus, "Zoom in  (Ctrl++)");
+        var zoomFit = TbarBtn(Icons.FitToScreenOutline, "Fit to screen  (Ctrl+0)");
         zoomOut.Click += (_, _) => SetZoom(_zoom / 1.2, null);
         zoomIn.Click += (_, _) => SetZoom(_zoom * 1.2, null);
         zoomFit.Click += (_, _) => { SetZoom(1.0, null); SetRotation(0); };
 
-        var rotLeft = TbarBtn(PackIconMaterialKind.RotateLeftVariant, "Rotate left 15°  (Shift+[)");
-        var rotRight = TbarBtn(PackIconMaterialKind.RotateRightVariant, "Rotate right 15°  (Shift+])");
-        var rotReset = TbarBtn(PackIconMaterialKind.Rotate360, "Reset rotation");
+        var rotLeft = TbarBtn(Icons.RotateLeftVariant, "Rotate left 15°  (Shift+[)");
+        var rotRight = TbarBtn(Icons.RotateRightVariant, "Rotate right 15°  (Shift+])");
+        var rotReset = TbarBtn(Icons.Rotate360, "Reset rotation");
         rotLeft.Click += (_, _) => SetRotation(_rotation - 15);
         rotRight.Click += (_, _) => SetRotation(_rotation + 15);
         rotReset.Click += (_, _) => SetRotation(0);
 
-        var undoTb = TbarBtn(PackIconMaterialKind.UndoVariant, "Undo  (Ctrl+Z)");
-        var redoTb = TbarBtn(PackIconMaterialKind.RedoVariant, "Redo  (Ctrl+Shift+Z)");
+        var undoTb = TbarBtn(Icons.UndoVariant, "Undo  (Ctrl+Z)");
+        var redoTb = TbarBtn(Icons.RedoVariant, "Redo  (Ctrl+Shift+Z)");
         undoTb.Click += (_, _) => _canvas.Undo();
         redoTb.Click += (_, _) => _canvas.Redo();
 
-        var openTb = TbarBtn(PackIconMaterialKind.FolderOpenOutline, "Open PSD  (Ctrl+O)");
-        var saveTb = TbarBtn(PackIconMaterialKind.ContentSaveOutline, "Save PSD  (Ctrl+S)");
+        var openTb = TbarBtn(Icons.FolderOpenOutline, "Open PSD  (Ctrl+O)");
+        var saveTb = TbarBtn(Icons.ContentSaveOutline, "Save PSD  (Ctrl+S)");
         openTb.Click += async (_, _) => await OpenPsdAsync();
         saveTb.Click += async (_, _) => await SavePsdAsync();
 
@@ -453,7 +472,7 @@ public partial class MainWindow : Window
         };
     }
 
-    private static Button TbarBtn(PackIconMaterialKind icon, string tip)
+    private static Button TbarBtn(string icon, string tip)
     {
         var btn = new Button
         {
@@ -472,15 +491,8 @@ public partial class MainWindow : Window
         return btn;
     }
 
-    private static PackIconMaterial MaterialIcon(PackIconMaterialKind kind, double size) => new()
-    {
-        Kind = kind,
-        Width = size,
-        Height = size,
-        Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-        VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-        HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center
-    };
+    private static PathIcon MaterialIcon(string pathData, double size) =>
+        Icons.Make(pathData, size, new SolidColorBrush(Color.Parse(TextSecondary)));
 
     private static Border TbarSep() => new()
     {
@@ -500,81 +512,91 @@ public partial class MainWindow : Window
     // ── Left rail ─────────────────────────────────────────────────────────────
     private Control BuildLeftRail()
     {
-        _toolStatusText = new TextBlock
-        {
-            Text = "Brush",
-            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-            FontSize = 9,
-            TextAlignment = TextAlignment.Center,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 2)
-        };
+        _toolStatusText = new TextBlock { IsVisible = false };
 
         _colorWell = new Border
         {
-            Width = 26,
-            Height = 26,
-            CornerRadius = new CornerRadius(13),
-            BorderBrush = new SolidColorBrush(Color.Parse("#404860")),
+            Width = 24,
+            Height = 24,
+            CornerRadius = new CornerRadius(12),
+            BorderBrush = new SolidColorBrush(Color.Parse("#3a3a3e")),
             BorderThickness = new Thickness(1.5),
-            Background = new SolidColorBrush(Color.Parse("#111111"))
+            Background = new SolidColorBrush(Color.Parse("#111112"))
         };
         var colorBtn = new Button
         {
             Content = _colorWell,
-            Width = 40,
-            Height = 40,
-            Background = new SolidColorBrush(Color.Parse(Bg2)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(6),
+            Width = 38,
+            Height = 36,
+            Background = Avalonia.Media.Brushes.Transparent,
+            Padding = new Thickness(5),
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
         ToolTip.SetTip(colorBtn, "Cycle color  (X)");
         colorBtn.Click += (_, _) => CycleColor();
 
-        _brushToolButton = RailBtn(PackIconMaterialKind.BrushOutline, "Brush  (B)");
-        _eraserToolButton = RailBtn(PackIconMaterialKind.Eraser, "Eraser  (E)");
-        _brushToolButton.Click += (_, _) => SetTool("brush");
-        _eraserToolButton.Click += (_, _) => SetTool("eraser");
+        _brushToolButton   = RailBtn(Icons.BrushOutline,       "Brush  (B)");
+        _eraserToolButton  = RailBtn(Icons.Eraser,             "Eraser  (E)");
+        _moveToolButton    = RailBtn(Icons.ArrowAll,           "Move layer  (V)");
+        _selectToolButton  = RailBtn(Icons.SelectionRect,      "Select  (S)");
+        _wandToolButton    = RailBtn(Icons.AutoFix,            "Magic Wand  (W)");
+        _fillToolButton    = RailBtn(Icons.FormatColorFill,    "Fill  (G)");
+        _eyedropToolButton = RailBtn(Icons.Eyedropper,         "Eyedropper  (I)");
+        _gradientToolButton= RailBtn(Icons.GradientHorizontal, "Gradient");
+        _shapeToolButton   = RailBtn(Icons.RectangleOutline,   "Shape");
+        _polylineToolButton= RailBtn(Icons.VectorPolyline,     "Polyline");
 
-        _undoButton = RailBtn(PackIconMaterialKind.UndoVariant, "Undo  (Ctrl+Z)");
-        _redoButton = RailBtn(PackIconMaterialKind.RedoVariant, "Redo  (Ctrl+Shift+Z)");
+        _brushToolButton.Click   += (_, _) => ActivateTool(_canvas.BrushTool,  _brushToolButton);
+        _eraserToolButton.Click  += (_, _) => ActivateTool(_canvas.EraserTool, _eraserToolButton);
+        _moveToolButton.Click    += (_, _) => ActivateTool(_moveTool,           _moveToolButton);
+        _selectToolButton.Click  += (_, _) => ActivateTool(_selectTool,         _selectToolButton);
+        _wandToolButton.Click    += (_, _) => ActivateTool(_magicWandTool,      _wandToolButton);
+        _fillToolButton.Click    += (_, _) => ActivateTool(_fillTool,           _fillToolButton);
+        _eyedropToolButton.Click += (_, _) => ActivateTool(_eyedropperTool,     _eyedropToolButton);
+        _gradientToolButton.Click+= (_, _) => ActivateTool(_gradientTool,       _gradientToolButton);
+        _shapeToolButton.Click   += (_, _) => ActivateTool(_shapeTool,          _shapeToolButton);
+        _polylineToolButton.Click+= (_, _) => ActivateTool(_polylineTool,       _polylineToolButton);
+
+        _toolButtons.AddRange([
+            _brushToolButton, _eraserToolButton, _moveToolButton,
+            _selectToolButton, _wandToolButton, _fillToolButton,
+            _eyedropToolButton, _gradientToolButton, _shapeToolButton, _polylineToolButton
+        ]);
+
+        _undoButton = RailBtn(Icons.UndoVariant, "Undo  (Ctrl+Z)");
+        _redoButton = RailBtn(Icons.RedoVariant, "Redo  (Ctrl+Shift+Z)");
         _undoButton.Click += (_, _) => _canvas.Undo();
         _redoButton.Click += (_, _) => _canvas.Redo();
 
-        var clearBtn = RailBtn(PackIconMaterialKind.DeleteOutline, "Clear layer");
-        var openBtn = RailBtn(PackIconMaterialKind.FolderOpenOutline, "Open PSD  (Ctrl+O)");
-        var saveBtn = RailBtn(PackIconMaterialKind.ContentSaveOutline, "Save PSD  (Ctrl+S)");
-        var zoomResetBtn = RailBtn(PackIconMaterialKind.FitToScreenOutline, "Reset view  (Ctrl+0)");
+        var clearBtn = RailBtn(Icons.DeleteOutline, "Clear layer");
         clearBtn.Click += (_, _) => _canvas.Clear();
-        openBtn.Click += async (_, _) => await OpenPsdAsync();
-        saveBtn.Click += async (_, _) => await SavePsdAsync();
-        zoomResetBtn.Click += (_, _) => { SetZoom(1.0, null); SetRotation(0); };
 
         var stack = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Vertical,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            Margin = new Thickness(0, 10),
-            Spacing = 4
+            Margin = new Thickness(0, 8),
+            Spacing = 2
         };
         stack.Children.Add(_brushToolButton);
         stack.Children.Add(_eraserToolButton);
-        stack.Children.Add(_toolStatusText);
+        stack.Children.Add(_moveToolButton);
         stack.Children.Add(RailSep());
+        stack.Children.Add(_selectToolButton);
+        stack.Children.Add(_wandToolButton);
+        stack.Children.Add(RailSep());
+        stack.Children.Add(_fillToolButton);
+        stack.Children.Add(_gradientToolButton);
+        stack.Children.Add(_shapeToolButton);
+        stack.Children.Add(_polylineToolButton);
+        stack.Children.Add(RailSep());
+        stack.Children.Add(_eyedropToolButton);
         stack.Children.Add(colorBtn);
         stack.Children.Add(RailSep());
         stack.Children.Add(_undoButton);
         stack.Children.Add(_redoButton);
-        stack.Children.Add(RailSep());
         stack.Children.Add(clearBtn);
-        stack.Children.Add(openBtn);
-        stack.Children.Add(saveBtn);
-        stack.Children.Add(RailSep());
-        stack.Children.Add(zoomResetBtn);
 
         return new Border
         {
@@ -590,19 +612,18 @@ public partial class MainWindow : Window
         };
     }
 
-    private static Button RailBtn(PackIconMaterialKind icon, string tip)
+    private static Button RailBtn(string icon, string tip)
     {
         var btn = new Button
         {
-            Content = MaterialIcon(icon, 20),
-            Width = 40,
-            Height = 40,
+            Content = MaterialIcon(icon, 18),
+            Width = 38,
+            Height = 36,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
             Background = Avalonia.Media.Brushes.Transparent,
-            BorderBrush = Avalonia.Media.Brushes.Transparent,
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(4),
             Padding = new Thickness(0)
         };
         ToolTip.SetTip(btn, tip);
@@ -612,9 +633,9 @@ public partial class MainWindow : Window
     private static Border RailSep() => new()
     {
         Height = 1,
-        Width = 32,
+        Width = 28,
         Background = new SolidColorBrush(Color.Parse(Stroke)),
-        Margin = new Thickness(0, 4)
+        Margin = new Thickness(0, 6)
     };
 
     // ── Right panel ───────────────────────────────────────────────────────────
@@ -643,16 +664,12 @@ public partial class MainWindow : Window
     {
         var header = new Border
         {
-            Background = new SolidColorBrush(Color.Parse(Bg0)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(0, 0, 0, 1),
-            Padding = new Thickness(12, 7),
+            Padding = new Thickness(10, 8, 10, 4),
             Child = new TextBlock
             {
-                Text = title.ToUpperInvariant(),
-                FontSize = 9,
+                Text = title,
+                FontSize = 10,
                 FontWeight = FontWeight.SemiBold,
-                LetterSpacing = 1.4,
                 Foreground = new SolidColorBrush(Color.Parse(TextMuted))
             }
         };
@@ -924,9 +941,9 @@ public partial class MainWindow : Window
 
     private static void SetToggleActive(Button btn, bool active)
     {
-        btn.Background = new SolidColorBrush(Color.Parse(active ? AccentSoft : Bg2));
-        btn.BorderBrush = new SolidColorBrush(Color.Parse(active ? Accent : Stroke));
-        btn.Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted));
+        btn.Background  = new SolidColorBrush(Color.Parse(active ? AccentSoft : "Transparent"));
+        btn.BorderBrush = new SolidColorBrush(Color.Parse(active ? Accent : "Transparent"));
+        btn.Foreground  = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted));
     }
 
     private static Button SmBtn(string glyph, string tip)
@@ -934,16 +951,16 @@ public partial class MainWindow : Window
         var btn = new Button
         {
             Content = glyph,
-            Width = 30,
-            Height = 30,
+            Width = 28,
+            Height = 26,
             Padding = new Thickness(0),
-            FontSize = 12,
+            FontSize = 11,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
             Background = new SolidColorBrush(Color.Parse(Bg2)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(6)
+            CornerRadius = new CornerRadius(3)
         };
         ToolTip.SetTip(btn, tip);
         return btn;
@@ -1042,6 +1059,7 @@ public partial class MainWindow : Window
         _canvas.HistoryChanged += (_, _) => UpdateStatus();
         _canvas.LayersChanged += (_, _) => { BuildLayerList(); UpdateStatus(); };
         _canvas.LayerMetadataChanged += (_, e) => { UpdateLayerRow(e.LayerIndex); UpdateStatus(); };
+        _canvas.ColorSampled += (_, c) => SetColor(c, syncPicker: true);
 
         SliderChanged(_sizeSlider, v => UpdateCurrentBrush(p => p with { Size = v }));
         SliderChanged(_opacitySlider, v => UpdateCurrentBrush(p => p with { Opacity = v }));
@@ -1390,14 +1408,35 @@ public partial class MainWindow : Window
     }
 
     // ── Tool selection ────────────────────────────────────────────────────────
+    private void ActivateTool(ITool tool, Button button)
+    {
+        _canvas.SetActiveTool(tool);
+        foreach (var b in _toolButtons) SetRailActive(b, b == button);
+        _footerStatusText.Text = ToolDisplayName(tool);
+    }
+
+    private string ToolDisplayName(ITool tool) => tool switch
+    {
+        BrushTool bt  => bt.IsEraser ? "Eraser" : _canvas.Brush.Name,
+        MoveTool      => "Move",
+        SelectTool    => "Select",
+        MagicWandTool => "Magic Wand",
+        FillTool      => "Fill",
+        EyedropperTool=> "Eyedropper",
+        GradientTool  => "Gradient",
+        ShapeTool     => "Shape",
+        PolylineTool  => "Polyline",
+        _             => "Tool"
+    };
+
     private void SetTool(string tool)
     {
-        _canvas.SetTool(tool);
-        _toolStatusText.Text = tool == "eraser" ? "Eraser" : _canvas.Brush.Name;
-        _footerStatusText.Text = tool == "eraser" ? "Eraser" : "Brush";
-        var eraser = tool == "eraser";
-        SetRailActive(_brushToolButton, !eraser);
-        SetRailActive(_eraserToolButton, eraser);
+        var (itool, btn) = tool switch
+        {
+            "eraser" => ((ITool)_canvas.EraserTool, _eraserToolButton),
+            _        => (_canvas.BrushTool, _brushToolButton)
+        };
+        ActivateTool(itool, btn);
     }
 
     private static void SetRailActive(Button button, bool active)
@@ -1856,6 +1895,15 @@ public partial class MainWindow : Window
         else if (sc.RotateRight.Matches(key, mods)) { SetRotation(_rotation + sc.RotateKeyStep); e.Handled = true; }
         else if (sc.ToolBrush.Matches(key, mods)) { SetTool("brush"); e.Handled = true; }
         else if (sc.ToolEraser.Matches(key, mods)) { SetTool("eraser"); e.Handled = true; }
+        else if (key == Key.V && mods == KeyModifiers.None) { ActivateTool(_moveTool, _moveToolButton); e.Handled = true; }
+        else if (key == Key.S && mods == KeyModifiers.None) { ActivateTool(_selectTool, _selectToolButton); e.Handled = true; }
+        else if (key == Key.W && mods == KeyModifiers.None) { ActivateTool(_magicWandTool, _wandToolButton); e.Handled = true; }
+        else if (key == Key.G && mods == KeyModifiers.None) { ActivateTool(_fillTool, _fillToolButton); e.Handled = true; }
+        else if (key == Key.I && mods == KeyModifiers.None) { ActivateTool(_eyedropperTool, _eyedropToolButton); e.Handled = true; }
+        else if (key == Key.Escape && _canvas.ActiveTool is SelectTool or PolylineTool)
+        { _canvas.CancelActiveTool(); e.Handled = true; }
+        else if ((key == Key.Return || key == Key.Enter) && _canvas.ActiveTool is SelectTool or PolylineTool)
+        { _canvas.CommitActiveTool(); e.Handled = true; }
         else if (sc.ColorCycle.Matches(key, mods)) { CycleColor(); e.Handled = true; }
         else if (sc.ColorDefault.Matches(key, mods)) { SetColor(Color.Parse("#111111")); e.Handled = true; }
         else if (sc.OpenSettings.Matches(key, mods)) { OpenSettings(); e.Handled = true; }

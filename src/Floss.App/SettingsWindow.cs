@@ -7,7 +7,6 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Floss.App.Input;
-using IconPacks.Avalonia.Material;
 using KeyBinding = Floss.App.Input.KeyBinding;
 
 namespace Floss.App;
@@ -300,7 +299,7 @@ public sealed class SettingsWindow : Window
 
         var clearBtn = new Button
         {
-            Content         = MaterialIcon(PackIconMaterialKind.Close, 13),
+            Content         = MaterialIcon(Icons.Close, 13),
             Width           = 22,
             Height          = 22,
             Padding         = new Thickness(0),
@@ -368,15 +367,8 @@ public sealed class SettingsWindow : Window
         return rowBorder;
     }
 
-    private static PackIconMaterial MaterialIcon(PackIconMaterialKind kind, double size) => new()
-    {
-        Kind = kind,
-        Width = size,
-        Height = size,
-        Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-        VerticalAlignment = VerticalAlignment.Center,
-        HorizontalAlignment = HorizontalAlignment.Center
-    };
+    private static PathIcon MaterialIcon(string pathData, double size) =>
+        Icons.Make(pathData, size, new SolidColorBrush(Color.Parse(TextMuted)));
 
     private static Control RowNudger(string label, int currentValue, int min, int max, Action<double> setter)
     {

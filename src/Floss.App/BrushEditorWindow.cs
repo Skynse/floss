@@ -10,7 +10,6 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Floss.App.Brushes;
-using IconPacks.Avalonia.Material;
 
 namespace Floss.App;
 
@@ -317,7 +316,7 @@ public sealed class BrushEditorWindow : Window
     {
         var dynBtn = new Button
         {
-            Content         = MaterialIcon(PackIconMaterialKind.TuneVertical, 14),
+            Content         = MaterialIcon(Icons.TuneVertical, 14),
             Width           = 22,
             Height          = 22,
             Padding         = new Thickness(0),
@@ -479,7 +478,7 @@ public sealed class BrushEditorWindow : Window
     {
         var layer = _stampLayers[index];
 
-        var icon = MaterialIcon(layer.Tip is ImageBrushTip ? PackIconMaterialKind.ImageOutline : PackIconMaterialKind.ShapeOutline, 16);
+        var icon = MaterialIcon(layer.Tip is ImageBrushTip ? Icons.ImageOutline : Icons.ShapeOutline, 16);
         icon.Width = 18;
 
         var typeLabel = new TextBlock
@@ -525,7 +524,7 @@ public sealed class BrushEditorWindow : Window
 
         var deleteBtn = new Button
         {
-            Content         = MaterialIcon(PackIconMaterialKind.Close, 13),
+            Content         = MaterialIcon(Icons.Close, 13),
             Width           = 22,
             Height          = 22,
             Padding         = new Thickness(0),
@@ -562,15 +561,8 @@ public sealed class BrushEditorWindow : Window
         };
     }
 
-    private static PackIconMaterial MaterialIcon(PackIconMaterialKind kind, double size) => new()
-    {
-        Kind = kind,
-        Width = size,
-        Height = size,
-        Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-        VerticalAlignment = VerticalAlignment.Center,
-        HorizontalAlignment = HorizontalAlignment.Center
-    };
+    private static PathIcon MaterialIcon(string pathData, double size) =>
+        Icons.Make(pathData, size, new SolidColorBrush(Color.Parse(TextMuted)));
 
     // ── Sync ──────────────────────────────────────────────────────────────────
 

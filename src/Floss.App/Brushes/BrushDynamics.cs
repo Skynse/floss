@@ -1,179 +1,234 @@
 using System;
 using System.Collections.Generic;
-using Floss.App.Input;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Floss.App.Brushes;
 
-public enum DynamicInputSource
+public sealed partial class BrushDynamics
 {
-    Pressure,
-    Tilt,
-    Velocity
-}
+    public CurveOption Size     { get; set; } = CurveOption.Off();
+    public CurveOption Opacity  { get; set; } = CurveOption.Off();
+    public CurveOption Flow     { get; set; } = CurveOption.Off();
+    public CurveOption Hardness { get; set; } = CurveOption.Off();
+    public CurveOption Scatter  { get; set; } = CurveOption.Off();
+    public CurveOption Rotation { get; set; } = CurveOption.Off();
+    public CurveOption Spacing  { get; set; } = CurveOption.Off();
 
-public enum DynamicOutputTarget
-{
-    Size,
-    Opacity,
-    Scatter,
-    Angle
-}
+    // ── Evaluation ───────────────────────────────────────────────────────────
 
-public enum ResponseCurveKind
-{
-    Linear,
-    Power,
-    Bezier
-}
-
-public sealed class ResponseCurve
-{
-    public const int LutSize = 256;
-
-    public ResponseCurve(
-        DynamicInputSource source,
-        DynamicOutputTarget target,
-        ResponseCurveKind kind = ResponseCurveKind.Power,
-        float strength = 1.0f,
-        float gamma = 1.0f,
-        float minimum = 0.0f,
-        float maximum = 1.0f,
-        float bezierX1 = 0.25f,
-        float bezierY1 = 0.25f,
-        float bezierX2 = 0.75f,
-        float bezierY2 = 0.75f,
-        bool invert = false)
+    public float EvalSize    (in StrokePoint sp) => Size.Compute(sp);
+    public float EvalOpacity (in StrokePoint sp) => Opacity.Compute(sp);
+    public float EvalFlow    (in StrokePoint sp) => Flow.Compute(sp);
+    public float EvalHardness(in StrokePoint sp) => Hardness.Compute(sp);
+    public float EvalScatter (in StrokePoint sp) => Scatter.Compute(sp);
+    // Rotation: returns degrees offset = (Compute - 0.5) * 360 * strength
+    public float EvalRotationDeg(in StrokePoint sp)
     {
-        Source = source;
-        Target = target;
-        Kind = kind;
-        Strength = Math.Clamp(strength, 0, 1);
-        Gamma = Math.Max(0.001f, gamma);
-        Minimum = minimum;
-        Maximum = maximum;
-        BezierX1 = bezierX1;
-        BezierY1 = bezierY1;
-        BezierX2 = bezierX2;
-        BezierY2 = bezierY2;
-        Invert = invert;
-        Lut = new float[LutSize];
-        RebuildLut();
+        if (!Rotation.IsEnabled || Rotation.Sensors.Count == 0) return 0f;
+        return (Rotation.Compute(sp) - 0.5f) * 360f;
     }
+    public float EvalSpacing(in StrokePoint sp) => Spacing.Compute(sp);
 
-    public DynamicInputSource Source { get; }
-    public DynamicOutputTarget Target { get; }
-    public ResponseCurveKind Kind { get; }
-    public float Strength { get; }
-    public float Gamma { get; }
-    public float Minimum { get; }
-    public float Maximum { get; }
-    public float BezierX1 { get; }
-    public float BezierY1 { get; }
-    public float BezierX2 { get; }
-    public float BezierY2 { get; }
-    public bool Invert { get; }
-    public float[] Lut { get; }
-
-    public float Evaluate(float normalizedInput)
-        => Lut[Math.Clamp((int)(Math.Clamp(normalizedInput, 0, 1) * 255), 0, LutSize - 1)];
-
-    private void RebuildLut()
+    public BrushDynamics Clone() => new()
     {
-        for (var i = 0; i < Lut.Length; i++)
+        Size     = Size.Clone(),
+        Opacity  = Opacity.Clone(),
+        Flow     = Flow.Clone(),
+        Hardness = Hardness.Clone(),
+        Scatter  = Scatter.Clone(),
+        Rotation = Rotation.Clone(),
+        Spacing  = Spacing.Clone()
+    };
+
+    // ── Serialization ────────────────────────────────────────────────────────
+
+    public string Serialize() => JsonSerializer.Serialize(ToDto(), DtoContext.Default.BrushDynamicsDto);
+
+    public static BrushDynamics Deserialize(string json)
+    {
+        try
         {
-            var x = i / 255.0f;
-            var y = Kind switch
+            var dto = JsonSerializer.Deserialize(json, DtoContext.Default.BrushDynamicsDto);
+            if (dto == null) return new BrushDynamics();
+            return new BrushDynamics
             {
-                ResponseCurveKind.Linear => x,
-                ResponseCurveKind.Bezier => CubicBezierY(x),
-                _ => MathF.Pow(x, Gamma)
+                Size     = FromDto(dto.Size),
+                Opacity  = FromDto(dto.Opacity),
+                Flow     = FromDto(dto.Flow),
+                Hardness = FromDto(dto.Hardness),
+                Scatter  = FromDto(dto.Scatter),
+                Rotation = FromDto(dto.Rotation),
+                Spacing  = FromDto(dto.Spacing)
             };
-
-            if (Invert) y = 1.0f - y;
-            y = Minimum + (Maximum - Minimum) * y;
-            Lut[i] = 1.0f + (y - 1.0f) * Strength;
         }
+        catch { return new BrushDynamics(); }
     }
 
-    private float CubicBezierY(float inputX)
+    // ── Legacy migration ─────────────────────────────────────────────────────
+
+    public static BrushDynamics FromLegacy(ParameterDynamics sizeDyn, ParameterDynamics opacDyn)
     {
-        // Binary search: find t where X(t) = inputX, then evaluate Y(t)
-        var lo = 0f; var hi = 1f;
-        for (var i = 0; i < 14; i++)
+        var d = new BrushDynamics();
+        d.Size    = BuildLegacyCurveOption(sizeDyn);
+        d.Opacity = BuildLegacyCurveOption(opacDyn);
+        return d;
+    }
+
+    private static CurveOption BuildLegacyCurveOption(ParameterDynamics dyn)
+    {
+        bool hasPressure = dyn.PressureEnabled;
+        bool hasVelocity = dyn.VelocityEnabled;
+        if (!hasPressure && !hasVelocity) return CurveOption.Off();
+
+        var opt = ToCurveOption(dyn);
+        return opt;
+    }
+
+    internal static CurveOption ToCurveOption(ParameterDynamics dyn)
+    {
+        bool hasPressure = dyn.PressureEnabled;
+        bool hasVelocity = dyn.VelocityEnabled;
+
+        var opt = new CurveOption { MinOutput = dyn.Min, MaxOutput = dyn.Max };
+        if (hasPressure)
         {
-            var mid = (lo + hi) * 0.5f;
-            if (Cubic(mid, 0, BezierX1, BezierX2, 1) < inputX) lo = mid; else hi = mid;
+            CubicCurve curve;
+            if (dyn.Kind == ResponseCurveKind.Bezier)
+                curve = BezierCurve(dyn.X1, dyn.Y1, dyn.X2, dyn.Y2);
+            else
+                curve = GammaCurve(dyn.Kind == ResponseCurveKind.Linear ? 1f : dyn.Gamma);
+            opt.Sensors.Add(new SensorConfig { Type = SensorType.Pressure, Curve = curve });
         }
-        return Cubic((lo + hi) * 0.5f, 0, BezierY1, BezierY2, 1);
-    }
-
-    private static float Cubic(float t, float p0, float p1, float p2, float p3)
-    {
-        var inv = 1 - t;
-        return inv*inv*inv*p0 + 3*inv*inv*t*p1 + 3*inv*t*t*p2 + t*t*t*p3;
-    }
-}
-
-public sealed class DynamicsMatrix
-{
-    private readonly IReadOnlyList<ResponseCurve> _curves;
-
-    public DynamicsMatrix(IReadOnlyList<ResponseCurve> curves)
-    {
-        _curves = curves;
-    }
-
-    public static DynamicsMatrix FromBrush(BrushPreset brush)
-    {
-        var curves = new List<ResponseCurve>(4);
-        AddCurves(curves, brush.SizeDynamics,    DynamicOutputTarget.Size);
-        AddCurves(curves, brush.OpacityDynamics, DynamicOutputTarget.Opacity);
-        return new DynamicsMatrix(curves);
-    }
-
-    private static void AddCurves(List<ResponseCurve> curves, ParameterDynamics dyn, DynamicOutputTarget target)
-    {
-        if (dyn.PressureEnabled)
-            curves.Add(new ResponseCurve(
-                DynamicInputSource.Pressure, target,
-                kind:      dyn.Kind,
-                gamma:     dyn.Gamma,
-                minimum:   dyn.Min,
-                maximum:   dyn.Max,
-                bezierX1:  dyn.X1,
-                bezierY1:  dyn.Y1,
-                bezierX2:  dyn.X2,
-                bezierY2:  dyn.Y2));
-
-        if (dyn.VelocityEnabled)
-            curves.Add(new ResponseCurve(
-                DynamicInputSource.Velocity, target,
-                kind:    ResponseCurveKind.Linear,
-                minimum: Math.Clamp(1.0f - dyn.VelocityStrength, 0.05f, 1.0f),
-                maximum: 1.0f,
-                invert:  true));
-    }
-
-    public float Evaluate(DynamicOutputTarget target, CanvasInputSample sample, float velocity01)
-    {
-        var result = 1.0f;
-        for (var i = 0; i < _curves.Count; i++)
+        if (hasVelocity)
         {
-            var curve = _curves[i];
-            if (curve.Target != target) continue;
-            result *= curve.Evaluate(InputValue(curve.Source, sample, velocity01));
+            var vc = new CubicCurve();
+            vc.SetPoints([new(0f, 1f), new(1f, Math.Clamp(1f - dyn.VelocityStrength, 0.05f, 1f))]);
+            opt.Sensors.Add(new SensorConfig { Type = SensorType.Speed, Curve = vc });
         }
-        return result;
+        return opt;
     }
 
-    private static float InputValue(DynamicInputSource source, CanvasInputSample sample, float velocity01)
+    private static CubicCurve GammaCurve(float gamma)
     {
-        return source switch
+        const int steps = 9;
+        var pts = new CurvePoint[steps];
+        for (int i = 0; i < steps; i++)
         {
-            DynamicInputSource.Pressure => (float)Math.Clamp(sample.Pressure, 0, 1),
-            DynamicInputSource.Tilt => (float)Math.Clamp(Math.Sqrt(sample.TiltX * sample.TiltX + sample.TiltY * sample.TiltY) / 90.0, 0, 1),
-            DynamicInputSource.Velocity => Math.Clamp(velocity01, 0, 1),
-            _ => 0
+            float x = i / (float)(steps - 1);
+            pts[i] = new CurvePoint(x, Math.Clamp(MathF.Pow(x, gamma), 0, 1));
+        }
+        var c = new CubicCurve();
+        c.SetPoints(pts);
+        return c;
+    }
+
+    private static CubicCurve BezierCurve(float x1, float y1, float x2, float y2)
+    {
+        const int steps = 9;
+        var pts = new CurvePoint[steps];
+        for (int i = 0; i < steps; i++)
+        {
+            float t = i / (float)(steps - 1);
+            float bx = CubicBez(t, 0, x1, x2, 1);
+            float by = Math.Clamp(CubicBez(t, 0, y1, y2, 1), 0, 1);
+            pts[i] = new CurvePoint(bx, by);
+        }
+        var c = new CubicCurve();
+        c.SetPoints(pts);
+        return c;
+    }
+
+    private static float CubicBez(float t, float p0, float p1, float p2, float p3)
+    {
+        float inv = 1 - t;
+        return inv * inv * inv * p0 + 3 * inv * inv * t * p1 + 3 * inv * t * t * p2 + t * t * t * p3;
+    }
+
+    // ── DTO layer ─────────────────────────────────────────────────────────────
+
+    private BrushDynamicsDto ToDto() => new()
+    {
+        Size     = ToDto(Size),
+        Opacity  = ToDto(Opacity),
+        Flow     = ToDto(Flow),
+        Hardness = ToDto(Hardness),
+        Scatter  = ToDto(Scatter),
+        Rotation = ToDto(Rotation),
+        Spacing  = ToDto(Spacing)
+    };
+
+    private static CurveOptionDto ToDto(CurveOption opt) => new()
+    {
+        Enabled  = opt.IsEnabled,
+        Strength = opt.Strength,
+        Min      = opt.MinOutput,
+        Max      = opt.MaxOutput,
+        Mode     = (int)opt.CombineMode,
+        Sensors  = ToDto(opt.Sensors)
+    };
+
+    private static List<SensorDto> ToDto(List<SensorConfig> sensors)
+    {
+        var list = new List<SensorDto>(sensors.Count);
+        foreach (var s in sensors)
+            list.Add(new SensorDto { T = (int)s.Type, C = s.Curve.Serialize(), L = s.Length });
+        return list;
+    }
+
+    private static CurveOption FromDto(CurveOptionDto? dto)
+    {
+        if (dto == null) return CurveOption.Off();
+        var opt = new CurveOption
+        {
+            IsEnabled   = dto.Enabled,
+            Strength    = dto.Strength,
+            MinOutput   = dto.Min,
+            MaxOutput   = dto.Max,
+            CombineMode = (SensorCombineMode)dto.Mode
         };
+        if (dto.Sensors != null)
+            foreach (var s in dto.Sensors)
+                opt.Sensors.Add(new SensorConfig
+                {
+                    Type   = (SensorType)s.T,
+                    Curve  = CubicCurve.Deserialize(s.C ?? ""),
+                    Length = s.L
+                });
+        return opt;
     }
+
+    // ── JSON DTO classes ──────────────────────────────────────────────────────
+
+    internal sealed class BrushDynamicsDto
+    {
+        public CurveOptionDto? Size     { get; set; }
+        public CurveOptionDto? Opacity  { get; set; }
+        public CurveOptionDto? Flow     { get; set; }
+        public CurveOptionDto? Hardness { get; set; }
+        public CurveOptionDto? Scatter  { get; set; }
+        public CurveOptionDto? Rotation { get; set; }
+        public CurveOptionDto? Spacing  { get; set; }
+    }
+
+    internal sealed class CurveOptionDto
+    {
+        public bool             Enabled  { get; set; }
+        public float            Strength { get; set; }
+        public float            Min      { get; set; }
+        public float            Max      { get; set; }
+        public int              Mode     { get; set; }
+        public List<SensorDto>? Sensors  { get; set; }
+    }
+
+    internal sealed class SensorDto
+    {
+        public int    T { get; set; }    // SensorType
+        public string? C { get; set; }   // CubicCurve serialized
+        public float   L { get; set; }   // Length
+    }
+
+    [JsonSerializable(typeof(BrushDynamicsDto))]
+    [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+    private sealed partial class DtoContext : JsonSerializerContext { }
 }
