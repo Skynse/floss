@@ -231,7 +231,7 @@ public static class PsdExporter
     private static unsafe void WriteCompositeImageData(PsdBinaryWriter w, DrawingDocument document, int width, int height)
     {
         var compositor = new LayerCompositor();
-        compositor.Composite(document.Layers, width, height);
+        compositor.Composite(document.Layers, width, height, document.PaperColor, document.PaperVisible);
 
         w.WriteUInt16(0); // Raw (uncompressed)
 
@@ -254,35 +254,35 @@ public static class PsdExporter
 
     private static string BlendModeKey(string blendMode) => blendMode switch
     {
-        "Normal"       => "norm",
-        "Dissolve"     => "diss",
-        "Darken"       => "dark",
-        "Multiply"     => "mul ",
-        "ColorBurn"    => "idiv",
-        "LinearBurn"   => "lbrn",
-        "DarkerColor"  => "dkCl",
-        "Lighten"      => "lite",
-        "Screen"       => "scrn",
-        "ColorDodge"   => "div ",
-        "LinearDodge"  => "lddg",
+        "Normal" => "norm",
+        "Dissolve" => "diss",
+        "Darken" => "dark",
+        "Multiply" => "mul ",
+        "ColorBurn" => "idiv",
+        "LinearBurn" => "lbrn",
+        "DarkerColor" => "dkCl",
+        "Lighten" => "lite",
+        "Screen" => "scrn",
+        "ColorDodge" => "div ",
+        "LinearDodge" => "lddg",
         "LighterColor" => "lgCl",
-        "Overlay"      => "over",
-        "SoftLight"    => "sLit",
-        "HardLight"    => "hLit",
-        "VividLight"   => "vLit",
-        "LinearLight"  => "lLit",
-        "PinLight"     => "pLit",
-        "HardMix"      => "hMix",
-        "Difference"   => "diff",
-        "Exclusion"    => "smud",
-        "Subtract"     => "fsub",
-        "Divide"       => "fdiv",
-        "Hue"          => "hue ",
-        "Saturation"   => "sat ",
-        "Color"        => "colr",
-        "Luminosity"   => "lum ",
-        "PassThrough"  => "pass",
-        _              => "norm"
+        "Overlay" => "over",
+        "SoftLight" => "sLit",
+        "HardLight" => "hLit",
+        "VividLight" => "vLit",
+        "LinearLight" => "lLit",
+        "PinLight" => "pLit",
+        "HardMix" => "hMix",
+        "Difference" => "diff",
+        "Exclusion" => "smud",
+        "Subtract" => "fsub",
+        "Divide" => "fdiv",
+        "Hue" => "hue ",
+        "Saturation" => "sat ",
+        "Color" => "colr",
+        "Luminosity" => "lum ",
+        "PassThrough" => "pass",
+        _ => "norm"
     };
 }
 

@@ -112,7 +112,7 @@ public static class DocumentRasterizer
         var width = Math.Max(1, document.Width);
         var height = Math.Max(1, document.Height);
         var compositor = new LayerCompositor();
-        compositor.Composite(document.Layers, width, height);
+        compositor.Composite(document.Layers, width, height, document.PaperColor, document.PaperVisible);
 
         var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Unpremul));
         using var frame = compositor.Bitmap.Lock();

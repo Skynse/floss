@@ -14,7 +14,32 @@ public enum LayerDropPlacement
 
 public sealed class DrawingDocument
 {
-    public static readonly Color PaperColor = Color.Parse("#f7f4ed");
+    private Color _paperColor = Color.Parse("#f7f4ed");
+    private bool _paperVisible = true;
+
+    public Color PaperColor
+    {
+        get => _paperColor;
+        set
+        {
+            if (_paperColor == value) return;
+            _paperColor = value;
+            PaperChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    public bool PaperVisible
+    {
+        get => _paperVisible;
+        set
+        {
+            if (_paperVisible == value) return;
+            _paperVisible = value;
+            PaperChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    public event EventHandler? PaperChanged;
 
     private readonly List<DrawingLayer> _layers = [];
     private readonly Stack<IHistoryState> _undo = new();
@@ -635,11 +660,16 @@ public sealed class DrawingDocument
     {
         var layer = new DrawingLayer(snap.Name, snap.BitmapWidth, snap.BitmapHeight)
         {
-            IsVisible = snap.IsVisible, IsLocked = snap.IsLocked,
-            Opacity = snap.Opacity, BlendMode = snap.BlendMode,
-            OffsetX = snap.OffsetX, OffsetY = snap.OffsetY,
-            IsGroup = snap.IsGroup, IsOpen = snap.IsOpen,
-            IsClipping = snap.IsClipping, IndentLevel = snap.IndentLevel
+            IsVisible = snap.IsVisible,
+            IsLocked = snap.IsLocked,
+            Opacity = snap.Opacity,
+            BlendMode = snap.BlendMode,
+            OffsetX = snap.OffsetX,
+            OffsetY = snap.OffsetY,
+            IsGroup = snap.IsGroup,
+            IsOpen = snap.IsOpen,
+            IsClipping = snap.IsClipping,
+            IndentLevel = snap.IndentLevel
         };
         layer.RestoreTiles(snap.Tiles);
         return layer;

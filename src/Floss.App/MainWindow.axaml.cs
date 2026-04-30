@@ -178,6 +178,8 @@ public partial class MainWindow : Window
     private TextBlock _rotDisplay = null!;
     private Button _saveBrushButton = null!;
     private BrushStrokePreview _strokePreview = null!;
+    private Border? _paperSwatch;
+    private Button? _paperVisBtn;
 
     // ── State ─────────────────────────────────────────────────────────────────
     private BrushEditorWindow? _brushEditorWindow;
@@ -521,9 +523,9 @@ public partial class MainWindow : Window
     {
         var btn = new Button
         {
-            Content = Icons.Make(icon, 11, new SolidColorBrush(Color.Parse(color))),
-            Width = 16,
-            Height = 16,
+            Content = Icons.Make(icon, 10, new SolidColorBrush(Color.Parse(color))),
+            Width = 14,
+            Height = 14,
             Padding = new Thickness(0),
             Tag = tag,
             Background = Avalonia.Media.Brushes.Transparent,
@@ -570,8 +572,8 @@ public partial class MainWindow : Window
         var colorBtn = new Button
         {
             Content = _colorWell,
-            Width = 38,
-            Height = 36,
+            Width = 36,
+            Height = 34,
             Background = Avalonia.Media.Brushes.Transparent,
             Padding = new Thickness(5),
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
@@ -638,8 +640,8 @@ public partial class MainWindow : Window
         {
             Orientation = Avalonia.Layout.Orientation.Vertical,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            Margin = new Thickness(0, 8),
-            Spacing = 2
+            Margin = new Thickness(0, 6),
+            Spacing = 1
         };
         stack.Children.Add(_brushToolButton);
         stack.Children.Add(_eraserToolButton);
@@ -680,8 +682,8 @@ public partial class MainWindow : Window
         var btn = new Button
         {
             Content = MaterialIcon(icon, 18),
-            Width = 38,
-            Height = 36,
+            Width = 36,
+            Height = 34,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
             Background = Avalonia.Media.Brushes.Transparent,
@@ -696,9 +698,9 @@ public partial class MainWindow : Window
     private static Border RailSep() => new()
     {
         Height = 1,
-        Width = 28,
+        Width = 26,
         Background = new SolidColorBrush(Color.Parse(Stroke)),
-        Margin = new Thickness(0, 6)
+        Margin = new Thickness(0, 4)
     };
 
     // ── Right panel ───────────────────────────────────────────────────────────
@@ -759,16 +761,16 @@ public partial class MainWindow : Window
     {
         var header = new Border
         {
-            Padding = new Thickness(10, 8, 10, 4),
+            Padding = new Thickness(10, 6, 10, 3),
             Child = new TextBlock
             {
                 Text = title,
-                FontSize = 10,
+                FontSize = 9,
                 FontWeight = FontWeight.SemiBold,
                 Foreground = new SolidColorBrush(Color.Parse(TextMuted))
             }
         };
-        var outer = new StackPanel();
+        var outer = new StackPanel { Spacing = 2 };
         outer.Children.Add(header);
         outer.Children.Add(content);
         return new Border
@@ -785,21 +787,21 @@ public partial class MainWindow : Window
         _colorPicker = new HsvColorPicker
         {
             Height = 168,
-            Margin = new Thickness(12, 0, 12, 10)
+            Margin = new Thickness(12, 4, 12, 10)
         };
         _colorPicker.HsvChanged += OnPickerHsvChanged;
 
         _hexInput = new TextBox
         {
             Width = 112,
-            Height = 30,
+            Height = 26,
             FontSize = 12,
             FontFamily = new FontFamily("Consolas, Courier New, monospace"),
             Background = new SolidColorBrush(Color.Parse(Bg0)),
             Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
             BorderBrush = new SolidColorBrush(Color.Parse("#3a4250")),
             BorderThickness = new Thickness(1),
-            Padding = new Thickness(8, 0),
+            Padding = new Thickness(6, 0),
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
             CaretBrush = new SolidColorBrush(Color.Parse(TextPrimary)),
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left
@@ -809,7 +811,7 @@ public partial class MainWindow : Window
 
         _swatchPanel = new WrapPanel
         {
-            Margin = new Thickness(12, 4, 12, 8),
+            Margin = new Thickness(12, 2, 12, 6),
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
             ItemWidth = SwatchSize + 2,
             ItemHeight = SwatchSize + 2
@@ -835,9 +837,9 @@ public partial class MainWindow : Window
             Orientation = Avalonia.Layout.Orientation.Horizontal,
             Spacing = 4
         };
-        _presetPanel = new StackPanel { Spacing = 3 };
+        _presetPanel = new StackPanel { Spacing = 2 };
 
-        _strokePreview = new BrushStrokePreview { Height = 72 };
+        _strokePreview = new BrushStrokePreview { Height = 64 };
 
         var importPngBtn = SmBtn("PNG", "Import brush tip PNG");
         _saveBrushButton = SmBtn("⊙", "Save brush");
@@ -856,7 +858,7 @@ public partial class MainWindow : Window
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            MaxHeight = 190,
+            MaxHeight = 160,
             Content = _presetPanel
         };
 
@@ -874,13 +876,14 @@ public partial class MainWindow : Window
             FontSize = 11,
             FontWeight = FontWeight.SemiBold,
             Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
-            Margin = new Thickness(0, 2, 0, 6)
+            Margin = new Thickness(0, 2, 0, 2),
+            TextTrimming = TextTrimming.CharacterEllipsis
         };
 
         var brushToolRow = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
-            Spacing = 4,
+            Spacing = 3,
             Children = { importPngBtn, _saveBrushButton, duplicateBrushBtn, editBrushBtn }
         };
 
@@ -888,22 +891,24 @@ public partial class MainWindow : Window
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            Height = 34,
+            Height = 30,
             Content = _brushCategoryPanel
         };
 
         return new StackPanel
         {
             Spacing = 0,
-            Margin = new Thickness(10, 6, 10, 10),
+            Margin = new Thickness(10, 4, 10, 8),
             Children =
             {
                 _strokePreview,
-                new Border { Height = 6 },
-                categoryScrollRow,
-                new Border { Height = 6 },
-                presetScroll,
                 new Border { Height = 4 },
+                _activeBrushLabel,
+                new Border { Height = 4 },
+                categoryScrollRow,
+                new Border { Height = 4 },
+                presetScroll,
+                new Border { Height = 2 },
                 brushToolRow,
             }
         };
@@ -921,13 +926,14 @@ public partial class MainWindow : Window
 
         var detailBtn = SmBtn("⚙", "Open full tool property detail");
         detailBtn.Click += (_, _) => OpenToolPropertyDetail();
+        detailBtn.Margin = new Thickness(4, 0, 0, 0);
 
-        var header = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 6) };
+        var header = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 4) };
         DockPanel.SetDock(detailBtn, Dock.Right);
         header.Children.Add(detailBtn);
         header.Children.Add(_toolPropertyTitle);
 
-        _toolPropertyPanel = new StackPanel { Spacing = 5 };
+        _toolPropertyPanel = new StackPanel { Spacing = 3 };
 
         var root = new StackPanel
         {
@@ -946,13 +952,13 @@ public partial class MainWindow : Window
         {
             PlaceholderText = "Layer name",
             FontSize = 11,
-            Height = 28,
+            Height = 26,
             Background = new SolidColorBrush(Color.Parse(Bg0)),
             Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
             CaretBrush = new SolidColorBrush(Color.Parse(TextPrimary)),
             BorderBrush = new SolidColorBrush(Color.Parse("#3a4250")),
             BorderThickness = new Thickness(1),
-            Padding = new Thickness(8, 0),
+            Padding = new Thickness(6, 0),
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
         _layerNameBox.KeyDown += (_, e) =>
@@ -1010,10 +1016,12 @@ public partial class MainWindow : Window
         _moveLayerUpButton.Click += (_, _) => _canvas.MoveActiveLayer(1);
         _moveLayerDownButton.Click += (_, _) => _canvas.MoveActiveLayer(-1);
 
-        var ctrlRow = new StackPanel
+        foreach (var btn in new Button[] { addBtn, folderBtn, dupBtn, _deleteLayerButton, _moveLayerUpButton, _moveLayerDownButton })
+            btn.Margin = new Thickness(0, 0, 2, 2);
+
+        var ctrlRow = new WrapPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
-            Spacing = 6,
             Children = { addBtn, folderBtn, dupBtn, _deleteLayerButton, _moveLayerUpButton, _moveLayerDownButton }
         };
 
@@ -1021,8 +1029,8 @@ public partial class MainWindow : Window
 
         return new StackPanel
         {
-            Spacing = 5,
-            Margin = new Thickness(8, 0, 8, 10),
+            Spacing = 4,
+            Margin = new Thickness(8, 4, 8, 8),
             Children =
             {
                 _layerNameBox,
@@ -1076,8 +1084,8 @@ public partial class MainWindow : Window
             Minimum = min,
             Maximum = max,
             Value = value,
-            Height = 30,
-            MinHeight = 30,
+            Height = 24,
+            MinHeight = 20,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
         ToolTip.SetTip(s, tip);
@@ -1430,6 +1438,7 @@ public partial class MainWindow : Window
         _canvas.LayersChanged += (_, _) => { BuildLayerList(); UpdateStatus(); };
         _canvas.LayerMetadataChanged += (_, e) => { UpdateLayerRow(e.LayerIndex); UpdateStatus(); };
         _canvas.ColorSampled += (_, c) => SetColor(c, syncPicker: true, switchToBrush: false);
+        _canvas.Document.PaperChanged += (_, _) => RefreshPaperRow();
 
         SliderChanged(_sizeSlider, v => UpdateCurrentBrush(p => p with { Size = v }));
         SliderChanged(_opacitySlider, v => UpdateCurrentBrush(p => p with { Opacity = v }));
@@ -1528,14 +1537,14 @@ public partial class MainWindow : Window
             {
                 Content = cat,
                 HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-                Padding = new Thickness(10, 6),
-                Height = 30,
+                Padding = new Thickness(8, 4),
+                Height = 26,
                 Background = new SolidColorBrush(selected ? Color.Parse(AccentSoft) : Color.Parse(Bg2)),
                 Foreground = new SolidColorBrush(selected ? Color.Parse(TextPrimary) : Color.Parse(TextSecondary)),
                 BorderBrush = new SolidColorBrush(selected ? Color.Parse(Accent) : Color.Parse(Stroke)),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(6),
-                FontSize = 11,
+                CornerRadius = new CornerRadius(4),
+                FontSize = 10,
                 Tag = cat
             };
             btn.Click += (_, _) =>
@@ -1553,14 +1562,14 @@ public partial class MainWindow : Window
         {
             Content = "+",
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            Padding = new Thickness(10, 6),
-            Height = 30,
+            Padding = new Thickness(8, 4),
+            Height = 26,
             Background = new SolidColorBrush(Color.Parse(Bg2)),
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(6),
-            FontSize = 11
+            CornerRadius = new CornerRadius(4),
+            FontSize = 10
         };
         newCatBtn.Click += (_, _) =>
         {
@@ -1606,11 +1615,12 @@ public partial class MainWindow : Window
                 FontSize = 9,
                 Foreground = new SolidColorBrush(Color.Parse(isActive ? "#8aacee" : TextMuted)),
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+                TextTrimming = TextTrimming.CharacterEllipsis
             };
 
             // Stroke-weight preview: tapered bar mimicking the brush width
-            var strokeH = Math.Clamp(preset.Size / 256.0 * 14.0 + 1.5, 1.5, 14.0);
+            var strokeH = Math.Clamp(preset.Size / 256.0 * 12.0 + 1.5, 1.5, 12.0);
             var strokeOp = preset.Kind == BrushKind.Airbrush ? 0.45 : 0.85;
             var strokeBar = new Border
             {
@@ -1619,10 +1629,10 @@ public partial class MainWindow : Window
                 Background = new SolidColorBrush(Color.Parse(isActive ? "#7a9fe0" : "#3a4258")),
                 Opacity = strokeOp,
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 8, 0)
+                Margin = new Thickness(0, 0, 4, 0)
             };
 
-            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,70,44") };
+            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,56,38") };
             Grid.SetColumn(nameText, 0);
             Grid.SetColumn(strokeBar, 1);
             Grid.SetColumn(kindTag, 2);
@@ -1632,14 +1642,14 @@ public partial class MainWindow : Window
 
             var row = new Button
             {
-                Height = 38,
+                Height = 32,
                 HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
                 VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
                 Background = new SolidColorBrush(Color.Parse(isActive ? AccentSoft : Bg2)),
                 BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke)),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(10, 0),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(8, 0),
                 Content = grid,
                 Tag = asset
             };
@@ -2080,7 +2090,7 @@ public partial class MainWindow : Window
             BorderBrush = new SolidColorBrush(isActive ? Color.Parse("#2e5fb8") : Color.Parse("#1e2128")),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(4, 3),
+            Padding = new Thickness(3, 2),
             Margin = new Thickness(layer.IndentLevel * 12, 0, 0, 0),
             Tag = i,
             ContextMenu = BuildLayerContextMenu(i, layer)
@@ -2094,7 +2104,7 @@ public partial class MainWindow : Window
         row.AddHandler(DragDrop.DropEvent, LayerRowDrop);
 
         // cols: disclosure | vis | thumb | lock | alphalock | clip | name | blend | opacity
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("18,18,34,18,18,18,*,30,32") };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("16,16,30,16,16,16,*,26,28") };
 
         var disclosureBtn = LayerDisclosureBtn(layer, i);
 
@@ -2136,16 +2146,18 @@ public partial class MainWindow : Window
         {
             Text = layer.Name,
             Foreground = new SolidColorBrush(fgColor),
-            Padding = new Thickness(4, 1),
+            Padding = new Thickness(2, 0),
             FontSize = 11,
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis
         };
         var nameHost = new ContentControl
         {
             Content = nameText,
             Tag = i,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
-            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Stretch
+            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
+            ClipToBounds = true
         };
 
         var blendText = new TextBlock
@@ -2201,7 +2213,7 @@ public partial class MainWindow : Window
             BorderBrush = Avalonia.Media.Brushes.Transparent,
             Foreground = new SolidColorBrush(Color.Parse(layer.IsGroup ? "#6a7a96" : "#30343d")),
             Padding = new Thickness(0),
-            FontSize = 12,
+            FontSize = 10,
             Tag = index,
             IsHitTestVisible = layer.IsGroup
         };
@@ -2423,50 +2435,199 @@ public partial class MainWindow : Window
         return position.Y < height * 0.5 ? LayerDropPlacement.Above : LayerDropPlacement.Below;
     }
 
-    private static Control BuildPaperRow()
+    private Control BuildPaperRow()
     {
-        var paperSwatch = new Border
+        var doc = _canvas.Document;
+        var paperColor = doc.PaperColor;
+
+        _paperSwatch = new Border
         {
-            Width = 30,
-            Height = 30,
-            Margin = new Thickness(1, 0, 3, 0),
-            Background = new SolidColorBrush(Colors.White),
+            Width = 26,
+            Height = 26,
+            Margin = new Thickness(2, 0, 2, 0),
+            Background = new SolidColorBrush(paperColor),
             BorderBrush = new SolidColorBrush(Color.Parse("#3a4050")),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(3)
         };
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("18,18,34,18,18,18,*,30,32") };
+        _paperSwatch.PointerPressed += (_, e) =>
+        {
+            if (e.GetCurrentPoint(_paperSwatch).Properties.IsLeftButtonPressed)
+            {
+                OpenPaperColorPicker();
+                e.Handled = true;
+            }
+        };
+
+        _paperVisBtn = new Button
+        {
+            Content = Icons.Make(doc.PaperVisible ? Icons.Eye : Icons.EyeOff, 10,
+                new SolidColorBrush(Color.Parse(doc.PaperVisible ? "#6a9fd8" : "#404550"))),
+            Width = 14,
+            Height = 14,
+            Padding = new Thickness(0),
+            Background = Avalonia.Media.Brushes.Transparent,
+            BorderBrush = Avalonia.Media.Brushes.Transparent,
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
+        };
+        _paperVisBtn.Click += (_, _) => _canvas.SetPaperVisible(!doc.PaperVisible);
+
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("16,16,30,16,16,16,*,26,28") };
         var nameLabel = new TextBlock
         {
             Text = "Paper",
             FontSize = 11,
             Foreground = new SolidColorBrush(Color.Parse("#4a5468")),
-            Padding = new Thickness(4, 1),
+            Padding = new Thickness(2, 0),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
-        var eyeLabel = new TextBlock
-        {
-            Text = "●",
-            FontSize = 9,
-            Foreground = new SolidColorBrush(Color.Parse("#3a4458")),
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center
-        };
-        Grid.SetColumn(eyeLabel, 1);
-        Grid.SetColumn(paperSwatch, 2);
+        Grid.SetColumn(_paperVisBtn, 1);
+        Grid.SetColumn(_paperSwatch, 2);
         Grid.SetColumn(nameLabel, 6);
-        grid.Children.Add(eyeLabel);
-        grid.Children.Add(paperSwatch);
+        grid.Children.Add(_paperVisBtn);
+        grid.Children.Add(_paperSwatch);
         grid.Children.Add(nameLabel);
-        return new Border
+
+        var row = new Border
         {
             Background = new SolidColorBrush(Color.Parse("#0f1016")),
             BorderBrush = new SolidColorBrush(Color.Parse("#1a1c22")),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(4, 3),
+            Padding = new Thickness(3, 2),
             Child = grid
         };
+        row.PointerPressed += (_, e) =>
+        {
+            if (e.GetCurrentPoint(row).Properties.IsLeftButtonPressed)
+            {
+                OpenPaperColorPicker();
+                e.Handled = true;
+            }
+        };
+        return row;
+    }
+
+    private void RefreshPaperRow()
+    {
+        if (_paperSwatch == null || _paperVisBtn == null) return;
+        var doc = _canvas.Document;
+        _paperSwatch.Background = new SolidColorBrush(doc.PaperColor);
+        _paperVisBtn.Content = Icons.Make(doc.PaperVisible ? Icons.Eye : Icons.EyeOff, 10,
+            new SolidColorBrush(Color.Parse(doc.PaperVisible ? "#6a9fd8" : "#404550")));
+    }
+
+    private void OpenPaperColorPicker()
+    {
+        var doc = _canvas.Document;
+        var dialog = new Window
+        {
+            Title = "Paper Color",
+            Width = 280,
+            Height = 220,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = new SolidColorBrush(Color.Parse(Bg0))
+        };
+
+        var picker = new HsvColorPicker
+        {
+            Height = 160,
+            Margin = new Thickness(12, 8, 12, 8)
+        };
+        var (ph, ps, pv) = RgbToHsv(doc.PaperColor.R / 255.0, doc.PaperColor.G / 255.0, doc.PaperColor.B / 255.0);
+        picker.SetHsv(ph, ps, pv);
+
+        var hexBox = new TextBox
+        {
+            Text = $"#{doc.PaperColor.R:X2}{doc.PaperColor.G:X2}{doc.PaperColor.B:X2}",
+            FontFamily = new FontFamily("Consolas, Courier New, monospace"),
+            FontSize = 12,
+            Height = 26,
+            Padding = new Thickness(6, 0),
+            Background = new SolidColorBrush(Color.Parse(Bg0)),
+            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
+            CaretBrush = new SolidColorBrush(Color.Parse(TextPrimary)),
+            BorderBrush = new SolidColorBrush(Color.Parse("#3a4250")),
+            BorderThickness = new Thickness(1),
+            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+            Width = 100
+        };
+
+        Color? result = null;
+        picker.HsvChanged += (h, s, v) =>
+        {
+            var (r, g, b) = HsvToRgb(h, s, v);
+            hexBox.Text = $"#{(byte)(r * 255):X2}{(byte)(g * 255):X2}{(byte)(b * 255):X2}";
+        };
+        hexBox.KeyDown += (_, e) =>
+        {
+            if (e.Key is Key.Enter or Key.Return && TryParseHexColor(hexBox.Text ?? "", out var c))
+            {
+                result = c;
+                dialog.Close();
+            }
+        };
+        hexBox.LostFocus += (_, _) =>
+        {
+            if (TryParseHexColor(hexBox.Text ?? "", out var c))
+            {
+                var (h, s, v) = RgbToHsv(c.R / 255.0, c.G / 255.0, c.B / 255.0);
+                picker.SetHsv(h, s, v);
+            }
+        };
+
+        var okBtn = new Button
+        {
+            Content = "OK",
+            Margin = new Thickness(12, 0, 12, 12),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right
+        };
+        okBtn.Click += (_, _) =>
+        {
+            if (TryParseHexColor(hexBox.Text ?? "", out var c))
+                result = c;
+            else
+            {
+                var (h, s, v) = picker.Hsv;
+                var (r, g, b) = HsvToRgb(h, s, v);
+                result = Color.FromRgb((byte)(r * 255), (byte)(g * 255), (byte)(b * 255));
+            }
+            dialog.Close();
+        };
+
+        dialog.Content = new StackPanel
+        {
+            Spacing = 8,
+            Children =
+            {
+                picker,
+                new StackPanel
+                {
+                    Orientation = Avalonia.Layout.Orientation.Horizontal,
+                    Spacing = 8,
+                    Margin = new Thickness(12, 0, 12, 0),
+                    Children = { new TextBlock { Text = "Hex", VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center, Foreground = new SolidColorBrush(Color.Parse(TextSecondary)) }, hexBox }
+                },
+                okBtn
+            }
+        };
+        dialog.ShowDialog(this);
+        if (result.HasValue)
+            _canvas.SetPaperColor(result.Value);
+    }
+
+    private static bool TryParseHexColor(string input, out Color color)
+    {
+        color = default;
+        var s = input.Trim().TrimStart('#');
+        if (s.Length == 6 && uint.TryParse(s, System.Globalization.NumberStyles.HexNumber, null, out var val))
+        {
+            color = Color.FromRgb((byte)((val >> 16) & 0xFF), (byte)((val >> 8) & 0xFF), (byte)(val & 0xFF));
+            return true;
+        }
+        return false;
     }
 
     private void UpdateLayerRow(int index)
@@ -2530,9 +2691,9 @@ public partial class MainWindow : Window
     {
         var frame = new Border
         {
-            Width = 30,
-            Height = 30,
-            Margin = new Thickness(1, 0, 3, 0),
+            Width = 26,
+            Height = 26,
+            Margin = new Thickness(2, 0, 2, 0),
             Background = new SolidColorBrush(Color.Parse("#1e2028")),
             BorderBrush = new SolidColorBrush(Color.Parse("#2e3340")),
             BorderThickness = new Thickness(1),
@@ -2546,7 +2707,7 @@ public partial class MainWindow : Window
             {
                 Text = layer.IsOpen ? "▾" : "▸",
                 Foreground = new SolidColorBrush(Color.Parse("#6a7a96")),
-                FontSize = 13,
+                FontSize = 11,
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
             };
@@ -2555,7 +2716,7 @@ public partial class MainWindow : Window
 
         var image = new Image
         {
-            Source = layer.GetThumbnail(30),
+            Source = layer.GetThumbnail(26),
             Stretch = Stretch.Uniform,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center

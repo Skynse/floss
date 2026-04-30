@@ -85,6 +85,11 @@ public sealed class DrawingCanvas : Control
             LayersChanged?.Invoke(this, EventArgs.Empty);
         };
         _document.LayerMetadataChanged += (_, e) => LayerMetadataChanged?.Invoke(this, e);
+        _document.PaperChanged += (_, _) =>
+        {
+            _compositor.Invalidate(null);
+            InvalidateVisual();
+        };
     }
 
     public event EventHandler? StatsChanged;
@@ -140,6 +145,10 @@ public sealed class DrawingCanvas : Control
         }
         InvalidateVisual();
     }
+
+    public void SetPaperColor(Color color) => _document.PaperColor = color;
+
+    public void SetPaperVisible(bool visible) => _document.PaperVisible = visible;
 
     public void SetBrushSize(double size)
     {
@@ -256,7 +265,7 @@ public sealed class DrawingCanvas : Control
         if (_isPointerOver)
             Cursor = new Cursor(IsPaintBlockedByLock ? StandardCursorType.No : StandardCursorType.None);
 
-        _compositor.Composite(_document.Layers, _document.Width, _document.Height);
+        _compositor.Composite(_document.Layers, _document.Width, _document.Height, _document.PaperColor, _document.PaperVisible);
         var target = new Rect(Bounds.Size);
         using (context.PushRenderOptions(new RenderOptions
         {
@@ -430,7 +439,7 @@ public sealed class DrawingCanvas : Control
     {
         if ((uint)x >= (uint)_document.Width || (uint)y >= (uint)_document.Height) return null;
 
-        _compositor.Composite(_document.Layers, _document.Width, _document.Height);
+        _compositor.Composite(_document.Layers, _document.Width, _document.Height, _document.PaperColor, _document.PaperVisible);
         using var frame = _compositor.Bitmap.Lock();
         if (_compositor.Bitmap.Format != PixelFormat.Bgra8888) return null;
 
@@ -447,7 +456,7 @@ public sealed class DrawingCanvas : Control
 
         return point.Pointer.Type switch
         {
-            PointerType.Pen   => properties.IsLeftButtonPressed || properties.Pressure >= PenPressureThreshold,
+            PointerType.Pen => properties.IsLeftButtonPressed || properties.Pressure >= PenPressureThreshold,
             PointerType.Touch => properties.IsLeftButtonPressed || properties.Pressure >= PenPressureThreshold,
             PointerType.Mouse => properties.IsLeftButtonPressed,
             _ => false
