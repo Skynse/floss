@@ -15,6 +15,7 @@ public sealed class LayerCompositor
     private bool _dirty = true;
     private bool _fullDirty = true;
     private PixelRegion? _dirtyRegion;
+    private readonly Dictionary<DrawingLayer, GroupProjectionCache> _groupCaches = new();
 
     public void SetSize(int width, int height)
     {
@@ -30,6 +31,7 @@ public sealed class LayerCompositor
         _dirty = true;
         _fullDirty = true;
         _dirtyRegion = null;
+        _groupCaches.Clear();
     }
 
     public WriteableBitmap Bitmap
@@ -43,6 +45,9 @@ public sealed class LayerCompositor
     }
 
     public void Invalidate(PixelRegion? region = null)
+        => Invalidate(region, null, null);
+
+    public void Invalidate(PixelRegion? region, IReadOnlyList<DrawingLayer>? layers, int? layerIndex)
     {
         _dirty = true;
         if (region is null || region.Value.IsEmpty)
@@ -58,6 +63,8 @@ public sealed class LayerCompositor
         {
             _dirtyRegion = _dirtyRegion is { } existing ? existing.Union(region.Value) : region.Value;
         }
+
+        InvalidateGroupCaches(region, layers, layerIndex);
     }
 
     public unsafe void Composite(IReadOnlyList<DrawingLayer> layers, int width, int height)
@@ -105,7 +112,28 @@ public sealed class LayerCompositor
 
     private record RenderItem(DrawingLayer Layer, bool IsClipped, int BaseLayerIndex);
 
-    private static unsafe void CompositeLayerList(
+    private void InvalidateGroupCaches(PixelRegion? region, IReadOnlyList<DrawingLayer>? layers, int? layerIndex)
+    {
+        if (region is null || region.Value.IsEmpty || layers is null || layerIndex is null ||
+            layerIndex.Value < 0 || layerIndex.Value >= layers.Count)
+        {
+            foreach (var cache in _groupCaches.Values)
+                cache.Invalidate(region);
+            return;
+        }
+
+        var layer = layers[layerIndex.Value];
+        if (layer.IsGroup && _groupCaches.TryGetValue(layer, out var ownCache))
+            ownCache.Invalidate(region.Value);
+
+        for (var parent = layer.Parent; parent != null; parent = parent.Parent)
+        {
+            if (_groupCaches.TryGetValue(parent, out var cache))
+                cache.Invalidate(region.Value);
+        }
+    }
+
+    private unsafe void CompositeLayerList(
         byte* dst,
         int dstStride,
         int width,
@@ -167,7 +195,7 @@ public sealed class LayerCompositor
         return result;
     }
 
-    private static unsafe void CompositeGroup(
+    private unsafe void CompositeGroup(
         byte* dst,
         int dstStride,
         int width,
@@ -189,41 +217,73 @@ public sealed class LayerCompositor
             return;
         }
 
-        var temp = new byte[clip.Width * clip.Height * 4];
-        fixed (byte* tempPtr = temp)
+        var projection = GetGroupProjection(group, clip);
+        CompositeProjectionBuffer(dst, dstStride, projection, group.BlendMode, groupOpacity, clip, originX, originY);
+    }
+
+    private unsafe TiledPixelBuffer GetGroupProjection(DrawingLayer group, PixelRegion requestedClip)
+    {
+        if (!_groupCaches.TryGetValue(group, out var cache))
         {
-            for (int i = 0; i < temp.Length; i++) tempPtr[i] = 0;
+            cache = new GroupProjectionCache(_width, _height);
+            _groupCaches.Add(group, cache);
+        }
+        else
+        {
+            cache.EnsureSize(_width, _height);
+        }
 
-            CompositeLayerList(tempPtr, clip.Width * 4, clip.Width, clip.Height, group.Children, opacityScale: 1.0, clip, clip.X, clip.Y);
-
-            for (int docY = clip.Y; docY < clip.Bottom; docY++)
+        var dirty = cache.TakeDirty(requestedClip);
+        if (!dirty.IsEmpty)
+        {
+            cache.Buffer.Clear(dirty);
+            var temp = new byte[dirty.Width * dirty.Height * 4];
+            fixed (byte* tempPtr = temp)
             {
-                var srcRow = tempPtr + (docY - clip.Y) * clip.Width * 4;
-                var dstRow = dst + (docY - originY) * dstStride;
+                CompositeLayerList(tempPtr, dirty.Width * 4, dirty.Width, dirty.Height, group.Children, opacityScale: 1.0, dirty, dirty.X, dirty.Y);
+            }
+            cache.Buffer.CopyFromBgra(dirty, temp, dirty.Width * 4);
+        }
 
-                for (int docX = clip.X; docX < clip.Right; docX++)
-                {
-                    var srcIdx = (docX - clip.X) * 4;
-                    var dstIdx = (docX - originX) * 4;
-                    var srcB = srcRow[srcIdx + 0] / 255.0;
-                    var srcG = srcRow[srcIdx + 1] / 255.0;
-                    var srcR = srcRow[srcIdx + 2] / 255.0;
-                    var srcA = srcRow[srcIdx + 3] / 255.0 * groupOpacity;
+        return cache.Buffer;
+    }
 
-                    if (srcA <= 0) continue;
+    private static unsafe void CompositeProjectionBuffer(
+        byte* dst,
+        int dstStride,
+        TiledPixelBuffer projection,
+        string blendMode,
+        double opacity,
+        PixelRegion clip,
+        int originX,
+        int originY)
+    {
+        if (opacity <= 0 || !projection.HasContentTiles(clip)) return;
 
-                    var dstB = dstRow[dstIdx + 0] / 255.0;
-                    var dstG = dstRow[dstIdx + 1] / 255.0;
-                    var dstR = dstRow[dstIdx + 2] / 255.0;
-                    var dstA = dstRow[dstIdx + 3] / 255.0;
+        for (int docY = clip.Y; docY < clip.Bottom; docY++)
+        {
+            var dstRow = dst + (docY - originY) * dstStride;
+            for (int docX = clip.X; docX < clip.Right; docX++)
+            {
+                projection.GetPixel(docX, docY, out var rawB, out var rawG, out var rawR, out var rawA);
+                var srcA = rawA / 255.0 * opacity;
+                if (srcA <= 0) continue;
 
-                    var (blendR, blendG, blendB) = ApplyBlendMode(
-                        srcR, srcG, srcB, srcA,
-                        dstR, dstG, dstB, dstA,
-                        group.BlendMode);
+                var dstIdx = (docX - originX) * 4;
+                var srcB = rawB / 255.0;
+                var srcG = rawG / 255.0;
+                var srcR = rawR / 255.0;
+                var dstB = dstRow[dstIdx + 0] / 255.0;
+                var dstG = dstRow[dstIdx + 1] / 255.0;
+                var dstR = dstRow[dstIdx + 2] / 255.0;
+                var dstA = dstRow[dstIdx + 3] / 255.0;
 
-                    BlendPixel(dstRow + dstIdx, srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendR, blendG, blendB);
-                }
+                var (blendR, blendG, blendB) = ApplyBlendMode(
+                    srcR, srcG, srcB, srcA,
+                    dstR, dstG, dstB, dstA,
+                    blendMode);
+
+                BlendPixel(dstRow + dstIdx, srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendR, blendG, blendB);
             }
         }
     }
@@ -261,6 +321,8 @@ public sealed class LayerCompositor
         docBottom = Math.Min(docBottom, height + originY);
 
         if (docLeft >= docRight || docTop >= docBottom) return;
+        var sourceRegion = new PixelRegion(docLeft - offsetX, docTop - offsetY, docRight - docLeft, docBottom - docTop);
+        if (!layer.Pixels.HasContentTiles(sourceRegion)) return;
 
         for (int docY = docTop; docY < docBottom; docY++)
         {
@@ -307,7 +369,7 @@ public sealed class LayerCompositor
         }
     }
 
-    private static unsafe void CompositeClippedGroup(
+    private unsafe void CompositeClippedGroup(
         byte* dst,
         int dstStride,
         int width,
@@ -423,6 +485,8 @@ public sealed class LayerCompositor
         docBottom = Math.Min(docBottom, height + originY);
 
         if (docLeft >= docRight || docTop >= docBottom) return;
+        var sourceRegion = new PixelRegion(docLeft - offsetX, docTop - offsetY, docRight - docLeft, docBottom - docTop);
+        if (!layer.Pixels.HasContentTiles(sourceRegion)) return;
 
         for (int docY = docTop; docY < docBottom; docY++)
         {
@@ -709,5 +773,67 @@ public sealed class LayerCompositor
             HueToRgb(p, q, h),
             HueToRgb(p, q, h - 1.0 / 3.0)
         );
+    }
+
+    private sealed class GroupProjectionCache
+    {
+        private bool _fullDirty = true;
+        private PixelRegion? _dirtyRegion;
+
+        public GroupProjectionCache(int width, int height)
+        {
+            Buffer = new TiledPixelBuffer(width, height);
+        }
+
+        public TiledPixelBuffer Buffer { get; private set; }
+
+        public void EnsureSize(int width, int height)
+        {
+            if (Buffer.Width == width && Buffer.Height == height) return;
+
+            Buffer = new TiledPixelBuffer(width, height);
+            _fullDirty = true;
+            _dirtyRegion = null;
+        }
+
+        public void Invalidate(PixelRegion? region)
+        {
+            if (region is null || region.Value.IsEmpty)
+            {
+                _fullDirty = true;
+                _dirtyRegion = null;
+                return;
+            }
+
+            if (_fullDirty) return;
+            _dirtyRegion = _dirtyRegion is { } existing ? existing.Union(region.Value) : region.Value;
+        }
+
+        public PixelRegion TakeDirty(PixelRegion requestedClip)
+        {
+            var clip = requestedClip.ClipTo(Buffer.Width, Buffer.Height);
+            if (clip.IsEmpty) return PixelRegion.Empty;
+
+            if (_fullDirty)
+            {
+                _fullDirty = false;
+                _dirtyRegion = null;
+                return clip;
+            }
+
+            if (_dirtyRegion is not { } dirty)
+                return PixelRegion.Empty;
+
+            var dirtyClip = dirty.Intersect(clip);
+            if (dirtyClip.IsEmpty)
+                return PixelRegion.Empty;
+
+            var remaining = dirtyClip.Width == dirty.Width && dirtyClip.Height == dirty.Height &&
+                            dirtyClip.X == dirty.X && dirtyClip.Y == dirty.Y
+                ? PixelRegion.Empty
+                : dirty;
+            _dirtyRegion = remaining.IsEmpty ? null : remaining;
+            return dirtyClip;
+        }
     }
 }

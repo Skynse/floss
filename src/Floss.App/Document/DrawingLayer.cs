@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
@@ -34,6 +35,10 @@ public sealed class DrawingLayer : IDisposable
     public TiledPixelBuffer Pixels { get; }
     public int Width => Pixels.Width;
     public int Height => Pixels.Height;
+    public PixelRegion DocumentContentBounds
+        => IsGroup
+            ? Children.Aggregate(PixelRegion.Empty, (bounds, child) => bounds.Union(child.DocumentContentBounds))
+            : Pixels.ContentTileBounds.Translate(OffsetX, OffsetY);
 
     public void Dispose()
     {

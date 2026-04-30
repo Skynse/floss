@@ -22,6 +22,43 @@ public sealed class TiledPixelBuffer
 
     public PixelRegion Bounds => new(0, 0, Width, Height);
 
+    public PixelRegion ContentTileBounds
+    {
+        get
+        {
+            if (_tiles.Count == 0) return PixelRegion.Empty;
+
+            var first = true;
+            var minX = 0;
+            var minY = 0;
+            var maxX = 0;
+            var maxY = 0;
+
+            foreach (var key in _tiles.Keys)
+            {
+                var x = key.X * TileSize;
+                var y = key.Y * TileSize;
+                if (first)
+                {
+                    minX = x;
+                    minY = y;
+                    maxX = x + TileSize;
+                    maxY = y + TileSize;
+                    first = false;
+                }
+                else
+                {
+                    minX = Math.Min(minX, x);
+                    minY = Math.Min(minY, y);
+                    maxX = Math.Max(maxX, x + TileSize);
+                    maxY = Math.Max(maxY, y + TileSize);
+                }
+            }
+
+            return new PixelRegion(minX, minY, maxX - minX, maxY - minY).ClipTo(Width, Height);
+        }
+    }
+
     public void Clear()
     {
         _tiles.Clear();
@@ -88,6 +125,22 @@ public sealed class TiledPixelBuffer
                 WritePixel(x, y, src, (y * srcWidth + x) * BytesPerPixel);
             }
         }
+    }
+
+    public void CopyFromBgra(PixelRegion region, byte[] src, int srcStride)
+    {
+        var clipped = region.ClipTo(Width, Height);
+        if (clipped.IsEmpty) return;
+
+        for (var y = 0; y < clipped.Height; y++)
+        {
+            for (var x = 0; x < clipped.Width; x++)
+            {
+                WritePixel(clipped.X + x, clipped.Y + y, src, y * srcStride + x * BytesPerPixel);
+            }
+        }
+
+        PruneTransparentTiles(clipped);
     }
 
     public unsafe void RenderWithSkia(PixelRegion region, Action<SKCanvas> render)
@@ -180,6 +233,52 @@ public sealed class TiledPixelBuffer
         g = tile[offset + 1];
         r = tile[offset + 2];
         a = tile[offset + 3];
+    }
+
+    public bool HasNonTransparentPixels(PixelRegion region)
+    {
+        var clipped = region.ClipTo(Width, Height);
+        if (clipped.IsEmpty) return false;
+
+        var found = false;
+        ForEachTile(clipped, (tileX, tileY, tile, tileRegion) =>
+        {
+            if (found) return;
+
+            for (var y = tileRegion.Y; y < tileRegion.Bottom; y++)
+            {
+                var offset = (y - tileY * TileSize) * TileSize * BytesPerPixel + (tileRegion.X - tileX * TileSize) * BytesPerPixel + 3;
+                for (var x = 0; x < tileRegion.Width; x++, offset += BytesPerPixel)
+                {
+                    if (tile[offset] == 0) continue;
+                    found = true;
+                    return;
+                }
+            }
+        }, create: false);
+
+        return found;
+    }
+
+    public bool HasContentTiles(PixelRegion region)
+    {
+        var clipped = region.ClipTo(Width, Height);
+        if (clipped.IsEmpty || _tiles.Count == 0) return false;
+
+        var firstTileX = FloorDiv(clipped.X, TileSize);
+        var firstTileY = FloorDiv(clipped.Y, TileSize);
+        var lastTileX = FloorDiv(clipped.Right - 1, TileSize);
+        var lastTileY = FloorDiv(clipped.Bottom - 1, TileSize);
+
+        for (var ty = firstTileY; ty <= lastTileY; ty++)
+        {
+            for (var tx = firstTileX; tx <= lastTileX; tx++)
+            {
+                if (_tiles.ContainsKey((tx, ty))) return true;
+            }
+        }
+
+        return false;
     }
 
     private byte[] GetOrCreateTile(int x, int y)

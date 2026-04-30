@@ -720,7 +720,7 @@ public partial class MainWindow : Window
         _workspaceViewport.PointerMoved        += Workspace_OnPointerMoved;
         _workspaceViewport.PointerReleased     += Workspace_OnPointerReleased;
 
-        _canvas.StatsChanged   += (_, _) => { _layerPanel.InvalidateVisual(); UpdateStatus(); };
+        _canvas.StatsChanged   += (_, _) => UpdateStatus();
         _canvas.HistoryChanged += (_, _) => UpdateStatus();
         _canvas.LayersChanged  += (_, _) => { BuildLayerList(); UpdateStatus(); };
 
@@ -1183,6 +1183,7 @@ public partial class MainWindow : Window
             _canvasScale.ScaleY = _zoom;
             _canvasPan.X = 0;
             _canvasPan.Y = 0;
+            ClampCanvasPan();
             UpdateStatus();
         }
     }
@@ -1211,6 +1212,7 @@ public partial class MainWindow : Window
         var d  = pt - _lastPanPoint;
         _canvasPan.X  += d.X;
         _canvasPan.Y  += d.Y;
+        ClampCanvasPan();
         _lastPanPoint  = pt;
         e.Handled = true;
     }
@@ -1241,6 +1243,7 @@ public partial class MainWindow : Window
             _canvasPan.Y = (c.Y - vpH * 0.5) * (1 - ratio) + _canvasPan.Y * ratio;
         }
 
+        ClampCanvasPan();
         UpdateStatus();
     }
 
@@ -1249,7 +1252,31 @@ public partial class MainWindow : Window
         _rotation = degrees % 360;
         _canvasRotate.Angle      = _rotation;
         _canvas.CanvasRotation   = _rotation;
+        ClampCanvasPan();
         UpdateStatus();
+    }
+
+    private void ClampCanvasPan()
+    {
+        var vpW = Math.Max(1, _workspaceViewport.Bounds.Width);
+        var vpH = Math.Max(1, _workspaceViewport.Bounds.Height);
+        if (vpW <= 1 || vpH <= 1) return;
+
+        var angle = Math.Abs(_rotation % 180) * Math.PI / 180.0;
+        var cos = Math.Abs(Math.Cos(angle));
+        var sin = Math.Abs(Math.Sin(angle));
+        var docW = Math.Max(1, _canvas.Document.Width) * _zoom;
+        var docH = Math.Max(1, _canvas.Document.Height) * _zoom;
+        var rotatedW = docW * cos + docH * sin;
+        var rotatedH = docW * sin + docH * cos;
+
+        var marginX = Math.Min(vpW * 0.45, 360);
+        var marginY = Math.Min(vpH * 0.45, 360);
+        var maxX = Math.Max(marginX, (rotatedW - vpW) * 0.5 + marginX);
+        var maxY = Math.Max(marginY, (rotatedH - vpH) * 0.5 + marginY);
+
+        _canvasPan.X = Math.Clamp(_canvasPan.X, -maxX, maxX);
+        _canvasPan.Y = Math.Clamp(_canvasPan.Y, -maxY, maxY);
     }
 
     // ── Keyboard ──────────────────────────────────────────────────────────────
@@ -1263,6 +1290,7 @@ public partial class MainWindow : Window
         if (none && e.Key == Key.Space)
         {
             _spacePanning = true;
+            _canvas.PaintInputSuspended = true;
             Cursor = new Cursor(StandardCursorType.SizeAll);
             e.Handled = true;
             return;
@@ -1305,6 +1333,7 @@ public partial class MainWindow : Window
         {
             _spacePanning = false;
             _isPanning    = false;
+            _canvas.PaintInputSuspended = false;
             Cursor        = Cursor.Default;
             e.Handled     = true;
         }

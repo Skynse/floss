@@ -31,7 +31,7 @@ public sealed class DrawingCanvas : Control
         _compositor = new LayerCompositor();
         _document.Changed += (_, e) =>
         {
-            _compositor.Invalidate(e.DirtyRegion);
+            _compositor.Invalidate(e.DirtyRegion, _document.Layers, e.LayerIndex);
             InvalidateVisual();
             StatsChanged?.Invoke(this, EventArgs.Empty);
         };
@@ -60,6 +60,7 @@ public sealed class DrawingCanvas : Control
     public int ActiveLayerIndex => _document.ActiveLayerIndex;
 
     public double CanvasRotation { get; set; }
+    public bool PaintInputSuspended { get; set; }
 
     public void SetBrush(BrushPreset preset)
     {
@@ -123,6 +124,11 @@ public sealed class DrawingCanvas : Control
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
+        if (PaintInputSuspended)
+        {
+            return;
+        }
+
         var point = e.GetCurrentPoint(this);
         if (!IsPaintInput(point))
         {
@@ -151,8 +157,23 @@ public sealed class DrawingCanvas : Control
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
+        if (PaintInputSuspended)
+        {
+            if (_activePointerId >= 0)
+            {
+                _activePointerId = -1;
+                _tool.Cancel();
+                e.Pointer.Capture(null);
+            }
+            return;
+        }
+
         var point = e.GetCurrentPoint(this);
         if (point.Pointer.Id != _activePointerId)
+        {
+            return;
+        }
+        if (!IsPaintInput(point))
         {
             return;
         }
@@ -220,8 +241,16 @@ public sealed class DrawingCanvas : Control
 
     private static bool IsPaintInput(PointerPoint point)
     {
-        return point.Pointer.Type == PointerType.Pen ||
-               point.Properties.IsLeftButtonPressed ||
-               point.Properties.IsEraser;
+        var properties = point.Properties;
+        if (properties.IsEraser)
+            return properties.Pressure > 0 || properties.IsLeftButtonPressed;
+
+        return point.Pointer.Type switch
+        {
+            PointerType.Pen => properties.Pressure > 0 || properties.IsLeftButtonPressed,
+            PointerType.Touch => properties.Pressure > 0 || properties.IsLeftButtonPressed,
+            PointerType.Mouse => properties.IsLeftButtonPressed,
+            _ => false
+        };
     }
 }

@@ -54,7 +54,7 @@ public sealed class DrawingDocument
         _undo.Push(new LayerRegionHistoryState(layerIndex, patches.ToArray(), dirtyRegion));
         _redo.Clear();
         HistoryChanged?.Invoke(this, EventArgs.Empty);
-        NotifyChanged(dirtyRegion);
+        NotifyChanged(dirtyRegion, layerIndex);
     }
 
     public void ClearForImport()
@@ -112,7 +112,7 @@ public sealed class DrawingDocument
 
         ActiveLayer.Clear();
         CommittedStrokeCount = 0;
-        NotifyChanged();
+        NotifyChanged(null, ActiveLayerIndex);
     }
 
     public void AddLayer()
@@ -167,17 +167,36 @@ public sealed class DrawingDocument
     public void ToggleLayerVisibility(int index)
     {
         if (index < 0 || index >= _layers.Count) return;
-        BeginDocumentMutation();
-        _layers[index].IsVisible = !_layers[index].IsVisible;
-        NotifyLayersChanged();
+        var oldValue = _layers[index].IsVisible;
+        var newValue = !oldValue;
+        var dirtyRegion = LayerDirtyRegion(index);
+        _undo.Push(new LayerPropertyHistoryState<bool>(
+            index,
+            oldValue,
+            newValue,
+            (layer, value) => layer.IsVisible = value,
+            true,
+            dirtyRegion));
+        _redo.Clear();
+        _layers[index].IsVisible = newValue;
+        NotifyLayerMetadataChanged(dirtyRegion, index);
     }
 
     public void ToggleLayerLock(int index)
     {
         if (index < 0 || index >= _layers.Count) return;
-        BeginDocumentMutation();
-        _layers[index].IsLocked = !_layers[index].IsLocked;
-        NotifyLayersChanged();
+        var oldValue = _layers[index].IsLocked;
+        var newValue = !oldValue;
+        _undo.Push(new LayerPropertyHistoryState<bool>(
+            index,
+            oldValue,
+            newValue,
+            (layer, value) => layer.IsLocked = value,
+            false,
+            PixelRegion.Empty));
+        _redo.Clear();
+        _layers[index].IsLocked = newValue;
+        NotifyLayerMetadataChanged(null, index);
     }
 
     public void SetActiveLayerOpacity(double opacity)
@@ -185,7 +204,7 @@ public sealed class DrawingDocument
         var clamped = Math.Clamp(opacity, 0, 1);
         if (Math.Abs(ActiveLayer.Opacity - clamped) < 0.001) return;
         ActiveLayer.Opacity = clamped;
-        NotifyLayersChanged();
+        NotifyLayerMetadataChanged(LayerDirtyRegion(ActiveLayerIndex), ActiveLayerIndex);
     }
 
     public void MoveActiveLayer(int delta)
@@ -203,8 +222,9 @@ public sealed class DrawingDocument
     public void Undo()
     {
         if (_undo.Count == 0) return;
-        _redo.Push(new SnapshotHistoryState(CaptureSnapshot()));
-        _undo.Pop().Restore(this);
+        var state = _undo.Pop();
+        _redo.Push(state.CaptureRedo(this));
+        state.Restore(this);
         CommittedStrokeCount = Math.Max(0, CommittedStrokeCount - 1);
         HistoryChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -212,22 +232,38 @@ public sealed class DrawingDocument
     public void Redo()
     {
         if (_redo.Count == 0) return;
-        _undo.Push(new SnapshotHistoryState(CaptureSnapshot()));
-        _redo.Pop().Restore(this);
+        var state = _redo.Pop();
+        _undo.Push(state.CaptureRedo(this));
+        state.Restore(this);
         CommittedStrokeCount += 1;
         HistoryChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    public void NotifyChanged(PixelRegion? dirtyRegion = null)
+    public void NotifyChanged(PixelRegion? dirtyRegion = null, int? layerIndex = null)
     {
-        Changed?.Invoke(this, new DocumentChangedEventArgs(dirtyRegion));
+        Changed?.Invoke(this, new DocumentChangedEventArgs(dirtyRegion, layerIndex));
     }
 
     private void NotifyLayersChanged()
     {
         LayersChanged?.Invoke(this, EventArgs.Empty);
-        Changed?.Invoke(this, new DocumentChangedEventArgs(null));
+        Changed?.Invoke(this, new DocumentChangedEventArgs(null, null));
         HistoryChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void NotifyLayerMetadataChanged(PixelRegion? dirtyRegion, int? layerIndex)
+    {
+        LayersChanged?.Invoke(this, EventArgs.Empty);
+        if (dirtyRegion is { IsEmpty: false })
+            Changed?.Invoke(this, new DocumentChangedEventArgs(dirtyRegion, layerIndex));
+        HistoryChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private PixelRegion LayerDirtyRegion(int index)
+    {
+        if (index < 0 || index >= _layers.Count) return PixelRegion.Empty;
+        var bounds = _layers[index].DocumentContentBounds.ClipTo(Width, Height);
+        return bounds.IsEmpty ? new PixelRegion(0, 0, Width, Height) : bounds;
     }
 
     private DocumentSnapshot CaptureSnapshot()
@@ -295,7 +331,7 @@ public sealed class DrawingDocument
 
         ActiveLayerIndex = Math.Clamp(snapshot.ActiveLayerIndex, 0, _layers.Count - 1);
         LayersChanged?.Invoke(this, EventArgs.Empty);
-        Changed?.Invoke(this, new DocumentChangedEventArgs(null));
+        Changed?.Invoke(this, new DocumentChangedEventArgs(null, null));
     }
 
     private sealed record DocumentSnapshot(int Width, int Height, int ActiveLayerIndex, LayerSnapshot[] Layers);
@@ -319,16 +355,34 @@ public sealed class DrawingDocument
 
     private interface IHistoryState
     {
+        IHistoryState CaptureRedo(DrawingDocument document);
         void Restore(DrawingDocument document);
     }
 
     private sealed record SnapshotHistoryState(DocumentSnapshot Snapshot) : IHistoryState
     {
+        public IHistoryState CaptureRedo(DrawingDocument document) => new SnapshotHistoryState(document.CaptureSnapshot());
         public void Restore(DrawingDocument document) => document.RestoreSnapshot(Snapshot);
     }
 
     private sealed record LayerRegionHistoryState(int LayerIndex, LayerRegionPatch[] Patches, PixelRegion DirtyRegion) : IHistoryState
     {
+        public IHistoryState CaptureRedo(DrawingDocument document)
+        {
+            if (LayerIndex < 0 || LayerIndex >= document._layers.Count)
+                return new LayerRegionHistoryState(LayerIndex, [], DirtyRegion);
+
+            var layer = document._layers[LayerIndex];
+            var redoPatches = new LayerRegionPatch[Patches.Length];
+            for (var i = 0; i < Patches.Length; i++)
+            {
+                var patch = Patches[i];
+                redoPatches[i] = new LayerRegionPatch(patch.Region, layer.CapturePixels(patch.Region));
+            }
+
+            return new LayerRegionHistoryState(LayerIndex, redoPatches, DirtyRegion);
+        }
+
         public void Restore(DrawingDocument document)
         {
             if (LayerIndex < 0 || LayerIndex >= document._layers.Count) return;
@@ -341,14 +395,34 @@ public sealed class DrawingDocument
             }
 
             document.LayersChanged?.Invoke(document, EventArgs.Empty);
-            document.Changed?.Invoke(document, new DocumentChangedEventArgs(DirtyRegion));
+            document.Changed?.Invoke(document, new DocumentChangedEventArgs(DirtyRegion, LayerIndex));
+        }
+    }
+
+    private sealed record LayerPropertyHistoryState<T>(
+        int LayerIndex,
+        T OldValue,
+        T NewValue,
+        Action<DrawingLayer, T> Apply,
+        bool AffectsComposite,
+        PixelRegion DirtyRegion) : IHistoryState
+    {
+        public IHistoryState CaptureRedo(DrawingDocument document)
+            => new LayerPropertyHistoryState<T>(LayerIndex, NewValue, OldValue, Apply, AffectsComposite, DirtyRegion);
+
+        public void Restore(DrawingDocument document)
+        {
+            if (LayerIndex < 0 || LayerIndex >= document._layers.Count) return;
+            Apply(document._layers[LayerIndex], OldValue);
+            document.NotifyLayerMetadataChanged(AffectsComposite ? DirtyRegion : null, LayerIndex);
         }
     }
 }
 
-public sealed class DocumentChangedEventArgs(PixelRegion? dirtyRegion) : EventArgs
+public sealed class DocumentChangedEventArgs(PixelRegion? dirtyRegion, int? layerIndex) : EventArgs
 {
     public PixelRegion? DirtyRegion { get; } = dirtyRegion;
+    public int? LayerIndex { get; } = layerIndex;
 }
 
 public readonly record struct LayerRegionPatch(PixelRegion Region, byte[] BeforePixels);
