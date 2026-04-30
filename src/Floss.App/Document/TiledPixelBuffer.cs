@@ -296,6 +296,29 @@ public sealed class TiledPixelBuffer
     public byte[]? GetTileOrNull(int tileX, int tileY)
         => _tiles.TryGetValue((tileX, tileY), out var tile) ? tile : null;
 
+    public Dictionary<(int X, int Y), byte[]> CaptureTiles()
+    {
+        var result = new Dictionary<(int X, int Y), byte[]>(_tiles.Count);
+        foreach (var (key, tile) in _tiles)
+        {
+            var copy = new byte[tile.Length];
+            Buffer.BlockCopy(tile, 0, copy, 0, tile.Length);
+            result[key] = copy;
+        }
+        return result;
+    }
+
+    public void RestoreTiles(Dictionary<(int X, int Y), byte[]> tiles)
+    {
+        _tiles.Clear();
+        foreach (var (key, tile) in tiles)
+        {
+            var copy = new byte[tile.Length];
+            Buffer.BlockCopy(tile, 0, copy, 0, tile.Length);
+            _tiles[key] = copy;
+        }
+    }
+
     private byte[] GetOrCreateTile(int x, int y)
     {
         var key = ToTileKey(x, y);

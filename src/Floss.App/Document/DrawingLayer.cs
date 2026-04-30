@@ -128,4 +128,12 @@ public sealed class DrawingLayer : IDisposable
         Pixels.Restore(region, bytes);
         MarkThumbnailDirty();
     }
+
+    public Dictionary<(int X, int Y), byte[]> CaptureTiles() => Pixels.CaptureTiles();
+
+    public void RestoreTiles(Dictionary<(int X, int Y), byte[]> tiles)
+    {
+        Pixels.RestoreTiles(tiles);
+        MarkThumbnailDirty();
+    }
 }

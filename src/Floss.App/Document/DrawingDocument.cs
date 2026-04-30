@@ -118,16 +118,19 @@ public sealed class DrawingDocument
 
     public void AddLayer()
     {
-        BeginDocumentMutation();
+        var prevActiveIndex = ActiveLayerIndex;
         var insertIndex = ActiveLayerIndex + 1;
         _layers.Insert(insertIndex, new DrawingLayer($"Layer {_layers.Count + 1}", Width, Height));
         ActiveLayerIndex = insertIndex;
+        _undo.Push(new InsertLayerHistoryState(insertIndex, prevActiveIndex));
+        _redo.Clear();
+        HistoryChanged?.Invoke(this, EventArgs.Empty);
         NotifyLayersChanged();
     }
 
     public void DuplicateActiveLayer()
     {
-        BeginDocumentMutation();
+        var prevActiveIndex = ActiveLayerIndex;
         var source = ActiveLayer;
         var copy = new DrawingLayer(
             $"{source.Name} Copy",
@@ -141,20 +144,29 @@ public sealed class DrawingDocument
             OffsetX = source.OffsetX,
             OffsetY = source.OffsetY
         };
-        copy.RestorePixels(source.CapturePixels());
-        _layers.Insert(ActiveLayerIndex + 1, copy);
-        ActiveLayerIndex += 1;
+        copy.RestoreTiles(source.CaptureTiles());
+        var insertIndex = ActiveLayerIndex + 1;
+        _layers.Insert(insertIndex, copy);
+        ActiveLayerIndex = insertIndex;
+        _undo.Push(new InsertLayerHistoryState(insertIndex, prevActiveIndex));
+        _redo.Clear();
+        HistoryChanged?.Invoke(this, EventArgs.Empty);
         NotifyLayersChanged();
     }
 
     public void DeleteActiveLayer()
     {
         if (_layers.Count <= 1) return;
-        BeginDocumentMutation(); // captures pixels as bytes before we dispose
+        var removedIndex = ActiveLayerIndex;
+        var prevActiveIndex = ActiveLayerIndex;
         var removed = _layers[ActiveLayerIndex];
+        var snap = CaptureLayerSnapshot(removed);
         _layers.RemoveAt(ActiveLayerIndex);
         removed.Dispose();
         ActiveLayerIndex = Math.Clamp(ActiveLayerIndex, 0, _layers.Count - 1);
+        _undo.Push(new RemoveLayerHistoryState(removedIndex, prevActiveIndex, snap));
+        _redo.Clear();
+        HistoryChanged?.Invoke(this, EventArgs.Empty);
         NotifyLayersChanged();
     }
 
@@ -210,13 +222,16 @@ public sealed class DrawingDocument
 
     public void MoveActiveLayer(int delta)
     {
-        var next = ActiveLayerIndex + delta;
-        if (next < 0 || next >= _layers.Count) return;
-        BeginDocumentMutation();
+        var from = ActiveLayerIndex;
+        var to = from + delta;
+        if (to < 0 || to >= _layers.Count) return;
         var layer = ActiveLayer;
-        _layers.RemoveAt(ActiveLayerIndex);
-        _layers.Insert(next, layer);
-        ActiveLayerIndex = next;
+        _layers.RemoveAt(from);
+        _layers.Insert(to, layer);
+        ActiveLayerIndex = to;
+        _undo.Push(new MoveLayerHistoryState(to, from));
+        _redo.Clear();
+        HistoryChanged?.Invoke(this, EventArgs.Empty);
         NotifyLayersChanged();
     }
 
@@ -268,28 +283,31 @@ public sealed class DrawingDocument
         return bounds;
     }
 
+    private LayerSnapshot CaptureLayerSnapshot(DrawingLayer layer)
+        => new(layer.Name, layer.IsVisible, layer.IsLocked, layer.Opacity, layer.BlendMode,
+               layer.OffsetX, layer.OffsetY, layer.IsGroup, layer.IsOpen, layer.IsClipping,
+               layer.IndentLevel, layer.Parent is null ? -1 : _layers.IndexOf(layer.Parent),
+               layer.Width, layer.Height, layer.CaptureTiles());
+
+    private DrawingLayer CreateLayerFromSnapshot(LayerSnapshot snap)
+    {
+        var layer = new DrawingLayer(snap.Name, snap.BitmapWidth, snap.BitmapHeight)
+        {
+            IsVisible = snap.IsVisible, IsLocked = snap.IsLocked,
+            Opacity = snap.Opacity, BlendMode = snap.BlendMode,
+            OffsetX = snap.OffsetX, OffsetY = snap.OffsetY,
+            IsGroup = snap.IsGroup, IsOpen = snap.IsOpen,
+            IsClipping = snap.IsClipping, IndentLevel = snap.IndentLevel
+        };
+        layer.RestoreTiles(snap.Tiles);
+        return layer;
+    }
+
     private DocumentSnapshot CaptureSnapshot()
     {
         return new DocumentSnapshot(
-            Width,
-            Height,
-            ActiveLayerIndex,
-            _layers.Select(layer => new LayerSnapshot(
-                layer.Name,
-                layer.IsVisible,
-                layer.IsLocked,
-                layer.Opacity,
-                layer.BlendMode,
-                layer.OffsetX,
-                layer.OffsetY,
-                layer.IsGroup,
-                layer.IsOpen,
-                layer.IsClipping,
-                layer.IndentLevel,
-                layer.Parent is null ? -1 : _layers.IndexOf(layer.Parent),
-                layer.Width,
-                layer.Height,
-                layer.CapturePixels())).ToArray());
+            Width, Height, ActiveLayerIndex,
+            _layers.Select(CaptureLayerSnapshot).ToArray());
     }
 
     private void RestoreSnapshot(DocumentSnapshot snapshot)
@@ -298,33 +316,13 @@ public sealed class DrawingDocument
         Height = snapshot.Height;
         foreach (var l in _layers) l.Dispose();
         _layers.Clear();
-        foreach (var layerSnapshot in snapshot.Layers)
-        {
-            var layer = new DrawingLayer(
-                layerSnapshot.Name,
-                layerSnapshot.BitmapWidth,
-                layerSnapshot.BitmapHeight)
-            {
-                IsVisible = layerSnapshot.IsVisible,
-                IsLocked = layerSnapshot.IsLocked,
-                Opacity = layerSnapshot.Opacity,
-                BlendMode = layerSnapshot.BlendMode,
-                OffsetX = layerSnapshot.OffsetX,
-                OffsetY = layerSnapshot.OffsetY,
-                IsGroup = layerSnapshot.IsGroup,
-                IsOpen = layerSnapshot.IsOpen,
-                IsClipping = layerSnapshot.IsClipping,
-                IndentLevel = layerSnapshot.IndentLevel
-            };
-            layer.RestorePixels(layerSnapshot.Pixels);
-            _layers.Add(layer);
-        }
+        foreach (var snap in snapshot.Layers)
+            _layers.Add(CreateLayerFromSnapshot(snap));
 
         for (var i = 0; i < snapshot.Layers.Length; i++)
         {
             var parentIndex = snapshot.Layers[i].ParentIndex;
             if (parentIndex < 0 || parentIndex >= _layers.Count) continue;
-
             var layer = _layers[i];
             var parent = _layers[parentIndex];
             layer.Parent = parent;
@@ -339,21 +337,10 @@ public sealed class DrawingDocument
     private sealed record DocumentSnapshot(int Width, int Height, int ActiveLayerIndex, LayerSnapshot[] Layers);
 
     private sealed record LayerSnapshot(
-        string Name,
-        bool IsVisible,
-        bool IsLocked,
-        double Opacity,
-        string BlendMode,
-        int OffsetX,
-        int OffsetY,
-        bool IsGroup,
-        bool IsOpen,
-        bool IsClipping,
-        int IndentLevel,
-        int ParentIndex,
-        int BitmapWidth,
-        int BitmapHeight,
-        byte[] Pixels);
+        string Name, bool IsVisible, bool IsLocked, double Opacity, string BlendMode,
+        int OffsetX, int OffsetY, bool IsGroup, bool IsOpen, bool IsClipping,
+        int IndentLevel, int ParentIndex, int BitmapWidth, int BitmapHeight,
+        Dictionary<(int X, int Y), byte[]> Tiles);
 
     private interface IHistoryState
     {
@@ -365,6 +352,58 @@ public sealed class DrawingDocument
     {
         public IHistoryState CaptureRedo(DrawingDocument document) => new SnapshotHistoryState(document.CaptureSnapshot());
         public void Restore(DrawingDocument document) => document.RestoreSnapshot(Snapshot);
+    }
+
+    // Undo an insert (add/duplicate): remove the layer that was inserted.
+    private sealed record InsertLayerHistoryState(int InsertedIndex, int PreviousActiveIndex) : IHistoryState
+    {
+        public IHistoryState CaptureRedo(DrawingDocument document)
+        {
+            var snap = document.CaptureLayerSnapshot(document._layers[InsertedIndex]);
+            return new RemoveLayerHistoryState(InsertedIndex, document.ActiveLayerIndex, snap);
+        }
+
+        public void Restore(DrawingDocument document)
+        {
+            var removed = document._layers[InsertedIndex];
+            document._layers.RemoveAt(InsertedIndex);
+            removed.Dispose();
+            document.ActiveLayerIndex = Math.Clamp(PreviousActiveIndex, 0, document._layers.Count - 1);
+            document.NotifyLayersChanged();
+        }
+    }
+
+    // Undo a delete: reinsert the layer that was removed.
+    private sealed record RemoveLayerHistoryState(int RemovedIndex, int PreviousActiveIndex, LayerSnapshot RemovedSnap) : IHistoryState
+    {
+        public IHistoryState CaptureRedo(DrawingDocument document)
+        {
+            var snap = document.CaptureLayerSnapshot(document._layers[RemovedIndex]);
+            return new InsertLayerHistoryState(RemovedIndex, document.ActiveLayerIndex);
+        }
+
+        public void Restore(DrawingDocument document)
+        {
+            var layer = document.CreateLayerFromSnapshot(RemovedSnap);
+            document._layers.Insert(RemovedIndex, layer);
+            document.ActiveLayerIndex = Math.Clamp(PreviousActiveIndex, 0, document._layers.Count - 1);
+            document.NotifyLayersChanged();
+        }
+    }
+
+    // Undo a move: swap from and to indices.
+    private sealed record MoveLayerHistoryState(int FromIndex, int ToIndex) : IHistoryState
+    {
+        public IHistoryState CaptureRedo(DrawingDocument document) => new MoveLayerHistoryState(ToIndex, FromIndex);
+
+        public void Restore(DrawingDocument document)
+        {
+            var layer = document._layers[FromIndex];
+            document._layers.RemoveAt(FromIndex);
+            document._layers.Insert(ToIndex, layer);
+            document.ActiveLayerIndex = ToIndex;
+            document.NotifyLayersChanged();
+        }
     }
 
     private sealed record LayerRegionHistoryState(int LayerIndex, LayerRegionPatch[] Patches, PixelRegion DirtyRegion) : IHistoryState
@@ -402,12 +441,8 @@ public sealed class DrawingDocument
     }
 
     private sealed record LayerPropertyHistoryState<T>(
-        int LayerIndex,
-        T OldValue,
-        T NewValue,
-        Action<DrawingLayer, T> Apply,
-        bool AffectsComposite,
-        PixelRegion DirtyRegion) : IHistoryState
+        int LayerIndex, T OldValue, T NewValue,
+        Action<DrawingLayer, T> Apply, bool AffectsComposite, PixelRegion DirtyRegion) : IHistoryState
     {
         public IHistoryState CaptureRedo(DrawingDocument document)
             => new LayerPropertyHistoryState<T>(LayerIndex, NewValue, OldValue, Apply, AffectsComposite, DirtyRegion);

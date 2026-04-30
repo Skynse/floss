@@ -511,6 +511,69 @@ public sealed class LayerCompositor
         var lastTileX  = FloorDiv(sourceRegion.Right  - 1, ts);
         var lastTileY  = FloorDiv(sourceRegion.Bottom - 1, ts);
 
+        // Integer fast path for Normal blend — avoids all float conversions.
+        if (blendMode == "Normal")
+        {
+            var opacityByte = (uint)Math.Round(opacity * 255);
+            var fullOpacity = opacityByte == 255;
+
+            for (var ty = firstTileY; ty <= lastTileY; ty++)
+            {
+                for (var tx = firstTileX; tx <= lastTileX; tx++)
+                {
+                    var tile = layer.Pixels.GetTileOrNull(tx, ty);
+                    if (tile == null) continue;
+
+                    var clipLeft   = Math.Max(sourceRegion.X,      tx * ts);
+                    var clipTop    = Math.Max(sourceRegion.Y,      ty * ts);
+                    var clipRight  = Math.Min(sourceRegion.Right,  tx * ts + ts);
+                    var clipBottom = Math.Min(sourceRegion.Bottom, ty * ts + ts);
+
+                    for (int srcY = clipTop; srcY < clipBottom; srcY++)
+                    {
+                        var tileLocalY  = srcY - ty * ts;
+                        var tileLocalX0 = clipLeft - tx * ts;
+                        var tileRowBase = (tileLocalY * ts + tileLocalX0) * 4;
+                        var docY  = srcY + offsetY;
+                        var dstRow = dst + (docY - originY) * dstStride;
+
+                        for (int j = 0, srcX = clipLeft; srcX < clipRight; srcX++, j++)
+                        {
+                            var tileOffset = tileRowBase + j * 4;
+                            uint rawA = tile[tileOffset + 3];
+                            if (rawA == 0) continue;
+
+                            uint srcA = fullOpacity ? rawA : (rawA * opacityByte + 127) / 255;
+                            var docX   = srcX + offsetX;
+                            var dstPtr = dstRow + (docX - originX) * 4;
+
+                            if (srcA == 255)
+                            {
+                                dstPtr[0] = tile[tileOffset + 0];
+                                dstPtr[1] = tile[tileOffset + 1];
+                                dstPtr[2] = tile[tileOffset + 2];
+                                dstPtr[3] = 255;
+                                continue;
+                            }
+
+                            uint invSrcA  = 255 - srcA;
+                            uint dstA     = dstPtr[3];
+                            uint dstCont  = (dstA * invSrcA + 127) / 255;
+                            uint outA     = srcA + dstCont;
+                            if (outA == 0) continue;
+
+                            uint halfOutA = outA >> 1;
+                            dstPtr[0] = (byte)((tile[tileOffset + 0] * srcA + dstPtr[0] * dstCont + halfOutA) / outA);
+                            dstPtr[1] = (byte)((tile[tileOffset + 1] * srcA + dstPtr[1] * dstCont + halfOutA) / outA);
+                            dstPtr[2] = (byte)((tile[tileOffset + 2] * srcA + dstPtr[2] * dstCont + halfOutA) / outA);
+                            dstPtr[3] = (byte)outA;
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
         for (var ty = firstTileY; ty <= lastTileY; ty++)
         {
             for (var tx = firstTileX; tx <= lastTileX; tx++)
