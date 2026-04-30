@@ -3,10 +3,10 @@ using Floss.App.Input;
 
 namespace Floss.App.Tools;
 
-// Translates the active layer's offset by dragging.
+// Translates the active layer's offset (no selection) or moves selected pixels (with selection).
 public sealed class MoveTool : ITool
 {
-    private MoveToolOperation? _operation;
+    private IToolOperation? _operation;
     public bool HasPendingOperation => _operation != null;
 
     public void Activate(ToolContext ctx) { }
@@ -17,7 +17,9 @@ public sealed class MoveTool : ITool
         var layer = ctx.ActiveLayer;
         if (layer == null) return;
         _operation?.Cancel();
-        _operation = new MoveToolOperation(ctx, s);
+        _operation = ctx.Selection.HasSelection
+            ? new SelectionMoveOperation(ctx, s)
+            : new MoveToolOperation(ctx, s);
     }
 
     public void PointerMove(ToolContext ctx, CanvasInputSample s)
@@ -37,5 +39,9 @@ public sealed class MoveTool : ITool
         _operation = null;
     }
 
-    public void RenderOverlay(DrawingContext dc, ToolContext ctx, double zoom) { }
+    public void RenderOverlay(DrawingContext dc, ToolContext ctx, double zoom)
+    {
+        if (_operation is IToolOperationOverlay overlay)
+            overlay.RenderOverlay(dc, zoom);
+    }
 }

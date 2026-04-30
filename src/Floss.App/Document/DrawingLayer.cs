@@ -29,6 +29,7 @@ public sealed class DrawingLayer : IDisposable
     public bool IsGroup { get; set; }
     public bool IsOpen { get; set; } = true;
     public bool IsClipping { get; set; }
+    public bool IsAlphaLocked { get; set; }
     public int IndentLevel { get; set; }
     public DrawingLayer? Parent { get; set; }
     public List<DrawingLayer> Children { get; } = [];

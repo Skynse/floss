@@ -45,6 +45,22 @@ public sealed class SelectionMask
         return _mask[y * _docW + x] > 0;
     }
 
+    public SKRectI? GetMaskBounds()
+    {
+        if (_mask == null) return null;
+        int minX = _docW, minY = _docH, maxX = -1, maxY = -1;
+        for (int y = 0; y < _docH; y++)
+            for (int x = 0; x < _docW; x++)
+                if (_mask[y * _docW + x] > 0)
+                {
+                    if (x < minX) minX = x;
+                    if (y < minY) minY = y;
+                    if (x > maxX) maxX = x;
+                    if (y > maxY) maxY = y;
+                }
+        return maxX >= minX ? new SKRectI(minX, minY, maxX + 1, maxY + 1) : null;
+    }
+
     public void Invert()
     {
         if (_mask == null)
@@ -131,6 +147,8 @@ public sealed class SelectionMask
         var queue = new Queue<(int x, int y)>();
         queue.Enqueue((srcX, srcY));
 
+        int minX = _docW, minY = _docH, maxX = -1, maxY = -1;
+
         while (queue.Count > 0)
         {
             var (cx, cy) = queue.Dequeue();
@@ -145,14 +163,28 @@ public sealed class SelectionMask
             var docX = cx + offsetX;
             var docY = cy + offsetY;
             if ((uint)docX < (uint)_docW && (uint)docY < (uint)_docH)
+            {
                 Apply(next, docX, docY, op, true);
+                if (docX < minX) minX = docX;
+                if (docY < minY) minY = docY;
+                if (docX > maxX) maxX = docX;
+                if (docY > maxY) maxY = docY;
+            }
 
             queue.Enqueue((cx + 1, cy)); queue.Enqueue((cx - 1, cy));
             queue.Enqueue((cx, cy + 1)); queue.Enqueue((cx, cy - 1));
         }
 
         CommitMask(next);
-        _geoType = SelectionGeometry.Polygon; // no simpler geo; render bounding box
+        if (maxX >= minX)
+        {
+            _geoType = SelectionGeometry.Rect;
+            _geoRect = new SKRectI(minX, minY, maxX + 1, maxY + 1);
+        }
+        else
+        {
+            _geoType = SelectionGeometry.None;
+        }
         _geoPoly.Clear();
     }
 

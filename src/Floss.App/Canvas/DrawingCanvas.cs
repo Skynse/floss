@@ -220,14 +220,24 @@ public sealed class DrawingCanvas : Control
     public void SelectLayer(int index) => _document.SelectLayer(index);
     public void ToggleLayerVisibility(int index) => _document.ToggleLayerVisibility(index);
     public void ToggleLayerLock(int index) => _document.ToggleLayerLock(index);
+    public void ToggleLayerAlphaLock(int index) => _document.ToggleLayerAlphaLock(index);
+    public void ToggleLayerClipping(int index) => _document.ToggleLayerClipping(index);
     public void MoveActiveLayer(int delta) => _document.MoveActiveLayer(delta);
     public void SetActiveLayerOpacity(double opacity) => _document.SetActiveLayerOpacity(opacity);
     public void SetActiveLayerBlendMode(string blendMode) => _document.SetActiveLayerBlendMode(blendMode);
     public void SetActiveLayerName(string name) => _document.SetActiveLayerName(name);
 
+    private bool IsPaintBlockedByLock =>
+        _toolController.ActiveTool is BrushTool && !_document.CanPaintActiveLayer;
+
     public override void Render(DrawingContext context)
     {
         base.Render(context);
+
+        // Sync cursor to current state so layer lock changes take effect immediately.
+        if (_isPointerOver)
+            Cursor = new Cursor(IsPaintBlockedByLock ? StandardCursorType.No : StandardCursorType.None);
+
         _compositor.Composite(_document.Layers, _document.Width, _document.Height);
         var target = new Rect(Bounds.Size);
         using (context.PushRenderOptions(new RenderOptions
@@ -242,7 +252,7 @@ public sealed class DrawingCanvas : Control
         _toolController.RenderOverlay(context, CanvasZoom);
         _ctx.Selection.RenderOverlay(context, CanvasZoom);
 
-        if (_isPointerOver || _isCursorPreviewLocked)
+        if ((_isPointerOver || _isCursorPreviewLocked) && !IsPaintBlockedByLock)
         {
             var mode = App.Config.BrushCursorMode;
             var pos = _isCursorPreviewLocked ? _lockedPointerPos : _pointerPos;
@@ -277,6 +287,7 @@ public sealed class DrawingCanvas : Control
     {
         base.OnPointerPressed(e);
         if (PaintInputSuspended) return;
+        if (IsPaintBlockedByLock) return;
 
         var point = e.GetCurrentPoint(this);
         if (!IsPaintInput(point)) return;
@@ -308,7 +319,7 @@ public sealed class DrawingCanvas : Control
     {
         base.OnPointerEntered(e);
         _isPointerOver = true;
-        Cursor = new Cursor(StandardCursorType.None);
+        Cursor = new Cursor(IsPaintBlockedByLock ? StandardCursorType.No : StandardCursorType.None);
         _pointerPos = e.GetCurrentPoint(this).Position;
         InvalidateVisual();
     }

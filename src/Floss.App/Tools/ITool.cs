@@ -4,6 +4,7 @@ using Floss.App.Brushes;
 using Floss.App.Document;
 using Floss.App.Input;
 using SkiaSharp;
+using System.Collections.Generic;
 
 namespace Floss.App.Tools;
 
@@ -20,6 +21,12 @@ public interface ITool
     // Called when the tool becomes active or inactive
     void Activate(ToolContext ctx) { }
     void Deactivate(ToolContext ctx) { }
+}
+
+// Optional rendering hook for in-progress tool operations.
+public interface IToolOperationOverlay
+{
+    void RenderOverlay(DrawingContext dc, double zoom);
 }
 
 // Shared state passed into every tool call — tools must not cache this reference.

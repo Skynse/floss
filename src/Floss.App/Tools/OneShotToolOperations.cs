@@ -63,6 +63,7 @@ public sealed class FillToolOperation : IToolOperation
             layer.Pixels.GetPixel(cx, cy, out byte b, out byte g, out byte r, out byte a);
             if (Math.Abs(b - refB) + Math.Abs(g - refG) + Math.Abs(r - refR) + Math.Abs(a - refA) > tolInt) continue;
 
+            if (layer.IsAlphaLocked) { layer.Pixels.GetPixel(cx, cy, out _, out _, out _, out byte ea); if (ea == 0) continue; }
             layer.Pixels.SetPixel(cx, cy, fillB, fillG, fillR, fillA);
             changed = true;
 

@@ -76,6 +76,7 @@ public sealed class GradientToolOperation : DragToolOperation
         canvas.DrawRect(0, 0, w, h, paint);
         shader.Dispose();
 
+        bool alphaLocked = layer.IsAlphaLocked;
         for (int py = 0; py < h; py++)
         {
             for (int px = 0; px < w; px++)
@@ -83,6 +84,7 @@ public sealed class GradientToolOperation : DragToolOperation
                 if (!Context.Selection.IsSelected(px + layer.OffsetX, py + layer.OffsetY)) continue;
                 var pix = bmp.GetPixel(px, py);
                 if (pix.Alpha == 0) continue;
+                if (alphaLocked) { layer.Pixels.GetPixel(px, py, out _, out _, out _, out byte ea); if (ea == 0) continue; }
                 layer.Pixels.SetPixel(px, py, pix.Blue, pix.Green, pix.Red, pix.Alpha);
             }
         }

@@ -511,6 +511,27 @@ public partial class MainWindow : Window
     private static PathIcon MaterialIcon(string pathData, double size) =>
         Icons.Make(pathData, size, new SolidColorBrush(Color.Parse(TextSecondary)));
 
+    private static Button LayerIconBtn(string icon, string tip, string color, int tag)
+    {
+        var btn = new Button
+        {
+            Content = Icons.Make(icon, 11, new SolidColorBrush(Color.Parse(color))),
+            Width = 16,
+            Height = 16,
+            Padding = new Thickness(0),
+            Tag = tag,
+            Background = Avalonia.Media.Brushes.Transparent,
+            BorderBrush = Avalonia.Media.Brushes.Transparent,
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
+        };
+        ToolTip.SetTip(btn, tip);
+        return btn;
+    }
+
+    private static void SetLayerIconBtnIcon(Button btn, string icon, string color) =>
+        btn.Content = Icons.Make(icon, 11, new SolidColorBrush(Color.Parse(color)));
+
     private static Border TbarSep() => new()
     {
         Width = 1,
@@ -1543,42 +1564,36 @@ public partial class MainWindow : Window
                 Margin = new Thickness(layer.IndentLevel * 12, 0, 0, 0)
             };
 
-            // cols: vis | thumb | lock | name | blend | opacity
-            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("18,34,18,*,30,32") };
+            // cols: vis | thumb | lock | alphalock | clip | name | blend | opacity
+            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("18,34,18,18,18,*,30,32") };
 
-            var visBtn = new Button
-            {
-                Content = layer.IsVisible ? "●" : "○",
-                Width = 16,
-                Height = 16,
-                Padding = new Thickness(0),
-                FontSize = 9,
-                Tag = i,
-                Background = Avalonia.Media.Brushes.Transparent,
-                BorderBrush = Avalonia.Media.Brushes.Transparent,
-                Foreground = new SolidColorBrush(layer.IsVisible ? Color.Parse("#6a9fd8") : Color.Parse("#404550")),
-            };
-            ToolTip.SetTip(visBtn, "Toggle visibility");
+            var visBtn = LayerIconBtn(
+                layer.IsVisible ? Icons.Eye : Icons.EyeOff,
+                "Toggle visibility",
+                layer.IsVisible ? "#6a9fd8" : "#404550", i);
             visBtn.Click += (_, _) => _canvas.ToggleLayerVisibility((int)visBtn.Tag!);
 
             var (preview, previewImage) = BuildLayerPreview(layer);
 
-            var lockBtn = new Button
-            {
-                Content = layer.IsLocked ? "🔒" : "·",
-                Width = 16,
-                Height = 16,
-                Padding = new Thickness(0),
-                FontSize = layer.IsLocked ? 8 : 12,
-                Tag = i,
-                Background = Avalonia.Media.Brushes.Transparent,
-                BorderBrush = Avalonia.Media.Brushes.Transparent,
-                Foreground = new SolidColorBrush(layer.IsLocked ? Color.Parse("#c89050") : Color.Parse("#404550")),
-            };
-            ToolTip.SetTip(lockBtn, "Toggle lock");
+            var lockBtn = LayerIconBtn(
+                layer.IsLocked ? Icons.LockOutline : Icons.LockOpenOutline,
+                "Toggle lock",
+                layer.IsLocked ? "#c89050" : "#404550", i);
             lockBtn.Click += (_, _) => _canvas.ToggleLayerLock((int)lockBtn.Tag!);
 
-            var prefix = (layer.IsGroup ? (layer.IsOpen ? "▾ " : "▸ ") : "") + (layer.IsClipping ? "⤷ " : "");
+            var alphaLockBtn = LayerIconBtn(
+                Icons.AlphaLock,
+                "Toggle alpha lock",
+                layer.IsAlphaLocked ? "#6ab8c8" : "#404550", i);
+            alphaLockBtn.Click += (_, _) => _canvas.ToggleLayerAlphaLock((int)alphaLockBtn.Tag!);
+
+            var clipBtn = LayerIconBtn(
+                Icons.ClipToBelow,
+                "Toggle clipping mask",
+                layer.IsClipping ? "#a87ad8" : "#404550", i);
+            clipBtn.Click += (_, _) => _canvas.ToggleLayerClipping((int)clipBtn.Tag!);
+
+            var prefix = (layer.IsGroup ? (layer.IsOpen ? "▾ " : "▸ ") : "");
             var nameBtn = new Button
             {
                 Content = prefix + layer.Name,
@@ -1617,18 +1632,22 @@ public partial class MainWindow : Window
             Grid.SetColumn(visBtn, 0);
             Grid.SetColumn(preview, 1);
             Grid.SetColumn(lockBtn, 2);
-            Grid.SetColumn(nameBtn, 3);
-            Grid.SetColumn(blendText, 4);
-            Grid.SetColumn(opacityText, 5);
+            Grid.SetColumn(alphaLockBtn, 3);
+            Grid.SetColumn(clipBtn, 4);
+            Grid.SetColumn(nameBtn, 5);
+            Grid.SetColumn(blendText, 6);
+            Grid.SetColumn(opacityText, 7);
             grid.Children.Add(visBtn);
             grid.Children.Add(preview);
             grid.Children.Add(lockBtn);
+            grid.Children.Add(alphaLockBtn);
+            grid.Children.Add(clipBtn);
             grid.Children.Add(nameBtn);
             grid.Children.Add(blendText);
             grid.Children.Add(opacityText);
             row.Child = grid;
             _layerPanel.Children.Add(row);
-            _layerRows[i] = new LayerRowRefs(row, visBtn, lockBtn, nameBtn, blendText, opacityText, previewImage);
+            _layerRows[i] = new LayerRowRefs(row, visBtn, lockBtn, alphaLockBtn, clipBtn, nameBtn, blendText, opacityText, previewImage);
         }
 
         // Paper row — always at the bottom, non-interactive
@@ -1657,7 +1676,7 @@ public partial class MainWindow : Window
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(3)
         };
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("18,34,18,*,30,32") };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("18,34,18,18,18,*,30,32") };
         var nameLabel = new TextBlock
         {
             Text = "Paper",
@@ -1676,7 +1695,7 @@ public partial class MainWindow : Window
         };
         Grid.SetColumn(eyeLabel, 0);
         Grid.SetColumn(paperSwatch, 1);
-        Grid.SetColumn(nameLabel, 3);
+        Grid.SetColumn(nameLabel, 5);
         grid.Children.Add(eyeLabel);
         grid.Children.Add(paperSwatch);
         grid.Children.Add(nameLabel);
@@ -1708,12 +1727,19 @@ public partial class MainWindow : Window
         refs.Row.Background = new SolidColorBrush(isActive ? Color.Parse("#1a2a50") : Color.Parse("#16181f"));
         refs.Row.BorderBrush = new SolidColorBrush(isActive ? Color.Parse("#2e5fb8") : Color.Parse("#1e2128"));
 
-        refs.VisibilityButton.Content = layer.IsVisible ? "●" : "○";
-        refs.VisibilityButton.Foreground = new SolidColorBrush(layer.IsVisible ? Color.Parse("#6a9fd8") : Color.Parse("#404550"));
-        refs.LockButton.Content = layer.IsLocked ? "🔒" : "·";
-        refs.LockButton.FontSize = layer.IsLocked ? 8 : 12;
-        refs.LockButton.Foreground = new SolidColorBrush(layer.IsLocked ? Color.Parse("#c89050") : Color.Parse("#404550"));
-        refs.NameButton.Content = (layer.IsGroup ? (layer.IsOpen ? "▾ " : "▸ ") : "") + (layer.IsClipping ? "⤷ " : "") + layer.Name;
+        SetLayerIconBtnIcon(refs.VisibilityButton,
+            layer.IsVisible ? Icons.Eye : Icons.EyeOff,
+            layer.IsVisible ? "#6a9fd8" : "#404550");
+        SetLayerIconBtnIcon(refs.LockButton,
+            layer.IsLocked ? Icons.LockOutline : Icons.LockOpenOutline,
+            layer.IsLocked ? "#c89050" : "#404550");
+        SetLayerIconBtnIcon(refs.AlphaLockButton,
+            Icons.AlphaLock,
+            layer.IsAlphaLocked ? "#6ab8c8" : "#404550");
+        SetLayerIconBtnIcon(refs.ClipButton,
+            Icons.ClipToBelow,
+            layer.IsClipping ? "#a87ad8" : "#404550");
+        refs.NameButton.Content = (layer.IsGroup ? (layer.IsOpen ? "▾ " : "▸ ") : "") + layer.Name;
         refs.NameButton.Foreground = new SolidColorBrush(fgColor);
         refs.BlendText.Text = BlendAbbr(layer.BlendMode);
         refs.BlendText.Foreground = new SolidColorBrush(dimColor);
@@ -1773,6 +1799,8 @@ public partial class MainWindow : Window
         Border Row,
         Button VisibilityButton,
         Button LockButton,
+        Button AlphaLockButton,
+        Button ClipButton,
         Button NameButton,
         TextBlock BlendText,
         TextBlock OpacityText,

@@ -144,7 +144,11 @@ public sealed class FreehandStrokeOperation : IToolOperation
     private void RestoreUnselectedPixels(DrawingLayer layer, PixelRegion dirty)
     {
         var clipped = dirty.ClipTo(layer.Width, layer.Height);
-        if (clipped.IsEmpty || !_selection.HasSelection) return;
+        if (clipped.IsEmpty) return;
+
+        bool hasSelection = _selection.HasSelection;
+        bool alphaLocked = layer.IsAlphaLocked;
+        if (!hasSelection && !alphaLocked) return;
 
         const int bytesPerPixel = 4;
         const int tileSize = TiledPixelBuffer.TileSize;
@@ -153,21 +157,24 @@ public sealed class FreehandStrokeOperation : IToolOperation
         {
             for (var x = clipped.X; x < clipped.Right; x++)
             {
-                if (_selection.IsSelected(x + layer.OffsetX, y + layer.OffsetY)) continue;
+                bool inSelection = !hasSelection || _selection.IsSelected(x + layer.OffsetX, y + layer.OffsetY);
 
                 var tileKey = (x / tileSize, y / tileSize);
                 var localX = x - tileKey.Item1 * tileSize;
                 var localY = y - tileKey.Item2 * tileSize;
                 var offset = (localY * tileSize + localX) * bytesPerPixel;
 
+                bool hadAlpha = true;
+                if (alphaLocked && _beforeTiles.TryGetValue(tileKey, out var bt) && bt != null)
+                    hadAlpha = bt[offset + 3] > 0;
+
+                // Restore if: outside selection, OR alpha-locked and original pixel was transparent.
+                if (inSelection && hadAlpha) continue;
+
                 if (_beforeTiles.TryGetValue(tileKey, out var before) && before != null)
-                {
                     layer.Pixels.SetPixel(x, y, before[offset + 0], before[offset + 1], before[offset + 2], before[offset + 3]);
-                }
                 else
-                {
                     layer.Pixels.SetPixel(x, y, 0, 0, 0, 0);
-                }
             }
         }
     }

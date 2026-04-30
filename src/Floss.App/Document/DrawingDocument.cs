@@ -268,6 +268,35 @@ public sealed class DrawingDocument
         NotifyLayerMetadataChanged(null, index);
     }
 
+    public void ToggleLayerAlphaLock(int index)
+    {
+        if (index < 0 || index >= _layers.Count) return;
+        var oldValue = _layers[index].IsAlphaLocked;
+        var newValue = !oldValue;
+        _undo.Push(new LayerPropertyHistoryState<bool>(
+            index, oldValue, newValue,
+            (layer, value) => layer.IsAlphaLocked = value,
+            false, PixelRegion.Empty));
+        _redo.Clear();
+        _layers[index].IsAlphaLocked = newValue;
+        NotifyLayerMetadataChanged(null, index);
+    }
+
+    public void ToggleLayerClipping(int index)
+    {
+        if (index < 0 || index >= _layers.Count) return;
+        var oldValue = _layers[index].IsClipping;
+        var newValue = !oldValue;
+        var dirtyRegion = LayerDirtyRegion(index);
+        _undo.Push(new LayerPropertyHistoryState<bool>(
+            index, oldValue, newValue,
+            (layer, value) => layer.IsClipping = value,
+            true, dirtyRegion));
+        _redo.Clear();
+        _layers[index].IsClipping = newValue;
+        NotifyLayerMetadataChanged(dirtyRegion, index);
+    }
+
     public void SetActiveLayerOpacity(double opacity)
     {
         var clamped = Math.Clamp(opacity, 0, 1);

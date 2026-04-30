@@ -77,6 +77,7 @@ public sealed class ShapeToolOperation : DragToolOperation
         if (dirty.IsEmpty) return;
 
         var beforeTiles = layer.Pixels.CaptureTiles(dirty);
+        bool alphaLocked = layer.IsAlphaLocked;
         for (int py = dirty.Y; py < dirty.Bottom; py++)
         {
             for (int px = dirty.X; px < dirty.Right; px++)
@@ -84,6 +85,7 @@ public sealed class ShapeToolOperation : DragToolOperation
                 if (!Context.Selection.IsSelected(px + layer.OffsetX, py + layer.OffsetY)) continue;
                 var pix = bmp.GetPixel(px, py);
                 if (pix.Alpha == 0) continue;
+                if (alphaLocked) { layer.Pixels.GetPixel(px, py, out _, out _, out _, out byte ea); if (ea == 0) continue; }
                 layer.Pixels.SetPixel(px, py, pix.Blue, pix.Green, pix.Red, pix.Alpha);
             }
         }
