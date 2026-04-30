@@ -87,13 +87,17 @@ public sealed class TiledPixelBuffer
         if (clipped.IsEmpty) return [];
 
         var bytes = new byte[clipped.Width * clipped.Height * BytesPerPixel];
-        for (var y = 0; y < clipped.Height; y++)
+        ForEachTile(clipped, (tileX, tileY, tile, tileRegion) =>
         {
-            for (var x = 0; x < clipped.Width; x++)
+            for (var y = tileRegion.Y; y < tileRegion.Bottom; y++)
             {
-                ReadPixel(clipped.X + x, clipped.Y + y, bytes, (y * clipped.Width + x) * BytesPerPixel);
+                var srcOffset = (y - tileY * TileSize) * TileSize * BytesPerPixel
+                              + (tileRegion.X - tileX * TileSize) * BytesPerPixel;
+                var dstOffset = (y - clipped.Y) * clipped.Width * BytesPerPixel
+                              + (tileRegion.X - clipped.X) * BytesPerPixel;
+                Buffer.BlockCopy(tile, srcOffset, bytes, dstOffset, tileRegion.Width * BytesPerPixel);
             }
-        }
+        }, create: false);
 
         return bytes;
     }
@@ -103,13 +107,17 @@ public sealed class TiledPixelBuffer
         var clipped = region.ClipTo(Width, Height);
         if (clipped.IsEmpty || bytes.Length == 0) return;
 
-        for (var y = 0; y < clipped.Height; y++)
+        ForEachTile(clipped, (tileX, tileY, tile, tileRegion) =>
         {
-            for (var x = 0; x < clipped.Width; x++)
+            for (var y = tileRegion.Y; y < tileRegion.Bottom; y++)
             {
-                WritePixel(clipped.X + x, clipped.Y + y, bytes, (y * clipped.Width + x) * BytesPerPixel);
+                var srcOffset = (y - clipped.Y) * clipped.Width * BytesPerPixel
+                              + (tileRegion.X - clipped.X) * BytesPerPixel;
+                var dstOffset = (y - tileY * TileSize) * TileSize * BytesPerPixel
+                              + (tileRegion.X - tileX * TileSize) * BytesPerPixel;
+                Buffer.BlockCopy(bytes, srcOffset, tile, dstOffset, tileRegion.Width * BytesPerPixel);
             }
-        }
+        }, create: true);
 
         PruneTransparentTiles(clipped);
     }
@@ -122,7 +130,9 @@ public sealed class TiledPixelBuffer
         {
             for (var x = 0; x < copyW; x++)
             {
-                WritePixel(x, y, src, (y * srcWidth + x) * BytesPerPixel);
+                var srcOffset = (y * srcWidth + x) * BytesPerPixel;
+                if (src[srcOffset + 3] == 0) continue;
+                WritePixel(x, y, src, srcOffset);
             }
         }
     }
@@ -136,7 +146,9 @@ public sealed class TiledPixelBuffer
         {
             for (var x = 0; x < clipped.Width; x++)
             {
-                WritePixel(clipped.X + x, clipped.Y + y, src, y * srcStride + x * BytesPerPixel);
+                var srcOffset = y * srcStride + x * BytesPerPixel;
+                if (src[srcOffset + 3] == 0) continue;
+                WritePixel(clipped.X + x, clipped.Y + y, src, srcOffset);
             }
         }
 
@@ -280,6 +292,9 @@ public sealed class TiledPixelBuffer
 
         return false;
     }
+
+    public byte[]? GetTileOrNull(int tileX, int tileY)
+        => _tiles.TryGetValue((tileX, tileY), out var tile) ? tile : null;
 
     private byte[] GetOrCreateTile(int x, int y)
     {

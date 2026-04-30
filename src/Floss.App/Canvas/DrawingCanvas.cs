@@ -41,11 +41,13 @@ public sealed class DrawingCanvas : Control
             _compositor.Invalidate(null);
             LayersChanged?.Invoke(this, EventArgs.Empty);
         };
+        _document.LayerMetadataChanged += (_, e) => LayerMetadataChanged?.Invoke(this, e);
     }
 
     public event EventHandler? StatsChanged;
     public event EventHandler? HistoryChanged;
     public event EventHandler? LayersChanged;
+    public event EventHandler<LayerMetadataChangedEventArgs>? LayerMetadataChanged;
 
     public int ActiveSampleCount => _tool.ActiveSampleCount;
     public int CommittedStrokeCount => _document.CommittedStrokeCount;

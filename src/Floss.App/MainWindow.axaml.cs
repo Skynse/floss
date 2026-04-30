@@ -86,6 +86,7 @@ public partial class MainWindow : Window
     private BrushAsset? _activeBrushAsset;
     private BrushLibrary _brushLibrary = null!;
     private IReadOnlyList<BrushAsset> _brushAssets = [];
+    private readonly Dictionary<int, LayerRowRefs> _layerRows = new();
 
     private bool  _spacePanning;
     private bool  _isPanning;
@@ -723,6 +724,7 @@ public partial class MainWindow : Window
         _canvas.StatsChanged   += (_, _) => UpdateStatus();
         _canvas.HistoryChanged += (_, _) => UpdateStatus();
         _canvas.LayersChanged  += (_, _) => { BuildLayerList(); UpdateStatus(); };
+        _canvas.LayerMetadataChanged += (_, e) => { UpdateLayerRow(e.LayerIndex); UpdateStatus(); };
 
         SliderChanged(_sizeSlider,      v => UpdateCurrentBrush(p => p with { Size = v }));
         SliderChanged(_opacitySlider,   v => UpdateCurrentBrush(p => p with { Opacity = v }));
@@ -1035,6 +1037,7 @@ public partial class MainWindow : Window
     private void BuildLayerList()
     {
         _layerPanel.Children.Clear();
+        _layerRows.Clear();
         var layers = _canvas.Layers;
 
         for (var i = layers.Count - 1; i >= 0; i--)
@@ -1117,12 +1120,41 @@ public partial class MainWindow : Window
             grid.Children.Add(opacityText);
             row.Child = grid;
             _layerPanel.Children.Add(row);
+            _layerRows[i] = new LayerRowRefs(row, visBtn, lockBtn, nameBtn, opacityText);
         }
 
         if (layers.Count > 0)
         {
             _syncingLayerUi = true;
             _layerOpacitySlider.Value = layers[_canvas.ActiveLayerIndex].Opacity;
+            _syncingLayerUi = false;
+        }
+    }
+
+    private void UpdateLayerRow(int index)
+    {
+        var layers = _canvas.Layers;
+        if (index < 0 || index >= layers.Count || !_layerRows.TryGetValue(index, out var refs))
+        {
+            BuildLayerList();
+            return;
+        }
+
+        var layer = layers[index];
+        var isActive = index == _canvas.ActiveLayerIndex;
+
+        refs.Row.Background = new SolidColorBrush(isActive ? Color.Parse("#1a2a50") : Color.Parse("#1a1c22"));
+        refs.Row.BorderBrush = new SolidColorBrush(isActive ? Color.Parse("#2e5fb8") : Color.Parse("#22252e"));
+        refs.VisibilityButton.Content = layer.IsVisible ? "●" : "○";
+        refs.LockButton.Content = layer.IsLocked ? "L" : "·";
+        refs.NameButton.Foreground = new SolidColorBrush(isActive ? Color.Parse("#d8e0f0") : Color.Parse("#909aa8"));
+        refs.OpacityText.Text = $"{Math.Round(layer.Opacity * 100)}%";
+        refs.OpacityText.Foreground = new SolidColorBrush(isActive ? Color.Parse("#5a80c8") : Color.Parse("#404550"));
+
+        if (isActive && !_syncingLayerUi)
+        {
+            _syncingLayerUi = true;
+            _layerOpacitySlider.Value = layer.Opacity;
             _syncingLayerUi = false;
         }
     }
@@ -1165,6 +1197,13 @@ public partial class MainWindow : Window
         frame.Child = image;
         return frame;
     }
+
+    private sealed record LayerRowRefs(
+        Border Row,
+        Button VisibilityButton,
+        Button LockButton,
+        Button NameButton,
+        TextBlock OpacityText);
 
     // ── Viewport ──────────────────────────────────────────────────────────────
     private void SyncCanvasFrameToDocument(bool fitToViewport)

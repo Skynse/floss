@@ -24,6 +24,7 @@ public sealed class DrawingDocument
     public event EventHandler<DocumentChangedEventArgs>? Changed;
     public event EventHandler? HistoryChanged;
     public event EventHandler? LayersChanged;
+    public event EventHandler<LayerMetadataChangedEventArgs>? LayerMetadataChanged;
 
     public int Width { get; private set; }
     public int Height { get; private set; }
@@ -253,7 +254,8 @@ public sealed class DrawingDocument
 
     private void NotifyLayerMetadataChanged(PixelRegion? dirtyRegion, int? layerIndex)
     {
-        LayersChanged?.Invoke(this, EventArgs.Empty);
+        if (layerIndex is { } index)
+            LayerMetadataChanged?.Invoke(this, new LayerMetadataChangedEventArgs(index));
         if (dirtyRegion is { IsEmpty: false })
             Changed?.Invoke(this, new DocumentChangedEventArgs(dirtyRegion, layerIndex));
         HistoryChanged?.Invoke(this, EventArgs.Empty);
@@ -263,7 +265,7 @@ public sealed class DrawingDocument
     {
         if (index < 0 || index >= _layers.Count) return PixelRegion.Empty;
         var bounds = _layers[index].DocumentContentBounds.ClipTo(Width, Height);
-        return bounds.IsEmpty ? new PixelRegion(0, 0, Width, Height) : bounds;
+        return bounds;
     }
 
     private DocumentSnapshot CaptureSnapshot()
@@ -423,6 +425,11 @@ public sealed class DocumentChangedEventArgs(PixelRegion? dirtyRegion, int? laye
 {
     public PixelRegion? DirtyRegion { get; } = dirtyRegion;
     public int? LayerIndex { get; } = layerIndex;
+}
+
+public sealed class LayerMetadataChangedEventArgs(int layerIndex) : EventArgs
+{
+    public int LayerIndex { get; } = layerIndex;
 }
 
 public readonly record struct LayerRegionPatch(PixelRegion Region, byte[] BeforePixels);
