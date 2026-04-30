@@ -5,6 +5,13 @@ using Avalonia.Media;
 
 namespace Floss.App.Document;
 
+public enum LayerDropPlacement
+{
+    Above,
+    Below,
+    Into
+}
+
 public sealed class DrawingDocument
 {
     public static readonly Color PaperColor = Color.Parse("#f7f4ed");
@@ -174,55 +181,74 @@ public sealed class DrawingDocument
 
     public void AddLayer()
     {
-        var prevActiveIndex = ActiveLayerIndex;
-        var insertIndex = ActiveLayerIndex + 1;
-        _layers.Insert(insertIndex, new DrawingLayer($"Layer {_layers.Count + 1}", Width, Height));
-        ActiveLayerIndex = insertIndex;
-        _undo.Push(new InsertLayerHistoryState(insertIndex, prevActiveIndex));
-        _redo.Clear();
-        HistoryChanged?.Invoke(this, EventArgs.Empty);
+        if (ActiveLayerIndex < 0) return;
+        BeginDocumentMutation();
+
+        var active = ActiveLayer;
+        var layer = new DrawingLayer($"Layer {_layers.Count + 1}", Width, Height);
+        InsertLayerNear(layer, active, LayerDropPlacement.Above);
+        RebuildFlatLayerOrder();
+        ActiveLayerIndex = _layers.IndexOf(layer);
+        NotifyLayersChanged();
+    }
+
+    public void AddGroupLayer()
+    {
+        if (ActiveLayerIndex < 0) return;
+        BeginDocumentMutation();
+
+        var active = ActiveLayer;
+        var group = new DrawingLayer($"Folder {_layers.Count(l => l.IsGroup) + 1}", Width, Height)
+        {
+            IsGroup = true,
+            IsOpen = true
+        };
+        InsertLayerNear(group, active, LayerDropPlacement.Above);
+        RebuildFlatLayerOrder();
+        ActiveLayerIndex = _layers.IndexOf(group);
         NotifyLayersChanged();
     }
 
     public void DuplicateActiveLayer()
     {
-        var prevActiveIndex = ActiveLayerIndex;
+        if (ActiveLayerIndex < 0) return;
+        BeginDocumentMutation();
+
         var source = ActiveLayer;
-        var copy = new DrawingLayer(
-            $"{source.Name} Copy",
-            source.Width,
-            source.Height)
-        {
-            IsVisible = source.IsVisible,
-            IsLocked = source.IsLocked,
-            Opacity = source.Opacity,
-            BlendMode = source.BlendMode,
-            OffsetX = source.OffsetX,
-            OffsetY = source.OffsetY
-        };
-        copy.RestoreTiles(source.CaptureTiles());
-        var insertIndex = ActiveLayerIndex + 1;
-        _layers.Insert(insertIndex, copy);
-        ActiveLayerIndex = insertIndex;
-        _undo.Push(new InsertLayerHistoryState(insertIndex, prevActiveIndex));
-        _redo.Clear();
-        HistoryChanged?.Invoke(this, EventArgs.Empty);
+        var copy = CloneLayerTree(source, $"{source.Name} Copy");
+        InsertLayerNear(copy, source, LayerDropPlacement.Above);
+        RebuildFlatLayerOrder();
+        ActiveLayerIndex = _layers.IndexOf(copy);
         NotifyLayersChanged();
     }
 
     public void DeleteActiveLayer()
     {
         if (_layers.Count <= 1) return;
-        var removedIndex = ActiveLayerIndex;
-        var prevActiveIndex = ActiveLayerIndex;
         var removed = _layers[ActiveLayerIndex];
-        var snap = CaptureLayerSnapshot(removed);
-        _layers.RemoveAt(ActiveLayerIndex);
-        removed.Dispose();
+        var parent = removed.Parent;
+        var siblings = parent?.Children ?? RootLayers();
+        var siblingIndex = siblings.IndexOf(removed);
+
+        BeginDocumentMutation();
+        DetachLayer(removed);
+        foreach (var layer in EnumerateLayerTree(removed).ToArray())
+        {
+            _layers.Remove(layer);
+            layer.Dispose();
+        }
+
+        RebuildFlatLayerOrder();
         ActiveLayerIndex = Math.Clamp(ActiveLayerIndex, 0, _layers.Count - 1);
-        _undo.Push(new RemoveLayerHistoryState(removedIndex, prevActiveIndex, snap));
-        _redo.Clear();
-        HistoryChanged?.Invoke(this, EventArgs.Empty);
+        if (_layers.Count > 0)
+        {
+            var nextSiblings = parent is { } p && _layers.Contains(p) ? p.Children : RootLayers();
+            var fallback = nextSiblings.Count > 0
+                ? nextSiblings[Math.Clamp(siblingIndex, 0, nextSiblings.Count - 1)]
+                : _layers[^1];
+            ActiveLayerIndex = _layers.IndexOf(fallback);
+        }
+
         NotifyLayersChanged();
     }
 
@@ -297,6 +323,23 @@ public sealed class DrawingDocument
         NotifyLayerMetadataChanged(dirtyRegion, index);
     }
 
+    public void ToggleLayerOpen(int index)
+    {
+        if (index < 0 || index >= _layers.Count || !_layers[index].IsGroup) return;
+        var oldValue = _layers[index].IsOpen;
+        var newValue = !oldValue;
+        _undo.Push(new LayerPropertyHistoryState<bool>(
+            index,
+            oldValue,
+            newValue,
+            (layer, value) => layer.IsOpen = value,
+            false,
+            PixelRegion.Empty));
+        _redo.Clear();
+        _layers[index].IsOpen = newValue;
+        NotifyLayersChanged();
+    }
+
     public void SetActiveLayerOpacity(double opacity)
     {
         var clamped = Math.Clamp(opacity, 0, 1);
@@ -358,16 +401,41 @@ public sealed class DrawingDocument
 
     public void MoveActiveLayer(int delta)
     {
-        var from = ActiveLayerIndex;
-        var to = from + delta;
-        if (to < 0 || to >= _layers.Count) return;
-        var layer = ActiveLayer;
-        _layers.RemoveAt(from);
-        _layers.Insert(to, layer);
-        ActiveLayerIndex = to;
-        _undo.Push(new MoveLayerHistoryState(to, from));
-        _redo.Clear();
-        HistoryChanged?.Invoke(this, EventArgs.Empty);
+        if (ActiveLayerIndex < 0) return;
+        var visible = VisibleLayerOrder().ToArray();
+        var current = visible.IndexOf(ActiveLayer);
+        var targetVisibleIndex = current - delta;
+        if (current < 0 || targetVisibleIndex < 0 || targetVisibleIndex >= visible.Length) return;
+
+        var target = visible[targetVisibleIndex];
+        MoveLayer(ActiveLayerIndex, _layers.IndexOf(target), delta > 0 ? LayerDropPlacement.Above : LayerDropPlacement.Below);
+    }
+
+    public bool CanMoveLayer(int sourceIndex, int targetIndex, LayerDropPlacement placement)
+    {
+        if (sourceIndex < 0 || sourceIndex >= _layers.Count) return false;
+        if (targetIndex < 0 || targetIndex >= _layers.Count) return false;
+        if (sourceIndex == targetIndex) return false;
+
+        var source = _layers[sourceIndex];
+        var target = _layers[targetIndex];
+        if (placement == LayerDropPlacement.Into && !target.IsGroup) return false;
+        if (target == source || IsDescendantOf(target, source)) return false;
+        return true;
+    }
+
+    public void MoveLayer(int sourceIndex, int targetIndex, LayerDropPlacement placement)
+    {
+        if (!CanMoveLayer(sourceIndex, targetIndex, placement)) return;
+
+        BeginDocumentMutation();
+        var source = _layers[sourceIndex];
+        var target = _layers[targetIndex];
+        InsertLayerNear(source, target, placement);
+        if (placement == LayerDropPlacement.Into)
+            target.IsOpen = true;
+        RebuildFlatLayerOrder();
+        ActiveLayerIndex = _layers.IndexOf(source);
         NotifyLayersChanged();
     }
 
@@ -417,6 +485,137 @@ public sealed class DrawingDocument
         if (index < 0 || index >= _layers.Count) return PixelRegion.Empty;
         var bounds = _layers[index].DocumentContentBounds.ClipTo(Width, Height);
         return bounds;
+    }
+
+    private List<DrawingLayer> RootLayers()
+        => _layers.Where(layer => layer.Parent == null).ToList();
+
+    private IEnumerable<DrawingLayer> VisibleLayerOrder()
+    {
+        foreach (var root in RootLayers().AsEnumerable().Reverse())
+        {
+            foreach (var layer in VisibleLayerOrder(root))
+                yield return layer;
+        }
+    }
+
+    private static IEnumerable<DrawingLayer> VisibleLayerOrder(DrawingLayer layer)
+    {
+        yield return layer;
+        if (!layer.IsGroup || !layer.IsOpen) yield break;
+        for (var i = layer.Children.Count - 1; i >= 0; i--)
+        {
+            foreach (var child in VisibleLayerOrder(layer.Children[i]))
+                yield return child;
+        }
+    }
+
+    private static IEnumerable<DrawingLayer> EnumerateLayerTree(DrawingLayer layer)
+    {
+        yield return layer;
+        foreach (var child in layer.Children.ToArray())
+        {
+            foreach (var descendant in EnumerateLayerTree(child))
+                yield return descendant;
+        }
+    }
+
+    private static bool IsDescendantOf(DrawingLayer layer, DrawingLayer possibleAncestor)
+    {
+        for (var parent = layer.Parent; parent != null; parent = parent.Parent)
+        {
+            if (parent == possibleAncestor) return true;
+        }
+
+        return false;
+    }
+
+    private void InsertLayerNear(DrawingLayer layer, DrawingLayer target, LayerDropPlacement placement)
+    {
+        DetachLayer(layer);
+
+        var newParent = placement == LayerDropPlacement.Into ? target : target.Parent;
+        var siblings = newParent?.Children ?? RootLayers();
+        siblings.Remove(layer);
+        var targetSiblingIndex = placement == LayerDropPlacement.Into ? siblings.Count : siblings.IndexOf(target);
+        var insertIndex = placement switch
+        {
+            LayerDropPlacement.Above => targetSiblingIndex + 1,
+            LayerDropPlacement.Below => targetSiblingIndex,
+            _ => targetSiblingIndex
+        };
+
+        layer.Parent = newParent;
+        siblings.Insert(Math.Clamp(insertIndex, 0, siblings.Count), layer);
+        if (newParent != null && !newParent.Children.Contains(layer))
+            newParent.Children.Add(layer);
+
+        if (newParent == null)
+        {
+            RebuildFlatLayerOrder(siblings);
+        }
+
+        UpdateIndentTree(layer, newParent?.IndentLevel + 1 ?? 0);
+    }
+
+    private static void DetachLayer(DrawingLayer layer)
+    {
+        if (layer.Parent != null)
+            layer.Parent.Children.Remove(layer);
+        layer.Parent = null;
+    }
+
+    private void RebuildFlatLayerOrder(List<DrawingLayer>? rootsOverride = null)
+    {
+        var roots = rootsOverride ?? RootLayers();
+        _layers.Clear();
+        foreach (var root in roots)
+            AppendFlat(root, 0);
+    }
+
+    private void AppendFlat(DrawingLayer layer, int indent)
+    {
+        layer.IndentLevel = indent;
+        _layers.Add(layer);
+        foreach (var child in layer.Children)
+        {
+            child.Parent = layer;
+            AppendFlat(child, indent + 1);
+        }
+    }
+
+    private static void UpdateIndentTree(DrawingLayer layer, int indent)
+    {
+        layer.IndentLevel = indent;
+        foreach (var child in layer.Children)
+            UpdateIndentTree(child, indent + 1);
+    }
+
+    private static DrawingLayer CloneLayerTree(DrawingLayer source, string? nameOverride = null)
+    {
+        var copy = new DrawingLayer(nameOverride ?? source.Name, source.Width, source.Height)
+        {
+            IsVisible = source.IsVisible,
+            IsLocked = source.IsLocked,
+            IsAlphaLocked = source.IsAlphaLocked,
+            Opacity = source.Opacity,
+            BlendMode = source.BlendMode,
+            OffsetX = source.OffsetX,
+            OffsetY = source.OffsetY,
+            IsGroup = source.IsGroup,
+            IsOpen = source.IsOpen,
+            IsClipping = source.IsClipping,
+            IndentLevel = source.IndentLevel
+        };
+        copy.RestoreTiles(source.CaptureTiles());
+        foreach (var child in source.Children)
+        {
+            var childCopy = CloneLayerTree(child);
+            childCopy.Parent = copy;
+            copy.Children.Add(childCopy);
+        }
+
+        return copy;
     }
 
     private static bool TileBytesEqual(byte[]? a, byte[]? b)

@@ -215,6 +215,7 @@ public sealed class DrawingCanvas : Control
     public void Undo() => _document.Undo();
     public void Redo() => _document.Redo();
     public void AddLayer() => _document.AddLayer();
+    public void AddGroupLayer() => _document.AddGroupLayer();
     public void DuplicateLayer() => _document.DuplicateActiveLayer();
     public void DeleteLayer() => _document.DeleteActiveLayer();
     public void SelectLayer(int index) => _document.SelectLayer(index);
@@ -222,6 +223,9 @@ public sealed class DrawingCanvas : Control
     public void ToggleLayerLock(int index) => _document.ToggleLayerLock(index);
     public void ToggleLayerAlphaLock(int index) => _document.ToggleLayerAlphaLock(index);
     public void ToggleLayerClipping(int index) => _document.ToggleLayerClipping(index);
+    public void ToggleLayerOpen(int index) => _document.ToggleLayerOpen(index);
+    public bool CanMoveLayer(int sourceIndex, int targetIndex, LayerDropPlacement placement) => _document.CanMoveLayer(sourceIndex, targetIndex, placement);
+    public void MoveLayer(int sourceIndex, int targetIndex, LayerDropPlacement placement) => _document.MoveLayer(sourceIndex, targetIndex, placement);
     public void MoveActiveLayer(int delta) => _document.MoveActiveLayer(delta);
     public void SetActiveLayerOpacity(double opacity) => _document.SetActiveLayerOpacity(opacity);
     public void SetActiveLayerBlendMode(string blendMode) => _document.SetActiveLayerBlendMode(blendMode);
