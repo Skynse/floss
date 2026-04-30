@@ -1979,7 +1979,8 @@ public partial class MainWindow : Window
         {
             var path = files[0].Path.LocalPath;
             await using var stream = await files[0].OpenReadAsync();
-            PsdImporter.Import(stream, _canvas.Document);
+            var imported = await System.Threading.Tasks.Task.Run(() => PsdImporter.Load(stream));
+            _canvas.Document.ReplaceWith(imported);
             App.Config.AddRecentFile(path);
             SyncCanvasFrameToDocument(fitToViewport: true);
             BuildLayerList();

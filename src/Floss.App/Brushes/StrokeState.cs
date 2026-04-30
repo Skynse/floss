@@ -8,6 +8,7 @@ public struct StrokeState
     public float LastTiltX;
     public float LastTiltY;
     public float DistanceLeftover;
+    public float NextStampDistance;
 
     public StrokeState(float x, float y, float pressure, float tiltX, float tiltY)
     {
@@ -17,5 +18,6 @@ public struct StrokeState
         LastTiltX = tiltX;
         LastTiltY = tiltY;
         DistanceLeftover = 0;
+        NextStampDistance = 0;
     }
 }

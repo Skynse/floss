@@ -5,6 +5,7 @@
 
     <Application.Styles>
         <FluentTheme />
+        <StyleInclude Source="avares://IconPacks.Avalonia.Core/PackIcon.axaml" />
 
         <!-- ── Compact horizontal slider ───────────────────────────────────── -->
         <Style Selector="Slider:horizontal">

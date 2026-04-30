@@ -8,15 +8,21 @@ public static class PsdImporter
 {
     public static void Import(Stream stream, DrawingDocument document)
     {
-        var psd = PsdReader.Read(stream);
+        document.ReplaceWith(Load(stream));
+    }
 
-        document.ResizeForImport(psd.Width, psd.Height);
+    public static DrawingDocument Load(Stream stream)
+    {
+        var psd = PsdReader.Read(stream);
+        var document = new DrawingDocument(psd.Width, psd.Height);
+
         document.ClearForImport();
 
         foreach (var node in psd.Layers)
             ImportNode(document, node, null, 0);
 
         document.FinalizeImport();
+        return document;
     }
 
     private static void ImportNode(DrawingDocument document, PsdNode node, DrawingLayer? parent, int depth)

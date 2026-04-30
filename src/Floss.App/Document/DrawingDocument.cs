@@ -58,6 +58,28 @@ public sealed class DrawingDocument
         NotifyChanged(dirtyRegion, layerIndex);
     }
 
+    public void CommitLayerTileMutation(int layerIndex, IReadOnlyDictionary<(int X, int Y), byte[]?> beforeTiles, PixelRegion dirtyRegion)
+    {
+        if (beforeTiles.Count == 0 || dirtyRegion.IsEmpty) return;
+        if (layerIndex < 0 || layerIndex >= _layers.Count) return;
+
+        var layer = _layers[layerIndex];
+        var patches = new List<LayerTilePatch>(beforeTiles.Count);
+        foreach (var (key, before) in beforeTiles)
+        {
+            var after = layer.CaptureTile(key.X, key.Y);
+            if (TileBytesEqual(before, after)) continue;
+            patches.Add(new LayerTilePatch(key.X, key.Y, before, after));
+        }
+
+        if (patches.Count == 0) return;
+
+        _undo.Push(new LayerTileHistoryState(layerIndex, patches.ToArray(), dirtyRegion));
+        _redo.Clear();
+        HistoryChanged?.Invoke(this, EventArgs.Empty);
+        NotifyChanged(dirtyRegion, layerIndex);
+    }
+
     public void ClearForImport()
     {
         foreach (var l in _layers) l.Dispose();
@@ -65,6 +87,27 @@ public sealed class DrawingDocument
         _undo.Clear();
         _redo.Clear();
         CommittedStrokeCount = 0;
+    }
+
+    public void ReplaceWith(DrawingDocument source)
+    {
+        if (ReferenceEquals(this, source)) return;
+
+        foreach (var l in _layers) l.Dispose();
+        _layers.Clear();
+        _undo.Clear();
+        _redo.Clear();
+
+        Width = source.Width;
+        Height = source.Height;
+        ActiveLayerIndex = source.ActiveLayerIndex;
+        CommittedStrokeCount = source.CommittedStrokeCount;
+
+        _layers.AddRange(source._layers);
+        source._layers.Clear();
+        source.ActiveLayerIndex = -1;
+
+        NotifyLayersChanged();
     }
 
     public DrawingLayer AddLayerForImport(
@@ -108,7 +151,18 @@ public sealed class DrawingDocument
     {
         if (pushHistory)
         {
-            BeginDocumentMutation();
+            var layerIndex = ActiveLayerIndex;
+            var dirtyRegion = LayerDirtyRegion(layerIndex);
+            var beforeTiles = new Dictionary<(int X, int Y), byte[]?>();
+            foreach (var (key, bytes) in ActiveLayer.CaptureTiles())
+            {
+                beforeTiles[key] = bytes;
+            }
+
+            ActiveLayer.Clear();
+            CommittedStrokeCount = 0;
+            CommitLayerTileMutation(layerIndex, beforeTiles, dirtyRegion);
+            return;
         }
 
         ActiveLayer.Clear();
@@ -310,6 +364,13 @@ public sealed class DrawingDocument
         return bounds;
     }
 
+    private static bool TileBytesEqual(byte[]? a, byte[]? b)
+    {
+        if (ReferenceEquals(a, b)) return true;
+        if (a == null || b == null || a.Length != b.Length) return false;
+        return a.AsSpan().SequenceEqual(b);
+    }
+
     private LayerSnapshot CaptureLayerSnapshot(DrawingLayer layer)
         => new(layer.Name, layer.IsVisible, layer.IsLocked, layer.Opacity, layer.BlendMode,
                layer.OffsetX, layer.OffsetY, layer.IsGroup, layer.IsOpen, layer.IsClipping,
@@ -459,6 +520,37 @@ public sealed class DrawingDocument
             {
                 var patch = Patches[i];
                 layer.RestorePixels(patch.Region, patch.BeforePixels);
+            }
+
+            document.LayersChanged?.Invoke(document, EventArgs.Empty);
+            document.Changed?.Invoke(document, new DocumentChangedEventArgs(DirtyRegion, LayerIndex));
+        }
+    }
+
+    private readonly record struct LayerTilePatch(int TileX, int TileY, byte[]? BeforePixels, byte[]? AfterPixels);
+
+    private sealed record LayerTileHistoryState(int LayerIndex, LayerTilePatch[] Patches, PixelRegion DirtyRegion) : IHistoryState
+    {
+        public IHistoryState CaptureRedo(DrawingDocument document)
+        {
+            var redoPatches = new LayerTilePatch[Patches.Length];
+            for (var i = 0; i < Patches.Length; i++)
+            {
+                var patch = Patches[i];
+                redoPatches[i] = new LayerTilePatch(patch.TileX, patch.TileY, patch.AfterPixels, patch.BeforePixels);
+            }
+
+            return new LayerTileHistoryState(LayerIndex, redoPatches, DirtyRegion);
+        }
+
+        public void Restore(DrawingDocument document)
+        {
+            if (LayerIndex < 0 || LayerIndex >= document._layers.Count) return;
+
+            var layer = document._layers[LayerIndex];
+            foreach (var patch in Patches)
+            {
+                layer.RestoreTile(patch.TileX, patch.TileY, patch.BeforePixels);
             }
 
             document.LayersChanged?.Invoke(document, EventArgs.Empty);

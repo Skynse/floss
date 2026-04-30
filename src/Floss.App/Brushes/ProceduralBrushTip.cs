@@ -12,6 +12,10 @@ public enum BrushTipShape
 
 public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circle, float aspectRatio = 1.0f) : IBrushTip
 {
+    private SKBitmap? _cachedMask;
+    private int _cachedSize;
+    private float _cachedHardness;
+
     public BrushTipShape Shape { get; } = shape;
     public float AspectRatio { get; } = aspectRatio;
 
@@ -19,6 +23,12 @@ public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circl
     {
         var size = Math.Max(1, baseSize);
         var clampedHardness = Math.Clamp(hardness, 0.001f, 1.0f);
+        if (_cachedMask != null && _cachedSize == size && Math.Abs(_cachedHardness - clampedHardness) < 0.0001f)
+            return _cachedMask;
+
+        _cachedMask?.Dispose();
+        _cachedSize = size;
+        _cachedHardness = clampedHardness;
         var bitmap = new SKBitmap(new SKImageInfo(size, size, SKColorType.Alpha8, SKAlphaType.Unpremul));
 
         using var canvas = new SKCanvas(bitmap);
@@ -45,7 +55,8 @@ public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circl
             DrawShape(canvas, paint, cx, cy, maxRadius * clampedHardness, Shape, AspectRatio);
         }
 
-        return bitmap;
+        _cachedMask = bitmap;
+        return _cachedMask;
     }
 
     private static void DrawShape(SKCanvas canvas, SKPaint paint, float cx, float cy, float radius, BrushTipShape shape, float aspectRatio)

@@ -102,6 +102,43 @@ public sealed class TiledPixelBuffer
         return bytes;
     }
 
+    public Dictionary<(int X, int Y), byte[]?> CaptureTiles(PixelRegion region)
+    {
+        var result = new Dictionary<(int X, int Y), byte[]?>();
+        CaptureTiles(region, result);
+        return result;
+    }
+
+    public void CaptureTiles(PixelRegion region, Dictionary<(int X, int Y), byte[]?> target)
+    {
+        var clipped = region.ClipTo(Width, Height);
+        if (clipped.IsEmpty) return;
+
+        var firstTileX = FloorDiv(clipped.X, TileSize);
+        var firstTileY = FloorDiv(clipped.Y, TileSize);
+        var lastTileX = FloorDiv(clipped.Right - 1, TileSize);
+        var lastTileY = FloorDiv(clipped.Bottom - 1, TileSize);
+
+        for (var ty = firstTileY; ty <= lastTileY; ty++)
+        {
+            for (var tx = firstTileX; tx <= lastTileX; tx++)
+            {
+                var key = (tx, ty);
+                if (target.ContainsKey(key)) continue;
+                target.Add(key, CaptureTile(tx, ty));
+            }
+        }
+    }
+
+    public byte[]? CaptureTile(int tileX, int tileY)
+    {
+        if (!_tiles.TryGetValue((tileX, tileY), out var tile)) return null;
+
+        var copy = new byte[tile.Length];
+        Buffer.BlockCopy(tile, 0, copy, 0, tile.Length);
+        return copy;
+    }
+
     public void Restore(PixelRegion region, byte[] bytes)
     {
         var clipped = region.ClipTo(Width, Height);
@@ -122,17 +159,48 @@ public sealed class TiledPixelBuffer
         PruneTransparentTiles(clipped);
     }
 
+    public void RestoreTile(int tileX, int tileY, byte[]? bytes)
+    {
+        var key = (tileX, tileY);
+        if (bytes == null || IsTransparent(bytes))
+        {
+            _tiles.Remove(key);
+            return;
+        }
+
+        var tile = new byte[TileSize * TileSize * BytesPerPixel];
+        Buffer.BlockCopy(bytes, 0, tile, 0, Math.Min(bytes.Length, tile.Length));
+        _tiles[key] = tile;
+    }
+
     public void CopyFromBgra(byte[] src, int srcWidth, int srcHeight)
     {
         var copyW = Math.Min(srcWidth, Width);
         var copyH = Math.Min(srcHeight, Height);
-        for (var y = 0; y < copyH; y++)
+        if (copyW <= 0 || copyH <= 0) return;
+
+        var lastTileX = (copyW - 1) / TileSize;
+        var lastTileY = (copyH - 1) / TileSize;
+
+        for (var ty = 0; ty <= lastTileY; ty++)
         {
-            for (var x = 0; x < copyW; x++)
+            var tileY = ty * TileSize;
+            var tileH = Math.Min(TileSize, copyH - tileY);
+            for (var tx = 0; tx <= lastTileX; tx++)
             {
-                var srcOffset = (y * srcWidth + x) * BytesPerPixel;
-                if (src[srcOffset + 3] == 0) continue;
-                WritePixel(x, y, src, srcOffset);
+                var tileX = tx * TileSize;
+                var tileW = Math.Min(TileSize, copyW - tileX);
+                if (!HasAnyAlpha(src, srcWidth, tileX, tileY, tileW, tileH)) continue;
+
+                var tile = new byte[TileSize * TileSize * BytesPerPixel];
+                for (var y = 0; y < tileH; y++)
+                {
+                    var srcOffset = ((tileY + y) * srcWidth + tileX) * BytesPerPixel;
+                    var dstOffset = y * TileSize * BytesPerPixel;
+                    Buffer.BlockCopy(src, srcOffset, tile, dstOffset, tileW * BytesPerPixel);
+                }
+
+                _tiles[(tx, ty)] = tile;
             }
         }
     }
@@ -384,6 +452,20 @@ public sealed class TiledPixelBuffer
         }
 
         return true;
+    }
+
+    private static bool HasAnyAlpha(byte[] src, int srcWidth, int x, int y, int width, int height)
+    {
+        for (var row = 0; row < height; row++)
+        {
+            var offset = ((y + row) * srcWidth + x) * BytesPerPixel + 3;
+            for (var col = 0; col < width; col++, offset += BytesPerPixel)
+            {
+                if (src[offset] != 0) return true;
+            }
+        }
+
+        return false;
     }
 
     private static (int X, int Y) ToTileKey(int x, int y)

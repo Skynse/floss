@@ -1,9 +1,11 @@
 using System;
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace Floss.App.Psd;
 
@@ -168,8 +170,10 @@ public static class PsdReader
             records[i] = rec;
         }
 
-        // ── Channel pixel data ───────────────────────────────────────────────
-        // One block per layer (same order as records), one compression+data block per channel.
+        // ── Channel pixel data — buffer sequentially, decode in parallel ─────
+        // PSD channel data must be read in stream order (sequential), but
+        // decompression is CPU-bound and independent per layer. Buffer every
+        // compressed channel block first, then decode all layers in parallel.
         for (int i = 0; i < layerCount; i++)
         {
             var rec    = records[i];
@@ -179,26 +183,48 @@ public static class PsdReader
             for (int c = 0; c < rec.ChannelIds.Length; c++)
             {
                 var chanId  = rec.ChannelIds[c];
-                var chanLen = rec.ChannelDataLens[c];
+                var chanLen = (int)rec.ChannelDataLens[c];
                 var chanEnd = stream.Position + chanLen;
 
-                if (layerW > 0 && layerH > 0)
+                if (layerW > 0 && layerH > 0 && chanLen > 0)
                 {
-                    var compression = r.U16();
-                    var plane = ReadPlane(r, stream, compression, layerW, layerH, bitDepth);
-                    if (plane != null)
-                        rec.Channels[chanId] = plane;
+                    var raw = new byte[chanLen];
+                    r.ReadExact(raw);
+                    rec.ChannelRaw[chanId] = raw;
                 }
-
-                stream.Position = chanEnd;
+                else
+                {
+                    stream.Position = chanEnd;
+                }
             }
         }
 
         stream.Position = layerMaskEnd;
 
+        // Decode channels and assemble BGRA in parallel (each record is independent).
+        Parallel.ForEach(records, rec =>
+        {
+            var layerW = rec.Right - rec.Left;
+            var layerH = rec.Bottom - rec.Top;
+
+            foreach (var (chanId, raw) in rec.ChannelRaw)
+            {
+                if (raw.Length < 2) continue;
+                var compression = (ushort)((raw[0] << 8) | raw[1]);
+                var plane = DecodeBufferedPlane(raw, 2, compression, layerW, layerH, bitDepth);
+                if (plane != null)
+                    rec.Channels[chanId] = plane;
+            }
+            rec.ChannelRaw.Clear();
+
+            if (rec.SectionType == 0 && rec.Channels.Count > 0 && layerW > 0 && layerH > 0)
+            {
+                rec.PrecomputedBgra = AssembleBgra(rec, layerW, layerH);
+                rec.Channels.Clear();
+            }
+        });
+
         // ── Build layer tree ─────────────────────────────────────────────────
-        // This reader normalizes PSD layer records into bottom-to-top order,
-        // which is the order expected by the compositor and layer panel.
         var doc = new PsdDocument { Width = width, Height = height };
         BuildTree(records, doc.Layers);
         return doc;
@@ -221,15 +247,12 @@ public static class PsdReader
 
             if (rec.SectionType == 3)
             {
-                // Bounding section divider: opens a group scope.
-                // Properties are set later when we find the matching folder (type 1/2).
                 var group = new PsdGroupNode();
                 stack.Push((group, current));
                 current = group.Children;
             }
             else if (rec.SectionType == 1 || rec.SectionType == 2)
             {
-                // Group folder: supplies the name/blend for the most-recently-opened group.
                 if (stack.Count > 0)
                 {
                     var (group, parent) = stack.Pop();
@@ -242,17 +265,13 @@ public static class PsdReader
                     parent.Add(group);
                     current = parent;
                 }
-                // else: orphaned folder record, ignore
             }
             else
             {
-                // Normal layer
                 var layerW = rec.Right - rec.Left;
                 var layerH = rec.Bottom - rec.Top;
-                byte[]? bgra = null;
-
-                if (layerW > 0 && layerH > 0 && rec.Channels.Count > 0)
-                    bgra = AssembleBgra(rec, layerW, layerH);
+                var bgra   = rec.PrecomputedBgra;
+                rec.PrecomputedBgra = null;
 
                 current.Add(new PsdLayerNode
                 {
@@ -299,72 +318,74 @@ public static class PsdReader
         return bgra;
     }
 
-    // Returns an 8-bit-per-sample plane of width×height bytes, or null on failure.
-    private static byte[]? ReadPlane(BEReader r, Stream stream, ushort compression, int w, int h, int bitDepth)
+    // Dispatch to the appropriate decoder based on the compression type embedded
+    // at the start of the raw channel buffer (first 2 bytes = big-endian ushort).
+    private static byte[]? DecodeBufferedPlane(byte[] raw, int dataOffset, ushort compression, int w, int h, int bitDepth)
     {
         return compression switch
         {
-            0 => ReadRaw(r, w, h, bitDepth),
-            1 => ReadPackBits(r, w, h, bitDepth),
-            2 => ReadZip(stream, w, h, bitDepth, delta: false),
-            3 => ReadZip(stream, w, h, bitDepth, delta: true),
+            0 => DecodeRaw(raw.AsSpan(dataOffset), w, h, bitDepth),
+            1 => DecodePackBits(raw.AsSpan(dataOffset), w, h, bitDepth),
+            2 => DecodeZip(raw, dataOffset, raw.Length - dataOffset, w, h, bitDepth, delta: false),
+            3 => DecodeZip(raw, dataOffset, raw.Length - dataOffset, w, h, bitDepth, delta: true),
             _ => null
         };
     }
 
-    private static byte[] ReadRaw(BEReader r, int w, int h, int bitDepth)
+    private static byte[] DecodeRaw(ReadOnlySpan<byte> span, int w, int h, int bitDepth)
     {
+        var plane = new byte[w * h];
         if (bitDepth == 8)
         {
-            var plane = new byte[w * h];
-            r.ReadExact(plane);
-            return plane;
+            span[..(w * h)].CopyTo(plane);
         }
-        if (bitDepth == 16)
+        else if (bitDepth == 16)
         {
-            var plane = new byte[w * h];
-            for (int i = 0; i < plane.Length; i++)
-                plane[i] = r.Byte(); // high byte of 16-bit sample
-            r.Skip(w * h); // skip low bytes
-            return plane;
+            // PSD 16-bit raw: big-endian u16 samples — take the high byte (stride 2).
+            for (int i = 0; i < w * h; i++)
+                plane[i] = span[i * 2];
         }
-        // 32-bit float — skip for now
-        r.Skip(w * h * (bitDepth / 8));
-        return new byte[w * h]; // transparent
+        // 32-bit: return transparent zeros (not supported for display)
+        return plane;
     }
 
-    private static byte[] ReadPackBits(BEReader r, int w, int h, int bitDepth)
+    private static byte[] DecodePackBits(ReadOnlySpan<byte> span, int w, int h, int bitDepth)
     {
-        // Row byte-count table (2 bytes per row, for each channel row)
-        var rowLens = new ushort[h];
-        for (int y = 0; y < h; y++)
-            rowLens[y] = r.U16();
+        var plane      = new byte[w * h];
+        var pixPerRow  = bitDepth == 8 ? w : w * (bitDepth / 8);
+        var rowBuf     = ArrayPool<byte>.Shared.Rent(pixPerRow);
 
-        var plane = new byte[w * h];
-        var pixPerRow = bitDepth == 8 ? w : w * (bitDepth / 8);
-        var rowOut = new byte[pixPerRow];
-
-        for (int y = 0; y < h; y++)
+        try
         {
-            var compressed = new byte[rowLens[y]];
-            r.ReadExact(compressed);
-            UnpackBits(compressed, rowOut, pixPerRow);
+            // First h*2 bytes: big-endian per-row compressed lengths.
+            var dataOffset = h * 2;
 
-            if (bitDepth == 8)
+            for (int y = 0; y < h; y++)
             {
-                Buffer.BlockCopy(rowOut, 0, plane, y * w, w);
+                var rowLen = (ushort)((span[y * 2] << 8) | span[y * 2 + 1]);
+                UnpackBits(span.Slice(dataOffset, rowLen), rowBuf, pixPerRow);
+                dataOffset += rowLen;
+
+                if (bitDepth == 8)
+                {
+                    rowBuf.AsSpan(0, w).CopyTo(plane.AsSpan(y * w, w));
+                }
+                else if (bitDepth == 16)
+                {
+                    for (int x = 0; x < w; x++)
+                        plane[y * w + x] = rowBuf[x * 2]; // high byte of big-endian u16
+                }
             }
-            else if (bitDepth == 16)
-            {
-                for (int x = 0; x < w; x++)
-                    plane[y * w + x] = rowOut[x * 2]; // high byte
-            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rowBuf);
         }
 
         return plane;
     }
 
-    private static void UnpackBits(byte[] src, byte[] dst, int dstLen)
+    private static void UnpackBits(ReadOnlySpan<byte> src, byte[] dst, int dstLen)
     {
         int si = 0, di = 0;
         while (si < src.Length && di < dstLen)
@@ -386,32 +407,32 @@ public static class PsdReader
         }
     }
 
-    private static byte[]? ReadZip(Stream stream, int w, int h, int bitDepth, bool delta)
+    private static byte[]? DecodeZip(byte[] raw, int offset, int length, int w, int h, int bitDepth, bool delta)
     {
         try
         {
-            using var deflate = new ZLibStream(stream, CompressionMode.Decompress, leaveOpen: true);
+            using var ms      = new MemoryStream(raw, offset, length, writable: false);
+            using var deflate = new ZLibStream(ms, CompressionMode.Decompress);
             var bytesPerSample = bitDepth / 8;
-            var rawLen = w * h * bytesPerSample;
-            var raw = new byte[rawLen];
+            var buf = new byte[w * h * bytesPerSample];
 
             int read = 0;
-            while (read < rawLen)
+            while (read < buf.Length)
             {
-                var n = deflate.Read(raw, read, rawLen - read);
+                var n = deflate.Read(buf, read, buf.Length - read);
                 if (n == 0) break;
                 read += n;
             }
 
             if (delta)
-                ApplyDeltaDecode(raw, w, h, bitDepth);
+                ApplyDeltaDecode(buf, w, h, bitDepth);
 
             if (bitDepth == 8)
-                return raw;
+                return buf;
 
             var plane = new byte[w * h];
             for (int i = 0; i < w * h; i++)
-                plane[i] = raw[i * bytesPerSample]; // high byte
+                plane[i] = buf[i * bytesPerSample]; // high byte
             return plane;
         }
         catch
@@ -450,7 +471,12 @@ public static class PsdReader
         public int    Top, Left, Bottom, Right;
         public short[] ChannelIds      = [];
         public long[]  ChannelDataLens = [];
-        public Dictionary<short, byte[]> Channels = new();
+        // Raw compressed bytes per channel, buffered during sequential stream read.
+        public Dictionary<short, byte[]> ChannelRaw = new();
+        // Decoded 8-bit planes, populated during parallel decode pass.
+        public Dictionary<short, byte[]> Channels   = new();
+        // Pre-assembled BGRA, set during parallel pass so BuildTree just grabs it.
+        public byte[]? PrecomputedBgra;
         public string BlendMode        = "norm";
         public string DividerBlendMode = "";
         public byte   Opacity          = 255;

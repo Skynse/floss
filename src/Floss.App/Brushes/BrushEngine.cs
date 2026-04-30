@@ -100,9 +100,9 @@ public sealed class BrushEngine : IDisposable
         var dx = to.X - from.X;
         var dy = to.Y - from.Y;
         var distance = Math.Sqrt(dx * dx + dy * dy);
+        var elapsedSeconds = Math.Max(0.001, (to.TimeMicros - from.TimeMicros) / 1_000_000.0);
+        var velocity01 = Math.Clamp((float)(distance / elapsedSeconds / 5000.0), 0, 1);
         var subdivisions = Math.Max(8, Math.Min(96, (int)Math.Ceiling(distance / 2.0)));
-        var spacing = Math.Max(0.5f, (float)(brush.Size * brush.Spacing));
-
         var p0 = new SplinePoint(
             stroke.State.LastX,
             stroke.State.LastY,
@@ -133,20 +133,20 @@ public sealed class BrushEngine : IDisposable
 
             if (segmentLength > 0.0001f)
             {
-                var consumed = spacing - stroke.State.DistanceLeftover;
+                var consumed = stroke.State.NextStampDistance - stroke.State.DistanceLeftover;
                 while (consumed <= segmentLength)
                 {
                     var ratio = consumed / segmentLength;
                     var sample = Lerp(previous, current, ratio, from, to);
-                    var velocity01 = Math.Clamp(segmentLength * subdivisions / 5000.0f, 0, 1);
                     var stamp = CreateStamp(stroke, brush, sample, velocity01);
                     _stamps.Add(stamp);
                     dirty = dirty.Union(StampBounds(stamp));
-                    consumed += spacing;
+                    stroke.State.NextStampDistance = StampSpacing(brush, stamp);
+                    consumed += stroke.State.NextStampDistance;
                 }
 
-                stroke.State.DistanceLeftover = segmentLength - (consumed - spacing);
-                if (stroke.State.DistanceLeftover >= spacing) stroke.State.DistanceLeftover = 0;
+                stroke.State.DistanceLeftover = segmentLength - (consumed - stroke.State.NextStampDistance);
+                if (stroke.State.DistanceLeftover >= stroke.State.NextStampDistance) stroke.State.DistanceLeftover = 0;
             }
 
             previous = current;
@@ -159,6 +159,13 @@ public sealed class BrushEngine : IDisposable
         stroke.State.LastTiltY = (float)to.TiltY;
 
         return dirty;
+    }
+
+    private static float StampSpacing(BrushPreset brush, StampSample stamp)
+    {
+        var flow = Math.Clamp((float)brush.Flow, 0.01f, 1.0f);
+        var flowCompensation = MathF.Sqrt(flow);
+        return Math.Max(0.5f, stamp.Size * Math.Max(0.01f, (float)brush.Spacing) * flowCompensation);
     }
 
     private StampSample CreateStamp(ActiveStroke stroke, BrushPreset brush, CanvasInputSample sample, float velocity01)
@@ -276,6 +283,9 @@ public sealed class BrushEngine : IDisposable
             _eraser = eraser;
             State = new StrokeState((float)sample.X, (float)sample.Y, (float)sample.Pressure, (float)sample.TiltX, (float)sample.TiltY);
             Dynamics = DynamicsMatrix.FromBrush(brush);
+            State.NextStampDistance = StampSpacing(
+                brush,
+                new StampSample(0, 0, Math.Max(0.5f, (float)brush.Size * Dynamics.Evaluate(DynamicOutputTarget.Size, sample, 0)), 1, 0));
             Mask = brush.Tip.GenerateMask(Math.Max(1, (int)Math.Ceiling(brush.Size)), (float)brush.Hardness);
             _baseColor = ToSkColor(brush.Color);
             Paint = new SKPaint
@@ -316,7 +326,7 @@ public sealed class BrushEngine : IDisposable
 
         public void Dispose()
         {
-            if (_brush.Tip is not ImageBrushTip)
+            if (_brush.Tip is CompoundBrushTip)
                 Mask.Dispose();
             Paint.ColorFilter?.Dispose();
             Paint.Dispose();

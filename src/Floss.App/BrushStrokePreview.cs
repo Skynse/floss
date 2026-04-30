@@ -143,7 +143,7 @@ public sealed class BrushStrokePreview : Control
         }
 
         colorFilter.Dispose();
-        if (brush.Tip is not ImageBrushTip)
+        if (brush.Tip is CompoundBrushTip)
             mask.Dispose();
     }
 }

@@ -74,8 +74,8 @@ public sealed class CompoundBrushTip : IBrushTip
                 }
             }
 
-            if (layer.Tip is not ImageBrushTip)
-                rawMask.Dispose();
+            // Child tips may cache and return a bitmap they still own. The compound
+            // tip only owns the composed result created above.
         }
 
         return result;

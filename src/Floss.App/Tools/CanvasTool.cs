@@ -18,7 +18,7 @@ public sealed class CanvasTool
     private CanvasInputSample _lastSample;
     private bool _active;
     private int _activeLayerIndex;
-    private readonly List<LayerRegionPatch> _strokePatches = [];
+    private readonly Dictionary<(int X, int Y), byte[]?> _strokeBeforeTiles = [];
     private PixelRegion _strokeDirtyRegion;
 
     public CanvasTool(DrawingDocument document, BrushEngine brushEngine)
@@ -37,13 +37,14 @@ public sealed class CanvasTool
         if (!_document.CanPaintActiveLayer) return;
         _active = true;
         _activeLayerIndex = _document.ActiveLayerIndex;
-        _strokePatches.Clear();
+        _strokeBeforeTiles.Clear();
         _strokeDirtyRegion = PixelRegion.Empty;
         ActiveSampleCount = 1;
         var layer = _document.ActiveLayer;
         var localSample = ToLayerSample(layer, sample);
         _lastSample = localSample;
         _brushEngine.BeginStroke(brush, IsEraser(sample), localSample);
+        RasterizeDabWithHistory(layer, brush, sample, localSample, velocity: 0);
     }
 
     public void Update(BrushPreset brush, CanvasInputSample sample)
@@ -66,8 +67,8 @@ public sealed class CanvasTool
         RasterizeSegmentWithHistory(layer, brush, sample, _lastSample, localSample);
         _active = false;
         ActiveSampleCount = 0;
-        _document.CommitLayerRegionMutation(_activeLayerIndex, _strokePatches, _strokeDirtyRegion);
-        _strokePatches.Clear();
+        _document.CommitLayerTileMutation(_activeLayerIndex, _strokeBeforeTiles, _strokeDirtyRegion);
+        _strokeBeforeTiles.Clear();
         _strokeDirtyRegion = PixelRegion.Empty;
         _brushEngine.EndStroke();
         _document.CommitStroke();
@@ -100,12 +101,11 @@ public sealed class CanvasTool
         var region = _brushEngine.EstimateDabRegion(layer, brush, localSample);
         if (region.IsEmpty) return;
 
-        var before = layer.CapturePixels(region);
+        CaptureBeforeTiles(layer, region);
         var dirty = _brushEngine.RasterizeDab(layer, brush, IsEraser(sourceSample), localSample, velocity);
         if (dirty.IsEmpty) return;
 
         layer.MarkThumbnailDirty();
-        _strokePatches.Add(new LayerRegionPatch(region, before));
         var docDirty = region.Translate(layer.OffsetX, layer.OffsetY);
         _strokeDirtyRegion = _strokeDirtyRegion.Union(docDirty);
         _document.NotifyChanged(docDirty, _activeLayerIndex);
@@ -116,15 +116,19 @@ public sealed class CanvasTool
         var region = _brushEngine.EstimateSegmentRegion(layer, brush, from, to);
         if (region.IsEmpty) return;
 
-        var before = layer.CapturePixels(region);
+        CaptureBeforeTiles(layer, region);
         var dirty = _brushEngine.RasterizeSegment(layer, brush, IsEraser(sourceSample), from, to);
         if (dirty.IsEmpty) return;
 
         layer.MarkThumbnailDirty();
-        _strokePatches.Add(new LayerRegionPatch(region, before));
         var docDirty = region.Translate(layer.OffsetX, layer.OffsetY);
         _strokeDirtyRegion = _strokeDirtyRegion.Union(docDirty);
         _document.NotifyChanged(docDirty, _activeLayerIndex);
+    }
+
+    private void CaptureBeforeTiles(DrawingLayer layer, PixelRegion region)
+    {
+        layer.CaptureTiles(region, _strokeBeforeTiles);
     }
 
     private bool IsEraser(CanvasInputSample sample)
