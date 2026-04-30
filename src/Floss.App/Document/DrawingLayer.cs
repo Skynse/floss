@@ -76,26 +76,45 @@ public sealed class DrawingLayer : IDisposable
         using var dstFrame = _thumbnail.Lock();
         unsafe
         {
-            var dst = (byte*)dstFrame.Address;
+            var dst  = (byte*)dstFrame.Address;
             var srcW = Width;
             var srcH = Height;
             var dstW = _thumbnail.PixelSize.Width;
             var dstH = _thumbnail.PixelSize.Height;
+            const int ts = TiledPixelBuffer.TileSize;
 
             for (var y = 0; y < dstH; y++)
             {
-                var srcY = Math.Clamp((int)((y + 0.5) * srcH / dstH), 0, srcH - 1);
-                var dstRow = dst + y * dstFrame.RowBytes;
+                var srcY       = Math.Clamp((int)((y + 0.5) * srcH / dstH), 0, srcH - 1);
+                var tilY       = srcY / ts;
+                var tilLocalY  = srcY - tilY * ts;
+                var dstRow     = dst + y * dstFrame.RowBytes;
+
+                int     prevTilX = -1;
+                byte[]? tile     = null;
 
                 for (var x = 0; x < dstW; x++)
                 {
-                    var srcX = Math.Clamp((int)((x + 0.5) * srcW / dstW), 0, srcW - 1);
-                    var dstPx = dstRow + x * 4;
-                    Pixels.GetPixel(srcX, srcY, out var b, out var g, out var r, out var a);
-                    dstPx[0] = b;
-                    dstPx[1] = g;
-                    dstPx[2] = r;
-                    dstPx[3] = a;
+                    var srcX      = Math.Clamp((int)((x + 0.5) * srcW / dstW), 0, srcW - 1);
+                    var tilX      = srcX / ts;
+                    var tilLocalX = srcX - tilX * ts;
+                    var dstPx     = dstRow + x * 4;
+
+                    if (tilX != prevTilX)
+                    {
+                        tile     = Pixels.GetTileOrNull(tilX, tilY);
+                        prevTilX = tilX;
+                    }
+
+                    if (tile == null)
+                    {
+                        *(uint*)dstPx = 0;
+                    }
+                    else
+                    {
+                        var offset = (tilLocalY * ts + tilLocalX) * 4;
+                        *(uint*)dstPx = *(uint*)(System.Runtime.CompilerServices.Unsafe.AsPointer(ref tile[offset]));
+                    }
                 }
             }
         }

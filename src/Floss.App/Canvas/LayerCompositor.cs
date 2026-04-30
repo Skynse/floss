@@ -97,16 +97,12 @@ public sealed class LayerCompositor
     private static unsafe void FillWithPaperColor(byte* dst, int stride, int width, int height, PixelRegion clip)
     {
         var paper = DrawingDocument.PaperColor;
+        var pixel = (uint)(paper.B | (paper.G << 8) | (paper.R << 16) | (255u << 24));
         for (int y = clip.Y; y < clip.Bottom; y++)
         {
-            var row = dst + y * stride + clip.X * 4;
+            var row = (uint*)(dst + y * stride + clip.X * 4);
             for (int x = 0; x < clip.Width; x++)
-            {
-                row[x * 4 + 0] = paper.B;
-                row[x * 4 + 1] = paper.G;
-                row[x * 4 + 2] = paper.R;
-                row[x * 4 + 3] = 255;
-            }
+                row[x] = pixel;
         }
     }
 
@@ -260,30 +256,111 @@ public sealed class LayerCompositor
     {
         if (opacity <= 0 || !projection.HasContentTiles(clip)) return;
 
-        for (int docY = clip.Y; docY < clip.Bottom; docY++)
+        const int ts = TiledPixelBuffer.TileSize;
+        var firstTileX = FloorDiv(clip.X,          ts);
+        var firstTileY = FloorDiv(clip.Y,          ts);
+        var lastTileX  = FloorDiv(clip.Right  - 1, ts);
+        var lastTileY  = FloorDiv(clip.Bottom - 1, ts);
+
+        if (blendMode == "Normal")
         {
-            var dstRow = dst + (docY - originY) * dstStride;
-            for (int docX = clip.X; docX < clip.Right; docX++)
+            var opacityByte = (uint)Math.Round(opacity * 255);
+            var fullOpacity = opacityByte == 255;
+
+            for (var ty = firstTileY; ty <= lastTileY; ty++)
             {
-                projection.GetPixel(docX, docY, out var rawB, out var rawG, out var rawR, out var rawA);
-                var srcA = rawA / 255.0 * opacity;
-                if (srcA <= 0) continue;
+                for (var tx = firstTileX; tx <= lastTileX; tx++)
+                {
+                    var tile = projection.GetTileOrNull(tx, ty);
+                    if (tile == null) continue;
 
-                var dstIdx = (docX - originX) * 4;
-                var srcB = rawB / 255.0;
-                var srcG = rawG / 255.0;
-                var srcR = rawR / 255.0;
-                var dstB = dstRow[dstIdx + 0] / 255.0;
-                var dstG = dstRow[dstIdx + 1] / 255.0;
-                var dstR = dstRow[dstIdx + 2] / 255.0;
-                var dstA = dstRow[dstIdx + 3] / 255.0;
+                    var tileLeft   = Math.Max(clip.X,      tx * ts);
+                    var tileTop    = Math.Max(clip.Y,      ty * ts);
+                    var tileRight  = Math.Min(clip.Right,  tx * ts + ts);
+                    var tileBottom = Math.Min(clip.Bottom, ty * ts + ts);
 
-                var (blendR, blendG, blendB) = ApplyBlendMode(
-                    srcR, srcG, srcB, srcA,
-                    dstR, dstG, dstB, dstA,
-                    blendMode);
+                    for (int docY = tileTop; docY < tileBottom; docY++)
+                    {
+                        var tileLocalY  = docY - ty * ts;
+                        var tileLocalX0 = tileLeft - tx * ts;
+                        var tileRowBase = (tileLocalY * ts + tileLocalX0) * 4;
+                        var dstRow = dst + (docY - originY) * dstStride;
 
-                BlendPixel(dstRow + dstIdx, srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendR, blendG, blendB);
+                        for (int j = 0, docX = tileLeft; docX < tileRight; docX++, j++)
+                        {
+                            var tileOffset = tileRowBase + j * 4;
+                            uint rawA = tile[tileOffset + 3];
+                            if (rawA == 0) continue;
+
+                            uint srcA  = fullOpacity ? rawA : (rawA * opacityByte + 127) / 255;
+                            var dstPtr = dstRow + (docX - originX) * 4;
+
+                            if (srcA == 255)
+                            {
+                                dstPtr[0] = tile[tileOffset + 0];
+                                dstPtr[1] = tile[tileOffset + 1];
+                                dstPtr[2] = tile[tileOffset + 2];
+                                dstPtr[3] = 255;
+                                continue;
+                            }
+
+                            uint invSrcA = 255 - srcA;
+                            uint dstA    = dstPtr[3];
+                            uint dstCont = (dstA * invSrcA + 127) / 255;
+                            uint outA    = srcA + dstCont;
+                            if (outA == 0) continue;
+
+                            uint half = outA >> 1;
+                            dstPtr[0] = (byte)((tile[tileOffset + 0] * srcA + dstPtr[0] * dstCont + half) / outA);
+                            dstPtr[1] = (byte)((tile[tileOffset + 1] * srcA + dstPtr[1] * dstCont + half) / outA);
+                            dstPtr[2] = (byte)((tile[tileOffset + 2] * srcA + dstPtr[2] * dstCont + half) / outA);
+                            dstPtr[3] = (byte)outA;
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
+        for (var ty = firstTileY; ty <= lastTileY; ty++)
+        {
+            for (var tx = firstTileX; tx <= lastTileX; tx++)
+            {
+                var tile = projection.GetTileOrNull(tx, ty);
+                if (tile == null) continue;
+
+                var tileLeft   = Math.Max(clip.X,      tx * ts);
+                var tileTop    = Math.Max(clip.Y,      ty * ts);
+                var tileRight  = Math.Min(clip.Right,  tx * ts + ts);
+                var tileBottom = Math.Min(clip.Bottom, ty * ts + ts);
+
+                for (int docY = tileTop; docY < tileBottom; docY++)
+                {
+                    var tileLocalY  = docY - ty * ts;
+                    var tileLocalX0 = tileLeft - tx * ts;
+                    var tileRowBase = (tileLocalY * ts + tileLocalX0) * 4;
+                    var dstRow = dst + (docY - originY) * dstStride;
+
+                    for (int j = 0, docX = tileLeft; docX < tileRight; docX++, j++)
+                    {
+                        var tileOffset = tileRowBase + j * 4;
+                        var rawA = tile[tileOffset + 3];
+                        if (rawA == 0) continue;
+
+                        var srcA   = rawA / 255.0 * opacity;
+                        var dstIdx = (docX - originX) * 4;
+                        var srcB = tile[tileOffset + 0] / 255.0;
+                        var srcG = tile[tileOffset + 1] / 255.0;
+                        var srcR = tile[tileOffset + 2] / 255.0;
+                        var dstB = dstRow[dstIdx + 0] / 255.0;
+                        var dstG = dstRow[dstIdx + 1] / 255.0;
+                        var dstR = dstRow[dstIdx + 2] / 255.0;
+                        var dstA = dstRow[dstIdx + 3] / 255.0;
+
+                        var (blendR, blendG, blendB) = ApplyBlendMode(srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendMode);
+                        BlendPixel(dstRow + dstIdx, srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendR, blendG, blendB);
+                    }
+                }
             }
         }
     }
@@ -340,15 +417,25 @@ public sealed class LayerCompositor
                 var clipRight  = Math.Min(sourceRegion.Right,  tx * ts + ts);
                 var clipBottom = Math.Min(sourceRegion.Bottom, ty * ts + ts);
 
+                var isNormal   = blendMode == "Normal";
+                var opacityInt = (uint)Math.Round(opacity * 255);
+
                 for (int srcY = clipTop; srcY < clipBottom; srcY++)
                 {
                     var tileLocalY  = srcY - ty * ts;
                     var tileLocalX0 = clipLeft - tx * ts;
                     var tileRowBase = (tileLocalY * ts + tileLocalX0) * 4;
-                    var docY    = srcY + offsetY;
-                    var dstRow  = dst + (docY - originY) * dstStride;
-                    var baseY   = docY - baseOffsetY;
-                    var inBaseY = baseY >= 0 && baseY < baseH;
+                    var docY   = srcY + offsetY;
+                    var dstRow = dst + (docY - originY) * dstStride;
+                    var baseY  = docY - baseOffsetY;
+
+                    if (baseY < 0 || baseY >= baseH) continue;
+
+                    var baseTileY      = FloorDiv(baseY, ts);
+                    var baseTileLocalY = baseY - baseTileY * ts;
+
+                    int      prevBaseTileX = int.MinValue;
+                    byte[]?  baseTile      = null;
 
                     for (int j = 0, srcX = clipLeft; srcX < clipRight; srcX++, j++)
                     {
@@ -356,31 +443,71 @@ public sealed class LayerCompositor
                         var rawA = tile[tileOffset + 3];
                         if (rawA == 0) continue;
 
-                        var srcA = rawA / 255.0 * opacity;
-                        var docX = srcX + offsetX;
-
+                        var docX  = srcX + offsetX;
                         var baseX = docX - baseOffsetX;
-                        double baseAlpha = 0;
-                        if (inBaseY && baseX >= 0 && baseX < baseW)
+                        if (baseX < 0 || baseX >= baseW) continue;
+
+                        var baseTileX = FloorDiv(baseX, ts);
+                        if (baseTileX != prevBaseTileX)
                         {
-                            baseLayer.Pixels.GetPixel(baseX, baseY, out _, out _, out _, out var baseA);
-                            baseAlpha = baseA / 255.0;
+                            baseTile      = baseLayer.Pixels.GetTileOrNull(baseTileX, baseTileY);
+                            prevBaseTileX = baseTileX;
                         }
 
-                        srcA *= baseAlpha;
-                        if (srcA <= 0) continue;
+                        uint baseAlphaByte = 0;
+                        if (baseTile != null)
+                        {
+                            var blx = baseX - baseTileX * ts;
+                            baseAlphaByte = baseTile[(baseTileLocalY * ts + blx) * 4 + 3];
+                        }
+                        if (baseAlphaByte == 0) continue;
 
                         var dstIdx = (docX - originX) * 4;
-                        var srcB = tile[tileOffset + 0] / 255.0;
-                        var srcG = tile[tileOffset + 1] / 255.0;
-                        var srcR = tile[tileOffset + 2] / 255.0;
-                        var dstB = dstRow[dstIdx + 0] / 255.0;
-                        var dstG = dstRow[dstIdx + 1] / 255.0;
-                        var dstR = dstRow[dstIdx + 2] / 255.0;
-                        var dstA = dstRow[dstIdx + 3] / 255.0;
 
-                        var (blendR, blendG, blendB) = ApplyBlendMode(srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendMode);
-                        BlendPixel(dstRow + dstIdx, srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendR, blendG, blendB);
+                        if (isNormal)
+                        {
+                            uint srcA = (rawA * opacityInt + 127) / 255;
+                            srcA = (srcA * baseAlphaByte + 127) / 255;
+                            if (srcA == 0) continue;
+
+                            var dstPtr = dstRow + dstIdx;
+                            if (srcA == 255)
+                            {
+                                dstPtr[0] = tile[tileOffset + 0];
+                                dstPtr[1] = tile[tileOffset + 1];
+                                dstPtr[2] = tile[tileOffset + 2];
+                                dstPtr[3] = 255;
+                                continue;
+                            }
+
+                            uint invSrcA = 255 - srcA;
+                            uint dstA    = dstPtr[3];
+                            uint dstCont = (dstA * invSrcA + 127) / 255;
+                            uint outA    = srcA + dstCont;
+                            if (outA == 0) continue;
+
+                            uint half = outA >> 1;
+                            dstPtr[0] = (byte)((tile[tileOffset + 0] * srcA + dstPtr[0] * dstCont + half) / outA);
+                            dstPtr[1] = (byte)((tile[tileOffset + 1] * srcA + dstPtr[1] * dstCont + half) / outA);
+                            dstPtr[2] = (byte)((tile[tileOffset + 2] * srcA + dstPtr[2] * dstCont + half) / outA);
+                            dstPtr[3] = (byte)outA;
+                        }
+                        else
+                        {
+                            var srcA = rawA / 255.0 * opacity * (baseAlphaByte / 255.0);
+                            if (srcA <= 0) continue;
+
+                            var srcB = tile[tileOffset + 0] / 255.0;
+                            var srcG = tile[tileOffset + 1] / 255.0;
+                            var srcR = tile[tileOffset + 2] / 255.0;
+                            var dstB = dstRow[dstIdx + 0] / 255.0;
+                            var dstG = dstRow[dstIdx + 1] / 255.0;
+                            var dstR = dstRow[dstIdx + 2] / 255.0;
+                            var dstA = dstRow[dstIdx + 3] / 255.0;
+
+                            var (blendR, blendG, blendB) = ApplyBlendMode(srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendMode);
+                            BlendPixel(dstRow + dstIdx, srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendR, blendG, blendB);
+                        }
                     }
                 }
             }
@@ -434,28 +561,47 @@ public sealed class LayerCompositor
         var baseOffsetX = baseLayer.OffsetX;
         var baseOffsetY = baseLayer.OffsetY;
 
+        const int ts = TiledPixelBuffer.TileSize;
+
         for (int docY = clip.Y; docY < clip.Bottom; docY++)
         {
+            var baseY = docY - baseOffsetY;
+            if (baseY < 0 || baseY >= baseH) continue;
+
             var srcRow = src + (docY - clip.Y) * srcStride;
             var dstRow = dst + (docY - originY) * dstStride;
+
+            var baseTileY      = FloorDiv(baseY, ts);
+            var baseTileLocalY = baseY - baseTileY * ts;
+            int     prevBaseTileX = int.MinValue;
+            byte[]? baseTile      = null;
 
             for (int docX = clip.X; docX < clip.Right; docX++)
             {
                 var srcIdx = (docX - clip.X) * 4;
-                var dstIdx = (docX - originX) * 4;
-                var srcA = srcRow[srcIdx + 3] / 255.0;
-                if (srcA <= 0) continue;
+                var rawA   = srcRow[srcIdx + 3];
+                if (rawA == 0) continue;
 
                 var baseX = docX - baseOffsetX;
-                var baseY = docY - baseOffsetY;
-                double baseAlpha = 0;
-                if (baseX >= 0 && baseX < baseW && baseY >= 0 && baseY < baseH)
+                if (baseX < 0 || baseX >= baseW) continue;
+
+                var baseTileX = FloorDiv(baseX, ts);
+                if (baseTileX != prevBaseTileX)
                 {
-                    baseLayer.Pixels.GetPixel(baseX, baseY, out _, out _, out _, out var baseA);
-                    baseAlpha = baseA / 255.0;
+                    baseTile      = baseLayer.Pixels.GetTileOrNull(baseTileX, baseTileY);
+                    prevBaseTileX = baseTileX;
                 }
 
-                srcA *= baseAlpha;
+                uint baseAlphaByte = 0;
+                if (baseTile != null)
+                {
+                    var blx = baseX - baseTileX * ts;
+                    baseAlphaByte = baseTile[(baseTileLocalY * ts + blx) * 4 + 3];
+                }
+                if (baseAlphaByte == 0) continue;
+
+                var dstIdx = (docX - originX) * 4;
+                var srcA = rawA / 255.0 * (baseAlphaByte / 255.0);
                 if (srcA <= 0) continue;
 
                 var srcB = srcRow[srcIdx + 0] / 255.0;
@@ -466,11 +612,7 @@ public sealed class LayerCompositor
                 var dstR = dstRow[dstIdx + 2] / 255.0;
                 var dstA = dstRow[dstIdx + 3] / 255.0;
 
-                var (blendR, blendG, blendB) = ApplyBlendMode(
-                    srcR, srcG, srcB, srcA,
-                    dstR, dstG, dstB, dstA,
-                    blendMode);
-
+                var (blendR, blendG, blendB) = ApplyBlendMode(srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendMode);
                 BlendPixel(dstRow + dstIdx, srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendR, blendG, blendB);
             }
         }
