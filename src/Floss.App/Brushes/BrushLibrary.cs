@@ -65,25 +65,29 @@ public sealed class BrushLibrary
     private static IEnumerable<BrushAsset> DefaultAssets()
     {
         yield return BrushAsset.FromPreset(
-            new BrushPreset("Technical Pen", BrushKind.Ink, 8, 1.0, 0.96, 0.09, 1.25, 0.18, 0.08, Color.Parse("#111111"))
+            new BrushPreset("Technical Pen", BrushKind.Ink, 8, 1.0, 0.96, 0.09, Color.Parse("#111111"))
             {
-                PressureToOpacity = false,
+                SizeDynamics    = new() { PressureEnabled = true,  Gamma = 1.25f, VelocityEnabled = true,  VelocityStrength = 0.18f },
+                OpacityDynamics = new() { PressureEnabled = false },
                 Smoothing = 0.45,
-                Grain = 0,
                 Tip = new ProceduralBrushTip(BrushTipShape.Circle)
             });
 
         yield return BrushAsset.FromPreset(
-            new BrushPreset("Round Sable", BrushKind.Ink, 18, 0.88, 0.62, 0.12, 1.55, 0.35, 0.18, Color.Parse("#111111"))
+            new BrushPreset("Round Sable", BrushKind.Ink, 18, 0.88, 0.62, 0.12, Color.Parse("#111111"))
             {
+                SizeDynamics    = new() { PressureEnabled = true, Gamma = 1.55f, VelocityEnabled = true,  VelocityStrength = 0.35f },
+                OpacityDynamics = new() { PressureEnabled = true, Gamma = 1.55f, VelocityEnabled = true,  VelocityStrength = 0.18f },
                 Smoothing = 0.52,
                 Flow = 0.82,
                 Tip = new ProceduralBrushTip(BrushTipShape.Ellipse, 0.78f)
             });
 
         yield return BrushAsset.FromPreset(
-            new BrushPreset("Soft Graphite", BrushKind.Pencil, 24, 0.55, 0.24, 0.16, 1.1, 0.42, 0.35, Color.Parse("#1c1c1c"))
+            new BrushPreset("Soft Graphite", BrushKind.Pencil, 24, 0.55, 0.24, 0.16, Color.Parse("#1c1c1c"))
             {
+                SizeDynamics    = new() { PressureEnabled = true, Gamma = 1.1f, VelocityEnabled = true,  VelocityStrength = 0.42f },
+                OpacityDynamics = new() { PressureEnabled = true, Gamma = 1.1f, VelocityEnabled = true,  VelocityStrength = 0.35f },
                 Smoothing = 0.18,
                 Grain = 0.55,
                 Flow = 0.75,
@@ -91,18 +95,20 @@ public sealed class BrushLibrary
             });
 
         yield return BrushAsset.FromPreset(
-            new BrushPreset("Chisel Marker", BrushKind.Marker, 42, 0.68, 0.46, 0.18, 0.9, 0.12, 0.05, Color.Parse("#111111"))
+            new BrushPreset("Chisel Marker", BrushKind.Marker, 42, 0.68, 0.46, 0.18, Color.Parse("#111111"))
             {
-                PressureToOpacity = false,
+                SizeDynamics    = new() { PressureEnabled = true, Gamma = 0.9f,  VelocityEnabled = true,  VelocityStrength = 0.12f },
+                OpacityDynamics = new() { PressureEnabled = false },
                 Flow = 0.58,
                 Smoothing = 0.55,
                 Tip = new ProceduralBrushTip(BrushTipShape.Rectangle, 2.8f)
             });
 
         yield return BrushAsset.FromPreset(
-            new BrushPreset("Soft Airbrush", BrushKind.Airbrush, 64, 0.34, 0.08, 0.12, 1.0, 0.0, 0.0, Color.Parse("#111111"))
+            new BrushPreset("Soft Airbrush", BrushKind.Airbrush, 64, 0.34, 0.08, 0.12, Color.Parse("#111111"))
             {
-                VelocityToSize = false,
+                SizeDynamics    = new() { PressureEnabled = true, Gamma = 1.0f, VelocityEnabled = false },
+                OpacityDynamics = new() { PressureEnabled = true, Gamma = 1.0f, VelocityEnabled = false },
                 Flow = 0.22,
                 Smoothing = 0.68,
                 Grain = 0.03,

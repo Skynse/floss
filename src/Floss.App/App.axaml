@@ -5,5 +5,70 @@
 
     <Application.Styles>
         <FluentTheme />
+
+        <!-- ── Compact horizontal slider ───────────────────────────────────── -->
+        <Style Selector="Slider:horizontal">
+            <Setter Property="MinHeight" Value="28"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Grid MinHeight="28" VerticalAlignment="Center">
+                        <!-- unfilled track -->
+                        <Border VerticalAlignment="Center" Height="3" CornerRadius="1.5"
+                                Background="#1c2030" IsHitTestVisible="False"/>
+                        <Track Name="PART_Track" Orientation="Horizontal"
+                               Minimum="{TemplateBinding Minimum}"
+                               Maximum="{TemplateBinding Maximum}"
+                               Value="{TemplateBinding Value, Mode=TwoWay}">
+                            <Track.DecreaseButton>
+                                <RepeatButton Name="PART_DecreaseButton" Focusable="False" Cursor="Arrow">
+                                    <RepeatButton.Template>
+                                        <ControlTemplate>
+                                            <Border Height="3" VerticalAlignment="Center"
+                                                    CornerRadius="1.5" Background="#3d6fd8"/>
+                                        </ControlTemplate>
+                                    </RepeatButton.Template>
+                                </RepeatButton>
+                            </Track.DecreaseButton>
+                            <Track.Thumb>
+                                <Thumb Cursor="Hand">
+                                    <Thumb.Template>
+                                        <ControlTemplate>
+                                            <Ellipse Name="ThumbEllipse"
+                                                     Fill="#6888d8"
+                                                     Width="13" Height="13"/>
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Track.Thumb>
+                            <Track.IncreaseButton>
+                                <RepeatButton Name="PART_IncreaseButton" Focusable="False" Cursor="Arrow">
+                                    <RepeatButton.Template>
+                                        <ControlTemplate>
+                                            <Border Height="3" VerticalAlignment="Center" Background="Transparent"/>
+                                        </ControlTemplate>
+                                    </RepeatButton.Template>
+                                </RepeatButton>
+                            </Track.IncreaseButton>
+                        </Track>
+                    </Grid>
+                </ControlTemplate>
+            </Setter>
+        </Style>
+
+        <!-- Thumb hover/press states -->
+        <Style Selector="Slider:horizontal:pointerover /template/ Thumb /template/ Ellipse#ThumbEllipse">
+            <Setter Property="Fill" Value="#8aabe8"/>
+        </Style>
+        <Style Selector="Slider:horizontal:pressed /template/ Thumb /template/ Ellipse#ThumbEllipse">
+            <Setter Property="Fill" Value="#aec4f8"/>
+            <Setter Property="Width" Value="15"/>
+            <Setter Property="Height" Value="15"/>
+        </Style>
+
+        <!-- ── ScrollBar: keep it minimal ─────────────────────────────────── -->
+        <Style Selector="ScrollBar">
+            <Setter Property="Opacity" Value="0.5"/>
+        </Style>
+
     </Application.Styles>
 </Application>

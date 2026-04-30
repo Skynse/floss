@@ -95,13 +95,22 @@ public sealed class ResponseCurve
         }
     }
 
-    private float CubicBezierY(float t)
+    private float CubicBezierY(float inputX)
     {
-        var inv = 1.0f - t;
-        return inv * inv * inv * 0.0f
-            + 3.0f * inv * inv * t * BezierY1
-            + 3.0f * inv * t * t * BezierY2
-            + t * t * t;
+        // Binary search: find t where X(t) = inputX, then evaluate Y(t)
+        var lo = 0f; var hi = 1f;
+        for (var i = 0; i < 14; i++)
+        {
+            var mid = (lo + hi) * 0.5f;
+            if (Cubic(mid, 0, BezierX1, BezierX2, 1) < inputX) lo = mid; else hi = mid;
+        }
+        return Cubic((lo + hi) * 0.5f, 0, BezierY1, BezierY2, 1);
+    }
+
+    private static float Cubic(float t, float p0, float p1, float p2, float p3)
+    {
+        var inv = 1 - t;
+        return inv*inv*inv*p0 + 3*inv*inv*t*p1 + 3*inv*t*t*p2 + t*t*t*p3;
     }
 }
 
@@ -117,52 +126,32 @@ public sealed class DynamicsMatrix
     public static DynamicsMatrix FromBrush(BrushPreset brush)
     {
         var curves = new List<ResponseCurve>(4);
-
-        if (brush.PressureToSize)
-        {
-            curves.Add(new ResponseCurve(
-                DynamicInputSource.Pressure,
-                DynamicOutputTarget.Size,
-                gamma: (float)brush.PressureCurve,
-                minimum: 0.0f,
-                maximum: 1.0f));
-        }
-
-        if (brush.PressureToOpacity)
-        {
-            curves.Add(new ResponseCurve(
-                DynamicInputSource.Pressure,
-                DynamicOutputTarget.Opacity,
-                gamma: (float)brush.PressureCurve,
-                minimum: 0.0f,
-                maximum: 1.0f));
-        }
-
-        if (brush.VelocityToSize)
-        {
-            curves.Add(new ResponseCurve(
-                DynamicInputSource.Velocity,
-                DynamicOutputTarget.Size,
-                kind: ResponseCurveKind.Linear,
-                strength: 1.0f,
-                minimum: (float)Math.Clamp(1.0 - brush.VelocitySize, 0.1, 1.0),
-                maximum: 1.0f,
-                invert: true));
-        }
-
-        if (brush.VelocityToOpacity)
-        {
-            curves.Add(new ResponseCurve(
-                DynamicInputSource.Velocity,
-                DynamicOutputTarget.Opacity,
-                kind: ResponseCurveKind.Linear,
-                strength: 1.0f,
-                minimum: (float)Math.Clamp(1.0 - brush.VelocityOpacity, 0.1, 1.0),
-                maximum: 1.0f,
-                invert: true));
-        }
-
+        AddCurves(curves, brush.SizeDynamics,    DynamicOutputTarget.Size);
+        AddCurves(curves, brush.OpacityDynamics, DynamicOutputTarget.Opacity);
         return new DynamicsMatrix(curves);
+    }
+
+    private static void AddCurves(List<ResponseCurve> curves, ParameterDynamics dyn, DynamicOutputTarget target)
+    {
+        if (dyn.PressureEnabled)
+            curves.Add(new ResponseCurve(
+                DynamicInputSource.Pressure, target,
+                kind:      dyn.Kind,
+                gamma:     dyn.Gamma,
+                minimum:   dyn.Min,
+                maximum:   dyn.Max,
+                bezierX1:  dyn.X1,
+                bezierY1:  dyn.Y1,
+                bezierX2:  dyn.X2,
+                bezierY2:  dyn.Y2));
+
+        if (dyn.VelocityEnabled)
+            curves.Add(new ResponseCurve(
+                DynamicInputSource.Velocity, target,
+                kind:    ResponseCurveKind.Linear,
+                minimum: Math.Clamp(1.0f - dyn.VelocityStrength, 0.05f, 1.0f),
+                maximum: 1.0f,
+                invert:  true));
     }
 
     public float Evaluate(DynamicOutputTarget target, CanvasInputSample sample, float velocity01)
@@ -174,7 +163,6 @@ public sealed class DynamicsMatrix
             if (curve.Target != target) continue;
             result *= curve.Evaluate(InputValue(curve.Source, sample, velocity01));
         }
-
         return result;
     }
 
