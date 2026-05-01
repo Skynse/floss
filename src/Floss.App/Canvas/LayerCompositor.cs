@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using Avalonia;
 using Avalonia.Media;
@@ -17,6 +18,8 @@ public sealed class LayerCompositor
     private bool _fullDirty = true;
     private PixelRegion? _dirtyRegion;
     private readonly Dictionary<DrawingLayer, GroupProjectionCache> _groupCaches = new();
+    private readonly List<DrawingLayer> _rootLayerScratch = new();
+    private readonly List<RenderItem> _renderItemScratch = new();
 
     public void SetSize(int width, int height)
     {
@@ -88,11 +91,11 @@ public sealed class LayerCompositor
         // Only process root-level layers; group children are composited inside CompositeGroup.
         // Filtering by Parent==null avoids double-rendering when the flat document list
         // contains both a group and its children (as happens after PSD import).
-        var rootLayers = new System.Collections.Generic.List<DrawingLayer>(layers.Count);
+        _rootLayerScratch.Clear();
         foreach (var l in layers)
-            if (l.Parent == null) rootLayers.Add(l);
+            if (l.Parent == null) _rootLayerScratch.Add(l);
 
-        CompositeLayerList(dst, stride, width, height, rootLayers, opacityScale: 1.0, clip, originX: 0, originY: 0);
+        CompositeLayerList(dst, stride, width, height, _rootLayerScratch, opacityScale: 1.0, clip, originX: 0, originY: 0);
     }
 
     private static unsafe void FillWithPaperColor(byte* dst, int stride, int width, int height, PixelRegion clip, Color paperColor, bool paperVisible)
@@ -146,7 +149,7 @@ public sealed class LayerCompositor
     {
         if (opacityScale <= 0) return;
 
-        var renderList = FlattenForRender(layers);
+        var renderList = FlattenForRender(layers, layers == _rootLayerScratch ? _renderItemScratch : null);
         for (int i = 0; i < renderList.Count; i++)
         {
             var item = renderList[i];
@@ -171,12 +174,12 @@ public sealed class LayerCompositor
         }
     }
 
-    private static List<RenderItem> FlattenForRender(IReadOnlyList<DrawingLayer> layers)
+    private static List<RenderItem> FlattenForRender(IReadOnlyList<DrawingLayer> layers, List<RenderItem>? reuse)
     {
-        var result = new List<RenderItem>();
+        var result = reuse ?? new List<RenderItem>(layers.Count);
+        result.Clear();
         int? lastNonClippingIndex = null;
 
-        // Build bottom-to-top render list with clipping info
         for (int i = 0; i < layers.Count; i++)
         {
             var layer = layers[i];
@@ -237,12 +240,21 @@ public sealed class LayerCompositor
         if (!dirty.IsEmpty)
         {
             cache.Buffer.Clear(dirty);
-            var temp = new byte[dirty.Width * dirty.Height * 4];
-            fixed (byte* tempPtr = temp)
+            var byteCount = dirty.Width * dirty.Height * 4;
+            var temp = ArrayPool<byte>.Shared.Rent(byteCount);
+            try
             {
-                CompositeLayerList(tempPtr, dirty.Width * 4, dirty.Width, dirty.Height, group.Children, opacityScale: 1.0, dirty, dirty.X, dirty.Y);
+                Array.Clear(temp, 0, byteCount);
+                fixed (byte* tempPtr = temp)
+                {
+                    CompositeLayerList(tempPtr, dirty.Width * 4, dirty.Width, dirty.Height, group.Children, opacityScale: 1.0, dirty, dirty.X, dirty.Y);
+                }
+                cache.Buffer.CopyFromBgra(dirty, temp, dirty.Width * 4);
             }
-            cache.Buffer.CopyFromBgra(dirty, temp, dirty.Width * 4);
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(temp);
+            }
         }
 
         return cache.Buffer;
@@ -266,7 +278,8 @@ public sealed class LayerCompositor
         var lastTileX = FloorDiv(clip.Right - 1, ts);
         var lastTileY = FloorDiv(clip.Bottom - 1, ts);
 
-        if (blendMode == "Normal")
+        var blendId = ParseBlendId(blendMode);
+        if (blendId == BlendId.Normal)
         {
             var opacityByte = (uint)Math.Round(opacity * 255);
             var fullOpacity = opacityByte == 255;
@@ -361,7 +374,7 @@ public sealed class LayerCompositor
                         var dstR = dstRow[dstIdx + 2] / 255.0;
                         var dstA = dstRow[dstIdx + 3] / 255.0;
 
-                        var (blendR, blendG, blendB) = ApplyBlendMode(srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendMode);
+                        var (blendR, blendG, blendB) = ApplyBlendMode(srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendId);
                         BlendPixel(dstRow + dstIdx, srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendR, blendG, blendB);
                     }
                 }
@@ -402,12 +415,16 @@ public sealed class LayerCompositor
         if (!layer.Pixels.HasContentTiles(sourceRegion)) return;
 
         var blendMode = layer.BlendMode;
+        var blendId = ParseBlendId(blendMode);
         const int ts = TiledPixelBuffer.TileSize;
 
         var firstTileX = FloorDiv(sourceRegion.X, ts);
         var firstTileY = FloorDiv(sourceRegion.Y, ts);
         var lastTileX = FloorDiv(sourceRegion.Right - 1, ts);
         var lastTileY = FloorDiv(sourceRegion.Bottom - 1, ts);
+
+        var isNormal = blendId == BlendId.Normal;
+        var opacityInt = (uint)Math.Round(opacity * 255);
 
         for (var ty = firstTileY; ty <= lastTileY; ty++)
         {
@@ -420,9 +437,6 @@ public sealed class LayerCompositor
                 var clipTop = Math.Max(sourceRegion.Y, ty * ts);
                 var clipRight = Math.Min(sourceRegion.Right, tx * ts + ts);
                 var clipBottom = Math.Min(sourceRegion.Bottom, ty * ts + ts);
-
-                var isNormal = blendMode == "Normal";
-                var opacityInt = (uint)Math.Round(opacity * 255);
 
                 for (int srcY = clipTop; srcY < clipBottom; srcY++)
                 {
@@ -509,7 +523,7 @@ public sealed class LayerCompositor
                             var dstR = dstRow[dstIdx + 2] / 255.0;
                             var dstA = dstRow[dstIdx + 3] / 255.0;
 
-                            var (blendR, blendG, blendB) = ApplyBlendMode(srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendMode);
+                            var (blendR, blendG, blendB) = ApplyBlendMode(srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendId);
                             BlendPixel(dstRow + dstIdx, srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendR, blendG, blendB);
                         }
                     }
@@ -533,17 +547,24 @@ public sealed class LayerCompositor
         var groupOpacity = group.Opacity * opacityScale;
         if (groupOpacity <= 0 || group.Children.Count == 0) return;
 
-        var temp = new byte[clip.Width * clip.Height * 4];
-        fixed (byte* tempPtr = temp)
+        var byteCount = clip.Width * clip.Height * 4;
+        var temp = ArrayPool<byte>.Shared.Rent(byteCount);
+        try
         {
-            for (int i = 0; i < temp.Length; i++) tempPtr[i] = 0;
+            Array.Clear(temp, 0, byteCount);
+            fixed (byte* tempPtr = temp)
+            {
+                if (group.BlendMode == "PassThrough")
+                    CompositeLayerList(tempPtr, clip.Width * 4, clip.Width, clip.Height, group.Children, groupOpacity, clip, clip.X, clip.Y);
+                else
+                    CompositeGroup(tempPtr, clip.Width * 4, clip.Width, clip.Height, group, opacityScale, clip, clip.X, clip.Y);
 
-            if (group.BlendMode == "PassThrough")
-                CompositeLayerList(tempPtr, clip.Width * 4, clip.Width, clip.Height, group.Children, groupOpacity, clip, clip.X, clip.Y);
-            else
-                CompositeGroup(tempPtr, clip.Width * 4, clip.Width, clip.Height, group, opacityScale, clip, clip.X, clip.Y);
-
-            CompositeClippedBuffer(dst, dstStride, width, height, tempPtr, clip.Width * 4, baseLayer, group.BlendMode, clip, originX, originY);
+                CompositeClippedBuffer(dst, dstStride, width, height, tempPtr, clip.Width * 4, baseLayer, group.BlendMode, clip, originX, originY);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(temp);
         }
     }
 
@@ -560,6 +581,7 @@ public sealed class LayerCompositor
         int originX,
         int originY)
     {
+        var blendId = ParseBlendId(blendMode);
         var baseW = baseLayer.Width;
         var baseH = baseLayer.Height;
         var baseOffsetX = baseLayer.OffsetX;
@@ -616,7 +638,7 @@ public sealed class LayerCompositor
                 var dstR = dstRow[dstIdx + 2] / 255.0;
                 var dstA = dstRow[dstIdx + 3] / 255.0;
 
-                var (blendR, blendG, blendB) = ApplyBlendMode(srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendMode);
+                var (blendR, blendG, blendB) = ApplyBlendMode(srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendId);
                 BlendPixel(dstRow + dstIdx, srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendR, blendG, blendB);
             }
         }
@@ -650,6 +672,7 @@ public sealed class LayerCompositor
         if (!layer.Pixels.HasContentTiles(sourceRegion)) return;
 
         var blendMode = layer.BlendMode;
+        var blendId = ParseBlendId(blendMode);
         const int ts = TiledPixelBuffer.TileSize;
 
         var firstTileX = FloorDiv(sourceRegion.X, ts);
@@ -658,7 +681,7 @@ public sealed class LayerCompositor
         var lastTileY = FloorDiv(sourceRegion.Bottom - 1, ts);
 
         // Integer fast path for Normal blend — avoids all float conversions.
-        if (blendMode == "Normal")
+        if (blendId == BlendId.Normal)
         {
             var opacityByte = (uint)Math.Round(opacity * 255);
             var fullOpacity = opacityByte == 255;
@@ -758,7 +781,7 @@ public sealed class LayerCompositor
                         var dstR = dstRow[dstIdx + 2] / 255.0;
                         var dstA = dstRow[dstIdx + 3] / 255.0;
 
-                        var (blendR, blendG, blendB) = ApplyBlendMode(srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendMode);
+                        var (blendR, blendG, blendB) = ApplyBlendMode(srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendId);
                         BlendPixel(dstRow + dstIdx, srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendR, blendG, blendB);
                     }
                 }
@@ -803,44 +826,86 @@ public sealed class LayerCompositor
     private static (double r, double g, double b) ApplyBlendMode(
         double srcR, double srcG, double srcB, double srcA,
         double dstR, double dstG, double dstB, double dstA,
-        string blendMode)
+        BlendId id)
     {
-        return blendMode switch
+        return id switch
         {
-            "Normal" or "PassThrough" => (srcR, srcG, srcB),
-            "Dissolve" => (srcR, srcG, srcB),
-            "Multiply" => (dstR * srcR, dstG * srcG, dstB * srcB),
-            "Screen" => (1.0 - (1.0 - dstR) * (1.0 - srcR),
-                        1.0 - (1.0 - dstG) * (1.0 - srcG),
-                        1.0 - (1.0 - dstB) * (1.0 - srcB)),
-            "Overlay" => (Overlay(dstR, srcR), Overlay(dstG, srcG), Overlay(dstB, srcB)),
-            "SoftLight" => (SoftLight(dstR, srcR), SoftLight(dstG, srcG), SoftLight(dstB, srcB)),
-            "HardLight" => (HardLight(dstR, srcR), HardLight(dstG, srcG), HardLight(dstB, srcB)),
-            "ColorDodge" => (ColorDodge(dstR, srcR), ColorDodge(dstG, srcG), ColorDodge(dstB, srcB)),
-            "ColorBurn" => (ColorBurn(dstR, srcR), ColorBurn(dstG, srcG), ColorBurn(dstB, srcB)),
-            "Darken" => (Math.Min(dstR, srcR), Math.Min(dstG, srcG), Math.Min(dstB, srcB)),
-            "Lighten" => (Math.Max(dstR, srcR), Math.Max(dstG, srcG), Math.Max(dstB, srcB)),
-            "Difference" => (Math.Abs(dstR - srcR), Math.Abs(dstG - srcG), Math.Abs(dstB - srcB)),
-            "Exclusion" => (dstR + srcR - 2.0 * dstR * srcR,
-                           dstG + srcG - 2.0 * dstG * srcG,
-                           dstB + srcB - 2.0 * dstB * srcB),
-            "LinearBurn" => (dstR + srcR - 1.0, dstG + srcG - 1.0, dstB + srcB - 1.0),
-            "LinearDodge" => (dstR + srcR, dstG + srcG, dstB + srcB),
-            "VividLight" => (VividLight(dstR, srcR), VividLight(dstG, srcG), VividLight(dstB, srcB)),
-            "LinearLight" => (LinearLight(dstR, srcR), LinearLight(dstG, srcG), LinearLight(dstB, srcB)),
-            "PinLight" => (PinLight(dstR, srcR), PinLight(dstG, srcG), PinLight(dstB, srcB)),
-            "HardMix" => (HardMix(dstR, srcR), HardMix(dstG, srcG), HardMix(dstB, srcB)),
-            "DarkerColor" => LuminosityBlend(dstR, dstG, dstB, srcR, srcG, srcB, useDarker: true),
-            "LighterColor" => LuminosityBlend(dstR, dstG, dstB, srcR, srcG, srcB, useDarker: false),
-            "Subtract" => (dstR - srcR, dstG - srcG, dstB - srcB),
-            "Divide" => (SafeDivide(dstR, srcR), SafeDivide(dstG, srcG), SafeDivide(dstB, srcB)),
-            "Hue" => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 0),
-            "Saturation" => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 1),
-            "Color" => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 2),
-            "Luminosity" => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 3),
-            _ => (srcR, srcG, srcB)
+            BlendId.Normal or BlendId.PassThrough or BlendId.Dissolve or BlendId.Unknown
+                                  => (srcR, srcG, srcB),
+            BlendId.Multiply      => (dstR * srcR, dstG * srcG, dstB * srcB),
+            BlendId.Screen        => (1.0 - (1.0 - dstR) * (1.0 - srcR),
+                                      1.0 - (1.0 - dstG) * (1.0 - srcG),
+                                      1.0 - (1.0 - dstB) * (1.0 - srcB)),
+            BlendId.Overlay       => (Overlay(dstR, srcR), Overlay(dstG, srcG), Overlay(dstB, srcB)),
+            BlendId.SoftLight     => (SoftLight(dstR, srcR), SoftLight(dstG, srcG), SoftLight(dstB, srcB)),
+            BlendId.HardLight     => (HardLight(dstR, srcR), HardLight(dstG, srcG), HardLight(dstB, srcB)),
+            BlendId.ColorDodge    => (ColorDodge(dstR, srcR), ColorDodge(dstG, srcG), ColorDodge(dstB, srcB)),
+            BlendId.ColorBurn     => (ColorBurn(dstR, srcR), ColorBurn(dstG, srcG), ColorBurn(dstB, srcB)),
+            BlendId.Darken        => (Math.Min(dstR, srcR), Math.Min(dstG, srcG), Math.Min(dstB, srcB)),
+            BlendId.Lighten       => (Math.Max(dstR, srcR), Math.Max(dstG, srcG), Math.Max(dstB, srcB)),
+            BlendId.Difference    => (Math.Abs(dstR - srcR), Math.Abs(dstG - srcG), Math.Abs(dstB - srcB)),
+            BlendId.Exclusion     => (dstR + srcR - 2.0 * dstR * srcR,
+                                      dstG + srcG - 2.0 * dstG * srcG,
+                                      dstB + srcB - 2.0 * dstB * srcB),
+            BlendId.LinearBurn    => (dstR + srcR - 1.0, dstG + srcG - 1.0, dstB + srcB - 1.0),
+            BlendId.LinearDodge   => (dstR + srcR, dstG + srcG, dstB + srcB),
+            BlendId.VividLight    => (VividLight(dstR, srcR), VividLight(dstG, srcG), VividLight(dstB, srcB)),
+            BlendId.LinearLight   => (LinearLight(dstR, srcR), LinearLight(dstG, srcG), LinearLight(dstB, srcB)),
+            BlendId.PinLight      => (PinLight(dstR, srcR), PinLight(dstG, srcG), PinLight(dstB, srcB)),
+            BlendId.HardMix       => (HardMix(dstR, srcR), HardMix(dstG, srcG), HardMix(dstB, srcB)),
+            BlendId.DarkerColor   => LuminosityBlend(dstR, dstG, dstB, srcR, srcG, srcB, useDarker: true),
+            BlendId.LighterColor  => LuminosityBlend(dstR, dstG, dstB, srcR, srcG, srcB, useDarker: false),
+            BlendId.Subtract      => (dstR - srcR, dstG - srcG, dstB - srcB),
+            BlendId.Divide        => (SafeDivide(dstR, srcR), SafeDivide(dstG, srcG), SafeDivide(dstB, srcB)),
+            BlendId.Hue           => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 0),
+            BlendId.Saturation    => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 1),
+            BlendId.Color         => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 2),
+            BlendId.Luminosity    => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 3),
+            _                     => (srcR, srcG, srcB)
         };
     }
+
+    // Numeric discriminant avoids repeated string comparisons inside pixel loops.
+    private enum BlendId
+    {
+        Normal, PassThrough, Dissolve, Multiply, Screen, Overlay, SoftLight, HardLight,
+        ColorDodge, ColorBurn, Darken, Lighten, Difference, Exclusion, LinearBurn,
+        LinearDodge, VividLight, LinearLight, PinLight, HardMix, DarkerColor, LighterColor,
+        Subtract, Divide, Hue, Saturation, Color, Luminosity, Unknown
+    }
+
+    private static BlendId ParseBlendId(string mode) => mode switch
+    {
+        "Normal"       => BlendId.Normal,
+        "PassThrough"  => BlendId.PassThrough,
+        "Dissolve"     => BlendId.Dissolve,
+        "Multiply"     => BlendId.Multiply,
+        "Screen"       => BlendId.Screen,
+        "Overlay"      => BlendId.Overlay,
+        "SoftLight"    => BlendId.SoftLight,
+        "HardLight"    => BlendId.HardLight,
+        "ColorDodge"   => BlendId.ColorDodge,
+        "ColorBurn"    => BlendId.ColorBurn,
+        "Darken"       => BlendId.Darken,
+        "Lighten"      => BlendId.Lighten,
+        "Difference"   => BlendId.Difference,
+        "Exclusion"    => BlendId.Exclusion,
+        "LinearBurn"   => BlendId.LinearBurn,
+        "LinearDodge"  => BlendId.LinearDodge,
+        "VividLight"   => BlendId.VividLight,
+        "LinearLight"  => BlendId.LinearLight,
+        "PinLight"     => BlendId.PinLight,
+        "HardMix"      => BlendId.HardMix,
+        "DarkerColor"  => BlendId.DarkerColor,
+        "LighterColor" => BlendId.LighterColor,
+        "Subtract"     => BlendId.Subtract,
+        "Divide"       => BlendId.Divide,
+        "Hue"          => BlendId.Hue,
+        "Saturation"   => BlendId.Saturation,
+        "Color"        => BlendId.Color,
+        "Luminosity"   => BlendId.Luminosity,
+        _              => BlendId.Unknown
+    };
 
     private static int FloorDiv(int value, int divisor)
     {

@@ -143,7 +143,7 @@ public partial class MainWindow : Window
     private StackPanel _presetPanel = null!;
     private StackPanel _toolPropertyPanel = null!;
     private TextBlock _toolPropertyTitle = null!;
-    private StackPanel _layerPanel = null!;
+    private LayerPanelControl _layerPanelControl = null!;
     private Slider _sizeSlider = null!;
     private Slider _opacitySlider = null!;
     private Slider _hardnessSlider = null!;
@@ -178,8 +178,6 @@ public partial class MainWindow : Window
     private TextBlock _rotDisplay = null!;
     private Button _saveBrushButton = null!;
     private BrushStrokePreview _strokePreview = null!;
-    private Border? _paperSwatch;
-    private Button? _paperVisBtn;
 
     // ── State ─────────────────────────────────────────────────────────────────
     private BrushEditorWindow? _brushEditorWindow;
@@ -192,12 +190,7 @@ public partial class MainWindow : Window
     private BrushAsset? _activeBrushAsset;
     private BrushLibrary _brushLibrary = null!;
     private IReadOnlyList<BrushAsset> _brushAssets = [];
-    private readonly Dictionary<int, LayerRowRefs> _layerRows = new();
     private string? _currentFlossPath;
-    private int _layerDragSourceIndex = -1;
-    private int _renamingLayerIndex = -1;
-    private TextBox? _activeLayerNameEdit;
-    private Action<bool>? _finishLayerRename;
 
     // ── Tool instances ────────────────────────────────────────────────────────
     private readonly SelectTool _selectTool = new();
@@ -244,7 +237,7 @@ public partial class MainWindow : Window
         SelectInitialBrush();
         SetColor(Color.Parse(App.Config.LastColor));
         SyncCanvasFrameToDocument(fitToViewport: false);
-        BuildLayerList();
+        RefreshLayerPanel();
         UpdateStatus();
         Closing += (_, _) => SaveToConfig();
     }
@@ -346,7 +339,6 @@ public partial class MainWindow : Window
         shell.Children.Add(root);
 
         Content = shell;
-        AddHandler(PointerPressedEvent, WindowPointerPressed, RoutingStrategies.Tunnel);
     }
 
     private static TextBlock MiniText() => new()
@@ -519,27 +511,6 @@ public partial class MainWindow : Window
     private static PathIcon MaterialIcon(string pathData, double size) =>
         Icons.Make(pathData, size, new SolidColorBrush(Color.Parse(TextSecondary)));
 
-    private static Button LayerIconBtn(string icon, string tip, string color, int tag)
-    {
-        var btn = new Button
-        {
-            Content = Icons.Make(icon, 10, new SolidColorBrush(Color.Parse(color))),
-            Width = 14,
-            Height = 14,
-            Padding = new Thickness(0),
-            Tag = tag,
-            Background = Avalonia.Media.Brushes.Transparent,
-            BorderBrush = Avalonia.Media.Brushes.Transparent,
-            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
-        };
-        ToolTip.SetTip(btn, tip);
-        return btn;
-    }
-
-    private static void SetLayerIconBtnIcon(Button btn, string icon, string color) =>
-        btn.Content = Icons.Make(icon, 11, new SolidColorBrush(Color.Parse(color)));
-
     private static Border TbarSep() => new()
     {
         Width = 1,
@@ -706,10 +677,10 @@ public partial class MainWindow : Window
     // ── Right panel ───────────────────────────────────────────────────────────
     private Control BuildRightPanel()
     {
+        // Top section: Brush/Tool (left) | Color (right) — both scrollable, min widths prevent overlap
         var leftStack = new StackPanel();
         leftStack.Children.Add(PanelSection("Brush", BuildBrushSection()));
         leftStack.Children.Add(PanelSection("Tool Property", BuildToolPropertySection()));
-        leftStack.Children.Add(PanelSection("Layers", BuildLayersSection()));
 
         var leftScroll = new ScrollViewer
         {
@@ -728,7 +699,7 @@ public partial class MainWindow : Window
             Content = rightStack
         };
 
-        var splitter = new GridSplitter
+        var hSplitter = new GridSplitter
         {
             Width = 5,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
@@ -736,24 +707,45 @@ public partial class MainWindow : Window
             Background = new SolidColorBrush(Color.Parse(Stroke))
         };
 
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
-        grid.ColumnDefinitions.Add(new ColumnDefinition(5, GridUnitType.Pixel));
-        grid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
-
+        var topGrid = new Grid();
+        topGrid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 90 });
+        topGrid.ColumnDefinitions.Add(new ColumnDefinition(5, GridUnitType.Pixel));
+        topGrid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 90 });
         Grid.SetColumn(leftScroll, 0);
-        Grid.SetColumn(splitter, 1);
+        Grid.SetColumn(hSplitter, 1);
         Grid.SetColumn(rightScroll, 2);
-        grid.Children.Add(leftScroll);
-        grid.Children.Add(splitter);
-        grid.Children.Add(rightScroll);
+        topGrid.Children.Add(leftScroll);
+        topGrid.Children.Add(hSplitter);
+        topGrid.Children.Add(rightScroll);
+
+        // Layer section — custom widget fills all remaining vertical space
+        var layerSection = BuildLayersSection();
+
+        var vSplitter = new GridSplitter
+        {
+            Height = 5,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
+            Background = new SolidColorBrush(Color.Parse(Stroke))
+        };
+
+        var vGrid = new Grid();
+        vGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto, MinHeight = 40 });
+        vGrid.RowDefinitions.Add(new RowDefinition(5, GridUnitType.Pixel));
+        vGrid.RowDefinitions.Add(new RowDefinition(1, GridUnitType.Star) { MinHeight = 80 });
+        Grid.SetRow(topGrid, 0);
+        Grid.SetRow(vSplitter, 1);
+        Grid.SetRow(layerSection, 2);
+        vGrid.Children.Add(topGrid);
+        vGrid.Children.Add(vSplitter);
+        vGrid.Children.Add(layerSection);
 
         return new Border
         {
             Background = new SolidColorBrush(Color.Parse(Bg1)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0),
-            Child = grid
+            Child = vGrid
         };
     }
 
@@ -1025,20 +1017,49 @@ public partial class MainWindow : Window
             Children = { addBtn, folderBtn, dupBtn, _deleteLayerButton, _moveLayerUpButton, _moveLayerDownButton }
         };
 
-        _layerPanel = new StackPanel { Spacing = 2 };
-
-        return new StackPanel
+        var header = new StackPanel
         {
             Spacing = 4,
-            Margin = new Thickness(8, 4, 8, 8),
-            Children =
-            {
-                _layerNameBox,
-                blendOpRow,
-                ctrlRow,
-                _layerPanel
-            }
+            Margin = new Thickness(8, 4, 8, 4),
+            Children = { _layerNameBox, blendOpRow, ctrlRow }
         };
+
+        // Custom layer panel — wire all callbacks
+        _layerPanelControl = new LayerPanelControl();
+        _layerPanelControl.OnSelectLayer = i => _canvas.SelectLayer(i);
+        _layerPanelControl.OnToggleVis   = i => _canvas.ToggleLayerVisibility(i);
+        _layerPanelControl.OnToggleLock  = i => _canvas.ToggleLayerLock(i);
+        _layerPanelControl.OnToggleAlpha = i => _canvas.ToggleLayerAlphaLock(i);
+        _layerPanelControl.OnToggleClip  = i => _canvas.ToggleLayerClipping(i);
+        _layerPanelControl.OnToggleOpen  = i => _canvas.ToggleLayerOpen(i);
+        _layerPanelControl.OnContextMenu = (i, pt) => ShowLayerContextMenu(i, pt);
+        _layerPanelControl.OnMoveLayer   = (from, insertBefore) =>
+        {
+            if (insertBefore < 0)
+                _canvas.MoveLayer(from, 0, LayerDropPlacement.Below);
+            else
+                _canvas.MoveLayer(from, insertBefore, LayerDropPlacement.Above);
+        };
+        _layerPanelControl.OnPaperVis    = () => _canvas.SetPaperVisible(!_canvas.Document.PaperVisible);
+        _layerPanelControl.OnPaperSwatch = () => OpenPaperColorPicker();
+
+        var grid = new Grid();
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition(1, GridUnitType.Star));
+        Grid.SetRow(header, 0);
+        Grid.SetRow(_layerPanelControl, 1);
+        grid.Children.Add(header);
+        grid.Children.Add(_layerPanelControl);
+
+        return grid;
+    }
+
+    private void ShowLayerContextMenu(int layerIndex, Point pos)
+    {
+        var layers = _canvas.Layers;
+        if (layerIndex < 0 || layerIndex >= layers.Count) return;
+        var menu = BuildLayerContextMenu(layerIndex, layers[layerIndex]);
+        menu.Open(_layerPanelControl);
     }
 
     private void ApplyLayerName()
@@ -1435,10 +1456,10 @@ public partial class MainWindow : Window
 
         _canvas.StatsChanged += (_, _) => UpdateStatus();
         _canvas.HistoryChanged += (_, _) => UpdateStatus();
-        _canvas.LayersChanged += (_, _) => { BuildLayerList(); UpdateStatus(); };
-        _canvas.LayerMetadataChanged += (_, e) => { UpdateLayerRow(e.LayerIndex); UpdateStatus(); };
+        _canvas.LayersChanged += (_, _) => { RefreshLayerPanel(); UpdateStatus(); };
+        _canvas.LayerMetadataChanged += (_, _) => { RefreshLayerPanel(); UpdateStatus(); };
         _canvas.ColorSampled += (_, c) => SetColor(c, syncPicker: true, switchToBrush: false);
-        _canvas.Document.PaperChanged += (_, _) => RefreshPaperRow();
+        _canvas.Document.PaperChanged += (_, _) => RefreshPaperState();
 
         SliderChanged(_sizeSlider, v => UpdateCurrentBrush(p => p with { Size = v }));
         SliderChanged(_opacitySlider, v => UpdateCurrentBrush(p => p with { Opacity = v }));
@@ -2014,22 +2035,11 @@ public partial class MainWindow : Window
     }
 
     // ── Layer panel ───────────────────────────────────────────────────────────
-    private void BuildLayerList()
+    private void RefreshLayerPanel()
     {
-        _layerPanel.Children.Clear();
-        _layerRows.Clear();
         var layers = _canvas.Layers;
-
-        foreach (var i in VisibleLayerIndexes())
-        {
-            var layer = layers[i];
-            var (row, refs) = BuildLayerRow(i, layer);
-            _layerPanel.Children.Add(row);
-            _layerRows[i] = refs;
-        }
-
-        // Paper row — always at the bottom, non-interactive
-        _layerPanel.Children.Add(BuildPaperRow());
+        _layerPanelControl.Update(layers, _canvas.ActiveLayerIndex);
+        RefreshPaperState();
 
         if (layers.Count > 0)
         {
@@ -2042,184 +2052,10 @@ public partial class MainWindow : Window
         }
     }
 
-    private IEnumerable<int> VisibleLayerIndexes()
+    private void RefreshPaperState()
     {
-        var layers = _canvas.Layers;
-        foreach (var root in layers.Where(l => l.Parent == null).Reverse())
-        {
-            foreach (var index in VisibleLayerIndexes(root))
-                yield return index;
-        }
-    }
-
-    private IEnumerable<int> VisibleLayerIndexes(DrawingLayer layer)
-    {
-        var index = LayerIndexOf(layer);
-        if (index >= 0)
-            yield return index;
-
-        if (!layer.IsGroup || !layer.IsOpen) yield break;
-        for (var i = layer.Children.Count - 1; i >= 0; i--)
-        {
-            foreach (var childIndex in VisibleLayerIndexes(layer.Children[i]))
-                yield return childIndex;
-        }
-    }
-
-    private int LayerIndexOf(DrawingLayer layer)
-    {
-        var layers = _canvas.Layers;
-        for (var i = 0; i < layers.Count; i++)
-        {
-            if (ReferenceEquals(layers[i], layer))
-                return i;
-        }
-
-        return -1;
-    }
-
-    private (Border Row, LayerRowRefs Refs) BuildLayerRow(int i, DrawingLayer layer)
-    {
-        var isActive = i == _canvas.ActiveLayerIndex;
-        var dimColor = isActive ? Color.Parse("#5a80c8") : Color.Parse("#383d47");
-        var fgColor = isActive ? Color.Parse("#d8e0f0") : Color.Parse("#7a8494");
-
-        var row = new Border
-        {
-            Background = new SolidColorBrush(isActive ? Color.Parse("#1a2a50") : Color.Parse("#16181f")),
-            BorderBrush = new SolidColorBrush(isActive ? Color.Parse("#2e5fb8") : Color.Parse("#1e2128")),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(3, 2),
-            Margin = new Thickness(layer.IndentLevel * 12, 0, 0, 0),
-            Tag = i,
-            ContextMenu = BuildLayerContextMenu(i, layer)
-        };
-
-        DragDrop.SetAllowDrop(row, true);
-        row.PointerPressed += LayerRowPointerPressed;
-        row.Tapped += LayerRowTapped;
-        row.DoubleTapped += LayerRowDoubleTapped;
-        row.AddHandler(DragDrop.DragOverEvent, LayerRowDragOver);
-        row.AddHandler(DragDrop.DropEvent, LayerRowDrop);
-
-        // cols: disclosure | vis | thumb | lock | alphalock | clip | name | blend | opacity
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("16,16,30,16,16,16,*,26,28") };
-
-        var disclosureBtn = LayerDisclosureBtn(layer, i);
-
-        var visBtn = LayerIconBtn(
-            layer.IsVisible ? Icons.Eye : Icons.EyeOff,
-            "Toggle visibility",
-            layer.IsVisible ? "#6a9fd8" : "#404550", i);
-        visBtn.Click += (_, _) => _canvas.ToggleLayerVisibility((int)visBtn.Tag!);
-
-        var (preview, previewImage) = BuildLayerPreview(layer);
-        preview.PointerPressed += (_, e) =>
-        {
-            if (layer.IsGroup && e.GetCurrentPoint(preview).Properties.IsLeftButtonPressed)
-            {
-                _canvas.ToggleLayerOpen(i);
-                e.Handled = true;
-            }
-        };
-
-        var lockBtn = LayerIconBtn(
-            layer.IsLocked ? Icons.LockOutline : Icons.LockOpenOutline,
-            "Toggle lock",
-            layer.IsLocked ? "#c89050" : "#404550", i);
-        lockBtn.Click += (_, _) => _canvas.ToggleLayerLock((int)lockBtn.Tag!);
-
-        var alphaLockBtn = LayerIconBtn(
-            Icons.AlphaLock,
-            "Toggle alpha lock",
-            layer.IsAlphaLocked ? "#6ab8c8" : "#404550", i);
-        alphaLockBtn.Click += (_, _) => _canvas.ToggleLayerAlphaLock((int)alphaLockBtn.Tag!);
-
-        var clipBtn = LayerIconBtn(
-            Icons.ClipToBelow,
-            "Toggle clipping mask",
-            layer.IsClipping ? "#a87ad8" : "#404550", i);
-        clipBtn.Click += (_, _) => _canvas.ToggleLayerClipping((int)clipBtn.Tag!);
-
-        var nameText = new TextBlock
-        {
-            Text = layer.Name,
-            Foreground = new SolidColorBrush(fgColor),
-            Padding = new Thickness(2, 0),
-            FontSize = 11,
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis
-        };
-        var nameHost = new ContentControl
-        {
-            Content = nameText,
-            Tag = i,
-            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
-            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
-            ClipToBounds = true
-        };
-
-        var blendText = new TextBlock
-        {
-            Text = BlendAbbr(layer.BlendMode),
-            Foreground = new SolidColorBrush(dimColor),
-            FontSize = 9,
-            FontFamily = new FontFamily("Consolas, Courier New, monospace"),
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
-            Margin = new Thickness(0, 0, 2, 0)
-        };
-
-        var opacityText = new TextBlock
-        {
-            Text = $"{Math.Round(layer.Opacity * 100):0}%",
-            Foreground = new SolidColorBrush(dimColor),
-            FontSize = 9,
-            FontFamily = new FontFamily("Consolas, Courier New, monospace"),
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
-            Margin = new Thickness(0, 0, 2, 0)
-        };
-
-        Grid.SetColumn(disclosureBtn, 0);
-        Grid.SetColumn(visBtn, 1);
-        Grid.SetColumn(preview, 2);
-        Grid.SetColumn(lockBtn, 3);
-        Grid.SetColumn(alphaLockBtn, 4);
-        Grid.SetColumn(clipBtn, 5);
-        Grid.SetColumn(nameHost, 6);
-        Grid.SetColumn(blendText, 7);
-        Grid.SetColumn(opacityText, 8);
-        grid.Children.Add(disclosureBtn);
-        grid.Children.Add(visBtn);
-        grid.Children.Add(preview);
-        grid.Children.Add(lockBtn);
-        grid.Children.Add(alphaLockBtn);
-        grid.Children.Add(clipBtn);
-        grid.Children.Add(nameHost);
-        grid.Children.Add(blendText);
-        grid.Children.Add(opacityText);
-        row.Child = grid;
-        return (row, new LayerRowRefs(row, disclosureBtn, visBtn, lockBtn, alphaLockBtn, clipBtn, nameHost, blendText, opacityText, previewImage));
-    }
-
-    private Button LayerDisclosureBtn(DrawingLayer layer, int index)
-    {
-        var btn = new Button
-        {
-            Content = layer.IsGroup ? (layer.IsOpen ? "▾" : "▸") : "",
-            Background = Avalonia.Media.Brushes.Transparent,
-            BorderBrush = Avalonia.Media.Brushes.Transparent,
-            Foreground = new SolidColorBrush(Color.Parse(layer.IsGroup ? "#6a7a96" : "#30343d")),
-            Padding = new Thickness(0),
-            FontSize = 10,
-            Tag = index,
-            IsHitTestVisible = layer.IsGroup
-        };
-        if (layer.IsGroup)
-            btn.Click += (_, _) => _canvas.ToggleLayerOpen((int)btn.Tag!);
-        return btn;
+        var doc = _canvas.Document;
+        _layerPanelControl.UpdatePaperState(doc.PaperVisible, doc.PaperColor);
     }
 
     private ContextMenu BuildLayerContextMenu(int index, DrawingLayer layer)
@@ -2253,269 +2089,6 @@ public partial class MainWindow : Window
             items.Insert(4, Item(layer.IsOpen ? "Collapse Folder" : "Expand Folder", () => _canvas.ToggleLayerOpen(index)));
 
         return new ContextMenu { ItemsSource = items };
-    }
-
-    private async void LayerRowPointerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (sender is not Border row || row.Tag is not int index) return;
-        var point = e.GetCurrentPoint(row);
-        if (!point.Properties.IsLeftButtonPressed) return;
-        if (IsLayerRowInteractiveSource(e.Source)) return;
-        _canvas.SelectLayer(index);
-        if (e.ClickCount > 1) return;
-        _layerDragSourceIndex = index;
-
-        var data = new DataTransfer();
-        var item = new DataTransferItem();
-        item.SetText(index.ToString(CultureInfo.InvariantCulture));
-        data.Add(item);
-        await DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
-        _layerDragSourceIndex = -1;
-    }
-
-    private void WindowPointerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (_activeLayerNameEdit == null) return;
-        if (IsInsideElement(e.Source, _activeLayerNameEdit)) return;
-        FinishActiveLayerRename(commit: true);
-    }
-
-    private void LayerRowTapped(object? sender, TappedEventArgs e)
-    {
-        if (sender is not Border row || row.Tag is not int index) return;
-        if (IsLayerRowInteractiveSource(e.Source)) return;
-        _canvas.SelectLayer(index);
-    }
-
-    private void LayerRowDoubleTapped(object? sender, TappedEventArgs e)
-    {
-        if (sender is not Border row || row.Tag is not int index) return;
-        if (IsLayerRowInteractiveSource(e.Source)) return;
-        _canvas.SelectLayer(index);
-        BeginLayerRename(index);
-        e.Handled = true;
-    }
-
-    private static bool IsLayerRowInteractiveSource(object? source)
-    {
-        for (var current = source as StyledElement; current != null; current = current.Parent)
-        {
-            if (current is Button or TextBox or ComboBox or Slider)
-                return true;
-        }
-
-        return false;
-    }
-
-    private void BeginLayerRename(int index)
-    {
-        var layers = _canvas.Layers;
-        if (index < 0 || index >= layers.Count || !_layerRows.TryGetValue(index, out var refs)) return;
-
-        FinishActiveLayerRename(commit: true);
-        _renamingLayerIndex = index;
-        var edit = new TextBox
-        {
-            Text = layers[index].Name,
-            FontSize = 11,
-            Height = 24,
-            Padding = new Thickness(4, 0),
-            Background = new SolidColorBrush(Color.Parse(Bg0)),
-            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
-            CaretBrush = new SolidColorBrush(Color.Parse(TextPrimary)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Accent)),
-            BorderThickness = new Thickness(1),
-            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center
-        };
-
-        var finished = false;
-        void Finish(bool commit)
-        {
-            if (finished) return;
-            finished = true;
-
-            if (commit)
-            {
-                var name = edit.Text?.Trim();
-                if (!string.IsNullOrWhiteSpace(name))
-                {
-                    _canvas.SelectLayer(index);
-                    _canvas.SetActiveLayerName(name);
-                }
-            }
-
-            _renamingLayerIndex = -1;
-            _activeLayerNameEdit = null;
-            _finishLayerRename = null;
-            UpdateLayerRow(index);
-        }
-
-        _activeLayerNameEdit = edit;
-        _finishLayerRename = Finish;
-        edit.KeyDown += (_, e) =>
-        {
-            if (e.Key == Key.Enter)
-            {
-                Finish(commit: true);
-                e.Handled = true;
-            }
-            else if (e.Key == Key.Escape)
-            {
-                Finish(commit: false);
-                e.Handled = true;
-            }
-        };
-        edit.LostFocus += (_, _) => Finish(commit: true);
-
-        refs.NameHost.Content = edit;
-        edit.AttachedToVisualTree += (_, _) =>
-        {
-            edit.Focus();
-            edit.SelectAll();
-        };
-    }
-
-    private void FinishActiveLayerRename(bool commit)
-    {
-        var finish = _finishLayerRename;
-        if (finish == null) return;
-        finish(commit);
-    }
-
-    private static bool IsInsideElement(object? source, StyledElement target)
-    {
-        for (var current = source as StyledElement; current != null; current = current.Parent)
-        {
-            if (ReferenceEquals(current, target))
-                return true;
-        }
-
-        return false;
-    }
-
-    private void LayerRowDragOver(object? sender, DragEventArgs e)
-    {
-        if (sender is not Border row || row.Tag is not int targetIndex)
-        {
-            e.DragEffects = DragDropEffects.None;
-            e.Handled = true;
-            return;
-        }
-
-        var sourceIndex = GetDraggedLayerIndex(e.DataTransfer);
-        var placement = GetLayerDropPlacement(row, targetIndex, e.GetPosition(row));
-        e.DragEffects = sourceIndex >= 0 && _canvas.CanMoveLayer(sourceIndex, targetIndex, placement)
-            ? DragDropEffects.Move
-            : DragDropEffects.None;
-        e.Handled = true;
-    }
-
-    private void LayerRowDrop(object? sender, DragEventArgs e)
-    {
-        if (sender is not Border row || row.Tag is not int targetIndex) return;
-        var sourceIndex = GetDraggedLayerIndex(e.DataTransfer);
-        var placement = GetLayerDropPlacement(row, targetIndex, e.GetPosition(row));
-        if (sourceIndex >= 0)
-            _canvas.MoveLayer(sourceIndex, targetIndex, placement);
-        e.Handled = true;
-    }
-
-    private int GetDraggedLayerIndex(IDataTransfer data)
-    {
-        var raw = data.TryGetText();
-        return int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var index) ? index : -1;
-    }
-
-    private LayerDropPlacement GetLayerDropPlacement(Border row, int targetIndex, Point position)
-    {
-        var height = Math.Max(1, row.Bounds.Height);
-        var target = _canvas.Layers[targetIndex];
-        if (target.IsGroup && position.Y > height * 0.25 && position.Y < height * 0.75)
-            return LayerDropPlacement.Into;
-        return position.Y < height * 0.5 ? LayerDropPlacement.Above : LayerDropPlacement.Below;
-    }
-
-    private Control BuildPaperRow()
-    {
-        var doc = _canvas.Document;
-        var paperColor = doc.PaperColor;
-
-        _paperSwatch = new Border
-        {
-            Width = 26,
-            Height = 26,
-            Margin = new Thickness(2, 0, 2, 0),
-            Background = new SolidColorBrush(paperColor),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3a4050")),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
-        };
-        _paperSwatch.PointerPressed += (_, e) =>
-        {
-            if (e.GetCurrentPoint(_paperSwatch).Properties.IsLeftButtonPressed)
-            {
-                OpenPaperColorPicker();
-                e.Handled = true;
-            }
-        };
-
-        _paperVisBtn = new Button
-        {
-            Content = Icons.Make(doc.PaperVisible ? Icons.Eye : Icons.EyeOff, 10,
-                new SolidColorBrush(Color.Parse(doc.PaperVisible ? "#6a9fd8" : "#404550"))),
-            Width = 14,
-            Height = 14,
-            Padding = new Thickness(0),
-            Background = Avalonia.Media.Brushes.Transparent,
-            BorderBrush = Avalonia.Media.Brushes.Transparent,
-            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
-        };
-        _paperVisBtn.Click += (_, _) => _canvas.SetPaperVisible(!doc.PaperVisible);
-
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("16,16,30,16,16,16,*,26,28") };
-        var nameLabel = new TextBlock
-        {
-            Text = "Paper",
-            FontSize = 11,
-            Foreground = new SolidColorBrush(Color.Parse("#4a5468")),
-            Padding = new Thickness(2, 0),
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
-        };
-        Grid.SetColumn(_paperVisBtn, 1);
-        Grid.SetColumn(_paperSwatch, 2);
-        Grid.SetColumn(nameLabel, 6);
-        grid.Children.Add(_paperVisBtn);
-        grid.Children.Add(_paperSwatch);
-        grid.Children.Add(nameLabel);
-
-        var row = new Border
-        {
-            Background = new SolidColorBrush(Color.Parse("#0f1016")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#1a1c22")),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(3, 2),
-            Child = grid
-        };
-        row.PointerPressed += (_, e) =>
-        {
-            if (e.GetCurrentPoint(row).Properties.IsLeftButtonPressed)
-            {
-                OpenPaperColorPicker();
-                e.Handled = true;
-            }
-        };
-        return row;
-    }
-
-    private void RefreshPaperRow()
-    {
-        if (_paperSwatch == null || _paperVisBtn == null) return;
-        var doc = _canvas.Document;
-        _paperSwatch.Background = new SolidColorBrush(doc.PaperColor);
-        _paperVisBtn.Content = Icons.Make(doc.PaperVisible ? Icons.Eye : Icons.EyeOff, 10,
-            new SolidColorBrush(Color.Parse(doc.PaperVisible ? "#6a9fd8" : "#404550")));
     }
 
     private void OpenPaperColorPicker()
@@ -2629,114 +2202,6 @@ public partial class MainWindow : Window
         }
         return false;
     }
-
-    private void UpdateLayerRow(int index)
-    {
-        var layers = _canvas.Layers;
-        if (index < 0 || index >= layers.Count || !_layerRows.TryGetValue(index, out var refs))
-        {
-            BuildLayerList();
-            return;
-        }
-
-        var layer = layers[index];
-        var isActive = index == _canvas.ActiveLayerIndex;
-        var dimColor = isActive ? Color.Parse("#5a80c8") : Color.Parse("#383d47");
-        var fgColor = isActive ? Color.Parse("#d8e0f0") : Color.Parse("#7a8494");
-
-        refs.Row.Background = new SolidColorBrush(isActive ? Color.Parse("#1a2a50") : Color.Parse("#16181f"));
-        refs.Row.BorderBrush = new SolidColorBrush(isActive ? Color.Parse("#2e5fb8") : Color.Parse("#1e2128"));
-
-        SetLayerIconBtnIcon(refs.VisibilityButton,
-            layer.IsVisible ? Icons.Eye : Icons.EyeOff,
-            layer.IsVisible ? "#6a9fd8" : "#404550");
-        SetLayerIconBtnIcon(refs.LockButton,
-            layer.IsLocked ? Icons.LockOutline : Icons.LockOpenOutline,
-            layer.IsLocked ? "#c89050" : "#404550");
-        SetLayerIconBtnIcon(refs.AlphaLockButton,
-            Icons.AlphaLock,
-            layer.IsAlphaLocked ? "#6ab8c8" : "#404550");
-        SetLayerIconBtnIcon(refs.ClipButton,
-            Icons.ClipToBelow,
-            layer.IsClipping ? "#a87ad8" : "#404550");
-        refs.DisclosureButton.Content = layer.IsGroup ? (layer.IsOpen ? "▾" : "▸") : "";
-        refs.DisclosureButton.IsHitTestVisible = layer.IsGroup;
-        if (_renamingLayerIndex != index)
-        {
-            refs.NameHost.Content = new TextBlock
-            {
-                Text = layer.Name,
-                Foreground = new SolidColorBrush(fgColor),
-                Padding = new Thickness(4, 1),
-                FontSize = 11,
-                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
-            };
-        }
-        refs.BlendText.Text = BlendAbbr(layer.BlendMode);
-        refs.BlendText.Foreground = new SolidColorBrush(dimColor);
-        refs.OpacityText.Text = $"{Math.Round(layer.Opacity * 100):0}%";
-        refs.OpacityText.Foreground = new SolidColorBrush(dimColor);
-
-        if (isActive && !_syncingLayerUi)
-        {
-            _syncingLayerUi = true;
-            _layerOpacitySlider.Value = layer.Opacity;
-            _blendModeComboBox.SelectedItem = layer.BlendMode;
-            _layerNameBox.Text = layer.Name;
-            _syncingLayerUi = false;
-        }
-    }
-
-    private static (Control Frame, Image? PreviewImage) BuildLayerPreview(DrawingLayer layer)
-    {
-        var frame = new Border
-        {
-            Width = 26,
-            Height = 26,
-            Margin = new Thickness(2, 0, 2, 0),
-            Background = new SolidColorBrush(Color.Parse("#1e2028")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#2e3340")),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3),
-            ClipToBounds = true
-        };
-
-        if (layer.IsGroup)
-        {
-            frame.Child = new TextBlock
-            {
-                Text = layer.IsOpen ? "▾" : "▸",
-                Foreground = new SolidColorBrush(Color.Parse("#6a7a96")),
-                FontSize = 11,
-                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
-            };
-            return (frame, null);
-        }
-
-        var image = new Image
-        {
-            Source = layer.GetThumbnail(26),
-            Stretch = Stretch.Uniform,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
-        };
-        RenderOptions.SetBitmapInterpolationMode(image, Avalonia.Media.Imaging.BitmapInterpolationMode.None);
-        frame.Child = image;
-        return (frame, image);
-    }
-
-    private sealed record LayerRowRefs(
-        Border Row,
-        Button DisclosureButton,
-        Button VisibilityButton,
-        Button LockButton,
-        Button AlphaLockButton,
-        Button ClipButton,
-        ContentControl NameHost,
-        TextBlock BlendText,
-        TextBlock OpacityText,
-        Image? PreviewImage);
 
     // ── Viewport ──────────────────────────────────────────────────────────────
     private void SyncCanvasFrameToDocument(bool fitToViewport)
@@ -3076,12 +2541,8 @@ public partial class MainWindow : Window
         _moveLayerUpButton.IsEnabled = activeIdx < layers.Count - 1;
         _moveLayerDownButton.IsEnabled = activeIdx > 0;
 
-        if (_layerRows.TryGetValue(activeIdx, out var refs) && refs.PreviewImage != null)
-        {
-            layer.MarkThumbnailDirty();
-            layer.RefreshThumbnail();
-            refs.PreviewImage.InvalidateVisual();
-        }
+        layer.MarkThumbnailDirty();
+        layer.RefreshThumbnail();
     }
 
     // ── File I/O ──────────────────────────────────────────────────────────────
@@ -3167,7 +2628,7 @@ public partial class MainWindow : Window
         App.Config.AddRecentFile(path);
         if (IsFlossPath(path)) _currentFlossPath = path;
         SyncCanvasFrameToDocument(fitToViewport: true);
-        BuildLayerList();
+        RefreshLayerPanel();
         UpdateStatus();
         _footerStatusText.Text =
             $"Opened {_canvas.Document.Width}x{_canvas.Document.Height}  {Path.GetFileName(path)}";

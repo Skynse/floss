@@ -1,0 +1,371 @@
+src/Floss.App
+├── App.axaml
+├── App.axaml.cs
+├── AppConfig.cs
+├── app.manifest
+├── AppPaths.cs
+├── bin
+│   ├── Debug
+│   │   └── net10.0
+│   │       ├── Avalonia.Base.dll
+│   │       ├── Avalonia.Controls.dll
+│   │       ├── Avalonia.DesignerSupport.dll
+│   │       ├── Avalonia.Desktop.dll
+│   │       ├── Avalonia.Dialogs.dll
+│   │       ├── Avalonia.dll
+│   │       ├── Avalonia.Fonts.Inter.dll
+│   │       ├── Avalonia.FreeDesktop.AtSpi.dll
+│   │       ├── Avalonia.FreeDesktop.dll
+│   │       ├── Avalonia.HarfBuzz.dll
+│   │       ├── Avalonia.Markup.dll
+│   │       ├── Avalonia.Markup.Xaml.dll
+│   │       ├── Avalonia.Metal.dll
+│   │       ├── Avalonia.MicroCom.dll
+│   │       ├── Avalonia.Native.dll
+│   │       ├── Avalonia.OpenGL.dll
+│   │       ├── Avalonia.Remote.Protocol.dll
+│   │       ├── Avalonia.Skia.dll
+│   │       ├── Avalonia.Themes.Fluent.dll
+│   │       ├── AvaloniaUI.DiagnosticsSupport.Avalonia.dll
+│   │       ├── Avalonia.Vulkan.dll
+│   │       ├── Avalonia.Win32.Automation.dll
+│   │       ├── Avalonia.Win32.dll
+│   │       ├── Avalonia.X11.dll
+│   │       ├── Floss.App
+│   │       ├── Floss.App.deps.json
+│   │       ├── Floss.App.dll
+│   │       ├── Floss.App.pdb
+│   │       ├── Floss.App.runtimeconfig.json
+│   │       ├── HarfBuzzSharp.dll
+│   │       ├── MicroCom.Runtime.dll
+│   │       ├── Microsoft.Extensions.DependencyInjection.Abstractions.dll
+│   │       ├── Microsoft.Extensions.Logging.Abstractions.dll
+│   │       ├── Microsoft.IO.RecyclableMemoryStream.dll
+│   │       ├── runtimes
+│   │       │   ├── linux-arm
+│   │       │   │   └── native
+│   │       │   │       ├── libHarfBuzzSharp.so
+│   │       │   │       └── libSkiaSharp.so
+│   │       │   ├── linux-arm64
+│   │       │   │   └── native
+│   │       │   │       ├── libHarfBuzzSharp.so
+│   │       │   │       └── libSkiaSharp.so
+│   │       │   ├── linux-bionic-arm64
+│   │       │   │   └── native
+│   │       │   │       └── libSkiaSharp.so
+│   │       │   ├── linux-bionic-x64
+│   │       │   │   └── native
+│   │       │   │       └── libSkiaSharp.so
+│   │       │   ├── linux-loongarch64
+│   │       │   │   └── native
+│   │       │   │       ├── libHarfBuzzSharp.so
+│   │       │   │       └── libSkiaSharp.so
+│   │       │   ├── linux-musl-arm
+│   │       │   │   └── native
+│   │       │   │       ├── libHarfBuzzSharp.so
+│   │       │   │       └── libSkiaSharp.so
+│   │       │   ├── linux-musl-arm64
+│   │       │   │   └── native
+│   │       │   │       ├── libHarfBuzzSharp.so
+│   │       │   │       └── libSkiaSharp.so
+│   │       │   ├── linux-musl-loongarch64
+│   │       │   │   └── native
+│   │       │   │       ├── libHarfBuzzSharp.so
+│   │       │   │       └── libSkiaSharp.so
+│   │       │   ├── linux-musl-riscv64
+│   │       │   │   └── native
+│   │       │   │       ├── libHarfBuzzSharp.so
+│   │       │   │       └── libSkiaSharp.so
+│   │       │   ├── linux-musl-x64
+│   │       │   │   └── native
+│   │       │   │       ├── libHarfBuzzSharp.so
+│   │       │   │       └── libSkiaSharp.so
+│   │       │   ├── linux-riscv64
+│   │       │   │   └── native
+│   │       │   │       ├── libHarfBuzzSharp.so
+│   │       │   │       └── libSkiaSharp.so
+│   │       │   ├── linux-x64
+│   │       │   │   └── native
+│   │       │   │       ├── libHarfBuzzSharp.so
+│   │       │   │       └── libSkiaSharp.so
+│   │       │   ├── linux-x86
+│   │       │   │   └── native
+│   │       │   │       ├── libHarfBuzzSharp.so
+│   │       │   │       └── libSkiaSharp.so
+│   │       │   ├── osx
+│   │       │   │   └── native
+│   │       │   │       ├── libAvaloniaNative.dylib
+│   │       │   │       ├── libHarfBuzzSharp.dylib
+│   │       │   │       └── libSkiaSharp.dylib
+│   │       │   ├── win-arm64
+│   │       │   │   └── native
+│   │       │   │       ├── av_libglesv2.dll
+│   │       │   │       ├── libHarfBuzzSharp.dll
+│   │       │   │       ├── libHarfBuzzSharp.pdb
+│   │       │   │       ├── libSkiaSharp.dll
+│   │       │   │       └── libSkiaSharp.pdb
+│   │       │   ├── win-x64
+│   │       │   │   └── native
+│   │       │   │       ├── av_libglesv2.dll
+│   │       │   │       ├── libHarfBuzzSharp.dll
+│   │       │   │       ├── libHarfBuzzSharp.pdb
+│   │       │   │       ├── libSkiaSharp.dll
+│   │       │   │       └── libSkiaSharp.pdb
+│   │       │   └── win-x86
+│   │       │       └── native
+│   │       │           ├── av_libglesv2.dll
+│   │       │           ├── libHarfBuzzSharp.dll
+│   │       │           ├── libHarfBuzzSharp.pdb
+│   │       │           ├── libSkiaSharp.dll
+│   │       │           └── libSkiaSharp.pdb
+│   │       ├── SkiaSharp.dll
+│   │       └── Tmds.DBus.Protocol.dll
+│   └── Release
+│       └── net10.0
+│           ├── Avalonia.Base.dll
+│           ├── Avalonia.Controls.dll
+│           ├── Avalonia.DesignerSupport.dll
+│           ├── Avalonia.Desktop.dll
+│           ├── Avalonia.Dialogs.dll
+│           ├── Avalonia.dll
+│           ├── Avalonia.Fonts.Inter.dll
+│           ├── Avalonia.FreeDesktop.AtSpi.dll
+│           ├── Avalonia.FreeDesktop.dll
+│           ├── Avalonia.HarfBuzz.dll
+│           ├── Avalonia.Markup.dll
+│           ├── Avalonia.Markup.Xaml.dll
+│           ├── Avalonia.Metal.dll
+│           ├── Avalonia.MicroCom.dll
+│           ├── Avalonia.Native.dll
+│           ├── Avalonia.OpenGL.dll
+│           ├── Avalonia.Remote.Protocol.dll
+│           ├── Avalonia.Skia.dll
+│           ├── Avalonia.Themes.Fluent.dll
+│           ├── Avalonia.Vulkan.dll
+│           ├── Avalonia.Win32.Automation.dll
+│           ├── Avalonia.Win32.dll
+│           ├── Avalonia.X11.dll
+│           ├── Floss.App
+│           ├── Floss.App.deps.json
+│           ├── Floss.App.dll
+│           ├── Floss.App.pdb
+│           ├── Floss.App.runtimeconfig.json
+│           ├── HarfBuzzSharp.dll
+│           ├── MicroCom.Runtime.dll
+│           ├── runtimes
+│           │   ├── linux-arm
+│           │   │   └── native
+│           │   │       ├── libHarfBuzzSharp.so
+│           │   │       └── libSkiaSharp.so
+│           │   ├── linux-arm64
+│           │   │   └── native
+│           │   │       ├── libHarfBuzzSharp.so
+│           │   │       └── libSkiaSharp.so
+│           │   ├── linux-bionic-arm64
+│           │   │   └── native
+│           │   │       └── libSkiaSharp.so
+│           │   ├── linux-bionic-x64
+│           │   │   └── native
+│           │   │       └── libSkiaSharp.so
+│           │   ├── linux-loongarch64
+│           │   │   └── native
+│           │   │       ├── libHarfBuzzSharp.so
+│           │   │       └── libSkiaSharp.so
+│           │   ├── linux-musl-arm
+│           │   │   └── native
+│           │   │       ├── libHarfBuzzSharp.so
+│           │   │       └── libSkiaSharp.so
+│           │   ├── linux-musl-arm64
+│           │   │   └── native
+│           │   │       ├── libHarfBuzzSharp.so
+│           │   │       └── libSkiaSharp.so
+│           │   ├── linux-musl-loongarch64
+│           │   │   └── native
+│           │   │       ├── libHarfBuzzSharp.so
+│           │   │       └── libSkiaSharp.so
+│           │   ├── linux-musl-riscv64
+│           │   │   └── native
+│           │   │       ├── libHarfBuzzSharp.so
+│           │   │       └── libSkiaSharp.so
+│           │   ├── linux-musl-x64
+│           │   │   └── native
+│           │   │       ├── libHarfBuzzSharp.so
+│           │   │       └── libSkiaSharp.so
+│           │   ├── linux-riscv64
+│           │   │   └── native
+│           │   │       ├── libHarfBuzzSharp.so
+│           │   │       └── libSkiaSharp.so
+│           │   ├── linux-x64
+│           │   │   └── native
+│           │   │       ├── libHarfBuzzSharp.so
+│           │   │       └── libSkiaSharp.so
+│           │   ├── linux-x86
+│           │   │   └── native
+│           │   │       ├── libHarfBuzzSharp.so
+│           │   │       └── libSkiaSharp.so
+│           │   ├── osx
+│           │   │   └── native
+│           │   │       ├── libAvaloniaNative.dylib
+│           │   │       ├── libHarfBuzzSharp.dylib
+│           │   │       └── libSkiaSharp.dylib
+│           │   ├── win-arm64
+│           │   │   └── native
+│           │   │       ├── av_libglesv2.dll
+│           │   │       ├── libHarfBuzzSharp.dll
+│           │   │       ├── libHarfBuzzSharp.pdb
+│           │   │       ├── libSkiaSharp.dll
+│           │   │       └── libSkiaSharp.pdb
+│           │   ├── win-x64
+│           │   │   └── native
+│           │   │       ├── av_libglesv2.dll
+│           │   │       ├── libHarfBuzzSharp.dll
+│           │   │       ├── libHarfBuzzSharp.pdb
+│           │   │       ├── libSkiaSharp.dll
+│           │   │       └── libSkiaSharp.pdb
+│           │   └── win-x86
+│           │       └── native
+│           │           ├── av_libglesv2.dll
+│           │           ├── libHarfBuzzSharp.dll
+│           │           ├── libHarfBuzzSharp.pdb
+│           │           ├── libSkiaSharp.dll
+│           │           └── libSkiaSharp.pdb
+│           ├── SkiaSharp.dll
+│           └── Tmds.DBus.Protocol.dll
+├── BrushEditorWindow.cs
+├── Brushes
+│   ├── BrushAsset.cs
+│   ├── BrushDynamics.cs
+│   ├── BrushEngine.cs
+│   ├── BrushFileFormat.cs
+│   ├── BrushLibrary.cs
+│   ├── BrushPaletteConfig.cs
+│   ├── BrushPreset.cs
+│   ├── CompoundBrushTip.cs
+│   ├── CubicCurve.cs
+│   ├── CurveOption.cs
+│   ├── IBrushTip.cs
+│   ├── ImageBrushTip.cs
+│   ├── ParameterDynamics.cs
+│   ├── ProceduralBrushTip.cs
+│   ├── ResponseCurveKind.cs
+│   ├── SensorType.cs
+│   ├── StrokePoint.cs
+│   └── StrokeState.cs
+├── BrushStrokePreview.cs
+├── Canvas
+│   ├── DrawingCanvas.cs
+│   └── LayerCompositor.cs
+├── Components
+│   └── ToneCurve.cs
+├── CurveGraph.cs
+├── Document
+│   ├── DrawingDocument.cs
+│   ├── DrawingLayer.cs
+│   ├── PixelRegion.cs
+│   └── TiledPixelBuffer.cs
+├── DynamicsPopupWindow.cs
+├── Floss.App.csproj
+├── FlossFiles
+│   └── FlossFileFormat.cs
+├── HsvColorPicker.cs
+├── Icons.cs
+├── ImageFiles
+│   └── ImageFileFormat.cs
+├── Input
+│   ├── CanvasInputSample.cs
+│   ├── KeyBinding.cs
+│   └── ShortcutsConfig.cs
+├── Kra
+│   └── KraImporter.cs
+├── MainWindow.axaml
+├── MainWindow.axaml.cs
+├── obj
+│   ├── Debug
+│   │   └── net10.0
+│   │       ├── apphost
+│   │       ├── Avalonia
+│   │       │   ├── references
+│   │       │   ├── resources
+│   │       │   └── Resources.Inputs.cache
+│   │       ├── Floss.App.AssemblyInfo.cs
+│   │       ├── Floss.App.AssemblyInfoInputs.cache
+│   │       ├── Floss.App.assets.cache
+│   │       ├── Floss.App.csproj.AssemblyReference.cache
+│   │       ├── Floss.App.csproj.CoreCompileInputs.cache
+│   │       ├── Floss.App.csproj.FileListAbsolute.txt
+│   │       ├── Floss.App.csproj.Up2Date
+│   │       ├── Floss.App.dll
+│   │       ├── Floss.App.GeneratedMSBuildEditorConfig.editorconfig
+│   │       ├── Floss.App.genruntimeconfig.cache
+│   │       ├── Floss.App.pdb
+│   │       ├── Floss.App.sourcelink.json
+│   │       ├── ref
+│   │       │   └── Floss.App.dll
+│   │       └── refint
+│   │           └── Floss.App.dll
+│   ├── Floss.App.csproj.nuget.dgspec.json
+│   ├── Floss.App.csproj.nuget.g.props
+│   ├── Floss.App.csproj.nuget.g.targets
+│   ├── project.assets.json
+│   ├── project.nuget.cache
+│   ├── project.packagespec.json
+│   ├── Release
+│   │   └── net10.0
+│   │       ├── apphost
+│   │       ├── Avalonia
+│   │       │   ├── references
+│   │       │   ├── resources
+│   │       │   └── Resources.Inputs.cache
+│   │       ├── Floss.App.AssemblyInfo.cs
+│   │       ├── Floss.App.AssemblyInfoInputs.cache
+│   │       ├── Floss.App.assets.cache
+│   │       ├── Floss.App.csproj.AssemblyReference.cache
+│   │       ├── Floss.App.csproj.CoreCompileInputs.cache
+│   │       ├── Floss.App.csproj.FileListAbsolute.txt
+│   │       ├── Floss.App.csproj.Up2Date
+│   │       ├── Floss.App.dll
+│   │       ├── Floss.App.GeneratedMSBuildEditorConfig.editorconfig
+│   │       ├── Floss.App.genruntimeconfig.cache
+│   │       ├── Floss.App.pdb
+│   │       ├── Floss.App.sourcelink.json
+│   │       ├── ref
+│   │       │   └── Floss.App.dll
+│   │       └── refint
+│   │           └── Floss.App.dll
+│   ├── rider.project.model.nuget.info
+│   └── rider.project.restore.info
+├── PERF_NOTES.md
+├── Program.cs
+├── Psd
+│   ├── PsdFormat.cs
+│   ├── PsdImporter.cs
+│   └── PsdReader.cs
+├── SettingsWindow.cs
+└── Tools
+    ├── BrushTool.cs
+    ├── CanvasTool.cs
+    ├── DragToolOperation.cs
+    ├── EyedropperTool.cs
+    ├── FillTool.cs
+    ├── FreehandStrokeOperation.cs
+    ├── GradientTool.cs
+    ├── GradientToolOperation.cs
+    ├── ITool.cs
+    ├── IToolOperation.cs
+    ├── LassoFillTool.cs
+    ├── MagicWandTool.cs
+    ├── MoveTool.cs
+    ├── MoveToolOperation.cs
+    ├── OneShotToolOperations.cs
+    ├── PolylineTool.cs
+    ├── PolylineToolOperation.cs
+    ├── SelectionMask.cs
+    ├── SelectionMoveOperation.cs
+    ├── SelectionToolOperations.cs
+    ├── SelectTool.cs
+    ├── ShapeTool.cs
+    ├── ShapeToolOperation.cs
+    ├── ToolController.cs
+    └── TransformTool.cs
+
+97 directories, 272 files
