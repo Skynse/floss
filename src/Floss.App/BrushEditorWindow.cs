@@ -233,33 +233,73 @@ public sealed class BrushEditorWindow : Window
         var isProc = mainTip is ProceduralBrushTip;
         var procTip = mainTip as ProceduralBrushTip ?? new ProceduralBrushTip();
 
-        // Tip type toggle
-        var typeRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, Margin = new Thickness(0, 0, 0, 6) };
-        var procBtn = MkToggleBtn("Procedural", isProc, () => CommitMainTip(new ProceduralBrushTip()));
-        var imgBtn = MkToggleBtn("Image", !isProc, () =>
-        {
-            var pngs = GetPngFiles();
-            if (pngs.Count > 0) CommitMainTip(new ImageBrushTip(pngs[0]));
-        });
-        typeRow.Children.Add(procBtn);
-        typeRow.Children.Add(imgBtn);
+        var result = new StackPanel { Spacing = 0 };
 
-        // Preview + browse
+        // ── SHAPE section ────────────────────────────────────────────────────────
+        // When tip is procedural: shape grid controls Tip directly (no separate clip).
+        // When tip is image-based: shape grid controls preset.Shape (the clip mask).
+
+        var gridShapes = new (BrushTipShape shape, string label)[]
+        {
+            (BrushTipShape.Circle,    "Round"),
+            (BrushTipShape.SoftRound, "Soft"),
+            (BrushTipShape.Flat,      "Flat"),
+            (BrushTipShape.Ellipse,   "Oval"),
+            (BrushTipShape.Rectangle, "Square"),
+            (BrushTipShape.Chalk,     "Chalk"),
+            (BrushTipShape.Bristle,   "Bristle"),
+            (BrushTipShape.Scatter,   "Scatter"),
+        };
+
+        var shapeGrid = new WrapPanel { Orientation = Orientation.Horizontal };
+
+        // "Off" cell — only shown when tip is image-based (shape clip is optional then)
+        if (!isProc)
+        {
+            var offActive = _preset.Shape == null;
+            var offBtn = MkShapeCell("Off", null, offActive, () => Commit(p => p with { Shape = null }));
+            shapeGrid.Children.Add(offBtn);
+        }
+
+        BrushTipShape? activeShape = isProc ? procTip.Shape : _preset.Shape?.Shape;
+
+        foreach (var (shape, label) in gridShapes)
+        {
+            var s = shape;
+            var active = activeShape == s;
+            Action onClick = isProc
+                ? () => CommitMainTip(new ProceduralBrushTip(s, procTip.AspectRatio))
+                : () => Commit(p => p with { Shape = new ProceduralBrushTip(s) });
+            shapeGrid.Children.Add(MkShapeCell(label, s, active, onClick));
+        }
+
+        result.Children.Add(SectionHeader("SHAPE"));
+        result.Children.Add(shapeGrid);
+
+        if (isProc && procTip.Shape == BrushTipShape.Ellipse)
+        {
+            var aspectSlider = MkSlider(0.1, 1.0, Math.Clamp(procTip.AspectRatio, 0.1, 1.0), "Aspect ratio (width/height)");
+            WireSlider(aspectSlider, v => CommitMainTip(new ProceduralBrushTip(procTip.Shape, (float)v)));
+            result.Children.Add(SectionHeader("ASPECT RATIO"));
+            result.Children.Add(PlainSliderRowRaw(aspectSlider, "f2"));
+        }
+
+        // ── TIP TEXTURE section ──────────────────────────────────────────────────
+        // Shows the raw texture bitmap. For procedural tips this is just the shape
+        // itself (no separate texture). For image tips, shows the imported image.
+
         var previewBmp = BuildTipPreview(mainTip);
         var previewImg = new Image
         {
             Source = previewBmp,
-            Width = 48,
-            Height = 48,
+            Width = 48, Height = 48,
             Stretch = Stretch.Uniform,
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center
         };
-
         var previewBtn = new Button
         {
-            Width = 54,
-            Height = 54,
+            Width = 54, Height = 54,
             Padding = new Thickness(2),
             Background = new SolidColorBrush(Color.Parse(Bg2)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
@@ -274,53 +314,69 @@ public sealed class BrushEditorWindow : Window
         var browseBtn = SmBtn("Browse...");
         browseBtn.Click += (_, _) => OpenTipBrowser();
 
-        var previewRow = new StackPanel
+        var tipBtnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        tipBtnRow.Children.Add(browseBtn);
+        if (!isProc)
+        {
+            var clearBtn = SmBtn("Clear");
+            clearBtn.Click += (_, _) =>
+            {
+                var shape = _preset.Shape?.Shape ?? BrushTipShape.Circle;
+                CommitMainTip(new ProceduralBrushTip(shape));
+                Commit(p => p with { Shape = null });
+            };
+            tipBtnRow.Children.Add(clearBtn);
+        }
+
+        var tipRow = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 8,
-            Margin = new Thickness(0, 0, 0, 6),
-            Children = { previewBtn, browseBtn }
+            Margin = new Thickness(0, 2, 0, 4),
+            Children = { previewBtn, tipBtnRow }
         };
 
-        var result = new StackPanel { Spacing = 0 };
-        result.Children.Add(SectionHeader("TIP TYPE"));
-        result.Children.Add(typeRow);
-        result.Children.Add(SectionHeader("PREVIEW"));
-        result.Children.Add(previewRow);
-
-        if (isProc)
-        {
-            var shapeRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 3, Margin = new Thickness(0, 0, 0, 4) };
-            foreach (var shape in Enum.GetValues<BrushTipShape>())
-            {
-                var s = shape;
-                var active = procTip.Shape == s;
-                var btn = new Button
-                {
-                    Content = shape.ToString(),
-                    Height = 20,
-                    Padding = new Thickness(6, 0),
-                    FontSize = 10,
-                    Background = new SolidColorBrush(Color.Parse(active ? AccentSoft : Bg2)),
-                    BorderBrush = new SolidColorBrush(Color.Parse(active ? Accent : Stroke)),
-                    BorderThickness = new Thickness(1),
-                    Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted)),
-                    CornerRadius = new CornerRadius(3)
-                };
-                btn.Click += (_, _) => CommitMainTip(new ProceduralBrushTip(s, procTip.AspectRatio));
-                shapeRow.Children.Add(btn);
-            }
-
-            var aspectSlider = MkSlider(0.1, 1.0, Math.Clamp(procTip.AspectRatio, 0.1, 1.0), "Aspect ratio (width/height)");
-            WireSlider(aspectSlider, v => CommitMainTip(new ProceduralBrushTip(procTip.Shape, (float)v)));
-
-            result.Children.Add(SectionHeader("SHAPE"));
-            result.Children.Add(shapeRow);
-            result.Children.Add(SectionHeader("ASPECT RATIO"));
-            result.Children.Add(PlainSliderRowRaw(aspectSlider, "f2"));
-        }
+        result.Children.Add(SectionHeader("TIP TEXTURE"));
+        result.Children.Add(tipRow);
 
         return result;
+    }
+
+    private Button MkShapeCell(string label, BrushTipShape? shape, bool active, Action onClick)
+    {
+        var thumb = shape.HasValue ? RenderTipThumbnail(shape.Value) : null;
+        Control inner;
+        if (thumb != null)
+        {
+            var img = new Image { Source = thumb, Width = 36, Height = 36, Stretch = Stretch.Uniform };
+            var lbl = new TextBlock
+            {
+                Text = label, FontSize = 8,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted))
+            };
+            inner = new StackPanel { Spacing = 2, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Children = { img, lbl } };
+        }
+        else
+        {
+            inner = new TextBlock { Text = label, FontSize = 9, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted)) };
+        }
+        var btn = new Button
+        {
+            Width = 54, Height = 58,
+            Margin = new Thickness(2),
+            Padding = new Thickness(2),
+            Background = new SolidColorBrush(Color.Parse(active ? AccentSoft : Bg2)),
+            BorderBrush = new SolidColorBrush(Color.Parse(active ? Accent : Stroke)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Content = inner
+        };
+        ToolTip.SetTip(btn, label);
+        btn.Click += (_, _) => onClick();
+        return btn;
     }
 
     private void OpenTipBrowser()
@@ -334,38 +390,40 @@ public sealed class BrushEditorWindow : Window
         const int size = 48;
         if (tip is ImageBrushTip img)
         {
-            try
-            {
-                using var ms = new MemoryStream(img.GetPngBytes());
-                return new Bitmap(ms);
-            }
+            try { using var ms = new MemoryStream(img.GetPngBytes()); return new Bitmap(ms); }
             catch { return null; }
         }
+        return RenderMaskThumbnail(tip, size);
+    }
 
-        if (tip is ProceduralBrushTip proc)
+    private static Bitmap? RenderTipThumbnail(BrushTipShape shape)
+    {
+        var tip = new ProceduralBrushTip(shape, shape == BrushTipShape.Ellipse ? 0.45f : 1.0f);
+        return RenderMaskThumbnail(tip, 40);
+    }
+
+    private static Bitmap? RenderMaskThumbnail(IBrushTip tip, int size)
+    {
+        try
         {
+            const float hardness = 0.85f;
+            using var mask = tip.GenerateMask(size - 6, hardness);
             var info = new SKImageInfo(size, size, SKColorType.Bgra8888, SKAlphaType.Premul);
-            using var bitmap = new SKBitmap(info);
-            using var canvas = new SKCanvas(bitmap);
-            canvas.Clear(SKColors.Transparent);
-            using var paint = new SKPaint { IsAntialias = true, Color = SKColors.White, Style = SKPaintStyle.Fill };
-            var rect = SKRect.Create(2, 2, size - 4, size - 4);
-            switch (proc.Shape)
-            {
-                case BrushTipShape.Rectangle:
-                    canvas.DrawRoundRect(rect, 2, 2, paint);
-                    break;
-                default:
-                    canvas.DrawOval(rect, paint);
-                    break;
-            }
-            using var image = SKImage.FromBitmap(bitmap);
+            using var bmp = new SKBitmap(info);
+            using var canvas = new SKCanvas(bmp);
+            canvas.Clear(new SKColor(0x28, 0x24, 0x28));
+            using var colorFilter = SKColorFilter.CreateBlendMode(SKColors.White, SKBlendMode.SrcIn);
+            using var paint = new SKPaint { ColorFilter = colorFilter, IsAntialias = true };
+            canvas.Save();
+            canvas.Translate(3f, 3f);
+            canvas.DrawBitmap(mask, 0, 0, paint);
+            canvas.Restore();
+            using var image = SKImage.FromBitmap(bmp);
             using var data = image.Encode(SKEncodedImageFormat.Png, 100);
             using var ms = new MemoryStream(data.ToArray());
             return new Bitmap(ms);
         }
-
-        return null;
+        catch { return null; }
     }
 
     private static List<string> GetPngFiles()

@@ -379,12 +379,45 @@ public sealed class BrushEngine : IDisposable
             Matrix = Matrix.PostConcat(SKMatrix.CreateTranslation(stamp.X, stamp.Y));
         }
 
-        public SKBitmap MaskFor(float hardness) => _brush.Tip.GenerateMask(BaseMaskSize, hardness);
+        public SKBitmap MaskFor(float hardness)
+        {
+            var tipMask = _brush.Tip.GenerateMask(BaseMaskSize, hardness);
+            if (_brush.Shape == null) return tipMask;
+            var shapeMask = _brush.Shape.GenerateMask(BaseMaskSize, hardness);
+            var combined = MultiplyMasks(tipMask, shapeMask, BaseMaskSize);
+            if (_brush.Tip is CompoundBrushTip) tipMask.Dispose();
+            return combined;
+        }
 
         public void ReleaseMask(SKBitmap mask)
         {
-            if (!ReferenceEquals(mask, Mask) && _brush.Tip is CompoundBrushTip)
+            if (_brush.Shape != null)
+                mask.Dispose(); // combined mask is always freshly allocated
+            else if (!ReferenceEquals(mask, Mask) && _brush.Tip is CompoundBrushTip)
                 mask.Dispose();
+        }
+
+        private static unsafe SKBitmap MultiplyMasks(SKBitmap tip, SKBitmap shape, int size)
+        {
+            var bmp = new SKBitmap(new SKImageInfo(size, size, SKColorType.Alpha8, SKAlphaType.Unpremul));
+            var a = (byte*)tip.GetPixels().ToPointer();
+            var b = (byte*)shape.GetPixels().ToPointer();
+            var dst = (byte*)bmp.GetPixels().ToPointer();
+            var aStride = tip.RowBytes;
+            var bStride = shape.RowBytes;
+            var dStride = bmp.RowBytes;
+            var tw = Math.Min(tip.Width, size);
+            var th = Math.Min(tip.Height, size);
+            var sw = Math.Min(shape.Width, size);
+            var sh = Math.Min(shape.Height, size);
+            for (var y = 0; y < size; y++)
+            for (var x = 0; x < size; x++)
+            {
+                var ta = y < th && x < tw ? a[y * aStride + x] : (byte)0;
+                var sa = y < sh && x < sw ? b[y * bStride + x] : (byte)0;
+                dst[y * dStride + x] = (byte)(ta * sa / 255);
+            }
+            return bmp;
         }
 
         public void Dispose()

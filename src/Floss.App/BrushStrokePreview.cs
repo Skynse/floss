@@ -92,7 +92,22 @@ public sealed class BrushStrokePreview : Control
     {
         // Cap size: large brushes still show their shape/texture
         var baseSize = (float)Math.Clamp(brush.Size, 1.0, h * 0.72);
-        var mask = brush.Tip.GenerateMask(Math.Max(1, (int)Math.Ceiling(baseSize)), (float)brush.Hardness);
+        var maskSize = Math.Max(1, (int)Math.Ceiling(baseSize));
+        var tipMask = brush.Tip.GenerateMask(maskSize, (float)brush.Hardness);
+        SKBitmap mask;
+        bool ownMask;
+        if (brush.Shape != null)
+        {
+            var shapeMask = brush.Shape.GenerateMask(maskSize, (float)brush.Hardness);
+            mask = MultiplyMasks(tipMask, shapeMask, maskSize);
+            ownMask = true;
+            if (brush.Tip is CompoundBrushTip) tipMask.Dispose();
+        }
+        else
+        {
+            mask = tipMask;
+            ownMask = brush.Tip is CompoundBrushTip;
+        }
 
         // Always white on dark — every brush reads cleanly regardless of its color
         using var colorFilter = SKColorFilter.CreateBlendMode(SKColors.White, SKBlendMode.SrcIn);
@@ -180,8 +195,30 @@ public sealed class BrushStrokePreview : Control
             prevY = py;
         }
 
-        if (brush.Tip is CompoundBrushTip)
-            mask.Dispose();
+        if (ownMask) mask.Dispose();
+    }
+
+    private static unsafe SKBitmap MultiplyMasks(SKBitmap tip, SKBitmap shape, int size)
+    {
+        var bmp = new SKBitmap(new SKImageInfo(size, size, SKColorType.Alpha8, SKAlphaType.Unpremul));
+        var a = (byte*)tip.GetPixels().ToPointer();
+        var b = (byte*)shape.GetPixels().ToPointer();
+        var dst = (byte*)bmp.GetPixels().ToPointer();
+        var aStride = tip.RowBytes;
+        var bStride = shape.RowBytes;
+        var dStride = bmp.RowBytes;
+        var tw = Math.Min(tip.Width, size);
+        var th = Math.Min(tip.Height, size);
+        var sw = Math.Min(shape.Width, size);
+        var sh = Math.Min(shape.Height, size);
+        for (var y = 0; y < size; y++)
+        for (var x = 0; x < size; x++)
+        {
+            var ta = y < th && x < tw ? a[y * aStride + x] : (byte)0;
+            var sa = y < sh && x < sw ? b[y * bStride + x] : (byte)0;
+            dst[y * dStride + x] = (byte)(ta * sa / 255);
+        }
+        return bmp;
     }
 
     private static float DabHash(int i)

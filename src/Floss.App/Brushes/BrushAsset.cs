@@ -103,13 +103,24 @@ public sealed class BrushAsset
     public BrushPreset Preset { get; set; } = BrushPreset.Defaults[0];
     public BrushTipData Tip { get; set; } = new();
 
+    // Persists preset.Shape (always procedural, so only shape+aspect needed).
+    public BrushTipData? ShapeData { get; set; } = null;
+
     public BrushPreset ToPreset()
-        => Preset with { Tip = Tip.CreateTip() };
+    {
+        var preset = Preset with { Tip = Tip.CreateTip() };
+        if (ShapeData is { Kind: BrushTipStorageKind.Procedural })
+            preset = preset with { Shape = new ProceduralBrushTip(ShapeData.Shape, ShapeData.AspectRatio) };
+        return preset;
+    }
 
     public BrushAsset WithPreset(BrushPreset preset)
     {
         Preset = preset;
         Tip = BrushTipData.FromTip(preset.Tip);
+        ShapeData = preset.Shape != null
+            ? new BrushTipData { Kind = BrushTipStorageKind.Procedural, Shape = preset.Shape.Shape, AspectRatio = preset.Shape.AspectRatio }
+            : null;
         return this;
     }
 
@@ -118,7 +129,8 @@ public sealed class BrushAsset
         {
             Id = Guid.NewGuid().ToString("N"),
             Preset = Preset with { Name = name },
-            Tip = Tip.DeepClone()
+            Tip = Tip.DeepClone(),
+            ShapeData = ShapeData == null ? null : new BrushTipData { Kind = BrushTipStorageKind.Procedural, Shape = ShapeData.Shape, AspectRatio = ShapeData.AspectRatio }
         };
 
     public static BrushAsset FromPreset(BrushPreset preset)

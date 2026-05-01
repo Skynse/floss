@@ -22,6 +22,9 @@ public sealed record BrushPreset(
     public double Grain { get; init; } = 0.0;
     public double Smoothing { get; init; } = 0.3;
     public IBrushTip Tip { get; init; } = new ProceduralBrushTip();
+    // Optional silhouette mask multiplied against Tip at render time.
+    // Null = no extra clip (Tip stamps as-is, which is correct for procedural tips).
+    public ProceduralBrushTip? Shape { get; init; } = null;
     public AngleSource BaseAngleSource { get; init; } = AngleSource.None;
     public float AngleJitter { get; init; } = 0f; // 0.0 to 1.0
     public ParameterDynamics SizeDynamics

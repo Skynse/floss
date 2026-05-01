@@ -563,24 +563,50 @@ public static class AbrImporter
         var spacing = Math.Clamp(spacingPct / 100.0, 0.02, 1.0);
         var pngBytes = PixelsToPng(pixels, w, h);
 
+        // Save tip to library so it appears in the tip browser for re-use
+        SaveTipToLibrary(cleanName, pngBytes);
+
         var tipData = new BrushTipData
         {
             Kind = BrushTipStorageKind.EmbeddedPng,
             PngBytes = pngBytes
         };
 
+        var shapeData = new BrushTipData
+        {
+            Kind = BrushTipStorageKind.Procedural,
+            Shape = BrushTipShape.Circle,
+            AspectRatio = 1.0f
+        };
+
+        var circleShape = new ProceduralBrushTip(BrushTipShape.Circle);
+
         var preset = new BrushPreset(cleanName, BrushKind.Ink, 40, 1.0, 0.9, spacing, Color.Parse("#111111"), 100.0)
         {
             Dynamics = new BrushDynamics { Size = CurveOption.Pressure(1.2f) },
-            Tip = tipData.CreateTip()
+            Tip = tipData.CreateTip(),
+            Shape = circleShape
         };
 
         return new BrushAsset
         {
             Id = Guid.NewGuid().ToString("N"),
             Preset = preset,
-            Tip = tipData
+            Tip = tipData,
+            ShapeData = shapeData
         };
+    }
+
+    private static void SaveTipToLibrary(string name, byte[] pngBytes)
+    {
+        try
+        {
+            var safeName = string.Concat(name.Split(Path.GetInvalidFileNameChars())) + ".png";
+            var destPath = Path.Combine(AppPaths.BrushTipsDirectory, safeName);
+            if (!File.Exists(destPath))
+                File.WriteAllBytes(destPath, pngBytes);
+        }
+        catch { /* non-fatal */ }
     }
 
     // ── Big-endian stream reader ──────────────────────────────────────────────
