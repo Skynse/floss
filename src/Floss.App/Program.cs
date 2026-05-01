@@ -1,4 +1,5 @@
 ﻿using Avalonia;
+using Avalonia.Skia;
 using System;
 
 namespace Floss.App;
@@ -12,10 +13,12 @@ class Program
     public static void Main(string[] args) => BuildAvaloniaApp()
         .StartWithClassicDesktopLifetime(args);
 
+
     // Avalonia configuration, don't remove; also used by visual designer.
     public static AppBuilder BuildAvaloniaApp()
         => AppBuilder.Configure<App>()
             .UsePlatformDetect()
             .WithInterFont()
-            .LogToTrace();
+            .LogToTrace()
+            .With(new SkiaOptions { MaxGpuResourceSizeBytes = 256 * 1024 * 1024 });
 }

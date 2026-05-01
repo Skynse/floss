@@ -133,6 +133,15 @@ public sealed class LayerCompositor
         }
     }
 
+    public unsafe byte[] CompositeToBgra(IReadOnlyList<DrawingLayer> layers, int width, int height)
+    {
+        var buf = new byte[width * height * 4];
+        var clip = new PixelRegion(0, 0, width, height);
+        fixed (byte* dst = buf)
+            CompositeLayerList(dst, width * 4, width, height, layers, 1.0, clip, 0, 0);
+        return buf;
+    }
+
     private unsafe void CompositeLayerList(
         byte* dst,
         int dstStride,

@@ -194,6 +194,7 @@ public partial class MainWindow : Window
     private BrushLibrary _brushLibrary = null!;
     private IReadOnlyList<BrushAsset> _brushAssets = [];
     private readonly Dictionary<int, LayerRowRefs> _layerRows = new();
+    private readonly HashSet<int> _selectedLayerIndices = new();
     private string? _currentFlossPath;
     private int _layerDragSourceIndex = -1;
     private int _renamingLayerIndex = -1;
@@ -245,6 +246,7 @@ public partial class MainWindow : Window
         SelectInitialBrush();
         SetColor(Color.Parse(App.Config.LastColor));
         SyncCanvasFrameToDocument(fitToViewport: false);
+        if (_canvas.Layers.Count > 0) _selectedLayerIndices.Add(_canvas.ActiveLayerIndex);
         BuildLayerList();
         UpdateStatus();
         Closing += (_, _) => SaveToConfig();
@@ -673,6 +675,7 @@ public partial class MainWindow : Window
             Background = new SolidColorBrush(Color.Parse(Bg1)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 0, 1, 0),
+            CacheMode = new Avalonia.Media.BitmapCache(),
             Child = new ScrollViewer
             {
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
@@ -1443,7 +1446,14 @@ public partial class MainWindow : Window
 
         _canvas.StatsChanged += (_, _) => UpdateStatus();
         _canvas.HistoryChanged += (_, _) => UpdateStatus();
-        _canvas.LayersChanged += (_, _) => { BuildLayerList(); UpdateStatus(); };
+        _canvas.LayersChanged += (_, _) =>
+        {
+            _selectedLayerIndices.Clear();
+            if (_canvas.Layers.Count > 0)
+                _selectedLayerIndices.Add(_canvas.ActiveLayerIndex);
+            BuildLayerList();
+            UpdateStatus();
+        };
         _canvas.LayerMetadataChanged += (_, e) => { UpdateLayerRow(e.LayerIndex); UpdateStatus(); };
         _canvas.ColorSampled += (_, c) => SetColor(c, syncPicker: true, switchToBrush: false);
         _canvas.Document.PaperChanged += (_, _) => RefreshPaperRow();
@@ -2121,13 +2131,14 @@ public partial class MainWindow : Window
     private (Border Row, LayerRowRefs Refs) BuildLayerRow(int i, DrawingLayer layer)
     {
         var isActive = i == _canvas.ActiveLayerIndex;
-        var dimColor = isActive ? Color.Parse("#5a80c8") : Color.Parse("#383d47");
-        var fgColor = isActive ? Color.Parse("#d8e0f0") : Color.Parse("#7a8494");
+        var isSelected = _selectedLayerIndices.Contains(i);
+        var dimColor = isActive ? Color.Parse("#5a80c8") : isSelected ? Color.Parse("#4a6090") : Color.Parse("#383d47");
+        var fgColor = isActive ? Color.Parse("#d8e0f0") : isSelected ? Color.Parse("#a8c0e0") : Color.Parse("#7a8494");
 
         var row = new Border
         {
-            Background = new SolidColorBrush(isActive ? Color.Parse("#1a2a50") : Color.Parse("#16181f")),
-            BorderBrush = new SolidColorBrush(isActive ? Color.Parse("#2e5fb8") : Color.Parse("#1e2128")),
+            Background = new SolidColorBrush(isActive ? Color.Parse("#1a2a50") : isSelected ? Color.Parse("#141e38") : Color.Parse("#16181f")),
+            BorderBrush = new SolidColorBrush(isActive ? Color.Parse("#2e5fb8") : isSelected ? Color.Parse("#2a4a88") : Color.Parse("#1e2128")),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(4),
             Padding = new Thickness(3, 2),
@@ -2189,7 +2200,8 @@ public partial class MainWindow : Window
             Padding = new Thickness(2, 0),
             FontSize = 11,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            IsHitTestVisible = false
         };
         var nameHost = new ContentControl
         {
@@ -2208,7 +2220,8 @@ public partial class MainWindow : Window
             FontFamily = new FontFamily("Consolas, Courier New, monospace"),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
-            Margin = new Thickness(0, 0, 2, 0)
+            Margin = new Thickness(0, 0, 2, 0),
+            IsHitTestVisible = false
         };
 
         var opacityText = new TextBlock
@@ -2219,7 +2232,8 @@ public partial class MainWindow : Window
             FontFamily = new FontFamily("Consolas, Courier New, monospace"),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
-            Margin = new Thickness(0, 0, 2, 0)
+            Margin = new Thickness(0, 0, 2, 0),
+            IsHitTestVisible = false
         };
 
         Grid.SetColumn(disclosureBtn, 0);
@@ -2290,9 +2304,57 @@ public partial class MainWindow : Window
         };
 
         if (layer.IsGroup)
+        {
             items.Insert(4, Item(layer.IsOpen ? "Collapse Folder" : "Expand Folder", () => _canvas.ToggleLayerOpen(index)));
+            items.Insert(5, Item("Flatten Folder", () => _canvas.FlattenGroup(index)));
+        }
+        else
+        {
+            var multiSelected = _selectedLayerIndices.Count > 1;
+            items.Insert(4, Item(
+                multiSelected ? $"Merge {_selectedLayerIndices.Count} Selected Layers" : "Merge Down",
+                () =>
+                {
+                    if (multiSelected)
+                        _canvas.MergeSelectedLayers(_selectedLayerIndices.OrderBy(x => x).ToList());
+                    else
+                        _canvas.MergeDown();
+                }));
+        }
 
         return new ContextMenu { ItemsSource = items };
+    }
+
+    private void SelectLayerWithModifiers(int index, KeyModifiers mods)
+    {
+        if (mods.HasFlag(KeyModifiers.Control))
+        {
+            if (!_selectedLayerIndices.Add(index))
+                _selectedLayerIndices.Remove(index);
+            _canvas.SelectLayer(index);
+        }
+        else if (mods.HasFlag(KeyModifiers.Shift) && _selectedLayerIndices.Count > 0)
+        {
+            var active = _canvas.ActiveLayerIndex;
+            var visible = VisibleLayerIndexes().ToList();
+            var ai = visible.IndexOf(active);
+            var ti = visible.IndexOf(index);
+            if (ai >= 0 && ti >= 0)
+            {
+                var lo = Math.Min(ai, ti);
+                var hi = Math.Max(ai, ti);
+                for (var vi = lo; vi <= hi; vi++)
+                    _selectedLayerIndices.Add(visible[vi]);
+            }
+            _canvas.SelectLayer(index);
+        }
+        else
+        {
+            _selectedLayerIndices.Clear();
+            _selectedLayerIndices.Add(index);
+            _canvas.SelectLayer(index);
+        }
+        BuildLayerList();
     }
 
     private async void LayerRowPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -2301,7 +2363,7 @@ public partial class MainWindow : Window
         var point = e.GetCurrentPoint(row);
         if (!point.Properties.IsLeftButtonPressed) return;
         if (IsLayerRowInteractiveSource(e.Source)) return;
-        _canvas.SelectLayer(index);
+        SelectLayerWithModifiers(index, e.KeyModifiers);
         if (e.ClickCount > 1) return;
         _layerDragSourceIndex = index;
 
@@ -2322,9 +2384,7 @@ public partial class MainWindow : Window
 
     private void LayerRowTapped(object? sender, TappedEventArgs e)
     {
-        if (sender is not Border row || row.Tag is not int index) return;
-        if (IsLayerRowInteractiveSource(e.Source)) return;
-        _canvas.SelectLayer(index);
+        // Tapped fires after PointerPressed, so selection is already handled there.
     }
 
     private void LayerRowDoubleTapped(object? sender, TappedEventArgs e)
@@ -2971,6 +3031,7 @@ public partial class MainWindow : Window
         else if (sc.LayerDelete.Matches(key, mods)) { _canvas.DeleteLayer(); e.Handled = true; }
         else if (sc.LayerMoveUp.Matches(key, mods)) { _canvas.MoveActiveLayer(1); e.Handled = true; }
         else if (sc.LayerMoveDown.Matches(key, mods)) { _canvas.MoveActiveLayer(-1); e.Handled = true; }
+        else if (sc.LayerMerge.Matches(key, mods)) { _canvas.MergeDown(_selectedLayerIndices.Count > 1 ? _selectedLayerIndices.OrderBy(x => x).ToList() : null); e.Handled = true; }
         else if (sc.ZoomReset.Matches(key, mods)) { ResetView(); e.Handled = true; }
         else if (sc.ZoomFit.Matches(key, mods)) { SyncCanvasFrameToDocument(fitToViewport: true); e.Handled = true; }
         else if (sc.ZoomIn.Matches(key, mods) || sc.ZoomInAlt.Matches(key, mods))
@@ -2982,14 +3043,18 @@ public partial class MainWindow : Window
         else if (sc.RotateRight.Matches(key, mods)) { SetRotation(_rotation + sc.RotateKeyStep); e.Handled = true; }
         else if (sc.ToolBrush.Matches(key, mods)) { SetTool("brush"); e.Handled = true; }
         else if (sc.ToolEraser.Matches(key, mods)) { SetTool("eraser"); e.Handled = true; }
+        else if (sc.ToolMove.Matches(key, mods)) { ActivateTool(_moveTool, _moveToolButton); e.Handled = true; }
+        else if (sc.ToolSelect.Matches(key, mods)) { ActivateTool(_selectTool, _selectToolButton); e.Handled = true; }
+        else if (sc.ToolWand.Matches(key, mods)) { ActivateTool(_magicWandTool, _wandToolButton); e.Handled = true; }
+        else if (sc.ToolFill.Matches(key, mods)) { ActivateTool(_fillTool, _fillToolButton); e.Handled = true; }
+        else if (sc.ToolLasso.Matches(key, mods)) { ActivateTool(_lassoFillTool, _lassoFillToolButton); e.Handled = true; }
+        else if (sc.ToolEyedropper.Matches(key, mods)) { ActivateTool(_eyedropperTool, _eyedropToolButton); e.Handled = true; }
+        else if (sc.ToolSmudge.Matches(key, mods)) { ActivateTool(_canvas.SmudgeTool, _smudgeToolButton); e.Handled = true; }
         else if (sc.ToolTransform.Matches(key, mods)) { _canvas.BeginSelectionTransform(); UpdateStatus(); e.Handled = true; }
-        else if (key == Key.V && mods == KeyModifiers.None) { ActivateTool(_moveTool, _moveToolButton); e.Handled = true; }
-        else if (key == Key.S && mods == KeyModifiers.None) { ActivateTool(_selectTool, _selectToolButton); e.Handled = true; }
-        else if (key == Key.W && mods == KeyModifiers.None) { ActivateTool(_magicWandTool, _wandToolButton); e.Handled = true; }
-        else if (key == Key.G && mods == KeyModifiers.None) { ActivateTool(_fillTool, _fillToolButton); e.Handled = true; }
-        else if (key == Key.L && mods == KeyModifiers.None) { ActivateTool(_lassoFillTool, _lassoFillToolButton); e.Handled = true; }
-        else if (key == Key.I && mods == KeyModifiers.None) { ActivateTool(_eyedropperTool, _eyedropToolButton); e.Handled = true; }
-        else if (key == Key.LeftAlt || key == Key.RightAlt)
+        else if (sc.SelectAll.Matches(key, mods)) { _canvas.SelectAll(); e.Handled = true; }
+        else if (sc.Deselect.Matches(key, mods)) { _canvas.Deselect(); e.Handled = true; }
+        else if (sc.InvertSelect.Matches(key, mods)) { _canvas.InvertSelection(); e.Handled = true; }
+        else if ((key == Key.LeftAlt || key == Key.RightAlt) && mods == KeyModifiers.Alt)
         {
             if (_preAltTool == null && _canvas.ActiveTool != _eyedropperTool)
             {

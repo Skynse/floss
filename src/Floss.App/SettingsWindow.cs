@@ -226,9 +226,21 @@ public sealed class SettingsWindow : Window
         content.Children.Add(BindingRow("Reset rotation",sc.RotateReset, v => sc.RotateReset = v));
 
         content.Children.Add(GroupHeader("Tools"));
-        content.Children.Add(BindingRow("Brush tool",  sc.ToolBrush,  v => sc.ToolBrush  = v));
-        content.Children.Add(BindingRow("Eraser tool", sc.ToolEraser, v => sc.ToolEraser = v));
-        content.Children.Add(BindingRow("Transform selection", sc.ToolTransform, v => sc.ToolTransform = v));
+        content.Children.Add(BindingRow("Brush",              sc.ToolBrush,      v => sc.ToolBrush      = v));
+        content.Children.Add(BindingRow("Eraser",             sc.ToolEraser,     v => sc.ToolEraser     = v));
+        content.Children.Add(BindingRow("Move",               sc.ToolMove,       v => sc.ToolMove       = v));
+        content.Children.Add(BindingRow("Select",             sc.ToolSelect,     v => sc.ToolSelect     = v));
+        content.Children.Add(BindingRow("Magic wand",         sc.ToolWand,       v => sc.ToolWand       = v));
+        content.Children.Add(BindingRow("Fill",               sc.ToolFill,       v => sc.ToolFill       = v));
+        content.Children.Add(BindingRow("Lasso fill",         sc.ToolLasso,      v => sc.ToolLasso      = v));
+        content.Children.Add(BindingRow("Eyedropper",         sc.ToolEyedropper, v => sc.ToolEyedropper = v));
+        content.Children.Add(BindingRow("Smudge",             sc.ToolSmudge,     v => sc.ToolSmudge     = v));
+        content.Children.Add(BindingRow("Transform selection",sc.ToolTransform,  v => sc.ToolTransform  = v));
+
+        content.Children.Add(GroupHeader("Selection"));
+        content.Children.Add(BindingRow("Select all",    sc.SelectAll,    v => sc.SelectAll    = v));
+        content.Children.Add(BindingRow("Deselect",      sc.Deselect,     v => sc.Deselect     = v));
+        content.Children.Add(BindingRow("Invert select", sc.InvertSelect, v => sc.InvertSelect = v));
 
         content.Children.Add(GroupHeader("Brush — Size"));
         content.Children.Add(BindingRow("Size decrease (small)", sc.BrushSizeDecrease,      v => sc.BrushSizeDecrease      = v));
@@ -250,6 +262,7 @@ public sealed class SettingsWindow : Window
         content.Children.Add(BindingRow("Delete layer",    sc.LayerDelete,    v => sc.LayerDelete    = v));
         content.Children.Add(BindingRow("Move up",         sc.LayerMoveUp,    v => sc.LayerMoveUp    = v));
         content.Children.Add(BindingRow("Move down",       sc.LayerMoveDown,  v => sc.LayerMoveDown  = v));
+        content.Children.Add(BindingRow("Merge / Flatten", sc.LayerMerge,     v => sc.LayerMerge     = v));
 
         content.Children.Add(GroupHeader("Misc"));
         content.Children.Add(BindingRow("Open settings",    sc.OpenSettings,    v => sc.OpenSettings    = v));

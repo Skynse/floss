@@ -464,6 +464,84 @@ public sealed class DrawingDocument
         NotifyLayersChanged();
     }
 
+    public void MergeSelectedLayers(IReadOnlyList<int> indices, Floss.App.Canvas.LayerCompositor compositor)
+    {
+        if (indices.Count < 2) return;
+        var sorted = indices.OrderBy(i => i).ToList();
+        if (sorted.Any(i => i < 0 || i >= _layers.Count)) return;
+
+        BeginDocumentMutation();
+
+        // Composite in flat-list order (ascending = bottom-to-top visual)
+        var toMerge = sorted.Select(i => _layers[i]).ToList();
+        var merged = compositor.CompositeToBgra(toMerge, Width, Height);
+
+        // Place result above the topmost selected layer (highest flat-list index)
+        var topmostIndex = sorted[^1];
+        var topmostLayer = _layers[topmostIndex];
+        var anchor = topmostLayer.Parent != null
+            ? _layers.FirstOrDefault(l => l.Parent == topmostLayer.Parent && !toMerge.Contains(l))
+            : _layers.FirstOrDefault(l => l.Parent == null && !toMerge.Contains(l));
+
+        var mergedLayer = new DrawingLayer("Merged", Width, Height);
+        mergedLayer.Pixels.CopyFromBgra(merged, Width, Height);
+
+        // Insert above topmost selected
+        if (anchor != null)
+            InsertLayerNear(mergedLayer, anchor, LayerDropPlacement.Above);
+        else
+        {
+            mergedLayer.Parent = topmostLayer.Parent;
+            (topmostLayer.Parent?.Children ?? RootLayers()).Add(mergedLayer);
+        }
+
+        // Remove all selected layers
+        foreach (var layer in toMerge)
+        {
+            DetachLayer(layer);
+            _layers.Remove(layer);
+            layer.Dispose();
+        }
+
+        RebuildFlatLayerOrder();
+        ActiveLayerIndex = Math.Clamp(_layers.IndexOf(mergedLayer), 0, _layers.Count - 1);
+        NotifyLayersChanged();
+    }
+
+    public void FlattenGroup(int groupIndex, Floss.App.Canvas.LayerCompositor compositor)
+    {
+        if (groupIndex < 0 || groupIndex >= _layers.Count) return;
+        var group = _layers[groupIndex];
+        if (!group.IsGroup || group.Children.Count == 0) return;
+
+        BeginDocumentMutation();
+
+        var flat = compositor.CompositeToBgra(group.Children, Width, Height);
+
+        var flatLayer = new DrawingLayer(group.Name, Width, Height)
+        {
+            Opacity = group.Opacity,
+            BlendMode = group.BlendMode,
+            IsClipping = group.IsClipping
+        };
+        flatLayer.Pixels.CopyFromBgra(flat, Width, Height);
+
+        // Insert flat layer where the group was
+        InsertLayerNear(flatLayer, group, LayerDropPlacement.Above);
+
+        // Remove group and all descendants
+        foreach (var layer in EnumerateLayerTree(group).ToArray())
+        {
+            DetachLayer(layer);
+            _layers.Remove(layer);
+            layer.Dispose();
+        }
+
+        RebuildFlatLayerOrder();
+        ActiveLayerIndex = Math.Clamp(_layers.IndexOf(flatLayer), 0, _layers.Count - 1);
+        NotifyLayersChanged();
+    }
+
     public void Undo()
     {
         if (_undo.Count == 0) return;

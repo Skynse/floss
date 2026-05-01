@@ -113,6 +113,7 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
     private Point _dragStart;
     private TransformDragPart _dragPart;
     private bool _isDragging;
+    private double _lastZoom = 1.0;
 
     public OverlayAction RequestedAction { get; private set; }
 
@@ -329,6 +330,7 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
 
     public void RenderOverlay(DrawingContext dc, double zoom)
     {
+        _lastZoom = zoom;
         EnsureOverlayBitmap();
         if (_overlayBitmap == null) return;
 
@@ -401,17 +403,17 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         var okRect = new Rect(screenBottomCenter.X - totalW / 2, screenBottomCenter.Y, btnW, btnH);
         var cancelRect = new Rect(okRect.Right + gap, screenBottomCenter.Y, btnW, btnH);
 
-        DrawButton(dc, okRect, "OK", AccentBlue);
-        DrawButton(dc, cancelRect, "✕", AccentRed);
+        DrawButton(dc, okRect, "OK", AccentBlue, zoom);
+        DrawButton(dc, cancelRect, "✕", AccentRed, zoom);
     }
 
-    private static void DrawButton(DrawingContext dc, Rect r, string text, IBrush accent)
+    private static void DrawButton(DrawingContext dc, Rect r, string text, IBrush accent, double zoom)
     {
         dc.FillRectangle(BtnBg, r);
-        dc.DrawRectangle(BtnBorder, r);
+        dc.DrawRectangle(new Pen(new SolidColorBrush(Color.Parse("#4a5268")), 1.0 / zoom), r);
 
         var ft = new FormattedText(text, CultureInfo.InvariantCulture,
-            FlowDirection.LeftToRight, Typeface.Default, 11, BtnText);
+            FlowDirection.LeftToRight, Typeface.Default, 11.0 / zoom, BtnText);
         dc.DrawText(ft, new Point(
             r.X + (r.Width - ft.Width) * 0.5,
             r.Y + (r.Height - ft.Height) * 0.5));
@@ -419,11 +421,10 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
 
     private OverlayAction HitTestButton(double x, double y)
     {
-        // Simplified: we recompute button rects in screen space and test against (x,y)
         var rect = NormalizedRect(_rect);
         var center = CenterOf(rect);
         var angleRad = _angle * Math.PI / 180;
-        var zoom = _context.ActiveLayer == null ? 1 : 1; // rough fallback
+        var zoom = _lastZoom;
         var btnW = 52 / zoom;
         var btnH = 22 / zoom;
         var gap = 6 / zoom;
@@ -529,7 +530,7 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         return new PixelRegion(x, y, (int)Math.Round(w), (int)Math.Round(h));
     }
 
-    private void StampRotated(DrawingLayer layer, PixelRegion dest)
+    private unsafe void StampRotated(DrawingLayer layer, PixelRegion dest)
     {
         var clipped = new PixelRegion(
             dest.X - layer.OffsetX,
@@ -538,38 +539,49 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
             dest.Height).ClipTo(layer.Width, layer.Height);
         if (clipped.IsEmpty) return;
 
-        var info = new SKImageInfo(_sourceW, _sourceH, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+        // Read existing pixels into one flat buffer, render the rotated source onto it
+        // in a single Skia draw call, then write back — avoids per-tile SKCanvas overhead.
+        var flat = layer.Pixels.Capture(clipped);
+        if (flat.Length == 0) flat = new byte[clipped.Width * clipped.Height * 4];
+
+        var srcInfo = new SKImageInfo(_sourceW, _sourceH, SKColorType.Bgra8888, SKAlphaType.Unpremul);
         using var srcBitmap = new SKBitmap();
-        var handle = GCHandle.Alloc(_floatPixels, GCHandleType.Pinned);
+        var srcHandle = GCHandle.Alloc(_floatPixels, GCHandleType.Pinned);
         try
         {
-            srcBitmap.InstallPixels(info, handle.AddrOfPinnedObject());
+            srcBitmap.InstallPixels(srcInfo, srcHandle.AddrOfPinnedObject());
 
-            var center = CenterOf(NormalizedRect(_rect));
-            var r = NormalizedRect(_rect);
-
-            layer.Pixels.RenderWithSkia(clipped, canvas =>
+            var dstInfo = new SKImageInfo(clipped.Width, clipped.Height, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+            fixed (byte* flatPtr = flat)
             {
-                using var paint = new SKPaint
-                {
-                    IsAntialias = true,
-                    BlendMode = SKBlendMode.SrcOver
-                };
+                using var dstBitmap = new SKBitmap();
+                dstBitmap.InstallPixels(dstInfo, (IntPtr)flatPtr, clipped.Width * 4);
+                using var canvas = new SKCanvas(dstBitmap);
 
-                canvas.Save();
+                // Shift from document space to flat-buffer space
+                canvas.Translate(
+                    -(clipped.X + layer.OffsetX),
+                    -(clipped.Y + layer.OffsetY));
+
+                var center = CenterOf(NormalizedRect(_rect));
+                var r = NormalizedRect(_rect);
+
+                using var paint = new SKPaint { IsAntialias = true, BlendMode = SKBlendMode.SrcOver };
                 canvas.Translate((float)center.X, (float)center.Y);
                 canvas.RotateDegrees((float)_angle);
-                canvas.Translate((float)(-center.X), (float)(-center.Y));
+                canvas.Translate(-(float)center.X, -(float)center.Y);
                 canvas.DrawBitmap(srcBitmap,
                     new SKRect((float)r.X, (float)r.Y, (float)r.Right, (float)r.Bottom),
                     paint);
-                canvas.Restore();
-            });
+                canvas.Flush();
+            }
         }
         finally
         {
-            handle.Free();
+            srcHandle.Free();
         }
+
+        layer.Pixels.Restore(clipped, flat);
     }
 
     private static Point CenterOf(Rect rect)

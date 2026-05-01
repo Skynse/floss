@@ -212,7 +212,10 @@ public sealed class DrawingCanvas : Control
     public void CancelActiveTool()
     {
         if (_toolController.ActiveTool is TransformTool)
+        {
+            _transformTool.Cancel(_ctx);
             EndSelectionTransform();
+        }
         else if (!_toolController.Cancel() && _ctx.Selection.HasSelection)
             _ctx.Selection.Clear();
         InvalidateVisual();
@@ -245,8 +248,49 @@ public sealed class DrawingCanvas : Control
     {
         var previous = _transformTool.GetPreviousTool();
         _transformTool.SetPreviousTool(null);
+        _ctx.Selection.Clear();
         if (previous != null)
             SetActiveTool(previous);
+    }
+
+    public void MergeSelectedLayers(IReadOnlyList<int> indices) => _document.MergeSelectedLayers(indices, _compositor);
+    public void FlattenGroup(int groupIndex) => _document.FlattenGroup(groupIndex, _compositor);
+
+    public void MergeDown(IReadOnlyList<int>? selectedIndices = null)
+    {
+        var active = _document.ActiveLayerIndex;
+        if (selectedIndices is { Count: > 1 })
+        {
+            _document.MergeSelectedLayers(selectedIndices, _compositor);
+            return;
+        }
+        var layer = _document.ActiveLayer;
+        if (layer.IsGroup)
+        {
+            _document.FlattenGroup(active, _compositor);
+            return;
+        }
+        // Merge with the next layer below in the flat list
+        if (active + 1 < _document.Layers.Count)
+            _document.MergeSelectedLayers([active, active + 1], _compositor);
+    }
+
+    public void SelectAll()
+    {
+        _ctx.Selection.SetFromRect(0, 0, _document.Width, _document.Height);
+        InvalidateVisual();
+    }
+
+    public void Deselect()
+    {
+        _ctx.Selection.Clear();
+        InvalidateVisual();
+    }
+
+    public void InvertSelection()
+    {
+        _ctx.Selection.Invert();
+        InvalidateVisual();
     }
 
     public bool IsTransformActive => _toolController.ActiveTool is TransformTool tt && tt.HasPendingOperation;
@@ -284,6 +328,7 @@ public sealed class DrawingCanvas : Control
 
         _compositor.Composite(_document.Layers, _document.Width, _document.Height, _document.PaperColor, _document.PaperVisible);
         var target = new Rect(Bounds.Size);
+        using (context.PushClip(new RoundedRect(target)))
         using (context.PushRenderOptions(new RenderOptions
         {
             BitmapInterpolationMode = BitmapInterpolationMode.None,
