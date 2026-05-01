@@ -382,7 +382,8 @@ public partial class MainWindow : Window
             {
                 MenuAction("_Save Brush", SaveActiveBrush),
                 MenuAction("_Duplicate Brush", DuplicateActiveBrush),
-                MenuAction("_Import Tip PNG...", async () => await ImportBrushTipPngAsync())
+                MenuAction("_Import Tip PNG...", async () => await ImportBrushTipPngAsync()),
+                MenuAction("_Import .abr Brushes...", async () => await ImportAbrAsync())
             }
         };
 
@@ -842,14 +843,17 @@ public partial class MainWindow : Window
         _strokePreview = new BrushStrokePreview { Height = 64 };
 
         var importPngBtn = SmBtn("PNG", "Import brush tip PNG");
+        var importAbrBtn = SmBtn("ABR", "Import .abr brush pack");
         _saveBrushButton = SmBtn("⊙", "Save brush");
         var duplicateBrushBtn = SmBtn("⎘", "Duplicate brush");
         var editBrushBtn = SmBtn("✎", "Edit brush dynamics");
         importPngBtn.Width = 44;
+        importAbrBtn.Width = 44;
         _saveBrushButton.Width = 30;
         duplicateBrushBtn.Width = 30;
         editBrushBtn.Width = 30;
         importPngBtn.Click += async (_, _) => await ImportBrushTipPngAsync();
+        importAbrBtn.Click += async (_, _) => await ImportAbrAsync();
         _saveBrushButton.Click += (_, _) => SaveActiveBrush();
         duplicateBrushBtn.Click += (_, _) => DuplicateActiveBrush();
         editBrushBtn.Click += (_, _) => OpenBrushEditor();
@@ -884,7 +888,7 @@ public partial class MainWindow : Window
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
             Spacing = 3,
-            Children = { importPngBtn, _saveBrushButton, duplicateBrushBtn, editBrushBtn }
+            Children = { importPngBtn, importAbrBtn, _saveBrushButton, duplicateBrushBtn, editBrushBtn }
         };
 
         var categoryScrollRow = new ScrollViewer
@@ -1902,6 +1906,43 @@ public partial class MainWindow : Window
         ApplyPreset(_activeBrushAsset.ToPreset(), syncSliders: false);
         BuildPresets();
         _footerStatusText.Text = $"Embedded PNG tip in {_activeBrushAsset.Preset.Name}";
+    }
+
+    private async System.Threading.Tasks.Task ImportAbrAsync()
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Import .abr brush pack",
+            AllowMultiple = true,
+            FileTypeFilter = [new FilePickerFileType("Adobe Brush") { Patterns = ["*.abr"] }]
+        });
+        if (files.Count == 0) return;
+
+        var imported    = 0;
+        var lastDiag    = "";
+        foreach (var file in files)
+        {
+            await using var stream = await file.OpenReadAsync();
+            List<Brushes.BrushAsset> brushes;
+            try { brushes = await System.Threading.Tasks.Task.Run(() => Brushes.AbrImporter.Import(stream, out lastDiag)); }
+            catch (Exception ex) { lastDiag = ex.Message; continue; }
+
+            foreach (var asset in brushes)
+            {
+                _brushLibrary.Save(asset);
+                imported++;
+            }
+        }
+
+        if (imported > 0)
+        {
+            LoadBrushAssets();
+            _footerStatusText.Text = $"Imported {imported} brush{(imported == 1 ? "" : "es")} from .abr [{lastDiag}]";
+        }
+        else
+        {
+            _footerStatusText.Text = $"No brushes imported — {lastDiag}";
+        }
     }
 
     private BrushPreset CurrentBrushFromUi()
