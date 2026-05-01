@@ -150,45 +150,31 @@ public sealed class FreehandStrokeOperation : IToolOperation
         bool alphaLocked = layer.IsAlphaLocked;
         if (!hasSelection && !alphaLocked) return;
 
-        const int ts = TiledPixelBuffer.TileSize;
+        const int bytesPerPixel = 4;
+        const int tileSize = TiledPixelBuffer.TileSize;
 
-        int firstTileX = clipped.X / ts;
-        int firstTileY = clipped.Y / ts;
-        int lastTileX = (clipped.Right - 1) / ts;
-        int lastTileY = (clipped.Bottom - 1) / ts;
-
-        for (int ty = firstTileY; ty <= lastTileY; ty++)
+        for (var y = clipped.Y; y < clipped.Bottom; y++)
         {
-            for (int tx = firstTileX; tx <= lastTileX; tx++)
+            for (var x = clipped.X; x < clipped.Right; x++)
             {
-                // Look up the before-tile once per tile, not per pixel.
-                _beforeTiles.TryGetValue((tx, ty), out var beforeTile);
+                bool inSelection = !hasSelection || _selection.IsSelected(x + layer.OffsetX, y + layer.OffsetY);
 
-                int pxMin = Math.Max(clipped.X, tx * ts);
-                int pxMax = Math.Min(clipped.Right, tx * ts + ts);
-                int pyMin = Math.Max(clipped.Y, ty * ts);
-                int pyMax = Math.Min(clipped.Bottom, ty * ts + ts);
+                var tileKey = (x / tileSize, y / tileSize);
+                var localX = x - tileKey.Item1 * tileSize;
+                var localY = y - tileKey.Item2 * tileSize;
+                var offset = (localY * tileSize + localX) * bytesPerPixel;
 
-                for (int py = pyMin; py < pyMax; py++)
-                {
-                    int ly = py - ty * ts;
-                    for (int px = pxMin; px < pxMax; px++)
-                    {
-                        bool inSelection = !hasSelection || _selection.IsSelected(px + layer.OffsetX, py + layer.OffsetY);
+                bool hadAlpha = true;
+                if (alphaLocked && _beforeTiles.TryGetValue(tileKey, out var bt) && bt != null)
+                    hadAlpha = bt[offset + 3] > 0;
 
-                        int lx = px - tx * ts;
-                        int offset = (ly * ts + lx) * 4;
+                // Restore if: outside selection, OR alpha-locked and original pixel was transparent.
+                if (inSelection && hadAlpha) continue;
 
-                        bool hadAlpha = !alphaLocked || (beforeTile != null && beforeTile[offset + 3] > 0);
-
-                        if (inSelection && hadAlpha) continue;
-
-                        if (beforeTile != null)
-                            layer.Pixels.SetPixel(px, py, beforeTile[offset], beforeTile[offset + 1], beforeTile[offset + 2], beforeTile[offset + 3]);
-                        else
-                            layer.Pixels.SetPixel(px, py, 0, 0, 0, 0);
-                    }
-                }
+                if (_beforeTiles.TryGetValue(tileKey, out var before) && before != null)
+                    layer.Pixels.SetPixel(x, y, before[offset + 0], before[offset + 1], before[offset + 2], before[offset + 3]);
+                else
+                    layer.Pixels.SetPixel(x, y, 0, 0, 0, 0);
             }
         }
     }

@@ -168,13 +168,9 @@ public sealed class TiledPixelBuffer
             return;
         }
 
-        // Reuse the existing tile array if present — avoids 16 KB allocation per undo tile.
-        if (!_tiles.TryGetValue(key, out var tile) || tile.Length != bytes.Length)
-        {
-            tile = new byte[bytes.Length];
-            _tiles[key] = tile;
-        }
-        Buffer.BlockCopy(bytes, 0, tile, 0, bytes.Length);
+        var tile = new byte[TileSize * TileSize * BytesPerPixel];
+        Buffer.BlockCopy(bytes, 0, tile, 0, Math.Min(bytes.Length, tile.Length));
+        _tiles[key] = tile;
     }
 
     public void CopyFromBgra(byte[] src, int srcWidth, int srcHeight)
@@ -488,19 +484,13 @@ public sealed class TiledPixelBuffer
         }
     }
 
-    private static unsafe bool IsTransparent(byte[] tile)
+    private static bool IsTransparent(byte[] tile)
     {
-        // Read as uint (BGRA little-endian) — alpha is the top byte.
-        // Checks 4 bytes at a time instead of every 4th byte individually.
-        fixed (byte* p = tile)
+        for (var i = 3; i < tile.Length; i += BytesPerPixel)
         {
-            var up = (uint*)p;
-            var count = tile.Length / BytesPerPixel;
-            for (int i = 0; i < count; i++)
-            {
-                if ((up[i] & 0xFF000000u) != 0) return false;
-            }
+            if (tile[i] != 0) return false;
         }
+
         return true;
     }
 
