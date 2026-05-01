@@ -19,6 +19,10 @@ public sealed record BrushPreset(
 {
     public BrushDynamics Dynamics { get; init; } = new();
     public double Flow { get; init; } = 1.0;
+    // 0 = pure brush color, 1 = fully samples canvas color per dab
+    public double ColorMix { get; init; } = 0.0;
+    // How fast the brush reloads with fresh paint. 1 = always fresh, 0 = color accumulates
+    public double ColorLoad { get; init; } = 1.0;
     public double Grain { get; init; } = 0.0;
     public double Smoothing { get; init; } = 0.3;
     public IBrushTip Tip { get; init; } = new ProceduralBrushTip();

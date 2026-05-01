@@ -336,9 +336,9 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         var center = CenterOf(rect);
         var angleRad = _angle * Math.PI / 180;
 
-        var matrix = Matrix.CreateTranslation(center.X, center.Y)
+        var matrix = Matrix.CreateTranslation(-center.X, -center.Y)
             * Matrix.CreateRotation(angleRad)
-            * Matrix.CreateTranslation(-center.X, -center.Y);
+            * Matrix.CreateTranslation(center.X, center.Y);
 
         using (dc.PushTransform(matrix))
         {
@@ -390,9 +390,9 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         var below = 18 / zoom;
 
         // Compute bottom-center of the rotated rect in canvas space
-        var rotMatrix = Matrix.CreateTranslation(center.X, center.Y)
+        var rotMatrix = Matrix.CreateTranslation(-center.X, -center.Y)
             * Matrix.CreateRotation(angleRad)
-            * Matrix.CreateTranslation(-center.X, -center.Y);
+            * Matrix.CreateTranslation(center.X, center.Y);
 
         var bottomCenter = new Point(rect.X + rect.Width / 2, rect.Bottom + below);
         var screenBottomCenter = rotMatrix.Transform(bottomCenter);
@@ -429,9 +429,9 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         var gap = 6 / zoom;
         var below = 18 / zoom;
 
-        var rotMatrix = Matrix.CreateTranslation(center.X, center.Y)
+        var rotMatrix = Matrix.CreateTranslation(-center.X, -center.Y)
             * Matrix.CreateRotation(angleRad)
-            * Matrix.CreateTranslation(-center.X, -center.Y);
+            * Matrix.CreateTranslation(center.X, center.Y);
 
         var bottomCenter = new Point(rect.X + rect.Width / 2, rect.Bottom + below);
         var screenBottomCenter = rotMatrix.Transform(bottomCenter);

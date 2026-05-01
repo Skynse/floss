@@ -159,6 +159,7 @@ public partial class MainWindow : Window
     private Button _redoButton = null!;
     private Button _brushToolButton = null!;
     private Button _eraserToolButton = null!;
+    private Button _smudgeToolButton = null!;
     private Button _moveToolButton = null!;
     private Button _selectToolButton = null!;
     private Button _wandToolButton = null!;
@@ -585,6 +586,7 @@ public partial class MainWindow : Window
 
         _brushToolButton = RailBtn(Icons.BrushOutline, "Brush  (B)");
         _eraserToolButton = RailBtn(Icons.Eraser, "Eraser  (E)");
+        _smudgeToolButton = RailBtn(Icons.BlurLinear, "Smudge  (U)");
         _moveToolButton = RailBtn(Icons.ArrowAll, "Move layer  (V)");
         _selectToolButton = RailBtn(Icons.SelectionRect, "Select  (S). Click again: rect/lasso/polyline");
         _wandToolButton = RailBtn(Icons.AutoFix, "Magic Wand  (W)");
@@ -597,6 +599,7 @@ public partial class MainWindow : Window
 
         _brushToolButton.Click += (_, _) => ActivateTool(_canvas.BrushTool, _brushToolButton);
         _eraserToolButton.Click += (_, _) => ActivateTool(_canvas.EraserTool, _eraserToolButton);
+        _smudgeToolButton.Click += (_, _) => ActivateTool(_canvas.SmudgeTool, _smudgeToolButton);
         _moveToolButton.Click += (_, _) => ActivateTool(_moveTool, _moveToolButton);
         _selectToolButton.Click += (_, _) =>
         {
@@ -624,7 +627,7 @@ public partial class MainWindow : Window
         };
 
         _toolButtons.AddRange([
-            _brushToolButton, _eraserToolButton, _moveToolButton,
+            _brushToolButton, _eraserToolButton, _smudgeToolButton, _moveToolButton,
             _selectToolButton, _wandToolButton, _fillToolButton, _lassoFillToolButton,
             _eyedropToolButton, _gradientToolButton, _shapeToolButton, _polylineToolButton
         ]);
@@ -646,6 +649,7 @@ public partial class MainWindow : Window
         };
         stack.Children.Add(_brushToolButton);
         stack.Children.Add(_eraserToolButton);
+        stack.Children.Add(_smudgeToolButton);
         stack.Children.Add(_moveToolButton);
         stack.Children.Add(RailSep());
         stack.Children.Add(_selectToolButton);

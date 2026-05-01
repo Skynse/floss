@@ -12,6 +12,7 @@ public sealed class BrushEngine : IDisposable
 {
     private const int InitialStampCapacity = 256;
     private readonly List<StampSample> _stamps = new(InitialStampCapacity);
+    private readonly List<SKColor> _stampColors = new(InitialStampCapacity);
     private ActiveStroke? _activeStroke;
 
     public void BeginStroke(BrushPreset brush, bool eraser, CanvasInputSample sample)
@@ -25,6 +26,7 @@ public sealed class BrushEngine : IDisposable
         _activeStroke?.Dispose();
         _activeStroke = null;
         _stamps.Clear();
+        _stampColors.Clear();
     }
 
     public PixelRegion RasterizeSegment(
@@ -37,9 +39,13 @@ public sealed class BrushEngine : IDisposable
         EnsureStroke(brush, eraser, from);
         var stroke = _activeStroke!;
         _stamps.Clear();
+        _stampColors.Clear();
 
         var dirty = BuildStamps(stroke, brush, from, to);
         if (dirty.IsEmpty || _stamps.Count == 0) return PixelRegion.Empty;
+
+        if (!eraser && brush.ColorMix > 0.001)
+            PrepareStampColors(layer, brush, stroke);
 
         var clippedDirty = dirty.ClipTo(layer.Width, layer.Height);
         if (clippedDirty.IsEmpty) return PixelRegion.Empty;
@@ -58,11 +64,15 @@ public sealed class BrushEngine : IDisposable
         EnsureStroke(brush, eraser, sample);
         var stroke = _activeStroke!;
         _stamps.Clear();
+        _stampColors.Clear();
 
         var velocity01 = (float)Math.Clamp(velocity / 5000.0, 0, 1);
         var sp = BuildStrokePoint(stroke, sample, velocity01);
         var stamp = CreateStamp(stroke, brush, sp);
         _stamps.Add(stamp);
+
+        if (!eraser && brush.ColorMix > 0.001)
+            PrepareStampColors(layer, brush, stroke);
 
         var dirty = StampBounds(stamp).ClipTo(layer.Width, layer.Height);
         if (dirty.IsEmpty) return PixelRegion.Empty;
@@ -247,6 +257,9 @@ public sealed class BrushEngine : IDisposable
             var stamp = _stamps[i];
             if (stamp.Opacity <= 0 || stamp.Size <= 0) continue;
 
+            if (_stampColors.Count > i)
+                stroke.UpdateColor(_stampColors[i]);
+
             stroke.UpdateOpacity(stamp.Opacity);
             stroke.UpdateMatrix(stamp);
             var mask = stroke.MaskFor(stamp.Hardness);
@@ -257,6 +270,35 @@ public sealed class BrushEngine : IDisposable
             canvas.Restore();
 
             stroke.ReleaseMask(mask);
+        }
+    }
+
+    private void PrepareStampColors(DrawingLayer layer, BrushPreset brush, ActiveStroke stroke)
+    {
+        _stampColors.Clear();
+        var mixAmt = (float)brush.ColorMix;
+        var loadAmt = (float)brush.ColorLoad;
+        for (var i = 0; i < _stamps.Count; i++)
+        {
+            var stamp = _stamps[i];
+            layer.Pixels.GetPixel((int)stamp.X, (int)stamp.Y, out var b, out var g, out var r, out var a);
+            float sampledR = a > 0 ? r : stroke.CarriedR;
+            float sampledG = a > 0 ? g : stroke.CarriedG;
+            float sampledB = a > 0 ? b : stroke.CarriedB;
+
+            var newR = stroke.CarriedR + (sampledR - stroke.CarriedR) * mixAmt;
+            var newG = stroke.CarriedG + (sampledG - stroke.CarriedG) * mixAmt;
+            var newB = stroke.CarriedB + (sampledB - stroke.CarriedB) * mixAmt;
+
+            _stampColors.Add(new SKColor(
+                (byte)Math.Clamp(newR, 0, 255),
+                (byte)Math.Clamp(newG, 0, 255),
+                (byte)Math.Clamp(newB, 0, 255)));
+
+            // Reload toward base brush color
+            stroke.CarriedR = newR + (stroke.BaseColor.Red   - newR) * loadAmt;
+            stroke.CarriedG = newG + (stroke.BaseColor.Green - newG) * loadAmt;
+            stroke.CarriedB = newB + (stroke.BaseColor.Blue  - newB) * loadAmt;
         }
     }
 
@@ -317,6 +359,8 @@ public sealed class BrushEngine : IDisposable
         private readonly BrushPreset _brush;
         private readonly bool _eraser;
         private readonly SKColor _baseColor;
+        private SKColor _currentColor;
+        private SKColorFilter? _mixedFilter;
 
         public ActiveStroke(BrushPreset brush, bool eraser, CanvasInputSample sample)
         {
@@ -342,6 +386,11 @@ public sealed class BrushEngine : IDisposable
             BaseMaskSize = Math.Max(1, (int)Math.Ceiling(brush.Size));
             Mask = brush.Tip.GenerateMask(BaseMaskSize, (float)brush.Hardness);
             _baseColor = ToSkColor(brush.Color);
+            _currentColor = _baseColor;
+            // Carried color tracks the mixed ink across dabs (color mixing feature)
+            CarriedR = _baseColor.Red;
+            CarriedG = _baseColor.Green;
+            CarriedB = _baseColor.Blue;
             Paint = new SKPaint
             {
                 IsAntialias = true,
@@ -357,16 +406,28 @@ public sealed class BrushEngine : IDisposable
         public SKBitmap Mask { get; }
         public SKPaint Paint { get; }
         public SKMatrix Matrix;
+        // Carried ink color (mutable, evolves with color mixing across dabs)
+        public float CarriedR, CarriedG, CarriedB;
+        public SKColor BaseColor => _baseColor;
 
         public bool Matches(BrushPreset brush, bool eraser)
             => ReferenceEquals(_brush, brush) && _eraser == eraser;
+
+        public void UpdateColor(SKColor color)
+        {
+            if (_currentColor == color) return;
+            _currentColor = color;
+            _mixedFilter?.Dispose();
+            _mixedFilter = SKColorFilter.CreateBlendMode(new SKColor(color.Red, color.Green, color.Blue, 255), SKBlendMode.SrcIn);
+            Paint.ColorFilter = _mixedFilter;
+        }
 
         public void UpdateOpacity(float opacity)
         {
             var alpha = (byte)Math.Clamp((int)(opacity * 255), 0, 255);
             Paint.Color = _eraser
                 ? new SKColor(255, 255, 255, alpha)
-                : new SKColor(_baseColor.Red, _baseColor.Green, _baseColor.Blue, alpha);
+                : new SKColor(_currentColor.Red, _currentColor.Green, _currentColor.Blue, alpha);
         }
 
         public void UpdateMatrix(StampSample stamp)
@@ -424,6 +485,7 @@ public sealed class BrushEngine : IDisposable
         {
             if (_brush.Tip is CompoundBrushTip)
                 Mask.Dispose();
+            _mixedFilter?.Dispose();
             Paint.ColorFilter?.Dispose();
             Paint.Dispose();
         }

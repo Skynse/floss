@@ -50,6 +50,8 @@ public sealed class BrushEditorWindow : Window
     private readonly Slider _sizeSlider = MkSlider(0.5, 300, 8, "Brush size in pixels");
     private readonly Slider _opacitySlider = MkSlider(0.01, 1, 1.0, "Maximum opacity per stamp");
     private readonly Slider _flowSlider = MkSlider(0.01, 1, 1.0, "Paint buildup per dab");
+    private readonly Slider _colorMixSlider = MkSlider(0, 1, 0.0, "Canvas color pickup per dab (0=pure brush, 1=full mix)");
+    private readonly Slider _colorLoadSlider = MkSlider(0, 1, 1.0, "Paint reload rate (1=always fresh, 0=color accumulates)");
     private readonly Slider _hardnessSlider = MkSlider(0, 1, 0.9, "Edge softness (anti-aliasing)");
     private readonly Slider _spacingSlider = MkSlider(0.01, 1, 0.1, "Stamp interval as fraction of size");
     private readonly Slider _smoothingSlider = MkSlider(0, 0.95, 0.3, "Input stabilization");
@@ -217,7 +219,10 @@ public sealed class BrushEditorWindow : Window
         Children =
         {
             DynSliderRow("Opacity", _opacitySlider, "%", () => OpenOpacityDynamics()),
-            DynSliderRow("Flow",    _flowSlider,    "%", () => OpenFlowDynamics())
+            DynSliderRow("Flow",    _flowSlider,    "%", () => OpenFlowDynamics()),
+            SectionHeader("COLOR MIXING"),
+            PlainSliderRow("Mix",  _colorMixSlider,  "%"),
+            PlainSliderRow("Load", _colorLoadSlider, "%"),
         }
     };
 
@@ -882,6 +887,8 @@ public sealed class BrushEditorWindow : Window
         WireSlider(_smoothingSlider, v => Commit(p => p with { Smoothing = v }));
         WireSlider(_grainSlider, v => Commit(p => p with { Grain = v }));
         WireSlider(_angleSlider, v => Commit(p => p with { Angle = v }));
+        WireSlider(_colorMixSlider,  v => Commit(p => p with { ColorMix  = v }));
+        WireSlider(_colorLoadSlider, v => Commit(p => p with { ColorLoad = v }));
     }
 
     private void Commit(Func<BrushPreset, BrushPreset> update)
@@ -929,6 +936,8 @@ public sealed class BrushEditorWindow : Window
         _smoothingSlider.Value = Math.Clamp(preset.Smoothing, _smoothingSlider.Minimum, _smoothingSlider.Maximum);
         _grainSlider.Value = Math.Clamp(preset.Grain, _grainSlider.Minimum, _grainSlider.Maximum);
         _angleSlider.Value = Math.Clamp(preset.Angle, _angleSlider.Minimum, _angleSlider.Maximum);
+        _colorMixSlider.Value  = Math.Clamp(preset.ColorMix,  _colorMixSlider.Minimum,  _colorMixSlider.Maximum);
+        _colorLoadSlider.Value = Math.Clamp(preset.ColorLoad, _colorLoadSlider.Minimum, _colorLoadSlider.Maximum);
 
         _stampLayers.Clear();
         if (preset.Tip is CompoundBrushTip compound)
