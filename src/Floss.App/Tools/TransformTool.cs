@@ -1,18 +1,23 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using System.Runtime.InteropServices;
 using Avalonia;
+using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Floss.App.Document;
 using Floss.App.Input;
+using SkiaSharp;
 
 namespace Floss.App.Tools;
 
 public sealed class TransformTool : ITool
 {
     private SelectionTransformOperation? _operation;
+    private ITool? _previousTool;
 
     public bool HasPendingOperation => _operation != null;
 
@@ -26,11 +31,19 @@ public sealed class TransformTool : ITool
         return _operation != null;
     }
 
+    public void SetPreviousTool(ITool? tool) => _previousTool = tool;
+    public ITool? GetPreviousTool() => _previousTool;
+
     public void PointerDown(ToolContext ctx, CanvasInputSample s)
     {
         if (_operation == null)
             BeginTransform(ctx);
         _operation?.PointerDown(s);
+
+        if (_operation?.RequestedAction == OverlayAction.Commit)
+            Commit(ctx);
+        else if (_operation?.RequestedAction == OverlayAction.Cancel)
+            Cancel(ctx);
     }
 
     public void PointerMove(ToolContext ctx, CanvasInputSample s) => _operation?.Update(s);
@@ -53,12 +66,23 @@ public sealed class TransformTool : ITool
 
     public void RenderOverlay(DrawingContext dc, ToolContext ctx, double zoom)
         => _operation?.RenderOverlay(dc, zoom);
+
+    public StandardCursorType? CursorFor(Point canvasPos, double zoom)
+        => _operation?.CursorFor(canvasPos, zoom);
+}
+
+internal enum OverlayAction
+{
+    None,
+    Commit,
+    Cancel
 }
 
 internal enum TransformDragPart
 {
     None,
     Move,
+    Rotate,
     TopLeft,
     Top,
     TopRight,
@@ -83,9 +107,21 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
     private WriteableBitmap? _overlayBitmap;
     private Rect _rect;
     private Rect _startRect;
+    private double _angle;
+    private double _startAngle;
+    private double _dragStartAngle;
     private Point _dragStart;
     private TransformDragPart _dragPart;
     private bool _isDragging;
+
+    public OverlayAction RequestedAction { get; private set; }
+
+    private static readonly IBrush BtnBg = new SolidColorBrush(Color.Parse("#2a2e38"));
+    private static readonly IBrush BtnBgHover = new SolidColorBrush(Color.Parse("#3a4050"));
+    private static readonly Pen BtnBorder = new(new SolidColorBrush(Color.Parse("#4a5268")), 1);
+    private static readonly IBrush BtnText = new SolidColorBrush(Color.Parse("#c8d0e0"));
+    private static readonly IBrush AccentBlue = new SolidColorBrush(Color.Parse("#5a9fd8"));
+    private static readonly IBrush AccentRed = new SolidColorBrush(Color.Parse("#d85a5a"));
 
     private SelectionTransformOperation(
         ToolContext context,
@@ -176,12 +212,28 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
 
     public void PointerDown(CanvasInputSample sample)
     {
+        RequestedAction = OverlayAction.None;
+
+        var btn = HitTestButton(sample.X, sample.Y);
+        if (btn == OverlayAction.Commit || btn == OverlayAction.Cancel)
+        {
+            RequestedAction = btn;
+            return;
+        }
+
         _dragPart = HitTest(sample.X, sample.Y, _context.ActiveLayer == null ? 1 : 1);
         if (_dragPart == TransformDragPart.None) return;
 
         _isDragging = true;
         _dragStart = new Point(sample.X, sample.Y);
         _startRect = _rect;
+        _startAngle = _angle;
+
+        if (_dragPart == TransformDragPart.Rotate)
+        {
+            var center = CenterOf(_rect);
+            _dragStartAngle = Math.Atan2(sample.Y - center.Y, sample.X - center.X) * 180 / Math.PI;
+        }
     }
 
     public void Update(CanvasInputSample sample)
@@ -192,9 +244,21 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         var dx = current.X - _dragStart.X;
         var dy = current.Y - _dragStart.Y;
 
-        _rect = _dragPart == TransformDragPart.Move
-            ? _startRect.Translate(new Vector(dx, dy))
-            : ResizeRect(_startRect, _dragPart, dx, dy);
+        if (_dragPart == TransformDragPart.Rotate)
+        {
+            var center = CenterOf(_startRect);
+            var currentAngle = Math.Atan2(current.Y - center.Y, current.X - center.X) * 180 / Math.PI;
+            _angle = _startAngle + (currentAngle - _dragStartAngle);
+        }
+        else if (_dragPart == TransformDragPart.Move)
+        {
+            _rect = _startRect.Translate(new Vector(dx, dy));
+        }
+        else
+        {
+            _rect = ResizeRect(_startRect, _dragPart, dx, dy);
+        }
+
         _context.InvalidateRender();
     }
 
@@ -241,7 +305,7 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         var layer = _context.ActiveLayer;
         if (layer == null || _layerIndex != _context.ActiveLayerIndex) return;
 
-        var dest = NormalizedPixelRect(_rect);
+        var dest = RotatedBounds(_rect, _angle);
         if (dest.IsEmpty) return;
 
         var destLayerRegion = new PixelRegion(
@@ -254,7 +318,7 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
             _beforeTiles.TryAdd(key, value);
 
         var dirty = new PixelRegion(_sourceX, _sourceY, _sourceW, _sourceH).Union(dest);
-        StampScaled(layer, dest);
+        StampRotated(layer, dest);
 
         layer.MarkThumbnailDirty();
         _context.Selection.SetFromRect(dest.X, dest.Y, dest.Width, dest.Height);
@@ -269,16 +333,115 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         if (_overlayBitmap == null) return;
 
         var rect = NormalizedRect(_rect);
-        dc.DrawImage(_overlayBitmap, rect);
+        var center = CenterOf(rect);
+        var angleRad = _angle * Math.PI / 180;
 
-        var t = Math.Max(0.75, 1.0 / zoom);
-        var borderPen = new Pen(new SolidColorBrush(Color.FromRgb(90, 150, 255)), t);
-        var fill = new SolidColorBrush(Color.FromRgb(245, 248, 255));
-        dc.DrawRectangle(null, borderPen, rect);
+        var matrix = Matrix.CreateTranslation(center.X, center.Y)
+            * Matrix.CreateRotation(angleRad)
+            * Matrix.CreateTranslation(-center.X, -center.Y);
 
-        var handleSize = Math.Max(6.0 / zoom, t * 5);
-        foreach (var handle in Handles(rect))
-            dc.DrawRectangle(fill, borderPen, CenteredRect(handle.Point, handleSize));
+        using (dc.PushTransform(matrix))
+        {
+            dc.DrawImage(_overlayBitmap, rect);
+
+            var t = Math.Max(0.75, 1.0 / zoom);
+            var borderPen = new Pen(new SolidColorBrush(Color.FromRgb(90, 150, 255)), t);
+            var fill = new SolidColorBrush(Color.FromRgb(245, 248, 255));
+            dc.DrawRectangle(null, borderPen, rect);
+
+            var handleSize = Math.Max(6.0 / zoom, t * 5);
+            foreach (var handle in Handles(rect))
+            {
+                var color = handle.Part == TransformDragPart.Rotate
+                    ? new SolidColorBrush(Color.FromRgb(255, 180, 60))
+                    : fill;
+                dc.DrawRectangle(color, borderPen, CenteredRect(handle.Point, handleSize));
+            }
+        }
+
+        // Draw OK / Cancel buttons below the transform box (in screen space, not rotated)
+        DrawButtons(dc, rect, angleRad, center, zoom);
+    }
+
+    public StandardCursorType? CursorFor(Point canvasPos, double zoom)
+    {
+        var btn = HitTestButton(canvasPos.X, canvasPos.Y);
+        if (btn == OverlayAction.Commit) return StandardCursorType.Hand;
+        if (btn == OverlayAction.Cancel) return StandardCursorType.Hand;
+
+        var part = HitTest(canvasPos.X, canvasPos.Y, zoom);
+        return part switch
+        {
+            TransformDragPart.Move => StandardCursorType.SizeAll,
+            TransformDragPart.Rotate => StandardCursorType.Hand,
+            TransformDragPart.Top or TransformDragPart.Bottom => StandardCursorType.SizeNorthSouth,
+            TransformDragPart.Left or TransformDragPart.Right => StandardCursorType.SizeWestEast,
+            TransformDragPart.TopLeft or TransformDragPart.BottomRight => StandardCursorType.TopLeftCorner,
+            TransformDragPart.TopRight or TransformDragPart.BottomLeft => StandardCursorType.TopRightCorner,
+            _ => null
+        };
+    }
+
+    private void DrawButtons(DrawingContext dc, Rect rect, double angleRad, Point center, double zoom)
+    {
+        var btnW = 52 / zoom;
+        var btnH = 22 / zoom;
+        var gap = 6 / zoom;
+        var below = 18 / zoom;
+
+        // Compute bottom-center of the rotated rect in canvas space
+        var rotMatrix = Matrix.CreateTranslation(center.X, center.Y)
+            * Matrix.CreateRotation(angleRad)
+            * Matrix.CreateTranslation(-center.X, -center.Y);
+
+        var bottomCenter = new Point(rect.X + rect.Width / 2, rect.Bottom + below);
+        var screenBottomCenter = rotMatrix.Transform(bottomCenter);
+
+        var totalW = btnW * 2 + gap;
+        var okRect = new Rect(screenBottomCenter.X - totalW / 2, screenBottomCenter.Y, btnW, btnH);
+        var cancelRect = new Rect(okRect.Right + gap, screenBottomCenter.Y, btnW, btnH);
+
+        DrawButton(dc, okRect, "OK", AccentBlue);
+        DrawButton(dc, cancelRect, "✕", AccentRed);
+    }
+
+    private static void DrawButton(DrawingContext dc, Rect r, string text, IBrush accent)
+    {
+        dc.FillRectangle(BtnBg, r);
+        dc.DrawRectangle(BtnBorder, r);
+
+        var ft = new FormattedText(text, CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight, Typeface.Default, 11, BtnText);
+        dc.DrawText(ft, new Point(
+            r.X + (r.Width - ft.Width) * 0.5,
+            r.Y + (r.Height - ft.Height) * 0.5));
+    }
+
+    private OverlayAction HitTestButton(double x, double y)
+    {
+        // Simplified: we recompute button rects in screen space and test against (x,y)
+        var rect = NormalizedRect(_rect);
+        var center = CenterOf(rect);
+        var angleRad = _angle * Math.PI / 180;
+        var zoom = _context.ActiveLayer == null ? 1 : 1; // rough fallback
+        var btnW = 52 / zoom;
+        var btnH = 22 / zoom;
+        var gap = 6 / zoom;
+        var below = 18 / zoom;
+
+        var rotMatrix = Matrix.CreateTranslation(center.X, center.Y)
+            * Matrix.CreateRotation(angleRad)
+            * Matrix.CreateTranslation(-center.X, -center.Y);
+
+        var bottomCenter = new Point(rect.X + rect.Width / 2, rect.Bottom + below);
+        var screenBottomCenter = rotMatrix.Transform(bottomCenter);
+        var totalW = btnW * 2 + gap;
+        var okRect = new Rect(screenBottomCenter.X - totalW / 2, screenBottomCenter.Y, btnW, btnH);
+        var cancelRect = new Rect(okRect.Right + gap, screenBottomCenter.Y, btnW, btnH);
+
+        if (okRect.Contains(new Point(x, y))) return OverlayAction.Commit;
+        if (cancelRect.Contains(new Point(x, y))) return OverlayAction.Cancel;
+        return OverlayAction.None;
     }
 
     private void EnsureOverlayBitmap()
@@ -304,7 +467,10 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
                 return handle.Part;
         }
 
-        return rect.Contains(p) ? TransformDragPart.Move : TransformDragPart.None;
+        if (rect.Contains(p))
+            return TransformDragPart.Move;
+
+        return TransformDragPart.Rotate;
     }
 
     private static Rect ResizeRect(Rect rect, TransformDragPart part, double dx, double dy)
@@ -343,7 +509,27 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         return new PixelRegion(x, y, w, h);
     }
 
-    private void StampScaled(DrawingLayer layer, PixelRegion dest)
+    private static PixelRegion RotatedBounds(Rect rect, double angleDeg)
+    {
+        if (Math.Abs(angleDeg % 360) < 0.1)
+            return NormalizedPixelRect(rect);
+
+        var r = NormalizedRect(rect);
+        var cx = r.X + r.Width / 2;
+        var cy = r.Y + r.Height / 2;
+        var angle = angleDeg * Math.PI / 180;
+        var cos = Math.Abs(Math.Cos(angle));
+        var sin = Math.Abs(Math.Sin(angle));
+
+        var w = r.Width * cos + r.Height * sin;
+        var h = r.Width * sin + r.Height * cos;
+
+        var x = (int)Math.Round(cx - w / 2);
+        var y = (int)Math.Round(cy - h / 2);
+        return new PixelRegion(x, y, (int)Math.Round(w), (int)Math.Round(h));
+    }
+
+    private void StampRotated(DrawingLayer layer, PixelRegion dest)
     {
         var clipped = new PixelRegion(
             dest.X - layer.OffsetX,
@@ -352,30 +538,44 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
             dest.Height).ClipTo(layer.Width, layer.Height);
         if (clipped.IsEmpty) return;
 
-        for (var layY = clipped.Y; layY < clipped.Bottom; layY++)
+        var info = new SKImageInfo(_sourceW, _sourceH, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+        using var srcBitmap = new SKBitmap();
+        var handle = GCHandle.Alloc(_floatPixels, GCHandleType.Pinned);
+        try
         {
-            var docY = layY + layer.OffsetY;
-            var sy = Math.Clamp((int)((docY - dest.Y + 0.5) * _sourceH / dest.Height), 0, _sourceH - 1);
-            for (var layX = clipped.X; layX < clipped.Right; layX++)
+            srcBitmap.InstallPixels(info, handle.AddrOfPinnedObject());
+
+            var center = CenterOf(NormalizedRect(_rect));
+            var r = NormalizedRect(_rect);
+
+            layer.Pixels.RenderWithSkia(clipped, canvas =>
             {
-                var docX = layX + layer.OffsetX;
-                var sx = Math.Clamp((int)((docX - dest.X + 0.5) * _sourceW / dest.Width), 0, _sourceW - 1);
-                var si = (sy * _sourceW + sx) * 4;
-                if (_floatPixels[si + 3] == 0) continue;
-
-                if (layer.IsAlphaLocked)
+                using var paint = new SKPaint
                 {
-                    layer.Pixels.GetPixel(layX, layY, out _, out _, out _, out var existingA);
-                    if (existingA == 0) continue;
-                }
+                    IsAntialias = true,
+                    BlendMode = SKBlendMode.SrcOver
+                };
 
-                layer.Pixels.SetPixel(layX, layY,
-                    _floatPixels[si],
-                    _floatPixels[si + 1],
-                    _floatPixels[si + 2],
-                    _floatPixels[si + 3]);
-            }
+                canvas.Save();
+                canvas.Translate((float)center.X, (float)center.Y);
+                canvas.RotateDegrees((float)_angle);
+                canvas.Translate((float)(-center.X), (float)(-center.Y));
+                canvas.DrawBitmap(srcBitmap,
+                    new SKRect((float)r.X, (float)r.Y, (float)r.Right, (float)r.Bottom),
+                    paint);
+                canvas.Restore();
+            });
         }
+        finally
+        {
+            handle.Free();
+        }
+    }
+
+    private static Point CenterOf(Rect rect)
+    {
+        var r = NormalizedRect(rect);
+        return new Point(r.X + r.Width / 2, r.Y + r.Height / 2);
     }
 
     private static Rect CenteredRect(Point p, double size)
@@ -393,5 +593,9 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         yield return (TransformDragPart.Bottom, new Point(midX, rect.Bottom));
         yield return (TransformDragPart.BottomLeft, rect.BottomLeft);
         yield return (TransformDragPart.Left, new Point(rect.Left, midY));
+
+        // Free rotation handle below the box
+        var rotY = rect.Bottom + Math.Max(rect.Height * 0.25, 12);
+        yield return (TransformDragPart.Rotate, new Point(midX, rotY));
     }
 }

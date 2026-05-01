@@ -210,7 +210,9 @@ public sealed class DrawingCanvas : Control
 
     public void CancelActiveTool()
     {
-        if (!_toolController.Cancel() && _ctx.Selection.HasSelection)
+        if (_toolController.ActiveTool is TransformTool)
+            EndSelectionTransform();
+        else if (!_toolController.Cancel() && _ctx.Selection.HasSelection)
             _ctx.Selection.Clear();
         InvalidateVisual();
     }
@@ -220,6 +222,8 @@ public sealed class DrawingCanvas : Control
         if (_toolController.ActiveTool is SelectTool st) st.CommitPolyline(_ctx);
         else if (_toolController.ActiveTool is PolylineTool pt) pt.Commit(_ctx);
         else if (_toolController.ActiveTool is TransformTool tt) tt.Commit(_ctx);
+        if (_toolController.ActiveTool is TransformTool)
+            EndSelectionTransform();
         InvalidateVisual();
     }
 
@@ -227,12 +231,24 @@ public sealed class DrawingCanvas : Control
     {
         var previousTool = _toolController.ActiveTool;
         SetActiveTool(_transformTool);
+        _transformTool.SetPreviousTool(previousTool);
         if (_transformTool.BeginTransform(_ctx))
             return true;
 
+        _transformTool.SetPreviousTool(null);
         SetActiveTool(previousTool);
         return false;
     }
+
+    public void EndSelectionTransform()
+    {
+        var previous = _transformTool.GetPreviousTool();
+        _transformTool.SetPreviousTool(null);
+        if (previous != null)
+            SetActiveTool(previous);
+    }
+
+    public bool IsTransformActive => _toolController.ActiveTool is TransformTool tt && tt.HasPendingOperation;
 
     public void Clear(bool pushHistory = true) => _document.ClearActiveLayer(pushHistory);
     public void Undo() => _document.Undo();
@@ -262,7 +278,7 @@ public sealed class DrawingCanvas : Control
         base.Render(context);
 
         // Sync cursor to current state so layer lock changes take effect immediately.
-        if (_isPointerOver)
+        if (_isPointerOver && !(_toolController.ActiveTool is TransformTool { HasPendingOperation: true }))
             Cursor = new Cursor(IsPaintBlockedByLock ? StandardCursorType.No : StandardCursorType.None);
 
         _compositor.Composite(_document.Layers, _document.Width, _document.Height, _document.PaperColor, _document.PaperVisible);
@@ -366,6 +382,17 @@ public sealed class DrawingCanvas : Control
         var point = e.GetCurrentPoint(this);
         if (!_isCursorPreviewLocked)
             _pointerPos = point.Position;
+
+        // Transform cursor override
+        if (_toolController.ActiveTool is TransformTool tt && tt.HasPendingOperation)
+        {
+            var canvasPos = new Point(
+                point.Position.X / Math.Max(Bounds.Width, 1) * _document.Width,
+                point.Position.Y / Math.Max(Bounds.Height, 1) * _document.Height);
+            var cursor = tt.CursorFor(canvasPos, CanvasZoom);
+            if (cursor.HasValue)
+                Cursor = new Cursor(cursor.Value);
+        }
 
         if (PaintInputSuspended)
         {

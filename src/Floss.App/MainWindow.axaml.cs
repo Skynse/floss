@@ -1932,6 +1932,15 @@ public partial class MainWindow : Window
 
     private void ActivateTool(ITool tool, Button button)
     {
+        if (_canvas.IsTransformActive)
+        {
+            // In CSP-style transform mode, clicking another tool cancels the transform
+            _canvas.CancelActiveTool();
+            // After cancel, the previous tool is restored; if user clicked a different tool,
+            // we still want to honor that switch, so fall through.
+            if (_canvas.ActiveTool == tool) return;
+        }
+
         _canvas.SetActiveTool(tool);
         _activeToolButton = button;
         foreach (var b in _toolButtons) SetRailActive(b, b == button);
