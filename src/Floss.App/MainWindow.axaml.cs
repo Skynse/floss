@@ -838,7 +838,7 @@ public partial class MainWindow : Window
             Orientation = Avalonia.Layout.Orientation.Horizontal,
             Spacing = 4
         };
-        _presetPanel = new StackPanel { Spacing = 2 };
+        _presetPanel = new StackPanel { Spacing = 2, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
 
         _strokePreview = new BrushStrokePreview { Height = 64 };
 
@@ -862,7 +862,7 @@ public partial class MainWindow : Window
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            MaxHeight = 160,
+            MaxHeight = 320,
             Content = _presetPanel
         };
 
@@ -1600,62 +1600,55 @@ public partial class MainWindow : Window
 
         foreach (var asset in assets)
         {
-            var preset = asset.Preset;
+            var preset  = asset.Preset;
             var isActive = _activeBrushAsset?.Id == asset.Id;
 
+            // Stroke preview fills the full row
+            var strokePreview = new BrushStrokePreview
+            {
+                Brush  = preset,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Stretch,
+            };
+
+            // Name pill — right-aligned, floating over the preview
             var nameText = new TextBlock
             {
-                Text = preset.Name,
-                Foreground = new SolidColorBrush(Color.Parse(isActive ? "#ffffff" : TextPrimary)),
+                Text       = preset.Name,
+                FontSize   = 11,
                 FontWeight = FontWeight.SemiBold,
-                FontSize = 11,
-                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-                TextTrimming = TextTrimming.CharacterEllipsis
+                Foreground = new SolidColorBrush(Colors.White),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxWidth   = 160,
             };
-
-            var kindTag = new TextBlock
+            var namePill = new Border
             {
-                Text = KindTag(preset.Kind),
-                FontSize = 9,
-                Foreground = new SolidColorBrush(Color.Parse(isActive ? "#8aacee" : TextMuted)),
-                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                Background    = new SolidColorBrush(Color.FromArgb(160, 15, 13, 18)),
+                Padding       = new Thickness(7, 2),
+                CornerRadius  = new CornerRadius(3),
+                Child         = nameText,
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
-                TextTrimming = TextTrimming.CharacterEllipsis
+                VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+                Margin        = new Thickness(0, 0, 7, 0),
             };
 
-            // Stroke-weight preview: tapered bar mimicking the brush width
-            var strokeH = Math.Clamp(preset.Size / 256.0 * 12.0 + 1.5, 1.5, 12.0);
-            var strokeOp = preset.Kind == BrushKind.Airbrush ? 0.45 : 0.85;
-            var strokeBar = new Border
-            {
-                Height = strokeH,
-                CornerRadius = new CornerRadius(strokeH / 2),
-                Background = new SolidColorBrush(Color.Parse(isActive ? "#7a9fe0" : "#3a4258")),
-                Opacity = strokeOp,
-                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 4, 0)
-            };
-
-            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,56,38") };
-            Grid.SetColumn(nameText, 0);
-            Grid.SetColumn(strokeBar, 1);
-            Grid.SetColumn(kindTag, 2);
-            grid.Children.Add(nameText);
-            grid.Children.Add(strokeBar);
-            grid.Children.Add(kindTag);
+            var panel = new Panel { ClipToBounds = true };
+            panel.Children.Add(strokePreview);
+            panel.Children.Add(namePill);
 
             var row = new Button
             {
-                Height = 32,
+                Height      = 48,
+                Padding     = new Thickness(0),
+                HorizontalAlignment        = Avalonia.Layout.HorizontalAlignment.Stretch,
                 HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
-                VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
-                Background = new SolidColorBrush(Color.Parse(isActive ? AccentSoft : Bg2)),
+                VerticalContentAlignment   = Avalonia.Layout.VerticalAlignment.Stretch,
+                Background  = new SolidColorBrush(Color.Parse(Bg2)),
                 BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(4),
-                Padding = new Thickness(8, 0),
-                Content = grid,
-                Tag = asset
+                BorderThickness = new Thickness(isActive ? 2 : 1),
+                CornerRadius    = new CornerRadius(4),
+                Content = panel,
+                Tag     = asset,
             };
             row.Click += (_, _) => ApplyBrushAsset(asset);
             EnablePresetDrag(row, asset);
