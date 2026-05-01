@@ -53,6 +53,7 @@ public sealed class BrushEditorWindow : Window
     private readonly Slider _hardnessSlider = MkSlider(0, 1, 0.9, "Edge softness (anti-aliasing)");
     private readonly Slider _spacingSlider = MkSlider(0.01, 1, 0.1, "Stamp interval as fraction of size");
     private readonly Slider _smoothingSlider = MkSlider(0, 0.95, 0.3, "Input stabilization");
+    private readonly Slider _angleSlider = MkSlider(0, 360, 0, "Base angle in degrees");
     private readonly Slider _grainSlider = MkSlider(0, 1, 0.0, "Noise texture strength");
 
     // ── Open dynamics popups ──────────────────────────────────────────────────
@@ -63,6 +64,7 @@ public sealed class BrushEditorWindow : Window
     private DynamicsPopupWindow? _spacingDynPopup;
     private DynamicsPopupWindow? _scatterDynPopup;
     private DynamicsPopupWindow? _rotationDynPopup;
+    private AngleDynamicsPopupWindow? _angleDynPopup;
 
     // ── Cached category panels (built once to avoid re-parenting sliders) ────
     private ScrollViewer _brushSizePanel = null!;
@@ -404,7 +406,9 @@ public sealed class BrushEditorWindow : Window
             DynSliderRow("Spacing",   _spacingSlider,   "%", () => OpenSpacingDynamics()),
             DynButtonRow("Scatter",   () => OpenScatterDynamics()),
             DynButtonRow("Rotation",  () => OpenRotationDynamics()),
-            PlainSliderRow("Smoothing", _smoothingSlider, "%")
+            PlainSliderRow("Smoothing", _smoothingSlider, "%"),
+            // Angle slider, 0->360 degrees with dynamics
+            DynSliderRow("Angle", _angleSlider, "°", () => openAngleDynamics())
         }
     };
 
@@ -609,6 +613,28 @@ public sealed class BrushEditorWindow : Window
         _hardnessDynPopup.Closed += (_, _) => _hardnessDynPopup = null;
         PositionPopup(_hardnessDynPopup);
         _hardnessDynPopup.Show(this);
+    }
+
+
+
+    private void openAngleDynamics()
+    {
+        if (_angleDynPopup != null)
+        {
+            _angleDynPopup.Activate();
+            return;
+        }
+
+        _angleDynPopup = new AngleDynamicsPopupWindow(
+            _preset.BaseAngleSource,
+            _preset.AngleJitter,
+            source => Commit(p => p with { BaseAngleSource = source }),
+            jitter => Commit(p => p with { AngleJitter = jitter })
+        );
+
+        _angleDynPopup.Closed += (_, _) => _angleDynPopup = null;
+        PositionPopup(_angleDynPopup);
+        _angleDynPopup.Show(this);
     }
 
     private void OpenSpacingDynamics()

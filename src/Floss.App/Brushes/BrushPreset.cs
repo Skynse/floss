@@ -1,26 +1,30 @@
 using System;
 using System.Collections.Generic;
 using Avalonia.Media;
+using static Floss.App.Brushes.BrushDynamics;
 
 namespace Floss.App.Brushes;
 
 public enum BrushKind { Ink, Pencil, Marker, Airbrush, Eraser }
 
 public sealed record BrushPreset(
-    string    Name,
+    string Name,
     BrushKind Kind,
-    double    Size,
-    double    Opacity,
-    double    Hardness,
-    double    Spacing,
-    Color     Color)
+    double Size,
+    double Opacity,
+    double Hardness,
+    double Spacing,
+    Color Color,
+    double Angle)
 {
     public BrushDynamics Dynamics { get; init; } = new();
-    public double Flow      { get; init; } = 1.0;
-    public double Grain     { get; init; } = 0.0;
+    public double Flow { get; init; } = 1.0;
+    public double Grain { get; init; } = 0.0;
     public double Smoothing { get; init; } = 0.3;
-    public IBrushTip Tip    { get; init; } = new ProceduralBrushTip();
-
+    public IBrushTip Tip { get; init; } = new ProceduralBrushTip();
+    public bool FollowTrajectory { get; set; } = false;
+    public AngleSource BaseAngleSource { get; init; } = AngleSource.None;
+    public float AngleJitter { get; init; } = 0f; // 0.0 to 1.0
     public ParameterDynamics SizeDynamics
     {
         get => BrushDynamics.ToParameterDynamics(Dynamics.Size);
@@ -45,16 +49,17 @@ public sealed record BrushPreset(
 
     public static IReadOnlyList<BrushPreset> Defaults { get; } =
     [
-        new("Technical Pen", BrushKind.Ink, 8, 1.0, 0.95, 0.10, Color.Parse("#111111"))
+        new("Technical Pen", BrushKind.Ink, 8, 1.0, 0.95, 0.10, Color.Parse("#000000"), 100)
         {
             Dynamics = new BrushDynamics
             {
                 Size    = CurveOption.PressureSpeed(1.25f, 0.18f),
                 Opacity = CurveOption.Off()
             },
-            Smoothing = 0.45
+            Smoothing = 0.45,
+
         },
-        new("Studio Pen", BrushKind.Ink, 16, 0.92, 0.72, 0.13, Color.Parse("#111111"))
+        new("Studio Pen", BrushKind.Ink, 16, 0.92, 0.72, 0.13, Color.Parse("#000000"), 100)
         {
             Dynamics = new BrushDynamics
             {
@@ -63,7 +68,7 @@ public sealed record BrushPreset(
             },
             Smoothing = 0.5
         },
-        new("Soft Pencil", BrushKind.Pencil, 22, 0.58, 0.28, 0.18, Color.Parse("#1c1c1c"))
+        new("Soft Pencil", BrushKind.Pencil, 22, 0.58, 0.28, 0.18, Color.Parse("#000000"), 100)
         {
             Dynamics = new BrushDynamics
             {
@@ -72,7 +77,7 @@ public sealed record BrushPreset(
             },
             Smoothing = 0.2, Grain = 0.45
         },
-        new("Marker", BrushKind.Marker, 34, 0.70, 0.48, 0.20, Color.Parse("#111111"))
+        new("Marker", BrushKind.Marker, 34, 0.70, 0.48, 0.20, Color.Parse("#000000"), 100)
         {
             Dynamics = new BrushDynamics
             {
@@ -81,7 +86,7 @@ public sealed record BrushPreset(
             },
             Flow = 0.6, Smoothing = 0.55
         },
-        new("Airbrush", BrushKind.Airbrush, 48, 0.35, 0.12, 0.16, Color.Parse("#111111"))
+        new("Airbrush", BrushKind.Airbrush, 48, 0.35, 0.12, 0.16, Color.Parse("#000000"), 100)
         {
             Dynamics = new BrushDynamics
             {

@@ -15,7 +15,7 @@ public static class AbrImporter
         var r = new AbrReader(stream);
 
         var version = r.U16();
-        var extra   = r.U16();
+        var extra = r.U16();
 
         if (version is 1 or 2)
         {
@@ -30,7 +30,7 @@ public static class AbrImporter
         else if (version is 6 or 7)
         {
             var subVersion = (int)extra;
-            var errors     = 0;
+            var errors = 0;
             while (stream.Position < stream.Length - 8)
             {
                 try
@@ -76,7 +76,7 @@ public static class AbrImporter
 
             if (stream.Read(lenBuf, 0, 4) < 4) break;
             var blockLen = (long)(((uint)lenBuf[0] << 24) | ((uint)lenBuf[1] << 16) |
-                                  ((uint)lenBuf[2] << 8)  |  lenBuf[3]);
+                                  ((uint)lenBuf[2] << 8) | lenBuf[3]);
 
             var blockStart = stream.Position;
             var tagStr = Encoding.ASCII.GetString(hdr, 4, 4);
@@ -135,13 +135,13 @@ public static class AbrImporter
     private static bool IsV10Guid(byte[] data, int pos)
     {
         if (pos + 38 > data.Length) return false;
-        if (data[pos + 9]  != '-') return false;
+        if (data[pos + 9] != '-') return false;
         if (data[pos + 14] != '-') return false;
         if (data[pos + 19] != '-') return false;
         if (data[pos + 24] != '-') return false;
-        if (data[pos + 37] != 0)   return false;
+        if (data[pos + 37] != 0) return false;
 
-        for (var i = 1;  i <= 8;  i++) if (!IsHexByte(data[pos + i])) return false;
+        for (var i = 1; i <= 8; i++) if (!IsHexByte(data[pos + i])) return false;
         for (var i = 10; i <= 13; i++) if (!IsHexByte(data[pos + i])) return false;
         for (var i = 15; i <= 18; i++) if (!IsHexByte(data[pos + i])) return false;
         for (var i = 20; i <= 23; i++) if (!IsHexByte(data[pos + i])) return false;
@@ -156,12 +156,12 @@ public static class AbrImporter
     {
         if (ds + 283 > data.Length) return null;
 
-        var topCrop  = (data[ds + 13] << 8) | data[ds + 14];
+        var topCrop = (data[ds + 13] << 8) | data[ds + 14];
         var leftCrop = (data[ds + 17] << 8) | data[ds + 18];
-        var renderH  = (data[ds + 21] << 8) | data[ds + 22];
-        var renderW  = (data[ds + 25] << 8) | data[ds + 26];
-        var depth    = data[ds + 280];
-        var comp     = data[ds + 281];
+        var renderH = (data[ds + 21] << 8) | data[ds + 22];
+        var renderW = (data[ds + 25] << 8) | data[ds + 26];
+        var depth = data[ds + 280];
+        var comp = data[ds + 281];
 
         if (depth != 8) return null;
         if (renderW <= 0 || renderH <= 0 || renderW > 5000 || renderH > 5000) return null;
@@ -224,7 +224,7 @@ public static class AbrImporter
 
     private static void TryReadV12(AbrReader r, int version, List<BrushAsset> results)
     {
-        var brushType  = r.U16();
+        var brushType = r.U16();
         var dataLength = (int)r.U32();
         var blockStart = r.Position;
 
@@ -252,14 +252,14 @@ public static class AbrImporter
             }
 
             r.Skip(1); // antiAlias
-            var top    = r.I16();
-            var left   = r.I16();
+            var top = r.I16();
+            var left = r.I16();
             var bottom = r.I16();
-            var right  = r.I16();
-            var w      = right - left;
-            var h      = bottom - top;
-            var depth  = r.U16();
-            var comp   = r.Byte();
+            var right = r.I16();
+            var w = right - left;
+            var h = bottom - top;
+            var depth = r.U16();
+            var comp = r.Byte();
 
             if (w <= 0 || h <= 0 || w > 5000 || h > 5000) return;
 
@@ -307,14 +307,14 @@ public static class AbrImporter
             }
 
             r.Skip(1); // antiAlias
-            var top    = r.I16();
-            var left   = r.I16();
+            var top = r.I16();
+            var left = r.I16();
             var bottom = r.I16();
-            var right  = r.I16();
-            var w      = right - left;
-            var h      = bottom - top;
-            var depth  = r.U16();
-            var comp   = r.Byte();
+            var right = r.I16();
+            var w = right - left;
+            var h = bottom - top;
+            var depth = r.U16();
+            var comp = r.Byte();
 
             if (w > 0 && h > 0 && w <= 5000 && h <= 5000)
             {
@@ -381,7 +381,7 @@ public static class AbrImporter
         if (expectedBytes > 16384) row = new byte[expectedBytes];
 
         var outPos = 0;
-        var inPos  = 0;
+        var inPos = 0;
 
         while (inPos < src.Length && outPos < expectedBytes)
         {
@@ -389,16 +389,16 @@ public static class AbrImporter
             if (n >= 0)
             {
                 var count = n + 1;
-                var copy  = Math.Min(count, expectedBytes - outPos);
+                var copy = Math.Min(count, expectedBytes - outPos);
                 src.AsSpan(inPos, copy).CopyTo(row[outPos..]);
                 outPos += copy;
-                inPos  += count;
+                inPos += count;
             }
             else if (n != -128)
             {
                 var count = -n + 1;
-                var fill  = Math.Min(count, expectedBytes - outPos);
-                var val   = src[inPos++];
+                var fill = Math.Min(count, expectedBytes - outPos);
+                var val = src[inPos++];
                 row.Slice(outPos, fill).Fill(val);
                 outPos += fill;
             }
@@ -421,7 +421,7 @@ public static class AbrImporter
     private static unsafe byte[] PixelsToPng(byte[] pixels, int w, int h)
     {
         using var bmp = new SKBitmap(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Premul));
-        var ptr      = (byte*)bmp.GetPixels().ToPointer();
+        var ptr = (byte*)bmp.GetPixels().ToPointer();
         var rowBytes = bmp.RowBytes;
 
         for (var y = 0; y < h; y++)
@@ -429,7 +429,7 @@ public static class AbrImporter
             for (var x = 0; x < w; x++)
             {
                 var alpha = pixels[y * w + x];
-                var p     = ptr + y * rowBytes + x * 4;
+                var p = ptr + y * rowBytes + x * 4;
                 p[0] = 0;     // B
                 p[1] = 0;     // G
                 p[2] = 0;     // R
@@ -438,7 +438,7 @@ public static class AbrImporter
         }
 
         using var image = SKImage.FromBitmap(bmp);
-        using var data  = image.Encode(SKEncodedImageFormat.Png, 100);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
         return data.ToArray();
     }
 
@@ -447,26 +447,26 @@ public static class AbrImporter
     private static BrushAsset MakeAsset(string name, int spacingPct, byte[] pixels, int w, int h)
     {
         var cleanName = string.IsNullOrWhiteSpace(name) ? "Imported Brush" : name.Trim();
-        var spacing   = Math.Clamp(spacingPct / 100.0, 0.02, 1.0);
-        var pngBytes  = PixelsToPng(pixels, w, h);
+        var spacing = Math.Clamp(spacingPct / 100.0, 0.02, 1.0);
+        var pngBytes = PixelsToPng(pixels, w, h);
 
         var tipData = new BrushTipData
         {
-            Kind     = BrushTipStorageKind.EmbeddedPng,
+            Kind = BrushTipStorageKind.EmbeddedPng,
             PngBytes = pngBytes
         };
 
-        var preset = new BrushPreset(cleanName, BrushKind.Ink, 40, 1.0, 0.9, spacing, Color.Parse("#111111"))
+        var preset = new BrushPreset(cleanName, BrushKind.Ink, 40, 1.0, 0.9, spacing, Color.Parse("#111111"), 100.0)
         {
             Dynamics = new BrushDynamics { Size = CurveOption.Pressure(1.2f) },
-            Tip      = tipData.CreateTip()
+            Tip = tipData.CreateTip()
         };
 
         return new BrushAsset
         {
-            Id     = Guid.NewGuid().ToString("N"),
+            Id = Guid.NewGuid().ToString("N"),
             Preset = preset,
-            Tip    = tipData
+            Tip = tipData
         };
     }
 

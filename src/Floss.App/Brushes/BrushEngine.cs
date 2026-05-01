@@ -70,6 +70,14 @@ public sealed class BrushEngine : IDisposable
         return dirty;
     }
 
+    private static float LerpAngle(float a, float b, float t)
+    {
+        var delta = b - a;
+        if (delta > MathF.PI) delta -= MathF.Tau;
+        else if (delta < -MathF.PI) delta += MathF.Tau;
+        return a + delta * t;
+    }
+
     public PixelRegion EstimateSegmentRegion(DrawingLayer layer, BrushPreset brush, CanvasInputSample from, CanvasInputSample to)
     {
         var radius = EstimateBrushRadius(brush);
@@ -104,8 +112,12 @@ public sealed class BrushEngine : IDisposable
         var subdivisions = Math.Max(8, Math.Min(96, (int)Math.Ceiling(distance / 2.0)));
 
         if (distance > 0.001)
-            stroke.State.DrawingAngle = MathF.Atan2((float)dy, (float)dx);
-
+        {
+            var currentAngle = MathF.Atan2((float)dy, (float)dx);
+            //stroke.State.DrawingAngle = MathF.Atan2((float)dy, (float)dx);
+            //
+            stroke.State.DrawingAngle = LerpAngle(stroke.State.DrawingAngle, currentAngle, 0.5f);
+        }
         var p0 = new SplinePoint(
             stroke.State.LastX, stroke.State.LastY, stroke.State.LastPressure,
             stroke.State.LastTiltX, stroke.State.LastTiltY, (float)from.Twist);
@@ -182,17 +194,19 @@ public sealed class BrushEngine : IDisposable
     private static StampSample CreateStamp(ActiveStroke stroke, BrushPreset brush, in StrokePoint sp)
     {
         var dyn = brush.Dynamics;
-        var sizeMul    = dyn.EvalSize(sp);
-        var opacMul    = dyn.EvalOpacity(sp);
-        var flowMul    = dyn.EvalFlow(sp);
-        var hardness   = dyn.Hardness.IsEnabled ? dyn.EvalHardness(sp) : (float)brush.Hardness;
+        var sizeMul = dyn.EvalSize(sp);
+        var opacMul = dyn.EvalOpacity(sp);
+        var flowMul = dyn.EvalFlow(sp);
+        var hardness = dyn.Hardness.IsEnabled ? dyn.EvalHardness(sp) : (float)brush.Hardness;
         var spacingMul = dyn.EvalSpacing(sp);
-        var scatter    = dyn.Scatter.IsEnabled ? dyn.EvalScatter(sp) : 0f;
-        var rotDeg     = dyn.EvalRotationDeg(sp);
-        var size       = Math.Max(0.5f, (float)brush.Size * sizeMul);
-        var opacity    = (float)Math.Clamp(brush.Opacity * brush.Flow * opacMul * flowMul, 0, 1);
-        var angle      = (float)sp.Twist + rotDeg;
-
+        var scatter = dyn.Scatter.IsEnabled ? dyn.EvalScatter(sp) : 0f;
+        var rotDeg = dyn.EvalRotationDeg(sp);
+        var size = Math.Max(0.5f, (float)brush.Size * sizeMul);
+        var opacity = (float)Math.Clamp(brush.Opacity * brush.Flow * opacMul * flowMul, 0, 1);
+        //var angle      = (float)sp.Twist + rotDeg;
+        var trajectoryDeg = sp.DrawingAngle * (180 / MathF.PI);
+        var baseAngle = brush.FollowTrajectory ? trajectoryDeg : (float)sp.Twist;
+        var angle = baseAngle + rotDeg;
         var x = sp.X;
         var y = sp.Y;
         if (scatter > 0.001f)
@@ -240,9 +254,9 @@ public sealed class BrushEngine : IDisposable
     private static PixelRegion StampBounds(StampSample stamp)
     {
         var radius = stamp.Size * 0.75f + 2.0f;
-        var left   = (int)MathF.Floor(stamp.X - radius);
-        var top    = (int)MathF.Floor(stamp.Y - radius);
-        var right  = (int)MathF.Ceiling(stamp.X + radius);
+        var left = (int)MathF.Floor(stamp.X - radius);
+        var top = (int)MathF.Floor(stamp.Y - radius);
+        var right = (int)MathF.Ceiling(stamp.X + radius);
         var bottom = (int)MathF.Ceiling(stamp.Y + radius);
         return new PixelRegion(left, top, right - left + 1, bottom - top + 1);
     }
@@ -266,12 +280,12 @@ public sealed class BrushEngine : IDisposable
     {
         var t2 = t * t; var t3 = t2 * t;
         return new SplinePoint(
-            Catmull(p0.X,        p1.X,        p2.X,        p3.X,        t, t2, t3),
-            Catmull(p0.Y,        p1.Y,        p2.Y,        p3.Y,        t, t2, t3),
+            Catmull(p0.X, p1.X, p2.X, p3.X, t, t2, t3),
+            Catmull(p0.Y, p1.Y, p2.Y, p3.Y, t, t2, t3),
             Catmull(p0.Pressure, p1.Pressure, p2.Pressure, p3.Pressure, t, t2, t3),
-            Catmull(p0.TiltX,    p1.TiltX,    p2.TiltX,    p3.TiltX,    t, t2, t3),
-            Catmull(p0.TiltY,    p1.TiltY,    p2.TiltY,    p3.TiltY,    t, t2, t3),
-            Catmull(p0.Twist,    p1.Twist,    p2.Twist,    p3.Twist,    t, t2, t3));
+            Catmull(p0.TiltX, p1.TiltX, p2.TiltX, p3.TiltX, t, t2, t3),
+            Catmull(p0.TiltY, p1.TiltY, p2.TiltY, p3.TiltY, t, t2, t3),
+            Catmull(p0.Twist, p1.Twist, p2.Twist, p3.Twist, t, t2, t3));
     }
 
     private static float Catmull(float p0, float p1, float p2, float p3, float t, float t2, float t3)
@@ -322,8 +336,8 @@ public sealed class BrushEngine : IDisposable
             Paint = new SKPaint
             {
                 IsAntialias = true,
-                BlendMode   = eraser ? SKBlendMode.DstOut : SKBlendMode.SrcOver,
-                Color       = eraser ? SKColors.White : _baseColor,
+                BlendMode = eraser ? SKBlendMode.DstOut : SKBlendMode.SrcOver,
+                Color = eraser ? SKColors.White : _baseColor,
                 ColorFilter = eraser ? null : SKColorFilter.CreateBlendMode(_baseColor, SKBlendMode.SrcIn)
             };
         }
@@ -332,7 +346,7 @@ public sealed class BrushEngine : IDisposable
         public StrokeState State;
         public int BaseMaskSize { get; }
         public SKBitmap Mask { get; }
-        public SKPaint  Paint { get; }
+        public SKPaint Paint { get; }
         public SKMatrix Matrix;
 
         public bool Matches(BrushPreset brush, bool eraser)
