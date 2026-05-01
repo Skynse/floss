@@ -13,6 +13,9 @@ public static class AppPaths
     public static string BrushesDirectory { get; } =
         Path.Combine(AppDirectory, "Brushes");
 
+    public static string BrushTipsDirectory { get; } =
+        Path.Combine(AppDirectory, "Tips");
+
     public static string DocumentsDirectory { get; } =
         Path.Combine(AppDirectory, "Documents");
 
@@ -29,6 +32,7 @@ public static class AppPaths
     {
         Directory.CreateDirectory(AppDirectory);
         Directory.CreateDirectory(BrushesDirectory);
+        Directory.CreateDirectory(BrushTipsDirectory);
         Directory.CreateDirectory(DocumentsDirectory);
     }
 }

@@ -8,6 +8,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using Floss.App.Brushes;
 
@@ -15,43 +16,43 @@ namespace Floss.App;
 
 public sealed class BrushEditorWindow : Window
 {
-    private const string Bg0           = "#0d0f14";
-    private const string Bg1           = "#13151a";
-    private const string Bg2           = "#1a1c22";
-    private const string BgSidebar     = "#0f1117";
-    private const string Stroke        = "#2b303b";
-    private const string TextPrimary   = "#d7dde8";
+    private const string Bg0 = "#0d0f14";
+    private const string Bg1 = "#13151a";
+    private const string Bg2 = "#1a1c22";
+    private const string BgSidebar = "#0f1117";
+    private const string Stroke = "#2b303b";
+    private const string TextPrimary = "#d7dde8";
     private const string TextSecondary = "#A0AAB4";
-    private const string TextMuted     = "#6f7888";
-    private const string Accent        = "#3d6fd8";
-    private const string AccentSoft    = "#22355f";
+    private const string TextMuted = "#6f7888";
+    private const string Accent = "#3d6fd8";
+    private const string AccentSoft = "#22355f";
 
     // ── Categories ────────────────────────────────────────────────────────────
     private static readonly string[] Categories =
         ["Brush Size", "Ink", "Anti-aliasing", "Brush Tip", "Stroke", "Texture"];
 
     private int _activeCategory;
-    private readonly Button[]         _catButtons;
-    private readonly Border           _contentHost = new();
+    private readonly Button[] _catButtons;
+    private readonly Border _contentHost = new();
 
     // ── State ─────────────────────────────────────────────────────────────────
     private BrushPreset _preset;
     private readonly Action<BrushPreset> _onChange;
-    private readonly BrushStrokePreview  _preview = new() { Height = 76 };
+    private readonly BrushStrokePreview _preview = new() { Height = 76 };
     private bool _syncing;
 
     // ── Stamp layers (Texture category) ──────────────────────────────────────
-    private readonly List<StampLayer> _stampLayers  = [];
-    private StackPanel                _stampPanel   = null!;
+    private readonly List<StampLayer> _stampLayers = [];
+    private StackPanel _stampPanel = null!;
 
     // ── Sliders ───────────────────────────────────────────────────────────────
-    private readonly Slider _sizeSlider      = MkSlider(0.5,  300,  8,    "Brush size in pixels");
-    private readonly Slider _opacitySlider   = MkSlider(0.01, 1,    1.0,  "Maximum opacity per stamp");
-    private readonly Slider _flowSlider      = MkSlider(0.01, 1,    1.0,  "Paint buildup per dab");
-    private readonly Slider _hardnessSlider  = MkSlider(0,    1,    0.9,  "Edge softness (anti-aliasing)");
-    private readonly Slider _spacingSlider   = MkSlider(0.01, 1,    0.1,  "Stamp interval as fraction of size");
-    private readonly Slider _smoothingSlider = MkSlider(0,    0.95, 0.3,  "Input stabilization");
-    private readonly Slider _grainSlider     = MkSlider(0,    1,    0.0,  "Noise texture strength");
+    private readonly Slider _sizeSlider = MkSlider(0.5, 300, 8, "Brush size in pixels");
+    private readonly Slider _opacitySlider = MkSlider(0.01, 1, 1.0, "Maximum opacity per stamp");
+    private readonly Slider _flowSlider = MkSlider(0.01, 1, 1.0, "Paint buildup per dab");
+    private readonly Slider _hardnessSlider = MkSlider(0, 1, 0.9, "Edge softness (anti-aliasing)");
+    private readonly Slider _spacingSlider = MkSlider(0.01, 1, 0.1, "Stamp interval as fraction of size");
+    private readonly Slider _smoothingSlider = MkSlider(0, 0.95, 0.3, "Input stabilization");
+    private readonly Slider _grainSlider = MkSlider(0, 1, 0.0, "Noise texture strength");
 
     // ── Open dynamics popups ──────────────────────────────────────────────────
     private DynamicsPopupWindow? _sizeDynPopup;
@@ -63,26 +64,26 @@ public sealed class BrushEditorWindow : Window
     private DynamicsPopupWindow? _rotationDynPopup;
 
     // ── Cached category panels (built once to avoid re-parenting sliders) ────
-    private ScrollViewer _brushSizePanel  = null!;
-    private ScrollViewer _inkPanel        = null!;
-    private ScrollViewer _aaPanel         = null!;
-    private ScrollViewer _strokePanel     = null!;
-    private ScrollViewer _texturePanel    = null!;
+    private ScrollViewer _brushSizePanel = null!;
+    private ScrollViewer _inkPanel = null!;
+    private ScrollViewer _aaPanel = null!;
+    private ScrollViewer _strokePanel = null!;
+    private ScrollViewer _texturePanel = null!;
 
     // ── Constructor ───────────────────────────────────────────────────────────
 
     public BrushEditorWindow(BrushPreset preset, Action<BrushPreset> onChange)
     {
-        _preset   = preset;
+        _preset = preset;
         _onChange = onChange;
 
-        Width         = 370;
-        Height        = 560;
-        CanResize     = true;
-        MinWidth      = 300;
-        MinHeight     = 420;
-        Background    = new SolidColorBrush(Color.Parse(Bg1));
-        Title         = $"Edit Brush — {preset.Name}";
+        Width = 370;
+        Height = 560;
+        CanResize = true;
+        MinWidth = 300;
+        MinHeight = 420;
+        Background = new SolidColorBrush(Color.Parse(Bg1));
+        Title = $"Edit Brush — {preset.Name}";
         ShowInTaskbar = false;
 
         _catButtons = Categories.Select((_, i) => MakeCatBtn(i)).ToArray();
@@ -91,10 +92,10 @@ public sealed class BrushEditorWindow : Window
         // Build slider-containing panels exactly once so sliders are never
         // re-parented when the user switches categories.
         _brushSizePanel = WrapContent(BuildBrushSizeContent());
-        _inkPanel       = WrapContent(BuildInkContent());
-        _aaPanel        = WrapContent(BuildAntiAliasingContent());
-        _strokePanel    = WrapContent(BuildStrokeContent());
-        _texturePanel   = WrapContent(BuildTextureContent());
+        _inkPanel = WrapContent(BuildInkContent());
+        _aaPanel = WrapContent(BuildAntiAliasingContent());
+        _strokePanel = WrapContent(BuildStrokeContent());
+        _texturePanel = WrapContent(BuildTextureContent());
 
         Content = BuildShell();
         SyncFromPreset(preset);
@@ -108,17 +109,17 @@ public sealed class BrushEditorWindow : Window
         // Sidebar
         var sidebar = new Border
         {
-            Width           = 110,
-            Background      = new SolidColorBrush(Color.Parse(BgSidebar)),
-            BorderBrush     = new SolidColorBrush(Color.Parse(Stroke)),
+            Width = 110,
+            Background = new SolidColorBrush(Color.Parse(BgSidebar)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 0, 1, 0),
-            Child           = BuildSidebar()
+            Child = BuildSidebar()
         };
 
         var body = new Grid();
         body.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
         body.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
-        Grid.SetColumn(sidebar,      0);
+        Grid.SetColumn(sidebar, 0);
         Grid.SetColumn(_contentHost, 1);
         body.Children.Add(sidebar);
         body.Children.Add(_contentHost);
@@ -142,17 +143,17 @@ public sealed class BrushEditorWindow : Window
     {
         var btn = new Button
         {
-            Content         = Categories[index],
-            Height          = 32,
-            Padding         = new Thickness(10, 0),
-            FontSize        = 10,
+            Content = Categories[index],
+            Height = 32,
+            Padding = new Thickness(10, 0),
+            FontSize = 10,
             HorizontalContentAlignment = HorizontalAlignment.Left,
-            VerticalContentAlignment   = VerticalAlignment.Center,
-            HorizontalAlignment        = HorizontalAlignment.Stretch,
-            Background      = new SolidColorBrush(Colors.Transparent),
-            Foreground      = new SolidColorBrush(Color.Parse(TextMuted)),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Background = new SolidColorBrush(Colors.Transparent),
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
             BorderThickness = new Thickness(0),
-            CornerRadius    = new CornerRadius(0)
+            CornerRadius = new CornerRadius(0)
         };
         btn.Click += (_, _) => SelectCategory(index);
         return btn;
@@ -191,9 +192,9 @@ public sealed class BrushEditorWindow : Window
     private static ScrollViewer WrapContent(Control content) => new()
     {
         HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-        VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
-        Padding                       = new Thickness(10, 8, 10, 12),
-        Content                       = content
+        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        Padding = new Thickness(10, 8, 10, 12),
+        Content = content
     };
 
     // ── Category content ──────────────────────────────────────────────────────
@@ -219,62 +220,241 @@ public sealed class BrushEditorWindow : Window
 
     private Control BuildAntiAliasingContent() => new StackPanel
     {
-        Spacing  = 0,
+        Spacing = 0,
         Children = { DynSliderRow("Hardness", _hardnessSlider, "%", () => OpenHardnessDynamics()) }
     };
 
     private Control BuildBrushTipContent()
     {
-        var tip = _preset.Tip as ProceduralBrushTip ?? new ProceduralBrushTip();
+        var mainTip = _stampLayers.Count > 0 ? _stampLayers[0].Tip : _preset.Tip;
+        return mainTip is ImageBrushTip img
+            ? BuildImageTipContent(img)
+            : BuildProceduralTipContent(mainTip as ProceduralBrushTip ?? new ProceduralBrushTip());
+    }
 
-        // Shape selector
-        var shapeRow = new StackPanel
+    private Control BuildImageTipContent(ImageBrushTip img)
+    {
+        Bitmap? bitmap = null;
+        try
         {
-            Orientation = Orientation.Horizontal,
-            Spacing     = 4,
-            Margin      = new Thickness(0, 0, 0, 8)
-        };
-        foreach (var shape in Enum.GetValues<BrushTipShape>())
-        {
-            var s     = shape;
-            var isAct = tip.Shape == s;
-            var btn   = new Button
-            {
-                Content         = shape.ToString(),
-                Height          = 24,
-                Padding         = new Thickness(8, 0),
-                FontSize        = 10,
-                Background      = new SolidColorBrush(Color.Parse(isAct ? AccentSoft : Bg2)),
-                BorderBrush     = new SolidColorBrush(Color.Parse(isAct ? Accent     : Stroke)),
-                BorderThickness = new Thickness(1),
-                Foreground      = new SolidColorBrush(Color.Parse(isAct ? TextPrimary : TextMuted)),
-                CornerRadius    = new CornerRadius(3),
-                HorizontalContentAlignment = HorizontalAlignment.Center,
-                VerticalContentAlignment   = VerticalAlignment.Center
-            };
-            btn.Click += (_, _) => Commit(p => p with { Tip = new ProceduralBrushTip(s, (p.Tip as ProceduralBrushTip)?.AspectRatio ?? 1f) });
-            shapeRow.Children.Add(btn);
+            using var ms = new MemoryStream(img.GetPngBytes());
+            bitmap = new Bitmap(ms);
         }
+        catch { }
 
-        // Aspect ratio
-        var aspectSlider = MkSlider(0.1, 1.0, Math.Clamp(tip.AspectRatio, 0.1, 1.0), "Aspect ratio (width/height)");
-        WireSlider(aspectSlider, v =>
+        var image = new Image
         {
-            if (_preset.Tip is ProceduralBrushTip pt)
-                Commit(p => p with { Tip = new ProceduralBrushTip(pt.Shape, (float)v) });
-        });
+            Source = bitmap,
+            Width = 64,
+            Height = 64,
+            Stretch = Stretch.Uniform,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var loadBtn = SmBtn("Load PNG");
+        loadBtn.Click += async (_, _) => await ImportPngTipAsync();
+
+        var backBtn = SmBtn("Procedural");
+        backBtn.Click += (_, _) => CommitMainTip(new ProceduralBrushTip());
+
+        var btnRow = new StackPanel
+        {
+            Orientation = Orientation.Vertical,
+            Spacing = 4,
+            VerticalAlignment = VerticalAlignment.Center,
+            Children = { loadBtn, backBtn }
+        };
 
         return new StackPanel
         {
-            Spacing  = 0,
+            Spacing = 8,
+            Children =
+            {
+                SectionHeader("CURRENT TIP"),
+                new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 10,
+                    Children = { image, btnRow }
+                },
+                SectionHeader("GALLERY"),
+                BuildTipGallery()
+            }
+        };
+    }
+
+    private Control BuildProceduralTipContent(ProceduralBrushTip tip)
+    {
+        var shapeRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 4,
+            Margin = new Thickness(0, 0, 0, 8)
+        };
+        foreach (var shape in Enum.GetValues<BrushTipShape>())
+        {
+            var s = shape;
+            var isAct = tip.Shape == s;
+            var btn = new Button
+            {
+                Content = shape.ToString(),
+                Height = 24,
+                Padding = new Thickness(8, 0),
+                FontSize = 10,
+                Background = new SolidColorBrush(Color.Parse(isAct ? AccentSoft : Bg2)),
+                BorderBrush = new SolidColorBrush(Color.Parse(isAct ? Accent : Stroke)),
+                BorderThickness = new Thickness(1),
+                Foreground = new SolidColorBrush(Color.Parse(isAct ? TextPrimary : TextMuted)),
+                CornerRadius = new CornerRadius(3),
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                VerticalContentAlignment = VerticalAlignment.Center
+            };
+            btn.Click += (_, _) =>
+            {
+                var ar = (_stampLayers.Count > 0 && _stampLayers[0].Tip is ProceduralBrushTip pt)
+                    ? pt.AspectRatio : 1f;
+                CommitMainTip(new ProceduralBrushTip(s, ar));
+            };
+            shapeRow.Children.Add(btn);
+        }
+
+        var aspectSlider = MkSlider(0.1, 1.0, Math.Clamp(tip.AspectRatio, 0.1, 1.0), "Aspect ratio (width/height)");
+        WireSlider(aspectSlider, v =>
+        {
+            var shape = (_stampLayers.Count > 0 && _stampLayers[0].Tip is ProceduralBrushTip pt)
+                ? pt.Shape : BrushTipShape.Circle;
+            CommitMainTip(new ProceduralBrushTip(shape, (float)v));
+        });
+
+        var loadBtn = SmBtn("Load PNG");
+        loadBtn.Click += async (_, _) => await ImportPngTipAsync();
+
+        return new StackPanel
+        {
+            Spacing = 0,
             Children =
             {
                 SectionHeader("SHAPE"),
                 shapeRow,
                 SectionHeader("ASPECT RATIO"),
-                PlainSliderRowRaw(aspectSlider, "f2")
+                PlainSliderRowRaw(aspectSlider, "f2"),
+                new Border { Height = 12 },
+                loadBtn,
+                new Border { Height = 12 },
+                SectionHeader("GALLERY"),
+                BuildTipGallery()
             }
         };
+    }
+
+    private Control BuildTipGallery()
+    {
+        var wrap = new WrapPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 4, 0, 0)
+        };
+
+        var pngFiles = new List<string>();
+        try
+        {
+            if (Directory.Exists(AppPaths.BrushTipsDirectory))
+                pngFiles.AddRange(Directory.EnumerateFiles(AppPaths.BrushTipsDirectory, "*.png"));
+        }
+        catch { }
+
+        foreach (var path in pngFiles.OrderBy(Path.GetFileName))
+        {
+            Bitmap? bitmap = null;
+            try
+            {
+                var bytes = File.ReadAllBytes(path);
+                using var ms = new MemoryStream(bytes);
+                bitmap = new Bitmap(ms);
+            }
+            catch { continue; }
+
+            var thumb = new Image
+            {
+                Source = bitmap,
+                Width = 44,
+                Height = 44,
+                Stretch = Stretch.Uniform,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            var btn = new Button
+            {
+                Width = 52,
+                Height = 52,
+                Padding = new Thickness(2),
+                Background = new SolidColorBrush(Color.Parse(Bg2)),
+                BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                Content = thumb
+            };
+
+            var localPath = path;
+            btn.Click += (_, _) =>
+            {
+                try { CommitMainTip(new ImageBrushTip(localPath)); }
+                catch { }
+            };
+
+            ToolTip.SetTip(btn, Path.GetFileNameWithoutExtension(localPath));
+            wrap.Children.Add(btn);
+        }
+
+        if (wrap.Children.Count == 0)
+        {
+            return new TextBlock
+            {
+                Text = "No tips found. Copy PNGs to:\n" + AppPaths.BrushTipsDirectory,
+                FontSize = 10,
+                Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+                TextWrapping = TextWrapping.Wrap
+            };
+        }
+
+        return new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            MaxHeight = 200,
+            Content = wrap
+        };
+    }
+
+    private async Task ImportPngTipAsync()
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Import PNG brush tip",
+            AllowMultiple = false,
+            FileTypeFilter = [new FilePickerFileType("PNG Image") { Patterns = ["*.png"] }]
+        });
+        if (files.Count == 0) return;
+        await using var stream = await files[0].OpenReadAsync();
+        using var mem = new MemoryStream();
+        await stream.CopyToAsync(mem);
+        var bytes = mem.ToArray();
+
+        try
+        {
+            var name = files[0].Name;
+            if (!name.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+                name += ".png";
+            var destPath = Path.Combine(AppPaths.BrushTipsDirectory, name);
+            await File.WriteAllBytesAsync(destPath, bytes);
+        }
+        catch { }
+
+        CommitMainTip(new ImageBrushTip(bytes));
     }
 
     private Control BuildStrokeContent() => new StackPanel
@@ -292,12 +472,12 @@ public sealed class BrushEditorWindow : Window
     private Control BuildTextureContent()
     {
         var addShapeBtn = SmBtn("+ Shape");
-        var addPngBtn   = SmBtn("+ PNG");
+        var addPngBtn = SmBtn("+ PNG");
         addShapeBtn.Click += (_, _) => AddShapeLayer();
-        addPngBtn.Click   += async (_, _) => await AddPngLayerAsync();
+        addPngBtn.Click += async (_, _) => await AddPngLayerAsync();
 
         var headerRow = new DockPanel { LastChildFill = false, Margin = new Thickness(0, 0, 0, 6) };
-        DockPanel.SetDock(addPngBtn,   Dock.Right);
+        DockPanel.SetDock(addPngBtn, Dock.Right);
         DockPanel.SetDock(addShapeBtn, Dock.Right);
         headerRow.Children.Add(SectionHeader("STAMP LAYERS"));
         headerRow.Children.Add(addPngBtn);
@@ -323,17 +503,17 @@ public sealed class BrushEditorWindow : Window
     {
         var dynBtn = new Button
         {
-            Content         = MaterialIcon(Icons.TuneVertical, 14),
-            Width           = 22,
-            Height          = 22,
-            Padding         = new Thickness(0),
+            Content = MaterialIcon(Icons.TuneVertical, 14),
+            Width = 22,
+            Height = 22,
+            Padding = new Thickness(0),
             HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment   = VerticalAlignment.Center,
-            Background      = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground      = new SolidColorBrush(Color.Parse(TextMuted)),
-            BorderBrush     = new SolidColorBrush(Color.Parse(Stroke)),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
-            CornerRadius    = new CornerRadius(3),
+            CornerRadius = new CornerRadius(3),
             VerticalAlignment = VerticalAlignment.Center
         };
         ToolTip.SetTip(dynBtn, "Edit dynamics curve");
@@ -349,25 +529,25 @@ public sealed class BrushEditorWindow : Window
     {
         var lbl = new TextBlock
         {
-            Text              = label,
-            FontSize          = 11,
-            Width             = 68,
-            Foreground        = new SolidColorBrush(Color.Parse(TextSecondary)),
+            Text = label,
+            FontSize = 11,
+            Width = 68,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
             VerticalAlignment = VerticalAlignment.Center
         };
         var dynBtn = new Button
         {
-            Content         = MaterialIcon(Icons.TuneVertical, 14),
-            Width           = 22,
-            Height          = 22,
-            Padding         = new Thickness(0),
+            Content = MaterialIcon(Icons.TuneVertical, 14),
+            Width = 22,
+            Height = 22,
+            Padding = new Thickness(0),
             HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment   = VerticalAlignment.Center,
-            Background      = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground      = new SolidColorBrush(Color.Parse(TextMuted)),
-            BorderBrush     = new SolidColorBrush(Color.Parse(Stroke)),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
-            CornerRadius    = new CornerRadius(3),
+            CornerRadius = new CornerRadius(3),
             VerticalAlignment = VerticalAlignment.Center
         };
         ToolTip.SetTip(dynBtn, "Edit dynamics curve");
@@ -399,10 +579,10 @@ public sealed class BrushEditorWindow : Window
     {
         var lbl = new TextBlock
         {
-            Text              = label,
-            FontSize          = 11,
-            Width             = 68,
-            Foreground        = new SolidColorBrush(Color.Parse(TextSecondary)),
+            Text = label,
+            FontSize = 11,
+            Width = 68,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
             VerticalAlignment = VerticalAlignment.Center
         };
         var val = MkValLabel(slider.Value, fmt);
@@ -433,13 +613,13 @@ public sealed class BrushEditorWindow : Window
 
     private static TextBlock MkValLabel(double value, string fmt) => new()
     {
-        Text              = FormatV(value, fmt),
-        FontSize          = 10,
-        Width             = 38,
-        TextAlignment     = Avalonia.Media.TextAlignment.Right,
-        Foreground        = new SolidColorBrush(Color.Parse(TextMuted)),
+        Text = FormatV(value, fmt),
+        FontSize = 10,
+        Width = 38,
+        TextAlignment = Avalonia.Media.TextAlignment.Right,
+        Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
         VerticalAlignment = VerticalAlignment.Center,
-        FontFamily        = new FontFamily("Consolas, Courier New, monospace")
+        FontFamily = new FontFamily("Consolas, Courier New, monospace")
     };
 
     // ── Dynamics popups ───────────────────────────────────────────────────────
@@ -542,7 +722,7 @@ public sealed class BrushEditorWindow : Window
     {
         _stampLayers.Add(new StampLayer
         {
-            Tip   = new ProceduralBrushTip(),
+            Tip = new ProceduralBrushTip(),
             Blend = _stampLayers.Count == 0 ? StampLayerBlend.Replace : StampLayerBlend.Multiply
         });
         RebuildStampPanel();
@@ -553,8 +733,8 @@ public sealed class BrushEditorWindow : Window
     {
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title          = "Import PNG texture",
-            AllowMultiple  = false,
+            Title = "Import PNG texture",
+            AllowMultiple = false,
             FileTypeFilter = [new FilePickerFileType("PNG Image") { Patterns = ["*.png"] }]
         });
         if (files.Count == 0) return;
@@ -563,7 +743,7 @@ public sealed class BrushEditorWindow : Window
         await stream.CopyToAsync(mem);
         _stampLayers.Add(new StampLayer
         {
-            Tip   = new ImageBrushTip(mem.ToArray()),
+            Tip = new ImageBrushTip(mem.ToArray()),
             Blend = _stampLayers.Count == 0 ? StampLayerBlend.Replace : StampLayerBlend.Multiply
         });
         RebuildStampPanel();
@@ -586,21 +766,21 @@ public sealed class BrushEditorWindow : Window
 
         var typeLabel = new TextBlock
         {
-            Text              = layer.Tip is ImageBrushTip ? "PNG" : "Shape",
-            FontSize          = 10,
-            Width             = 34,
-            Foreground        = new SolidColorBrush(Color.Parse(TextMuted)),
+            Text = layer.Tip is ImageBrushTip ? "PNG" : "Shape",
+            FontSize = 10,
+            Width = 34,
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
             VerticalAlignment = VerticalAlignment.Center
         };
 
         var blendBox = new ComboBox
         {
-            ItemsSource   = Enum.GetNames<StampLayerBlend>(),
+            ItemsSource = Enum.GetNames<StampLayerBlend>(),
             SelectedIndex = (int)layer.Blend,
-            FontSize      = 10,
-            Width         = 78,
-            Height        = 24,
-            Padding       = new Thickness(4, 0)
+            FontSize = 10,
+            Width = 78,
+            Height = 24,
+            Padding = new Thickness(4, 0)
         };
         blendBox.SelectionChanged += (_, _) =>
         {
@@ -611,11 +791,11 @@ public sealed class BrushEditorWindow : Window
 
         var opacSlider = new Slider
         {
-            Minimum           = 0,
-            Maximum           = 1,
-            Value             = layer.Opacity,
-            Width             = 54,
-            Height            = 24,
+            Minimum = 0,
+            Maximum = 1,
+            Value = layer.Opacity,
+            Width = 54,
+            Height = 24,
             VerticalAlignment = VerticalAlignment.Center
         };
         opacSlider.PropertyChanged += (_, e) =>
@@ -627,18 +807,18 @@ public sealed class BrushEditorWindow : Window
 
         var deleteBtn = new Button
         {
-            Content         = MaterialIcon(Icons.Close, 13),
-            Width           = 22,
-            Height          = 22,
-            Padding         = new Thickness(0),
+            Content = MaterialIcon(Icons.Close, 13),
+            Width = 22,
+            Height = 22,
+            Padding = new Thickness(0),
             HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment   = VerticalAlignment.Center,
-            Background      = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground      = new SolidColorBrush(Color.Parse(TextMuted)),
-            BorderBrush     = new SolidColorBrush(Color.Parse(Stroke)),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
-            CornerRadius    = new CornerRadius(3),
-            IsEnabled       = _stampLayers.Count > 1
+            CornerRadius = new CornerRadius(3),
+            IsEnabled = _stampLayers.Count > 1
         };
         deleteBtn.Click += (_, _) =>
         {
@@ -649,17 +829,17 @@ public sealed class BrushEditorWindow : Window
 
         return new Border
         {
-            Background      = new SolidColorBrush(Color.Parse(Bg2)),
-            BorderBrush     = new SolidColorBrush(Color.Parse(Stroke)),
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
-            CornerRadius    = new CornerRadius(4),
-            Padding         = new Thickness(6, 3),
-            Margin          = new Thickness(0, 0, 0, 3),
-            Child           = new StackPanel
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(6, 3),
+            Margin = new Thickness(0, 0, 0, 3),
+            Child = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
-                Spacing     = 5,
-                Children    = { icon, typeLabel, blendBox, opacSlider, deleteBtn }
+                Spacing = 5,
+                Children = { icon, typeLabel, blendBox, opacSlider, deleteBtn }
             }
         };
     }
@@ -671,13 +851,13 @@ public sealed class BrushEditorWindow : Window
 
     private void WireSliderEvents()
     {
-        WireSlider(_sizeSlider,      v => Commit(p => p with { Size      = v }));
-        WireSlider(_opacitySlider,   v => Commit(p => p with { Opacity   = v }));
-        WireSlider(_flowSlider,      v => Commit(p => p with { Flow      = v }));
-        WireSlider(_hardnessSlider,  v => Commit(p => p with { Hardness  = v }));
-        WireSlider(_spacingSlider,   v => Commit(p => p with { Spacing   = v }));
+        WireSlider(_sizeSlider, v => Commit(p => p with { Size = v }));
+        WireSlider(_opacitySlider, v => Commit(p => p with { Opacity = v }));
+        WireSlider(_flowSlider, v => Commit(p => p with { Flow = v }));
+        WireSlider(_hardnessSlider, v => Commit(p => p with { Hardness = v }));
+        WireSlider(_spacingSlider, v => Commit(p => p with { Spacing = v }));
         WireSlider(_smoothingSlider, v => Commit(p => p with { Smoothing = v }));
-        WireSlider(_grainSlider,     v => Commit(p => p with { Grain     = v }));
+        WireSlider(_grainSlider, v => Commit(p => p with { Grain = v }));
     }
 
     private void Commit(Func<BrushPreset, BrushPreset> update)
@@ -687,6 +867,21 @@ public sealed class BrushEditorWindow : Window
         _preview.Brush = _preset;
         _preview.InvalidateBitmap();
         _onChange(_preset);
+    }
+
+    private void CommitMainTip(IBrushTip tip)
+    {
+        if (_stampLayers.Count == 0)
+        {
+            _stampLayers.Add(new StampLayer { Tip = tip, Blend = StampLayerBlend.Replace });
+        }
+        else
+        {
+            _stampLayers[0] = _stampLayers[0] with { Tip = tip };
+        }
+        CommitLayers();
+        if (_activeCategory == 3)
+            _contentHost.Child = WrapContent(BuildBrushTipContent());
     }
 
     private void CommitLayers()
@@ -700,15 +895,15 @@ public sealed class BrushEditorWindow : Window
     public void SyncFromPreset(BrushPreset preset)
     {
         _syncing = true;
-        _preset  = preset;
+        _preset = preset;
 
-        _sizeSlider.Value      = Math.Clamp(preset.Size,      _sizeSlider.Minimum,      _sizeSlider.Maximum);
-        _opacitySlider.Value   = Math.Clamp(preset.Opacity,   _opacitySlider.Minimum,   _opacitySlider.Maximum);
-        _flowSlider.Value      = Math.Clamp(preset.Flow,      _flowSlider.Minimum,      _flowSlider.Maximum);
-        _hardnessSlider.Value  = Math.Clamp(preset.Hardness,  _hardnessSlider.Minimum,  _hardnessSlider.Maximum);
-        _spacingSlider.Value   = Math.Clamp(preset.Spacing,   _spacingSlider.Minimum,   _spacingSlider.Maximum);
+        _sizeSlider.Value = Math.Clamp(preset.Size, _sizeSlider.Minimum, _sizeSlider.Maximum);
+        _opacitySlider.Value = Math.Clamp(preset.Opacity, _opacitySlider.Minimum, _opacitySlider.Maximum);
+        _flowSlider.Value = Math.Clamp(preset.Flow, _flowSlider.Minimum, _flowSlider.Maximum);
+        _hardnessSlider.Value = Math.Clamp(preset.Hardness, _hardnessSlider.Minimum, _hardnessSlider.Maximum);
+        _spacingSlider.Value = Math.Clamp(preset.Spacing, _spacingSlider.Minimum, _spacingSlider.Maximum);
         _smoothingSlider.Value = Math.Clamp(preset.Smoothing, _smoothingSlider.Minimum, _smoothingSlider.Maximum);
-        _grainSlider.Value     = Math.Clamp(preset.Grain,     _grainSlider.Minimum,     _grainSlider.Maximum);
+        _grainSlider.Value = Math.Clamp(preset.Grain, _grainSlider.Minimum, _grainSlider.Maximum);
 
         _stampLayers.Clear();
         if (preset.Tip is CompoundBrushTip compound)
@@ -744,11 +939,11 @@ public sealed class BrushEditorWindow : Window
     {
         var s = new Slider
         {
-            Minimum           = min,
-            Maximum           = max,
-            Value             = value,
-            Height            = 26,
-            MinHeight         = 26,
+            Minimum = min,
+            Maximum = max,
+            Value = value,
+            Height = 26,
+            MinHeight = 26,
             VerticalAlignment = VerticalAlignment.Center
         };
         ToolTip.SetTip(s, tip);
@@ -764,11 +959,11 @@ public sealed class BrushEditorWindow : Window
 
     private static TextBlock SectionHeader(string text) => new()
     {
-        Text          = text,
-        FontSize      = 9,
-        FontWeight    = FontWeight.SemiBold,
-        Foreground    = new SolidColorBrush(Color.Parse(TextMuted)),
-        Margin        = new Thickness(0, 4, 0, 4),
+        Text = text,
+        FontSize = 9,
+        FontWeight = FontWeight.SemiBold,
+        Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+        Margin = new Thickness(0, 4, 0, 4),
         LetterSpacing = 1.2
     };
 
@@ -776,17 +971,17 @@ public sealed class BrushEditorWindow : Window
     {
         var b = new Button
         {
-            Content         = label,
-            Height          = 22,
-            Padding         = new Thickness(6, 0),
-            FontSize        = 10,
+            Content = label,
+            Height = 22,
+            Padding = new Thickness(6, 0),
+            FontSize = 10,
             HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment   = VerticalAlignment.Center,
-            Background      = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground      = new SolidColorBrush(Color.Parse(TextSecondary)),
-            BorderBrush     = new SolidColorBrush(Color.Parse(Stroke)),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
-            CornerRadius    = new CornerRadius(3)
+            CornerRadius = new CornerRadius(3)
         };
         return b;
     }
@@ -794,10 +989,10 @@ public sealed class BrushEditorWindow : Window
     private static string FormatV(double v, string fmt) => fmt switch
     {
         "px" => $"{v:0}px",
-        "%"  => $"{v * 100:0}%",
+        "%" => $"{v * 100:0}%",
         "f1" => $"{v:0.0}",
         "f2" => $"{v:0.00}",
-        _    => $"{v:0.##}"
+        _ => $"{v:0.##}"
     };
 
     private static void WireSlider(Slider slider, Action<double> onChange)

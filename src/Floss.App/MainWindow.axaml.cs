@@ -1815,15 +1815,7 @@ public partial class MainWindow : Window
             _syncingBrushUi = false;
         }
 
-        var applied = preset with
-        {
-            Color = _canvas.PaintColor,
-            Size = _sizeSlider.Value,
-            Opacity = _opacitySlider.Value,
-            Flow = _flowSlider.Value,
-            Hardness = _hardnessSlider.Value,
-            Spacing = _spacingSlider.Value,
-        };
+        var applied = preset with { Color = _canvas.PaintColor };
         _canvas.SetBrush(applied);
         _strokePreview.Brush = applied;
         SetTool(preset.Kind == BrushKind.Eraser ? "eraser" : "brush");
