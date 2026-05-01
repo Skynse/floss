@@ -195,6 +195,7 @@ public partial class MainWindow : Window
     private IReadOnlyList<BrushAsset> _brushAssets = [];
     private readonly Dictionary<int, LayerRowRefs> _layerRows = new();
     private readonly HashSet<int> _selectedLayerIndices = new();
+    private readonly HashSet<string> _collapsedSections = ["Tool Property"];
     private string? _currentFlossPath;
     private int _layerDragSourceIndex = -1;
     private int _renamingLayerIndex = -1;
@@ -319,7 +320,7 @@ public partial class MainWindow : Window
         root.ColumnDefinitions.Add(new ColumnDefinition(48, GridUnitType.Pixel));
         root.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 320 });
         root.ColumnDefinitions.Add(new ColumnDefinition(5, GridUnitType.Pixel));
-        root.ColumnDefinitions.Add(new ColumnDefinition(290, GridUnitType.Pixel) { MinWidth = 180, MaxWidth = 600 });
+        root.ColumnDefinitions.Add(new ColumnDefinition(320, GridUnitType.Pixel) { MinWidth = 200, MaxWidth = 700 });
 
         var splitter = new GridSplitter
         {
@@ -562,7 +563,7 @@ public partial class MainWindow : Window
     // ── Right panel ───────────────────────────────────────────────────────────
     private Border BuildRightPanel()
     {
-        var leftStack = new StackPanel();
+        var leftStack = new StackPanel { HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
         leftStack.Children.Add(PanelSection("Brush", BuildBrushSection()));
         leftStack.Children.Add(PanelSection("Tool Property", BuildToolPropertySection()));
         leftStack.Children.Add(PanelSection("Layers", BuildLayersSection()));
@@ -571,16 +572,18 @@ public partial class MainWindow : Window
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            ClipToBounds = true,
             Content = leftStack
         };
 
-        var rightStack = new StackPanel();
+        var rightStack = new StackPanel { HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
         rightStack.Children.Add(PanelSection("Color", BuildColorSection()));
 
         var rightScroll = new ScrollViewer
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            ClipToBounds = true,
             Content = rightStack
         };
 
@@ -592,7 +595,7 @@ public partial class MainWindow : Window
             Background = new SolidColorBrush(Color.Parse(Stroke))
         };
 
-        var grid = new Grid();
+        var grid = new Grid { ClipToBounds = true };
         grid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
         grid.ColumnDefinitions.Add(new ColumnDefinition(5, GridUnitType.Pixel));
         grid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
@@ -609,24 +612,54 @@ public partial class MainWindow : Window
             Background = new SolidColorBrush(Color.Parse(Bg1)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0),
+            ClipToBounds = true,
             Child = grid
         };
     }
 
-    private static Border PanelSection(string title, Control content)
+    private Border PanelSection(string title, Control content)
     {
+        var collapsed = _collapsedSections.Contains(title);
+        content.IsVisible = !collapsed;
+
+        var arrow = new TextBlock
+        {
+            Text = collapsed ? "▸" : "▾",
+            FontSize = 8,
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 5, 0)
+        };
+        var titleText = new TextBlock
+        {
+            Text = title,
+            FontSize = 9,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+        };
+        var headerRow = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            Children = { arrow, titleText }
+        };
         var header = new Border
         {
-            Padding = new Thickness(10, 6, 10, 3),
-            Child = new TextBlock
-            {
-                Text = title,
-                FontSize = 9,
-                FontWeight = FontWeight.SemiBold,
-                Foreground = new SolidColorBrush(Color.Parse(TextMuted))
-            }
+            Padding = new Thickness(10, 6, 10, 5),
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Child = headerRow
         };
-        var outer = new StackPanel { Spacing = 2 };
+        header.PointerPressed += (_, e) =>
+        {
+            if (!e.GetCurrentPoint(header).Properties.IsLeftButtonPressed) return;
+            if (!_collapsedSections.Remove(title))
+                _collapsedSections.Add(title);
+            var nowCollapsed = _collapsedSections.Contains(title);
+            content.IsVisible = !nowCollapsed;
+            arrow.Text = nowCollapsed ? "▸" : "▾";
+        };
+
+        var outer = new StackPanel { Spacing = 0 };
         outer.Children.Add(header);
         outer.Children.Add(content);
         return new Border

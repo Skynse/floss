@@ -157,44 +157,47 @@
             <Setter Property="Background" Value="#1a1c22"/>
         </Style>
 
-        <!-- ── Horizontal slider ──────────────────────────────────────────── -->
+        <!-- ── Horizontal slider — chunky progress-bar style ───────────────── -->
         <Style Selector="Slider:horizontal">
-            <Setter Property="MinHeight" Value="26"/>
+            <Setter Property="MinHeight" Value="22"/>
+            <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <ControlTemplate>
-                    <Grid MinHeight="26" VerticalAlignment="Center">
-                        <Border VerticalAlignment="Center" Height="2" CornerRadius="1"
-                                Background="#1c2030" IsHitTestVisible="False"/>
+                    <Grid MinHeight="22" VerticalAlignment="Center">
+                        <!-- track trough -->
+                        <Border VerticalAlignment="Center" Height="8" CornerRadius="4"
+                                Background="#161820" IsHitTestVisible="False"/>
                         <Track Name="PART_Track" Orientation="Horizontal"
                                Minimum="{TemplateBinding Minimum}"
                                Maximum="{TemplateBinding Maximum}"
                                Value="{TemplateBinding Value, Mode=TwoWay}">
                             <Track.DecreaseButton>
-                                <RepeatButton Name="PART_DecreaseButton" Focusable="False" Cursor="Arrow">
+                                <RepeatButton Name="PART_DecreaseButton" Focusable="False" Cursor="Hand">
                                     <RepeatButton.Template>
                                         <ControlTemplate>
-                                            <Border Height="2" VerticalAlignment="Center"
-                                                    CornerRadius="1" Background="#3d6fd8"/>
+                                            <Border Name="Fill" Height="8" VerticalAlignment="Center"
+                                                    CornerRadius="4,0,0,4" Background="#3a6fd8"/>
                                         </ControlTemplate>
                                     </RepeatButton.Template>
                                 </RepeatButton>
                             </Track.DecreaseButton>
                             <Track.Thumb>
-                                <Thumb Cursor="Hand">
+                                <Thumb Cursor="Hand" Width="3">
                                     <Thumb.Template>
                                         <ControlTemplate>
-                                            <Ellipse Name="ThumbEllipse"
-                                                     Fill="#5580d8"
-                                                     Width="11" Height="11"/>
+                                            <Border Name="Edge" Width="3" Height="14"
+                                                    VerticalAlignment="Center"
+                                                    CornerRadius="2" Background="#6a94ec"/>
                                         </ControlTemplate>
                                     </Thumb.Template>
                                 </Thumb>
                             </Track.Thumb>
                             <Track.IncreaseButton>
-                                <RepeatButton Name="PART_IncreaseButton" Focusable="False" Cursor="Arrow">
+                                <RepeatButton Name="PART_IncreaseButton" Focusable="False" Cursor="Hand">
                                     <RepeatButton.Template>
                                         <ControlTemplate>
-                                            <Border Height="2" VerticalAlignment="Center" Background="Transparent"/>
+                                            <Border Height="8" VerticalAlignment="Center"
+                                                    Background="Transparent"/>
                                         </ControlTemplate>
                                     </RepeatButton.Template>
                                 </RepeatButton>
@@ -204,15 +207,14 @@
                 </ControlTemplate>
             </Setter>
         </Style>
-        <Style Selector="Slider:horizontal:pointerover /template/ Thumb /template/ Ellipse#ThumbEllipse">
-            <Setter Property="Fill" Value="#7aa0e8"/>
-            <Setter Property="Width" Value="13"/>
-            <Setter Property="Height" Value="13"/>
+        <Style Selector="Slider:horizontal:pointerover /template/ RepeatButton#PART_DecreaseButton /template/ Border#Fill">
+            <Setter Property="Background" Value="#4d82ec"/>
         </Style>
-        <Style Selector="Slider:horizontal:pressed /template/ Thumb /template/ Ellipse#ThumbEllipse">
-            <Setter Property="Fill" Value="#a0c0f8"/>
-            <Setter Property="Width" Value="13"/>
-            <Setter Property="Height" Value="13"/>
+        <Style Selector="Slider:horizontal:pressed /template/ RepeatButton#PART_DecreaseButton /template/ Border#Fill">
+            <Setter Property="Background" Value="#5a90f5"/>
+        </Style>
+        <Style Selector="Slider:horizontal:pointerover /template/ Thumb /template/ Border#Edge">
+            <Setter Property="Background" Value="#90b4f8"/>
         </Style>
 
         <!-- ── ScrollBar: keep it minimal ────────────────────────────────── -->

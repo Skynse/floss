@@ -71,18 +71,20 @@ public partial class MainWindow
             TextTrimming = TextTrimming.CharacterEllipsis
         };
 
-        var brushToolRow = new StackPanel
+        var brushToolRow = new WrapPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
-            Spacing = 3,
             Children = { importPngBtn, importAbrBtn, _saveBrushButton, duplicateBrushBtn, editBrushBtn }
         };
+        foreach (var b in new[] { importPngBtn, importAbrBtn, _saveBrushButton, duplicateBrushBtn, editBrushBtn })
+            b.Margin = new Thickness(0, 0, 3, 3);
 
         var categoryScrollRow = new ScrollViewer
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
             Height = 30,
+            ClipToBounds = true,
             Content = _brushCategoryPanel
         };
 
@@ -104,6 +106,8 @@ public partial class MainWindow
             }
         };
     }
+
+    private static readonly DataFormat<string> CategoryDragFormat = DataFormat.CreateInProcessFormat<string>("x-floss-category");
 
     // ── Brush library ─────────────────────────────────────────────────────────
     private void BuildBrushCategories()
@@ -132,7 +136,9 @@ public partial class MainWindow
                 BuildBrushCategories();
                 BuildPresets();
             };
+            btn.DoubleTapped += (_, _) => RenameCategoryPrompt(cat);
             EnableCategoryDrop(btn, cat);
+            EnableCategoryReorder(btn, cat);
             _brushCategoryPanel.Children.Add(btn);
         }
 
@@ -335,6 +341,75 @@ public partial class MainWindow
         dialog.Content = new StackPanel { Children = { tb, ok } };
         dialog.ShowDialog(this);
         return result;
+    }
+
+    private void RenameCategoryPrompt(string oldName)
+    {
+        var dialog = new Window
+        {
+            Title = "Rename Category",
+            Width = 280,
+            Height = 140,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = new SolidColorBrush(Color.Parse(Bg0))
+        };
+        var tb = new TextBox { Margin = new Thickness(12), Text = oldName };
+        var ok = new Button { Content = "Rename", Margin = new Thickness(12, 0, 12, 12) };
+        string? result = null;
+        ok.Click += (_, _) => { result = tb.Text; dialog.Close(); };
+        tb.KeyDown += (_, e) => { if (e.Key == Key.Enter) { result = tb.Text; dialog.Close(); } };
+        dialog.Content = new StackPanel { Children = { tb, ok } };
+        dialog.ShowDialog(this);
+
+        var newName = result?.Trim();
+        if (string.IsNullOrWhiteSpace(newName) || newName == oldName) return;
+        if (_brushPaletteConfig.Categories.Contains(newName)) return;
+
+        var idx = _brushPaletteConfig.Categories.IndexOf(oldName);
+        if (idx < 0) return;
+        _brushPaletteConfig.Categories[idx] = newName;
+        foreach (var key in _brushPaletteConfig.BrushCategory.Keys.ToList())
+            if (_brushPaletteConfig.BrushCategory[key] == oldName)
+                _brushPaletteConfig.BrushCategory[key] = newName;
+        if (_selectedBrushCategory == oldName) _selectedBrushCategory = newName;
+        _brushPaletteConfig.Save(AppPaths.BrushPaletteConfigPath);
+        BuildBrushCategories();
+        BuildPresets();
+    }
+
+    private void EnableCategoryReorder(Button btn, string cat)
+    {
+        DragDrop.SetAllowDrop(btn, true);
+        btn.PointerPressed += (_, e) =>
+        {
+            if (!e.GetCurrentPoint(btn).Properties.IsLeftButtonPressed) return;
+            var item = new DataTransferItem();
+            item.Set(CategoryDragFormat, cat);
+            var data = new DataTransfer();
+            data.Add(item);
+            _ = DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
+        };
+        btn.AddHandler(DragDrop.DragOverEvent, (_, e) =>
+        {
+            if (e.DataTransfer.Contains(CategoryDragFormat) && e.DataTransfer.TryGetValue<string>(CategoryDragFormat) != cat)
+            {
+                e.DragEffects = DragDropEffects.Move;
+                e.Handled = true;
+            }
+        });
+        btn.AddHandler(DragDrop.DropEvent, (_, e) =>
+        {
+            var dragged = e.DataTransfer.TryGetValue<string>(CategoryDragFormat);
+            if (string.IsNullOrEmpty(dragged) || dragged == cat) return;
+            var from = _brushPaletteConfig.Categories.IndexOf(dragged);
+            var to   = _brushPaletteConfig.Categories.IndexOf(cat);
+            if (from < 0 || to < 0) return;
+            _brushPaletteConfig.Categories.RemoveAt(from);
+            _brushPaletteConfig.Categories.Insert(to, dragged);
+            _brushPaletteConfig.Save(AppPaths.BrushPaletteConfigPath);
+            BuildBrushCategories();
+            e.Handled = true;
+        });
     }
 
     private static string KindTag(BrushKind kind) => kind switch
