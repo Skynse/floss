@@ -13,6 +13,8 @@ namespace Floss.App;
 
 public sealed class BrushStrokePreview : Control
 {
+    private static readonly SKColor BgColor = new(0x28, 0x24, 0x28);
+
     private BrushPreset? _brush;
     private WriteableBitmap? _bitmap;
     private int _renderedW;
@@ -53,8 +55,7 @@ public sealed class BrushStrokePreview : Control
         var h = (int)Bounds.Height;
         if (w < 2 || h < 2) return;
 
-        context.FillRectangle(new SolidColorBrush(Color.Parse("#e8e6e0")), new Rect(0, 0, w, h));
-
+        context.FillRectangle(new SolidColorBrush(Color.FromRgb(0x28, 0x24, 0x28)), new Rect(0, 0, w, h));
         if (_brush == null) return;
 
         if (_bitmap == null || _renderedW != w || _renderedH != h)
@@ -81,96 +82,115 @@ public sealed class BrushStrokePreview : Control
         using var surface = SKSurface.Create(info, fb.Address, fb.RowBytes);
         if (surface == null) return bmp;
         var canvas = surface.Canvas;
-        canvas.Clear(new SKColor(0xe8, 0xe6, 0xe0));
-        StampSineStroke(canvas, w, h, brush);
+        canvas.Clear(BgColor);
+        PaintStroke(canvas, w, h, brush);
         surface.Flush();
         return bmp;
     }
 
-    private static void StampSineStroke(SKCanvas canvas, int w, int h, BrushPreset brush)
+    private static void PaintStroke(SKCanvas canvas, int w, int h, BrushPreset brush)
     {
-        var color = brush.Color;
-        var skColor = new SKColor(color.R, color.G, color.B, color.A);
-        var baseSize = Math.Max(1.0, brush.Size);
-        var maxPreviewSize = Math.Max(w, h) * 1.5;
-        if (baseSize > maxPreviewSize)
-            baseSize = maxPreviewSize;
-        var spacing = Math.Max(0.5, baseSize * brush.Spacing);
-
+        // Cap size: large brushes still show their shape/texture
+        var baseSize = (float)Math.Clamp(brush.Size, 1.0, h * 0.72);
         var mask = brush.Tip.GenerateMask(Math.Max(1, (int)Math.Ceiling(baseSize)), (float)brush.Hardness);
-        var colorFilter = SKColorFilter.CreateBlendMode(skColor, SKBlendMode.SrcIn);
+
+        // Always white on dark — every brush reads cleanly regardless of its color
+        using var colorFilter = SKColorFilter.CreateBlendMode(SKColors.White, SKBlendMode.SrcIn);
         using var paint = new SKPaint
         {
             IsAntialias = true,
             BlendMode = SKBlendMode.SrcOver,
-            Color = skColor,
-            ColorFilter = colorFilter
+            ColorFilter = colorFilter,
         };
 
-        var amplitude = Math.Min(h * 0.28, baseSize * 3.5);
-        var steps = Math.Max(300, (int)((w + baseSize * 2) / Math.Max(0.5, spacing)) + 32);
-        double leftover = 0;
-        double prevX = -baseSize;
-        double prevY = h * 0.5;
+        var hPad = w * 0.05f;
+        var pathW = w - hPad * 2f;
+        const float strokeRandom = 0.37f;
+
+        // Accumulate distance along path; place dabs when we've travelled >= nextSpacing.
+        // nextSpacing is recomputed per-dab from the current stamp size so size dynamics
+        // never create gaps between stamps.
+        const int steps = 600;
+        float prevX = hPad, prevY = h * 0.5f;
+        double accum = 0;
+        double nextSpacing = Math.Max(0.5, baseSize * brush.Spacing);
+        int dabIdx = 0;
 
         for (var i = 1; i <= steps; i++)
         {
-            var t = i / (double)steps;
-            var x = t * (w + baseSize * 2) - baseSize;
-            var y = h * 0.5 + Math.Sin(t * Math.PI * 2.5) * amplitude;
-            var pressure = (float)(Math.Sin(t * Math.PI) * 0.82 + 0.18);
+            var t = i / (float)steps;
+            // Gentle S-curve: sin envelope fades the wave in and out so it starts/ends on-axis
+            var envelope = (float)Math.Sin(t * Math.PI);
+            var px = hPad + pathW * t;
+            var py = h * 0.5f + (float)Math.Sin(t * Math.PI * 2.0) * h * 0.20f * envelope;
 
-            var dx = x - prevX;
-            var dy = y - prevY;
-            var segLen = Math.Sqrt(dx * dx + dy * dy);
-            if (segLen < 0.001) { prevX = x; prevY = y; continue; }
+            // Pressure: full bell-curve, 0.15 → 1.0 → 0.15
+            var pressure = 0.15f + 0.85f * envelope;
+            var segDx = px - prevX;
+            var segDy = py - prevY;
+            var segLen = (float)Math.Sqrt(segDx * segDx + segDy * segDy);
+            if (segLen < 0.001f) { prevX = px; prevY = py; continue; }
 
-            var consumed = leftover;
-            while (consumed <= segLen)
+            var drawAngle = (float)Math.Atan2(segDy, segDx);
+            accum += segLen;
+
+            while (accum >= nextSpacing)
             {
-                var ratio = consumed / segLen;
-                var sx = prevX + dx * ratio;
-                var sy = prevY + dy * ratio;
+                accum -= nextSpacing;
+
+                // Exact dab position: backtrack from segment end by remaining accum
+                var frac = Math.Clamp((float)(1.0 - accum / segLen), 0f, 1f);
+                var dabX = prevX + segDx * frac;
+                var dabY = prevY + segDy * frac;
 
                 var sp = new StrokePoint(
-                    x: (float)sx, y: (float)sy,
-                    pressure: pressure,
-                    tiltX: 0, tiltY: 0, twist: 0,
-                    drawingAngle: (float)Math.Atan2(dy, dx),
-                    speed: 0.25f,
-                    totalDistance: (float)(t * w),
-                    dabSeqNo: i,
-                    random: 0.5f,
-                    strokeRandom: 0.5f);
-                var sizeM = brush.Dynamics.EvalSize(sp);
-                var opacM = brush.Dynamics.EvalOpacity(sp);
+                    dabX, dabY, pressure, 0, 0, 0,
+                    drawAngle, 0.3f, (float)(t * w),
+                    dabIdx, DabHash(dabIdx), strokeRandom);
 
+                var sizeM  = brush.Dynamics.EvalSize(sp);
+                var opacM  = brush.Dynamics.EvalOpacity(sp);
                 var stampSize = (float)Math.Max(0.5, baseSize * sizeM);
-                var opacity = (float)Math.Clamp(brush.Opacity * brush.Flow * opacM, 0, 1);
-                var alpha = (byte)Math.Clamp((int)(opacity * 255), 0, 255);
-                paint.Color = new SKColor(color.R, color.G, color.B, alpha);
+                var opacity   = (float)Math.Clamp(brush.Opacity * brush.Flow * opacM, 0.0, 1.0);
+                paint.Color = new SKColor(255, 255, 255, (byte)(opacity * 255));
 
                 var scale = stampSize / Math.Max(1, mask.Width);
-                var matrix = SKMatrix.CreateTranslation(-mask.Width * 0.5f, -mask.Height * 0.5f);
-                matrix = matrix.PostConcat(SKMatrix.CreateScale(scale, scale));
-                matrix = matrix.PostConcat(SKMatrix.CreateTranslation((float)sx, (float)sy));
+                var mx = SKMatrix.CreateTranslation(-mask.Width * 0.5f, -mask.Height * 0.5f)
+                                 .PostConcat(SKMatrix.CreateScale(scale, scale));
+
+                float angle = (float)brush.Angle;
+                if (brush.BaseAngleSource == BrushDynamics.AngleSource.DirectionOfLine)
+                    angle += drawAngle * (180f / MathF.PI);
+                if (MathF.Abs(angle) > 0.001f)
+                    mx = mx.PostConcat(SKMatrix.CreateRotationDegrees(angle));
+
+                mx = mx.PostConcat(SKMatrix.CreateTranslation(dabX, dabY));
 
                 canvas.Save();
-                canvas.Concat(in matrix);
+                canvas.Concat(in mx);
                 canvas.DrawBitmap(mask, 0, 0, paint);
                 canvas.Restore();
 
-                consumed += spacing;
+                // Update spacing for the next dab (adapts to current stamp size)
+                nextSpacing = Math.Max(0.5, stampSize * brush.Spacing);
+                dabIdx++;
             }
 
-            leftover = segLen - (consumed - spacing);
-            if (leftover >= spacing) leftover = 0;
-            prevX = x;
-            prevY = y;
+            prevX = px;
+            prevY = py;
         }
 
-        colorFilter.Dispose();
         if (brush.Tip is CompoundBrushTip)
             mask.Dispose();
+    }
+
+    private static float DabHash(int i)
+    {
+        unchecked
+        {
+            var h = (uint)(i * 2654435761u);
+            h ^= h >> 16;
+            return (h & 0xFFFF) / 65535f;
+        }
     }
 }

@@ -39,7 +39,7 @@ public sealed class BrushEditorWindow : Window
     // ── State ─────────────────────────────────────────────────────────────────
     private BrushPreset _preset;
     private readonly Action<BrushPreset> _onChange;
-    private readonly BrushStrokePreview _preview = new() { Height = 52 };
+    private readonly BrushStrokePreview _preview = new() { Height = 64 };
     private bool _syncing;
 
     // ── Stamp layers (Texture category) ──────────────────────────────────────
@@ -823,6 +823,7 @@ public sealed class BrushEditorWindow : Window
         WireSlider(_spacingSlider, v => Commit(p => p with { Spacing = v }));
         WireSlider(_smoothingSlider, v => Commit(p => p with { Smoothing = v }));
         WireSlider(_grainSlider, v => Commit(p => p with { Grain = v }));
+        WireSlider(_angleSlider, v => Commit(p => p with { Angle = v }));
     }
 
     private void Commit(Func<BrushPreset, BrushPreset> update)
@@ -869,6 +870,7 @@ public sealed class BrushEditorWindow : Window
         _spacingSlider.Value = Math.Clamp(preset.Spacing, _spacingSlider.Minimum, _spacingSlider.Maximum);
         _smoothingSlider.Value = Math.Clamp(preset.Smoothing, _smoothingSlider.Minimum, _smoothingSlider.Maximum);
         _grainSlider.Value = Math.Clamp(preset.Grain, _grainSlider.Minimum, _grainSlider.Maximum);
+        _angleSlider.Value = Math.Clamp(preset.Angle, _angleSlider.Minimum, _angleSlider.Maximum);
 
         _stampLayers.Clear();
         if (preset.Tip is CompoundBrushTip compound)
@@ -886,6 +888,7 @@ public sealed class BrushEditorWindow : Window
         _spacingDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.Spacing));
         _scatterDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.Scatter));
         _rotationDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.Rotation));
+        _angleDynPopup?.SyncState(preset.BaseAngleSource, preset.AngleJitter);
 
         RebuildStampPanel();
         // Refresh sidebar highlight without rebuilding cached slider panels.

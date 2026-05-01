@@ -15,7 +15,7 @@ public sealed partial class BrushDynamics
     public CurveOption Rotation { get; set; } = CurveOption.Off();
     public CurveOption Spacing { get; set; } = CurveOption.Off();
 
-    public enum AngleSource { None, DirectionOfLine, PenTilt }
+    public enum AngleSource { None, DirectionOfLine, PenTilt, PenTwist }
 
     // ── Evaluation ───────────────────────────────────────────────────────────
 

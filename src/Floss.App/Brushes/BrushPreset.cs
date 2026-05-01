@@ -22,7 +22,6 @@ public sealed record BrushPreset(
     public double Grain { get; init; } = 0.0;
     public double Smoothing { get; init; } = 0.3;
     public IBrushTip Tip { get; init; } = new ProceduralBrushTip();
-    public bool FollowTrajectory { get; set; } = false;
     public AngleSource BaseAngleSource { get; init; } = AngleSource.None;
     public float AngleJitter { get; init; } = 0f; // 0.0 to 1.0
     public ParameterDynamics SizeDynamics

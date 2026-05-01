@@ -4,6 +4,7 @@ using Avalonia.Media;
 using Floss.App.Document;
 using Floss.App.Input;
 using SkiaSharp;
+using static Floss.App.Brushes.BrushDynamics;
 
 namespace Floss.App.Brushes;
 
@@ -203,10 +204,18 @@ public sealed class BrushEngine : IDisposable
         var rotDeg = dyn.EvalRotationDeg(sp);
         var size = Math.Max(0.5f, (float)brush.Size * sizeMul);
         var opacity = (float)Math.Clamp(brush.Opacity * brush.Flow * opacMul * flowMul, 0, 1);
-        //var angle      = (float)sp.Twist + rotDeg;
-        var trajectoryDeg = sp.DrawingAngle * (180 / MathF.PI);
-        var baseAngle = brush.FollowTrajectory ? trajectoryDeg : (float)sp.Twist;
-        var angle = baseAngle + rotDeg;
+        var trajectoryDeg = sp.DrawingAngle * (180f / MathF.PI);
+        float directionContrib = brush.BaseAngleSource switch
+        {
+            AngleSource.DirectionOfLine => trajectoryDeg,
+            AngleSource.PenTilt         => MathF.Atan2(sp.TiltX, sp.TiltY) * (180f / MathF.PI),
+            AngleSource.PenTwist        => sp.Twist * (180f / MathF.PI),
+            _                           => 0f
+        };
+        var jitter = brush.AngleJitter > 0.001f
+            ? (sp.Random * 2f - 1f) * brush.AngleJitter * 180f
+            : 0f;
+        var angle = (float)brush.Angle + directionContrib + rotDeg + jitter;
         var x = sp.X;
         var y = sp.Y;
         if (scatter > 0.001f)
