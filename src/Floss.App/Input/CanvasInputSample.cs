@@ -33,7 +33,7 @@ public readonly record struct CanvasInputSample(
     CanvasInputSource Source,
     CanvasInputPhase Phase)
 {
-    private const double PressureFloor = 0.02;
+    private const double PressureFloor = 0.005;
 
     public CanvasInputSample WithPosition(double x, double y, double pressure, long timeMicros)
     {
@@ -61,11 +61,27 @@ public readonly record struct CanvasInputSample(
         var properties = point.Properties;
         var source = SourceFromPointer(point);
         var pressure = properties.Pressure;
-        if (pressure <= 0 && source == CanvasInputSource.Mouse && properties.IsLeftButtonPressed)
+
+        // Clamp NaN so it doesn't propagate through brush math
+        if (double.IsNaN(pressure))
+            pressure = 0;
+
+        if (source == CanvasInputSource.Mouse && properties.IsLeftButtonPressed)
         {
-            pressure = 1;
+            // Heuristic: if this "mouse" reports pressure, tilt, or twist, it's likely a pen
+            // tablet that the platform driver is exposing as a mouse. Trust the reported
+            // pressure instead of forcing full pressure.
+            var hasTabletData = pressure > 0
+                || properties.XTilt != 0
+                || properties.YTilt != 0
+                || properties.Twist != 0;
+
+            if (!hasTabletData && pressure <= 0)
+            {
+                pressure = 1;
+            }
         }
-        else if (source is CanvasInputSource.Pen or CanvasInputSource.Eraser or CanvasInputSource.Touch && pressure < PressureFloor)
+        else if ((source is CanvasInputSource.Pen or CanvasInputSource.Eraser or CanvasInputSource.Touch) && pressure < PressureFloor)
         {
             pressure = 0;
         }

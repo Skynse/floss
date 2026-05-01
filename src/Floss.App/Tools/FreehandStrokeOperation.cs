@@ -20,8 +20,10 @@ public sealed class FreehandStrokeOperation : IToolOperation
     private readonly Dictionary<(int X, int Y), byte[]?> _beforeTiles = [];
 
     private CanvasInputSample _lastSample;
+    private CanvasInputSample _firstSample;
     private PixelRegion _dirtyRegion;
     private bool _active = true;
+    private bool _renderedInitialDab;
 
     public FreehandStrokeOperation(
         DrawingDocument document,
@@ -42,8 +44,17 @@ public sealed class FreehandStrokeOperation : IToolOperation
         var layer = document.ActiveLayer;
         var localSample = ToLayerSample(layer, firstSample);
         _lastSample = localSample;
+        _firstSample = localSample;
         _brushEngine.BeginStroke(_brush, _eraser, localSample);
-        RasterizeDabWithHistory(layer, firstSample, localSample, velocity: 0);
+
+        // For mouse/touch we render the initial dab immediately (a click should leave a mark).
+        // For pen/eraser we defer — the PointerPressed event often reports incorrect pressure
+        // (0, 1, or driver-default) before the first PointerMoved delivers the real reading.
+        if (firstSample.Source is CanvasInputSource.Mouse or CanvasInputSource.Unknown)
+        {
+            RasterizeDabWithHistory(layer, firstSample, localSample, velocity: 0);
+            _renderedInitialDab = true;
+        }
     }
 
     public int SampleCount { get; private set; }
@@ -62,6 +73,17 @@ public sealed class FreehandStrokeOperation : IToolOperation
 
         var smoothed = ApplyStreamline(localSample, _brush.Smoothing);
         RasterizeSegmentWithHistory(layer, sample, _lastSample, smoothed);
+
+        // If this was the first real segment and the initial pressure was suspiciously
+        // high while the first move shows lower pressure, the PointerPressed event
+        // likely reported a bogus value. Replace the stored initial pressure so it
+        // doesn't keep polluting smoothing on future segments.
+        if (SampleCount == 1 && !_renderedInitialDab &&
+            _lastSample.Pressure >= 0.95 && smoothed.Pressure < _lastSample.Pressure * 0.5)
+        {
+            _lastSample = _lastSample.WithPosition(_lastSample.X, _lastSample.Y, smoothed.Pressure, _lastSample.TimeMicros);
+        }
+
         _lastSample = smoothed;
         SampleCount++;
     }
@@ -72,6 +94,14 @@ public sealed class FreehandStrokeOperation : IToolOperation
         var layer = _document.ActiveLayer;
         var localSample = ToLayerSample(layer, sample);
         RasterizeSegmentWithHistory(layer, sample, _lastSample, localSample);
+
+        // If the stroke never moved enough to render anything (just a tap), draw the
+        // initial dab now so a pure tap still leaves a mark.
+        if (_dirtyRegion.IsEmpty && !_renderedInitialDab)
+        {
+            RasterizeDabWithHistory(layer, sample, _firstSample, velocity: 0);
+        }
+
         _active = false;
         SampleCount = 0;
         _document.CommitLayerTileMutation(_activeLayerIndex, _beforeTiles, _dirtyRegion);

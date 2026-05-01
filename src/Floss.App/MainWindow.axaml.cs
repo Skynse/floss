@@ -83,7 +83,7 @@ public partial class MainWindow : Window
         Color.Parse("#2d0015"),
     ];
 
-    private BrushPaletteConfig _brushPaletteConfig = new();
+    private readonly BrushPaletteConfig _brushPaletteConfig = new();
     private string? _selectedBrushCategory;
 
     // ── Blend modes ───────────────────────────────────────────────────────────
@@ -704,7 +704,7 @@ public partial class MainWindow : Window
     };
 
     // ── Right panel ───────────────────────────────────────────────────────────
-    private Control BuildRightPanel()
+    private Border BuildRightPanel()
     {
         var leftStack = new StackPanel();
         leftStack.Children.Add(PanelSection("Brush", BuildBrushSection()));
@@ -782,7 +782,7 @@ public partial class MainWindow : Window
     }
 
     // ── Color section ─────────────────────────────────────────────────────────
-    private Control BuildColorSection()
+    private StackPanel BuildColorSection()
     {
         _colorPicker = new HsvColorPicker
         {
@@ -914,7 +914,7 @@ public partial class MainWindow : Window
         };
     }
 
-    private Control BuildToolPropertySection()
+    private StackPanel BuildToolPropertySection()
     {
         _toolPropertyTitle = new TextBlock
         {
@@ -1826,11 +1826,11 @@ public partial class MainWindow : Window
         };
         _canvas.SetBrush(applied);
         _strokePreview.Brush = applied;
-        _strokePreview.InvalidateBitmap();
         SetTool(preset.Kind == BrushKind.Eraser ? "eraser" : "brush");
         BuildPresets();
         UpdateStatus();
-        RefreshToolProperties();
+        if (syncSliders)
+            RefreshToolProperties();
     }
 
     private void UpdateCurrentBrush(Func<BrushPreset, BrushPreset> update)
@@ -2002,6 +2002,7 @@ public partial class MainWindow : Window
             "eraser" => ((ITool)_canvas.EraserTool, _eraserToolButton),
             _ => (_canvas.BrushTool, _brushToolButton)
         };
+        if (ReferenceEquals(_canvas.ActiveTool, itool)) return;
         ActivateTool(itool, btn);
     }
 

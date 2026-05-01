@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
+using Avalonia.Threading;
 using Floss.App.Brushes;
 using Floss.App.Input;
 using SkiaSharp;
@@ -16,6 +17,7 @@ public sealed class BrushStrokePreview : Control
     private WriteableBitmap? _bitmap;
     private int _renderedW;
     private int _renderedH;
+    private DispatcherTimer? _debounceTimer;
 
     public BrushPreset? Brush
     {
@@ -25,6 +27,20 @@ public sealed class BrushStrokePreview : Control
 
     public void InvalidateBitmap()
     {
+        if (_debounceTimer == null)
+        {
+            _debounceTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(50), DispatcherPriority.Normal, OnDebounceTick)
+            {
+                IsEnabled = false
+            };
+        }
+        _debounceTimer.Stop();
+        _debounceTimer.Start();
+    }
+
+    private void OnDebounceTick(object? sender, EventArgs e)
+    {
+        _debounceTimer?.Stop();
         _bitmap?.Dispose();
         _bitmap = null;
         InvalidateVisual();
@@ -76,6 +92,9 @@ public sealed class BrushStrokePreview : Control
         var color = brush.Color;
         var skColor = new SKColor(color.R, color.G, color.B, color.A);
         var baseSize = Math.Max(1.0, brush.Size);
+        var maxPreviewSize = Math.Max(w, h) * 1.5;
+        if (baseSize > maxPreviewSize)
+            baseSize = maxPreviewSize;
         var spacing = Math.Max(0.5, baseSize * brush.Spacing);
 
         var mask = brush.Tip.GenerateMask(Math.Max(1, (int)Math.Ceiling(baseSize)), (float)brush.Hardness);
@@ -127,11 +146,11 @@ public sealed class BrushStrokePreview : Control
                 var opacM = brush.Dynamics.EvalOpacity(sp);
 
                 var stampSize = (float)Math.Max(0.5, baseSize * sizeM);
-                var opacity   = (float)Math.Clamp(brush.Opacity * brush.Flow * opacM, 0, 1);
-                var alpha     = (byte)Math.Clamp((int)(opacity * 255), 0, 255);
-                paint.Color   = new SKColor(color.R, color.G, color.B, alpha);
+                var opacity = (float)Math.Clamp(brush.Opacity * brush.Flow * opacM, 0, 1);
+                var alpha = (byte)Math.Clamp((int)(opacity * 255), 0, 255);
+                paint.Color = new SKColor(color.R, color.G, color.B, alpha);
 
-                var scale  = stampSize / Math.Max(1, mask.Width);
+                var scale = stampSize / Math.Max(1, mask.Width);
                 var matrix = SKMatrix.CreateTranslation(-mask.Width * 0.5f, -mask.Height * 0.5f);
                 matrix = matrix.PostConcat(SKMatrix.CreateScale(scale, scale));
                 matrix = matrix.PostConcat(SKMatrix.CreateTranslation((float)sx, (float)sy));
