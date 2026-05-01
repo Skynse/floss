@@ -115,7 +115,6 @@ public sealed class DrawingCanvas : Control
     public TransformTool TransformTool => _transformTool;
     public bool HasSelection => _ctx.Selection.HasSelection;
 
-    public double CanvasRotation { get; set; }
     public bool PaintInputSuspended { get; set; }
     public double CanvasZoom { get; set; } = 1.0;
 
@@ -460,7 +459,7 @@ public sealed class DrawingCanvas : Control
         => CanvasInputSample.FromPointerPoint(
             point, Bounds.Size,
             _document.Width, _document.Height,
-            phase, CanvasRotation);
+            phase);
 
     private unsafe Color? SampleDocumentColor(int x, int y)
     {

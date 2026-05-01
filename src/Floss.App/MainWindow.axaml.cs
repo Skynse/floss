@@ -2861,7 +2861,6 @@ public partial class MainWindow : Window
     {
         _rotation = degrees % 360;
         _canvasRotate.Angle = _rotation;
-        _canvas.CanvasRotation = _rotation;
         ClampCanvasPan();
         _rotDisplay.Text = $"{Math.Round(_rotation)}°";
         UpdateStatus();
@@ -2871,7 +2870,6 @@ public partial class MainWindow : Window
     {
         _rotation = 0;
         _canvasRotate.Angle = 0;
-        _canvas.CanvasRotation = 0;
 
         var w = Math.Max(1, _canvas.Document.Width);
         var h = Math.Max(1, _canvas.Document.Height);
