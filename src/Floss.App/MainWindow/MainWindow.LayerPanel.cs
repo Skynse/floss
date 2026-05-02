@@ -15,10 +15,42 @@ using Floss.App.Document;
 namespace Floss.App;
 
 public partial class MainWindow
-{
+{// ── Pre-Allocated Layer Brushes (Performance Optimization) ──────────────
+
+    // Row Backgrounds
+    private static readonly IBrush RowBgActive = new SolidColorBrush(Color.Parse("#1a2a50"));
+    private static readonly IBrush RowBgSelected = new SolidColorBrush(Color.Parse("#141e38"));
+    private static readonly IBrush RowBgDefault = new SolidColorBrush(Color.Parse("#16181f"));
+
+    // Row Borders
+    private static readonly IBrush RowBorderActive = new SolidColorBrush(Color.Parse("#2e5fb8"));
+    private static readonly IBrush RowBorderSelected = new SolidColorBrush(Color.Parse("#2a4a88"));
+    private static readonly IBrush RowBorderDefault = new SolidColorBrush(Color.Parse("#1e2128"));
+
+    // Text Colors
+    private static readonly IBrush TextFgActive = new SolidColorBrush(Color.Parse("#d8e0f0"));
+    private static readonly IBrush TextFgSelected = new SolidColorBrush(Color.Parse("#a8c0e0"));
+    private static readonly IBrush TextFgDefault = new SolidColorBrush(Color.Parse("#7a8494"));
+
+    private static readonly IBrush TextDimActive = new SolidColorBrush(Color.Parse("#5a80c8"));
+    private static readonly IBrush TextDimSelected = new SolidColorBrush(Color.Parse("#4a6090"));
+    private static readonly IBrush TextDimDefault = new SolidColorBrush(Color.Parse("#383d47"));
+
+    // Icon Colors
+    private static readonly IBrush IconOff = new SolidColorBrush(Color.Parse("#404550"));
+    private static readonly IBrush IconVisOn = new SolidColorBrush(Color.Parse("#6a9fd8"));
+    private static readonly IBrush IconLockOn = new SolidColorBrush(Color.Parse("#c89050"));
+    private static readonly IBrush IconAlphaOn = new SolidColorBrush(Color.Parse("#6ab8c8"));
+    private static readonly IBrush IconClipOn = new SolidColorBrush(Color.Parse("#a87ad8"));
+
+    private static readonly IBrush IconFolder = new SolidColorBrush(Color.Parse("#6a7a96"));
+    private static readonly IBrush IconStandard = new SolidColorBrush(Color.Parse("#30343d"));
     // ── Layers section ────────────────────────────────────────────────────────
     private Control BuildLayersSection()
     {
+
+
+
         // Layer name
         _layerNameBox = new TextBox
         {
@@ -152,23 +184,29 @@ public partial class MainWindow
     private IEnumerable<int> VisibleLayerIndexes()
     {
         var layers = _canvas.Layers;
+        var indexMap = new Dictionary<DrawingLayer, int>(ReferenceEqualityComparer.Instance);
+        for (int i = 0; i < layers.Count; i++)
+        {
+            indexMap[layers[i]] = i;
+        }
+
         foreach (var root in layers.Where(l => l.Parent == null).Reverse())
         {
-            foreach (var index in VisibleLayerIndexes(root))
+            foreach (var index in GetVisibleIndexes(root, indexMap))
                 yield return index;
         }
     }
 
-    private IEnumerable<int> VisibleLayerIndexes(DrawingLayer layer)
+    private IEnumerable<int> GetVisibleIndexes(DrawingLayer layer, Dictionary<DrawingLayer, int> indexMap)
     {
-        var index = LayerIndexOf(layer);
-        if (index >= 0)
+        if (indexMap.TryGetValue(layer, out var index))
             yield return index;
 
         if (!layer.IsGroup || !layer.IsOpen) yield break;
+
         for (var i = layer.Children.Count - 1; i >= 0; i--)
         {
-            foreach (var childIndex in VisibleLayerIndexes(layer.Children[i]))
+            foreach (var childIndex in GetVisibleIndexes(layer.Children[i], indexMap))
                 yield return childIndex;
         }
     }

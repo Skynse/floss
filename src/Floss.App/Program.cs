@@ -20,5 +20,5 @@ class Program
             .UsePlatformDetect()
             .WithInterFont()
             .LogToTrace()
-            .With(new SkiaOptions { MaxGpuResourceSizeBytes = 256 * 1024 * 1024 });
+            .With(new SkiaOptions { MaxGpuResourceSizeBytes = 512 * 1024 * 1024 });
 }
