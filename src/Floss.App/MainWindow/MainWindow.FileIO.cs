@@ -75,7 +75,7 @@ public partial class MainWindow
 
             if (wantsToSave == true)
             {
-                await SaveFlossAsync();
+                await SaveDocumentAsync();
 
                 // Safety check: If they clicked "Save" but then canceled out of the
                 // "Save As" file picker, the document is STILL dirty. Abort.
@@ -96,7 +96,7 @@ public partial class MainWindow
 
         // 4. Swap it in and reset session state
         _canvas.Document.ReplaceWith(newDoc);
-        _currentFlossPath = null;
+        _currentFilePath = null;
         _canvas.Document.MarkAsSaved(); // Force IsDirty to false for the fresh canvas
 
         // 5. Sync the UI
@@ -121,6 +121,7 @@ public partial class MainWindow
             var path = files[0].Path.LocalPath;
             await using var stream = await files[0].OpenReadAsync();
             var imported = await System.Threading.Tasks.Task.Run(() => LoadDocumentFromStream(stream, path));
+            _currentFilePath = path;
             ApplyOpenedDocument(imported, path);
         }
         catch (Exception ex)
@@ -129,7 +130,6 @@ public partial class MainWindow
         }
     }
 
-    private async System.Threading.Tasks.Task OpenPsdAsync() => await OpenDocumentAsync();
 
     public async System.Threading.Tasks.Task OpenDocumentFromPathAsync(string path)
     {
@@ -161,7 +161,7 @@ public partial class MainWindow
     {
         _canvas.Document.ReplaceWith(imported);
         App.Config.AddRecentFile(path);
-        if (IsFlossPath(path)) _currentFlossPath = path;
+        if (IsFlossPath(path)) _currentFilePath = path;
         SyncCanvasFrameToDocument(fitToViewport: true);
         BuildLayerList();
         UpdateStatus();
@@ -169,43 +169,68 @@ public partial class MainWindow
             $"Opened {_canvas.Document.Width}x{_canvas.Document.Height}  {Path.GetFileName(path)}";
     }
 
-    private async System.Threading.Tasks.Task SaveFlossAsync()
+    private async System.Threading.Tasks.Task SaveDocumentAsync()
     {
-        if (_currentFlossPath != null)
+        // 1. If we've never saved, force a Save As
+        if (string.IsNullOrEmpty(_currentFilePath))
         {
-            try
-            {
-                await using var stream = File.Open(_currentFlossPath, FileMode.Create, FileAccess.Write);
-                FlossFileFormat.Save(stream, _canvas.Document);
-                _footerStatusText.Text = $"Saved {Path.GetFileName(_currentFlossPath)}";
-            }
-            catch (Exception ex)
-            {
-                _footerStatusText.Text = $"Save error: {ex.Message}";
-            }
+            Console.WriteLine("No current file path, forcing Save As");
+            await SaveDocumentAsAsync();
             return;
         }
 
-        await SaveFlossAsAsync();
+        // 2. If it's a native project or a PSD, silently overwrite it
+        if (IsFlossPath(_currentFilePath))
+        {
+            await WriteFlossInternalAsync(_currentFilePath);
+        }
+        else if (IsPsdPath(_currentFilePath))
+        {
+            await WritePsdInternalAsync(_currentFilePath);
+        }
+        // 3. If they opened a PNG or KRA, DON'T overwrite. Force Save As.
+        else
+        {
+            await SaveDocumentAsAsync();
+        }
     }
 
-    private async System.Threading.Tasks.Task SaveFlossAsAsync()
+    // Wire your "Save As" (Ctrl+Shift+S) to this!
+    private async System.Threading.Tasks.Task SaveDocumentAsAsync()
     {
         var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
-            Title = "Save Floss Document",
-            FileTypeChoices = [FlossFileType],
-            SuggestedFileName = "untitled.floss"
+            Title = "Save Document As",
+            FileTypeChoices = [FlossFileType, PsdFileType], // Support both natively
+            SuggestedFileName = string.IsNullOrEmpty(_currentFilePath) ? "untitled.floss" : Path.GetFileNameWithoutExtension(_currentFilePath)
         });
-        if (file == null) return;
 
+        if (file == null) return;
+        var path = file.Path.LocalPath;
+
+        if (IsPsdPath(path))
+        {
+            await WritePsdInternalAsync(path);
+        }
+        else
+        {
+            await WriteFlossInternalAsync(path); // Default to Floss format
+        }
+    }
+
+    // ── Actual Disk Writers ───────────────────────────────────────────────────
+
+    private async System.Threading.Tasks.Task WriteFlossInternalAsync(string path)
+    {
         try
         {
-            await using var stream = await file.OpenWriteAsync();
+            await using var stream = File.Open(path, FileMode.Create, FileAccess.Write);
             FlossFileFormat.Save(stream, _canvas.Document);
-            _currentFlossPath = file.Path.LocalPath;
-            App.Config.AddRecentFile(file.Path.LocalPath);
-            _footerStatusText.Text = $"Saved {Path.GetFileName(file.Path.LocalPath)}";
+
+            _currentFilePath = path; // Update universal state
+            App.Config.AddRecentFile(path);
+            _canvas.Document.MarkAsSaved(); // Clears IsDirty
+            _footerStatusText.Text = $"Saved {Path.GetFileName(path)}";
         }
         catch (Exception ex)
         {
@@ -213,25 +238,21 @@ public partial class MainWindow
         }
     }
 
-    private async System.Threading.Tasks.Task SavePsdAsync()
+    private async System.Threading.Tasks.Task WritePsdInternalAsync(string path)
     {
-        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
-        {
-            Title = "Save PSD",
-            FileTypeChoices = [PsdFileType]
-        });
-        if (file == null) return;
-
         try
         {
-            await using var stream = await file.OpenWriteAsync();
+            await using var stream = File.Open(path, FileMode.Create, FileAccess.Write);
             PsdExporter.Export(stream, _canvas.Document);
-            App.Config.AddRecentFile(file.Path.LocalPath);
-            _footerStatusText.Text = $"Saved {Path.GetFileName(file.Path.LocalPath)}";
+
+            _currentFilePath = path; // Update universal state
+            App.Config.AddRecentFile(path);
+            _canvas.Document.MarkAsSaved(); // Clears IsDirty
+            _footerStatusText.Text = $"Saved PSD {Path.GetFileName(path)}";
         }
         catch (Exception ex)
         {
-            _footerStatusText.Text = $"Save error: {ex.Message}";
+            _footerStatusText.Text = $"PSD Save error: {ex.Message}";
         }
     }
 

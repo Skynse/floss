@@ -199,7 +199,8 @@ public partial class MainWindow
         if (sc.Undo.Matches(key, mods)) { _canvas.Undo(); e.Handled = true; }
         else if (sc.Redo.Matches(key, mods)) { _canvas.Redo(); e.Handled = true; }
         else if (sc.RedoAlt.Matches(key, mods)) { _canvas.Redo(); e.Handled = true; }
-        else if (sc.FileSave.Matches(key, mods)) { _ = SaveFlossAsync(); e.Handled = true; }
+        else if (sc.FileSave.Matches(key, mods)) { _ = SaveDocumentAsync(); e.Handled = true; }
+        else if (sc.FileSaveAs.Matches(key, mods)) { _ = SaveDocumentAsAsync(); e.Handled = true; }
         else if (sc.FileOpen.Matches(key, mods)) { _ = OpenDocumentAsync(); e.Handled = true; }
         else if (sc.LayerNew.Matches(key, mods)) { _canvas.AddLayer(); e.Handled = true; }
         else if (sc.LayerDuplicate.Matches(key, mods)) { _canvas.DuplicateLayer(); e.Handled = true; }

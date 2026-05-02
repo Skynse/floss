@@ -13,48 +13,48 @@ namespace Floss.App;
 
 public sealed class SettingsWindow : Window
 {
-    private const string Bg0          = "#0d0f14";
-    private const string Bg1          = "#13151a";
-    private const string Bg2          = "#1a1c22";
-    private const string BgSidebar    = "#0f1117";
-    private const string Stroke       = "#2b303b";
-    private const string TextPrimary  = "#d7dde8";
-    private const string TextSecondary= "#A0AAB4";
-    private const string TextMuted    = "#6f7888";
-    private const string Accent       = "#3d6fd8";
-    private const string AccentSoft   = "#22355f";
-    private const string AccentWarm   = "#d87e3d";
+    private const string Bg0 = "#0d0f14";
+    private const string Bg1 = "#13151a";
+    private const string Bg2 = "#1a1c22";
+    private const string BgSidebar = "#0f1117";
+    private const string Stroke = "#2b303b";
+    private const string TextPrimary = "#d7dde8";
+    private const string TextSecondary = "#A0AAB4";
+    private const string TextMuted = "#6f7888";
+    private const string Accent = "#3d6fd8";
+    private const string AccentSoft = "#22355f";
+    private const string AccentWarm = "#d87e3d";
     private const string AccentWarmSoft = "#3d2415";
 
     private static readonly string[] SidebarItems = ["General", "Keyboard & Gestures"];
 
     private readonly ShortcutsConfig _sc;
-    private readonly AppConfig       _cfg;
+    private readonly AppConfig _cfg;
 
-    private int             _activePage;
+    private int _activePage;
     private readonly Button[] _sidebarBtns;
-    private readonly Border   _contentHost = new();
+    private readonly Border _contentHost = new();
 
     // Key recorder state
     private Action<KeyBinding>? _recordingSetter;
-    private TextBlock?          _recordingDisplay;
-    private Border?             _recordingRow;
-    private bool                _isRecording;
-    private bool                _recordingGesture;
-    private KeyModifiers        _recordingPendingModifiers;
+    private TextBlock? _recordingDisplay;
+    private Border? _recordingRow;
+    private bool _isRecording;
+    private bool _recordingGesture;
+    private KeyModifiers _recordingPendingModifiers;
 
     public SettingsWindow()
     {
-        _sc  = App.Shortcuts;
+        _sc = App.Shortcuts;
         _cfg = App.Config;
 
-        Width         = 700;
-        Height        = 560;
-        CanResize     = true;
-        MinWidth      = 520;
-        MinHeight     = 400;
-        Background    = new SolidColorBrush(Color.Parse(Bg1));
-        Title         = "Settings";
+        Width = 700;
+        Height = 560;
+        CanResize = true;
+        MinWidth = 520;
+        MinHeight = 400;
+        Background = new SolidColorBrush(Color.Parse(Bg1));
+        Title = "Settings";
         ShowInTaskbar = false;
 
         _sidebarBtns = new Button[SidebarItems.Length];
@@ -83,14 +83,14 @@ public sealed class SettingsWindow : Window
     {
         var sidebar = new Border
         {
-            Width           = 140,
-            Background      = new SolidColorBrush(Color.Parse(BgSidebar)),
-            BorderBrush     = new SolidColorBrush(Color.Parse(Stroke)),
+            Width = 140,
+            Background = new SolidColorBrush(Color.Parse(BgSidebar)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 0, 1, 0),
-            Child           = new StackPanel
+            Child = new StackPanel
             {
                 Spacing = 1,
-                Margin  = new Thickness(0, 8, 0, 8),
+                Margin = new Thickness(0, 8, 0, 8),
                 Children = { _sidebarBtns[0], _sidebarBtns[1] }
             }
         };
@@ -98,7 +98,7 @@ public sealed class SettingsWindow : Window
         var body = new Grid();
         body.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
         body.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
-        Grid.SetColumn(sidebar,      0);
+        Grid.SetColumn(sidebar, 0);
         Grid.SetColumn(_contentHost, 1);
         body.Children.Add(sidebar);
         body.Children.Add(_contentHost);
@@ -110,17 +110,17 @@ public sealed class SettingsWindow : Window
     {
         var btn = new Button
         {
-            Content         = SidebarItems[index],
-            Height          = 34,
-            Padding         = new Thickness(14, 0),
-            FontSize        = 11,
+            Content = SidebarItems[index],
+            Height = 34,
+            Padding = new Thickness(14, 0),
+            FontSize = 11,
             HorizontalContentAlignment = HorizontalAlignment.Left,
-            VerticalContentAlignment   = VerticalAlignment.Center,
-            HorizontalAlignment        = HorizontalAlignment.Stretch,
-            Background      = new SolidColorBrush(Colors.Transparent),
-            Foreground      = new SolidColorBrush(Color.Parse(TextMuted)),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Background = new SolidColorBrush(Colors.Transparent),
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
             BorderThickness = new Thickness(0),
-            CornerRadius    = new CornerRadius(0)
+            CornerRadius = new CornerRadius(0)
         };
         btn.Click += (_, _) => SelectPage(index);
         return btn;
@@ -150,7 +150,7 @@ public sealed class SettingsWindow : Window
         content.Children.Add(PageHeader("General"));
 
         content.Children.Add(GroupHeader("New Canvas"));
-        content.Children.Add(RowNudger("Width (px)",  _cfg.NewCanvasWidth,  1, 16384, v => { _cfg.NewCanvasWidth  = (int)v; App.Config.Save(); }));
+        content.Children.Add(RowNudger("Width (px)", _cfg.NewCanvasWidth, 1, 16384, v => { _cfg.NewCanvasWidth = (int)v; App.Config.Save(); }));
         content.Children.Add(RowNudger("Height (px)", _cfg.NewCanvasHeight, 1, 16384, v => { _cfg.NewCanvasHeight = (int)v; App.Config.Save(); }));
 
         content.Children.Add(GroupHeader("Zoom"));
@@ -188,8 +188,8 @@ public sealed class SettingsWindow : Window
         return new ScrollViewer
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
-            Content                       = content
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = content
         };
     }
 
@@ -205,46 +205,47 @@ public sealed class SettingsWindow : Window
         var sc = _sc;
 
         content.Children.Add(GroupHeader("File"));
-        content.Children.Add(BindingRow("Open file",  sc.FileOpen,  v => sc.FileOpen  = v));
-        content.Children.Add(BindingRow("Save file",  sc.FileSave,  v => sc.FileSave  = v));
+        content.Children.Add(BindingRow("Open file", sc.FileOpen, v => sc.FileOpen = v));
+        content.Children.Add(BindingRow("Save file", sc.FileSave, v => sc.FileSave = v));
+        content.Children.Add(BindingRow("Save File As", sc.FileSaveAs, v => sc.FileSaveAs = v));
 
         content.Children.Add(GroupHeader("Edit"));
-        content.Children.Add(BindingRow("Undo",          sc.Undo,    v => sc.Undo    = v));
-        content.Children.Add(BindingRow("Redo",          sc.Redo,    v => sc.Redo    = v));
-        content.Children.Add(BindingRow("Redo (alt)",    sc.RedoAlt, v => sc.RedoAlt = v));
+        content.Children.Add(BindingRow("Undo", sc.Undo, v => sc.Undo = v));
+        content.Children.Add(BindingRow("Redo", sc.Redo, v => sc.Redo = v));
+        content.Children.Add(BindingRow("Redo (alt)", sc.RedoAlt, v => sc.RedoAlt = v));
 
         content.Children.Add(GroupHeader("View — Zoom"));
-        content.Children.Add(BindingRow("Zoom in",       sc.ZoomIn,    v => sc.ZoomIn    = v));
+        content.Children.Add(BindingRow("Zoom in", sc.ZoomIn, v => sc.ZoomIn = v));
         content.Children.Add(BindingRow("Zoom in (alt)", sc.ZoomInAlt, v => sc.ZoomInAlt = v));
-        content.Children.Add(BindingRow("Zoom out",      sc.ZoomOut,   v => sc.ZoomOut   = v));
-        content.Children.Add(BindingRow("Reset view",    sc.ZoomReset, v => sc.ZoomReset = v));
-        content.Children.Add(BindingRow("Fit to view",   sc.ZoomFit,   v => sc.ZoomFit   = v));
+        content.Children.Add(BindingRow("Zoom out", sc.ZoomOut, v => sc.ZoomOut = v));
+        content.Children.Add(BindingRow("Reset view", sc.ZoomReset, v => sc.ZoomReset = v));
+        content.Children.Add(BindingRow("Fit to view", sc.ZoomFit, v => sc.ZoomFit = v));
 
         content.Children.Add(GroupHeader("View — Rotation"));
-        content.Children.Add(BindingRow("Rotate left",   sc.RotateLeft,  v => sc.RotateLeft  = v));
-        content.Children.Add(BindingRow("Rotate right",  sc.RotateRight, v => sc.RotateRight = v));
-        content.Children.Add(BindingRow("Reset rotation",sc.RotateReset, v => sc.RotateReset = v));
+        content.Children.Add(BindingRow("Rotate left", sc.RotateLeft, v => sc.RotateLeft = v));
+        content.Children.Add(BindingRow("Rotate right", sc.RotateRight, v => sc.RotateRight = v));
+        content.Children.Add(BindingRow("Reset rotation", sc.RotateReset, v => sc.RotateReset = v));
 
         content.Children.Add(GroupHeader("Tools"));
-        content.Children.Add(BindingRow("Brush",              sc.ToolBrush,      v => sc.ToolBrush      = v));
-        content.Children.Add(BindingRow("Eraser",             sc.ToolEraser,     v => sc.ToolEraser     = v));
-        content.Children.Add(BindingRow("Move",               sc.ToolMove,       v => sc.ToolMove       = v));
-        content.Children.Add(BindingRow("Select",             sc.ToolSelect,     v => sc.ToolSelect     = v));
-        content.Children.Add(BindingRow("Magic wand",         sc.ToolWand,       v => sc.ToolWand       = v));
-        content.Children.Add(BindingRow("Fill",               sc.ToolFill,       v => sc.ToolFill       = v));
-        content.Children.Add(BindingRow("Lasso fill",         sc.ToolLasso,      v => sc.ToolLasso      = v));
-        content.Children.Add(BindingRow("Eyedropper",         sc.ToolEyedropper, v => sc.ToolEyedropper = v));
-        content.Children.Add(BindingRow("Smudge",             sc.ToolSmudge,     v => sc.ToolSmudge     = v));
-        content.Children.Add(BindingRow("Transform selection",sc.ToolTransform,  v => sc.ToolTransform  = v));
+        content.Children.Add(BindingRow("Brush", sc.ToolBrush, v => sc.ToolBrush = v));
+        content.Children.Add(BindingRow("Eraser", sc.ToolEraser, v => sc.ToolEraser = v));
+        content.Children.Add(BindingRow("Move", sc.ToolMove, v => sc.ToolMove = v));
+        content.Children.Add(BindingRow("Select", sc.ToolSelect, v => sc.ToolSelect = v));
+        content.Children.Add(BindingRow("Magic wand", sc.ToolWand, v => sc.ToolWand = v));
+        content.Children.Add(BindingRow("Fill", sc.ToolFill, v => sc.ToolFill = v));
+        content.Children.Add(BindingRow("Lasso fill", sc.ToolLasso, v => sc.ToolLasso = v));
+        content.Children.Add(BindingRow("Eyedropper", sc.ToolEyedropper, v => sc.ToolEyedropper = v));
+        content.Children.Add(BindingRow("Smudge", sc.ToolSmudge, v => sc.ToolSmudge = v));
+        content.Children.Add(BindingRow("Transform selection", sc.ToolTransform, v => sc.ToolTransform = v));
 
         content.Children.Add(GroupHeader("Selection"));
-        content.Children.Add(BindingRow("Select all",    sc.SelectAll,    v => sc.SelectAll    = v));
-        content.Children.Add(BindingRow("Deselect",      sc.Deselect,     v => sc.Deselect     = v));
+        content.Children.Add(BindingRow("Select all", sc.SelectAll, v => sc.SelectAll = v));
+        content.Children.Add(BindingRow("Deselect", sc.Deselect, v => sc.Deselect = v));
         content.Children.Add(BindingRow("Invert select", sc.InvertSelect, v => sc.InvertSelect = v));
 
         content.Children.Add(GroupHeader("Brush — Size"));
-        content.Children.Add(BindingRow("Size decrease (small)", sc.BrushSizeDecrease,      v => sc.BrushSizeDecrease      = v));
-        content.Children.Add(BindingRow("Size increase (small)", sc.BrushSizeIncrease,      v => sc.BrushSizeIncrease      = v));
+        content.Children.Add(BindingRow("Size decrease (small)", sc.BrushSizeDecrease, v => sc.BrushSizeDecrease = v));
+        content.Children.Add(BindingRow("Size increase (small)", sc.BrushSizeIncrease, v => sc.BrushSizeIncrease = v));
         content.Children.Add(BindingRow("Size decrease (large)", sc.BrushSizeDecreaseLarge, v => sc.BrushSizeDecreaseLarge = v));
         content.Children.Add(BindingRow("Size increase (large)", sc.BrushSizeIncreaseLarge, v => sc.BrushSizeIncreaseLarge = v));
 
@@ -253,32 +254,32 @@ public sealed class SettingsWindow : Window
         content.Children.Add(BindingRow("Opacity increase", sc.BrushOpacityIncrease, v => sc.BrushOpacityIncrease = v));
 
         content.Children.Add(GroupHeader("Color"));
-        content.Children.Add(BindingRow("Cycle swatch",  sc.ColorCycle,   v => sc.ColorCycle   = v));
+        content.Children.Add(BindingRow("Cycle swatch", sc.ColorCycle, v => sc.ColorCycle = v));
         content.Children.Add(BindingRow("Default black", sc.ColorDefault, v => sc.ColorDefault = v));
 
         content.Children.Add(GroupHeader("Layers"));
-        content.Children.Add(BindingRow("New layer",       sc.LayerNew,       v => sc.LayerNew       = v));
+        content.Children.Add(BindingRow("New layer", sc.LayerNew, v => sc.LayerNew = v));
         content.Children.Add(BindingRow("Duplicate layer", sc.LayerDuplicate, v => sc.LayerDuplicate = v));
-        content.Children.Add(BindingRow("Delete layer",    sc.LayerDelete,    v => sc.LayerDelete    = v));
-        content.Children.Add(BindingRow("Move up",         sc.LayerMoveUp,    v => sc.LayerMoveUp    = v));
-        content.Children.Add(BindingRow("Move down",       sc.LayerMoveDown,  v => sc.LayerMoveDown  = v));
-        content.Children.Add(BindingRow("Merge / Flatten", sc.LayerMerge,     v => sc.LayerMerge     = v));
+        content.Children.Add(BindingRow("Delete layer", sc.LayerDelete, v => sc.LayerDelete = v));
+        content.Children.Add(BindingRow("Move up", sc.LayerMoveUp, v => sc.LayerMoveUp = v));
+        content.Children.Add(BindingRow("Move down", sc.LayerMoveDown, v => sc.LayerMoveDown = v));
+        content.Children.Add(BindingRow("Merge / Flatten", sc.LayerMerge, v => sc.LayerMerge = v));
 
         content.Children.Add(GroupHeader("Misc"));
-        content.Children.Add(BindingRow("Open settings",    sc.OpenSettings,    v => sc.OpenSettings    = v));
-        content.Children.Add(BindingRow("Open brush editor",sc.OpenBrushEditor, v => sc.OpenBrushEditor = v));
+        content.Children.Add(BindingRow("Open settings", sc.OpenSettings, v => sc.OpenSettings = v));
+        content.Children.Add(BindingRow("Open brush editor", sc.OpenBrushEditor, v => sc.OpenBrushEditor = v));
 
         content.Children.Add(GroupHeader("Pen Gestures  (hold key + drag pen)"));
-        content.Children.Add(BindingRow("Pan canvas",       sc.GesturePan,       v => sc.GesturePan       = v, gesture: true));
-        content.Children.Add(BindingRow("Zoom  (drag ↑↓)", sc.GestureZoom,      v => sc.GestureZoom      = v, gesture: true));
-        content.Children.Add(BindingRow("Rotate (drag ←→)",sc.GestureRotate,    v => sc.GestureRotate    = v, gesture: true));
+        content.Children.Add(BindingRow("Pan canvas", sc.GesturePan, v => sc.GesturePan = v, gesture: true));
+        content.Children.Add(BindingRow("Zoom  (drag ↑↓)", sc.GestureZoom, v => sc.GestureZoom = v, gesture: true));
+        content.Children.Add(BindingRow("Rotate (drag ←→)", sc.GestureRotate, v => sc.GestureRotate = v, gesture: true));
         content.Children.Add(BindingRow("Brush size (←→)", sc.GestureBrushSize, v => sc.GestureBrushSize = v, gesture: true));
 
         return new ScrollViewer
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
-            Content                       = content
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = content
         };
     }
 
@@ -288,58 +289,58 @@ public sealed class SettingsWindow : Window
     {
         var keyDisplay = new TextBlock
         {
-            Text              = current.Display(),
-            FontSize          = 11,
-            Width             = 130,
-            FontFamily        = new FontFamily("Consolas, Courier New, monospace"),
-            Foreground        = new SolidColorBrush(Color.Parse(current.IsEmpty ? TextMuted : TextPrimary)),
+            Text = current.Display(),
+            FontSize = 11,
+            Width = 130,
+            FontFamily = new FontFamily("Consolas, Courier New, monospace"),
+            Foreground = new SolidColorBrush(Color.Parse(current.IsEmpty ? TextMuted : TextPrimary)),
             VerticalAlignment = VerticalAlignment.Center
         };
 
         var recordBtn = new Button
         {
-            Content         = "Record",
-            Height          = 22,
-            Padding         = new Thickness(8, 0),
-            FontSize        = 10,
+            Content = "Record",
+            Height = 22,
+            Padding = new Thickness(8, 0),
+            FontSize = 10,
             HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment   = VerticalAlignment.Center,
-            Background      = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground      = new SolidColorBrush(Color.Parse(TextSecondary)),
-            BorderBrush     = new SolidColorBrush(Color.Parse(Stroke)),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
-            CornerRadius    = new CornerRadius(3)
+            CornerRadius = new CornerRadius(3)
         };
 
         var clearBtn = new Button
         {
-            Content         = MaterialIcon(Icons.Close, 13),
-            Width           = 22,
-            Height          = 22,
-            Padding         = new Thickness(0),
+            Content = MaterialIcon(Icons.Close, 13),
+            Width = 22,
+            Height = 22,
+            Padding = new Thickness(0),
             HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment   = VerticalAlignment.Center,
-            Background      = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground      = new SolidColorBrush(Color.Parse(TextMuted)),
-            BorderBrush     = new SolidColorBrush(Color.Parse(Stroke)),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
-            CornerRadius    = new CornerRadius(3)
+            CornerRadius = new CornerRadius(3)
         };
 
         var labelText = new TextBlock
         {
-            Text              = label,
-            FontSize          = 11,
-            Foreground        = new SolidColorBrush(Color.Parse(gesture ? AccentWarm : TextSecondary)),
+            Text = label,
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse(gesture ? AccentWarm : TextSecondary)),
             VerticalAlignment = VerticalAlignment.Center,
-            MinWidth          = 200
+            MinWidth = 200
         };
 
         var row = new DockPanel { LastChildFill = false };
-        DockPanel.SetDock(labelText,  Dock.Left);
+        DockPanel.SetDock(labelText, Dock.Left);
         DockPanel.SetDock(keyDisplay, Dock.Left);
-        DockPanel.SetDock(clearBtn,   Dock.Right);
-        DockPanel.SetDock(recordBtn,  Dock.Right);
+        DockPanel.SetDock(clearBtn, Dock.Right);
+        DockPanel.SetDock(recordBtn, Dock.Right);
         row.Children.Add(labelText);
         row.Children.Add(keyDisplay);
         row.Children.Add(clearBtn);
@@ -348,17 +349,17 @@ public sealed class SettingsWindow : Window
 
         var rowBorder = new Border
         {
-            Padding         = new Thickness(8, 5),
+            Padding = new Thickness(8, 5),
             BorderThickness = new Thickness(0, 0, 0, 1),
-            BorderBrush     = new SolidColorBrush(Color.Parse(Stroke)),
-            Child           = row
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            Child = row
         };
 
         clearBtn.Click += (_, _) =>
         {
             StopRecording();
             setter(KeyBinding.Empty);
-            keyDisplay.Text       = "--";
+            keyDisplay.Text = "--";
             keyDisplay.Foreground = new SolidColorBrush(Color.Parse(TextMuted));
         };
 
@@ -373,7 +374,7 @@ public sealed class SettingsWindow : Window
             StartRecording(rowBorder, keyDisplay, gesture, v =>
             {
                 setter(v);
-                keyDisplay.Text       = v.Display();
+                keyDisplay.Text = v.Display();
                 keyDisplay.Foreground = new SolidColorBrush(Color.Parse(v.IsEmpty ? TextMuted : TextPrimary));
             });
         };
@@ -388,15 +389,15 @@ public sealed class SettingsWindow : Window
     {
         var nudger = new NumericUpDown
         {
-            Value             = currentValue,
-            Minimum           = min,
-            Maximum           = max,
-            Increment         = 1,
-            Width             = 100,
-            Height            = 26,
-            FontSize          = 11,
+            Value = currentValue,
+            Minimum = min,
+            Maximum = max,
+            Increment = 1,
+            Width = 100,
+            Height = 26,
+            FontSize = 11,
             VerticalAlignment = VerticalAlignment.Center,
-            FormatString      = "0"
+            FormatString = "0"
         };
         nudger.ValueChanged += (_, _) =>
         {
@@ -410,21 +411,21 @@ public sealed class SettingsWindow : Window
     {
         var valLabel = new TextBlock
         {
-            Text              = Format(currentValue, fmt),
-            Width             = 44,
-            FontSize          = 10,
-            FontFamily        = new FontFamily("Consolas, Courier New, monospace"),
-            Foreground        = new SolidColorBrush(Color.Parse("#6f7888")),
+            Text = Format(currentValue, fmt),
+            Width = 44,
+            FontSize = 10,
+            FontFamily = new FontFamily("Consolas, Courier New, monospace"),
+            Foreground = new SolidColorBrush(Color.Parse("#6f7888")),
             VerticalAlignment = VerticalAlignment.Center,
-            TextAlignment     = Avalonia.Media.TextAlignment.Right
+            TextAlignment = Avalonia.Media.TextAlignment.Right
         };
         var slider = new Slider
         {
-            Minimum           = min,
-            Maximum           = max,
-            Value             = currentValue,
-            Width             = 180,
-            Height            = 26,
+            Minimum = min,
+            Maximum = max,
+            Value = currentValue,
+            Width = 180,
+            Height = 26,
             VerticalAlignment = VerticalAlignment.Center
         };
         slider.PropertyChanged += (_, e) =>
@@ -436,8 +437,8 @@ public sealed class SettingsWindow : Window
         var inner = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing     = 6,
-            Children    = { slider, valLabel }
+            Spacing = 6,
+            Children = { slider, valLabel }
         };
         return SettingRow(label, inner);
     }
@@ -446,14 +447,14 @@ public sealed class SettingsWindow : Window
     {
         var lbl = new TextBlock
         {
-            Text              = label,
-            FontSize          = 11,
-            MinWidth          = 200,
-            Foreground        = new SolidColorBrush(Color.Parse("#A0AAB4")),
+            Text = label,
+            FontSize = 11,
+            MinWidth = 200,
+            Foreground = new SolidColorBrush(Color.Parse("#A0AAB4")),
             VerticalAlignment = VerticalAlignment.Center
         };
         var row = new DockPanel { LastChildFill = false, Margin = new Thickness(8, 5) };
-        DockPanel.SetDock(lbl,     Dock.Left);
+        DockPanel.SetDock(lbl, Dock.Left);
         DockPanel.SetDock(control, Dock.Left);
         row.Children.Add(lbl);
         row.Children.Add(control);
@@ -467,17 +468,17 @@ public sealed class SettingsWindow : Window
             var active = current == axis;
             var btn = new Button
             {
-                Content         = text,
-                Height          = 24,
-                Padding         = new Thickness(10, 0),
-                FontSize        = 10,
+                Content = text,
+                Height = 24,
+                Padding = new Thickness(10, 0),
+                FontSize = 10,
                 HorizontalContentAlignment = HorizontalAlignment.Center,
-                VerticalContentAlignment   = VerticalAlignment.Center,
-                Background      = new SolidColorBrush(Color.Parse(active ? AccentSoft : Bg2)),
-                BorderBrush     = new SolidColorBrush(Color.Parse(active ? Accent : Stroke)),
+                VerticalContentAlignment = VerticalAlignment.Center,
+                Background = new SolidColorBrush(Color.Parse(active ? AccentSoft : Bg2)),
+                BorderBrush = new SolidColorBrush(Color.Parse(active ? Accent : Stroke)),
                 BorderThickness = new Thickness(1),
-                Foreground      = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted)),
-                CornerRadius    = new CornerRadius(3)
+                Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted)),
+                CornerRadius = new CornerRadius(3)
             };
             btn.Click += (_, _) =>
             {
@@ -491,8 +492,8 @@ public sealed class SettingsWindow : Window
         var picker = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing     = 4,
-            Children    = { MkBtn(GestureAxis.Vertical, "Vertical  ↑↓"), MkBtn(GestureAxis.Horizontal, "Horizontal  ←→") }
+            Spacing = 4,
+            Children = { MkBtn(GestureAxis.Vertical, "Vertical  ↑↓"), MkBtn(GestureAxis.Horizontal, "Horizontal  ←→") }
         };
         return SettingRow(label, picker);
     }
@@ -504,17 +505,17 @@ public sealed class SettingsWindow : Window
             var active = current == mode;
             var btn = new Button
             {
-                Content         = text,
-                Height          = 24,
-                Padding         = new Thickness(10, 0),
-                FontSize        = 10,
+                Content = text,
+                Height = 24,
+                Padding = new Thickness(10, 0),
+                FontSize = 10,
                 HorizontalContentAlignment = HorizontalAlignment.Center,
-                VerticalContentAlignment   = VerticalAlignment.Center,
-                Background      = new SolidColorBrush(Color.Parse(active ? AccentSoft : Bg2)),
-                BorderBrush     = new SolidColorBrush(Color.Parse(active ? Accent : Stroke)),
+                VerticalContentAlignment = VerticalAlignment.Center,
+                Background = new SolidColorBrush(Color.Parse(active ? AccentSoft : Bg2)),
+                BorderBrush = new SolidColorBrush(Color.Parse(active ? Accent : Stroke)),
                 BorderThickness = new Thickness(1),
-                Foreground      = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted)),
-                CornerRadius    = new CornerRadius(3)
+                Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted)),
+                CornerRadius = new CornerRadius(3)
             };
             btn.Click += (_, _) =>
             {
@@ -527,7 +528,7 @@ public sealed class SettingsWindow : Window
         var picker = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing     = 4,
+            Spacing = 4,
             Children =
             {
                 MkBtn(BrushCursorMode.Outline, "Size"),
@@ -543,21 +544,21 @@ public sealed class SettingsWindow : Window
         "f1" => $"{v:0.0}",
         "f2" => $"{v:0.00}",
         "f3" => $"{v:0.000}",
-        _    => $"{v:0.##}"
+        _ => $"{v:0.##}"
     };
 
     // ── Recording ─────────────────────────────────────────────────────────────
 
     private void StartRecording(Border rowBorder, TextBlock display, bool gesture, Action<KeyBinding> setter)
     {
-        _isRecording      = true;
+        _isRecording = true;
         _recordingGesture = gesture;
         _recordingPendingModifiers = KeyModifiers.None;
-        _recordingSetter  = setter;
+        _recordingSetter = setter;
         _recordingDisplay = display;
-        _recordingRow     = rowBorder;
+        _recordingRow = rowBorder;
 
-        display.Text       = "Press keys...";
+        display.Text = "Press keys...";
         display.Foreground = new SolidColorBrush(Color.Parse(Accent));
         rowBorder.Background = new SolidColorBrush(Color.Parse(AccentSoft));
         Cursor = new Cursor(StandardCursorType.Ibeam);
@@ -571,9 +572,9 @@ public sealed class SettingsWindow : Window
         if (_recordingRow != null)
             _recordingRow.Background = null;
 
-        _recordingSetter  = null;
+        _recordingSetter = null;
         _recordingDisplay = null;
-        _recordingRow     = null;
+        _recordingRow = null;
         _recordingGesture = false;
         _recordingPendingModifiers = KeyModifiers.None;
         Cursor = Cursor.Default;
@@ -586,10 +587,10 @@ public sealed class SettingsWindow : Window
 
         // Normal keyboard shortcuts need a real key. Gesture bindings may use
         // modifiers only, so holding Ctrl+Alt can become a pen-drag gesture.
-        if (e.Key is Key.LeftCtrl  or Key.RightCtrl or
+        if (e.Key is Key.LeftCtrl or Key.RightCtrl or
                      Key.LeftShift or Key.RightShift or
-                     Key.LeftAlt   or Key.RightAlt   or
-                     Key.LWin      or Key.RWin)
+                     Key.LeftAlt or Key.RightAlt or
+                     Key.LWin or Key.RWin)
         {
             if (_recordingGesture && mods != KeyModifiers.None)
             {
@@ -601,7 +602,7 @@ public sealed class SettingsWindow : Window
             return;
         }
 
-        var setter  = _recordingSetter;
+        var setter = _recordingSetter;
         var display = _recordingDisplay;
 
         // ESC cancels without changing the binding (just restore old text via full page rebuild)
@@ -666,36 +667,36 @@ public sealed class SettingsWindow : Window
 
     private static TextBlock PageHeader(string text) => new()
     {
-        Text          = text,
-        FontSize      = 16,
-        FontWeight    = FontWeight.SemiBold,
-        Foreground    = new SolidColorBrush(Color.Parse("#d7dde8")),
-        Margin        = new Thickness(0, 0, 0, 16)
+        Text = text,
+        FontSize = 16,
+        FontWeight = FontWeight.SemiBold,
+        Foreground = new SolidColorBrush(Color.Parse("#d7dde8")),
+        Margin = new Thickness(0, 0, 0, 16)
     };
 
     private static Control GroupHeader(string text) => new Border
     {
-        Margin          = new Thickness(0, 12, 0, 0),
-        Padding         = new Thickness(8, 5),
-        Background      = new SolidColorBrush(Color.Parse("#0d0f14")),
-        BorderBrush     = new SolidColorBrush(Color.Parse("#2b303b")),
+        Margin = new Thickness(0, 12, 0, 0),
+        Padding = new Thickness(8, 5),
+        Background = new SolidColorBrush(Color.Parse("#0d0f14")),
+        BorderBrush = new SolidColorBrush(Color.Parse("#2b303b")),
         BorderThickness = new Thickness(0, 1, 0, 1),
-        Child           = new TextBlock
+        Child = new TextBlock
         {
-            Text          = text,
-            FontSize      = 9,
-            FontWeight    = FontWeight.SemiBold,
-            Foreground    = new SolidColorBrush(Color.Parse("#6f7888")),
+            Text = text,
+            FontSize = 9,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = new SolidColorBrush(Color.Parse("#6f7888")),
             LetterSpacing = 1.0
         }
     };
 
     private static Control RecordingHint() => new TextBlock
     {
-        Text       = "Click Record, then press the desired key combination. Backspace clears. Esc cancels.",
-        FontSize   = 10,
+        Text = "Click Record, then press the desired key combination. Backspace clears. Esc cancels.",
+        FontSize = 10,
         Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-        Margin     = new Thickness(0, 0, 0, 4),
+        Margin = new Thickness(0, 0, 0, 4),
         TextWrapping = Avalonia.Media.TextWrapping.Wrap
     };
 }

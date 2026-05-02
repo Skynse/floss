@@ -196,7 +196,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<int, LayerRowRefs> _layerRows = new();
     private readonly HashSet<int> _selectedLayerIndices = new();
     private readonly HashSet<string> _collapsedSections = ["Tool Property"];
-    private string? _currentFlossPath;
+    private string? _currentFilePath; // Replaces _currentFlossPath
     private int _layerDragSourceIndex = -1;
     private int _renamingLayerIndex = -1;
     private TextBox? _activeLayerNameEdit;
@@ -253,7 +253,7 @@ public partial class MainWindow : Window
         Closing += (_, _) => SaveToConfig();
         _canvas.DirtyStateChanged += (_, _) =>
         {
-            string fileName = _currentFlossPath == null ? "Untitled" : Path.GetFileName(_currentFlossPath);
+            string fileName = _currentFilePath == null ? "Untitled" : Path.GetFileName(_currentFilePath);
             string dirtyStar = _canvas.IsDirty ? "*" : "";
             Title = $"Floss Studio - {fileName}{dirtyStar}";
         };
@@ -375,9 +375,8 @@ public partial class MainWindow : Window
             {
                 MenuAction("_New...", async () => await NewDocumentAsync()),
                 MenuAction("_Open...", async () => await OpenDocumentAsync()),
-                MenuAction("_Save Floss", async () => await SaveFlossAsync()),
-                MenuAction("_Save Floss As...", async () => await SaveFlossAsAsync()),
-                MenuAction("_Save PSD...", async () => await SavePsdAsync()),
+                MenuAction("_Save Floss", async () => await SaveDocumentAsync()),
+                MenuAction("_Save Floss As...", async () => await SaveDocumentAsAsync()),
                 MenuAction("_Export Image...", async () => await ExportImageAsync()),
                 new Separator(),
                 MenuAction("_Reset View", ResetView),
@@ -467,12 +466,11 @@ public partial class MainWindow : Window
         redoTb.Click += (_, _) => _canvas.Redo();
 
         var openTb = TbarBtn(Icons.FolderOpenOutline, "Open PSD or image  (Ctrl+O)");
-        var saveFlossTb = TbarBtn(Icons.ContentSaveOutline, "Save Floss document  (Ctrl+S)");
+        var SaveDocumentTb = TbarBtn(Icons.ContentSaveOutline, "Save document  (Ctrl+S)");
         var saveTb = TbarBtn(Icons.ContentSaveOutline, "Save PSD");
         var exportTb = TbarBtn(Icons.ContentSaveOutline, "Export image");
         openTb.Click += async (_, _) => await OpenDocumentAsync();
-        saveFlossTb.Click += async (_, _) => await SaveFlossAsync();
-        saveTb.Click += async (_, _) => await SavePsdAsync();
+        SaveDocumentTb.Click += async (_, _) => await SaveDocumentAsync();
         exportTb.Click += async (_, _) => await ExportImageAsync();
 
         var row = new StackPanel
@@ -483,7 +481,7 @@ public partial class MainWindow : Window
             Margin = new Thickness(8, 0)
         };
         row.Children.Add(openTb);
-        row.Children.Add(saveFlossTb);
+        row.Children.Add(SaveDocumentTb);
         row.Children.Add(saveTb);
         row.Children.Add(exportTb);
         row.Children.Add(TbarSep());

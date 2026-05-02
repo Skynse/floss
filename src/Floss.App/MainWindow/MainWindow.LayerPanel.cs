@@ -772,7 +772,7 @@ public partial class MainWindow
         dialog.ShowDialog(this);
         if (result.HasValue)
             _canvas.SetPaperColor(result.Value);
-        Console.WriteLine($"Selected paper color: {result.Value}");
+
     }
 
     private static bool TryParseHexColor(string input, out Color color)
