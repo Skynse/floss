@@ -142,7 +142,6 @@ public partial class MainWindow : Window
     private StackPanel _presetPanel = null!;
     private StackPanel _toolPropertyPanel = null!;
     private TextBlock _toolPropertyTitle = null!;
-    private StackPanel _layerPanel = null!;
     private Slider _sizeSlider = null!;
     private Slider _opacitySlider = null!;
     private Slider _hardnessSlider = null!;
@@ -540,27 +539,28 @@ public partial class MainWindow : Window
 
     private static PathIcon MaterialIcon(string pathData, double size) =>
         Icons.Make(pathData, size, new SolidColorBrush(Color.Parse(TextSecondary)));
-
-    private static Button LayerIconBtn(string icon, string tip, string color, int tag)
+    private Button LayerIconBtn(string icon, string tooltip, IBrush iconBrush, int index)
     {
         var btn = new Button
         {
-            Content = Icons.Make(icon, 10, new SolidColorBrush(Color.Parse(color))),
-            Width = 14,
-            Height = 14,
+            Content = Icons.Make(icon, 16, iconBrush),
+            [ToolTip.TipProperty] = tooltip, // <-- Use the attached property syntax here
+            Width = 16,
+            Height = 16,
             Padding = new Thickness(0),
-            Tag = tag,
             Background = Avalonia.Media.Brushes.Transparent,
             BorderBrush = Avalonia.Media.Brushes.Transparent,
-            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Tag = index
         };
-        ToolTip.SetTip(btn, tip);
         return btn;
     }
 
-    private static void SetLayerIconBtnIcon(Button btn, string icon, string color) =>
-        btn.Content = Icons.Make(icon, 11, new SolidColorBrush(Color.Parse(color)));
+    private void SetLayerIconBtnIcon(Button btn, string icon, IBrush iconBrush)
+    {
+        // Notice we are passing iconBrush directly here too
+        btn.Content = Icons.Make(icon, 16, iconBrush);
+    }
+
 
     private static Border TbarSep() => new()
     {
@@ -865,25 +865,25 @@ public partial class MainWindow : Window
     {
         var baseName = _activeToolGroup?.Name ?? tool switch
         {
-            BrushTool bt  => bt.IsEraser ? "Eraser" : "Brush",
-            MoveTool      => "Move",
-            SelectTool    => "Select",
+            BrushTool bt => bt.IsEraser ? "Eraser" : "Brush",
+            MoveTool => "Move",
+            SelectTool => "Select",
             TransformTool => "Transform",
             MagicWandTool => "Magic Wand",
-            FillTool      => "Fill",
+            FillTool => "Fill",
             EyedropperTool => "Eyedropper",
-            GradientTool  => "Gradient",
-            ShapeTool     => "Shape",
-            PolylineTool  => "Polyline",
-            _             => "Tool"
+            GradientTool => "Gradient",
+            ShapeTool => "Shape",
+            PolylineTool => "Polyline",
+            _ => "Tool"
         };
         return tool switch
         {
-            SelectTool   => $"{baseName}: {_selectTool.Mode}",
+            SelectTool => $"{baseName}: {_selectTool.Mode}",
             GradientTool => $"{baseName}: {_gradientTool.GradientType}",
-            ShapeTool    => $"{baseName}: {_shapeTool.Kind}",
+            ShapeTool => $"{baseName}: {_shapeTool.Kind}",
             PolylineTool => $"{baseName}: {(_polylineTool.ClosePath ? "Closed" : "Open")}",
-            _            => baseName
+            _ => baseName
         };
     }
 
@@ -948,13 +948,13 @@ public partial class MainWindow : Window
                 _gradientTool.GradientType = preset.GradientType;
                 break;
             case ToolPresetEngine.Shape:
-                _shapeTool.Kind        = preset.ShapeKind;
-                _shapeTool.DrawMode    = preset.ShapeDrawMode;
+                _shapeTool.Kind = preset.ShapeKind;
+                _shapeTool.DrawMode = preset.ShapeDrawMode;
                 _shapeTool.StrokeWidth = preset.ShapeStrokeWidth;
                 break;
             case ToolPresetEngine.Polyline:
-                _polylineTool.ClosePath    = preset.PolylineClosePath;
-                _polylineTool.StrokeWidth  = preset.PolylineStrokeWidth;
+                _polylineTool.ClosePath = preset.PolylineClosePath;
+                _polylineTool.StrokeWidth = preset.PolylineStrokeWidth;
                 break;
         }
 
@@ -978,18 +978,18 @@ public partial class MainWindow : Window
 
     internal ITool ToolForPresetEngine(ToolPresetEngine engine) => engine switch
     {
-        ToolPresetEngine.Brush      => _canvas.BrushTool,
-        ToolPresetEngine.Eraser     => _canvas.EraserTool,
-        ToolPresetEngine.Smudge     => _canvas.SmudgeTool,
-        ToolPresetEngine.Move       => _moveTool,
-        ToolPresetEngine.Select     => _selectTool,
-        ToolPresetEngine.MagicWand  => _magicWandTool,
-        ToolPresetEngine.Fill       => _fillTool,
-        ToolPresetEngine.LassoFill  => _lassoFillTool,
+        ToolPresetEngine.Brush => _canvas.BrushTool,
+        ToolPresetEngine.Eraser => _canvas.EraserTool,
+        ToolPresetEngine.Smudge => _canvas.SmudgeTool,
+        ToolPresetEngine.Move => _moveTool,
+        ToolPresetEngine.Select => _selectTool,
+        ToolPresetEngine.MagicWand => _magicWandTool,
+        ToolPresetEngine.Fill => _fillTool,
+        ToolPresetEngine.LassoFill => _lassoFillTool,
         ToolPresetEngine.Eyedropper => _eyedropperTool,
-        ToolPresetEngine.Gradient   => _gradientTool,
-        ToolPresetEngine.Shape      => _shapeTool,
-        ToolPresetEngine.Polyline   => _polylineTool,
+        ToolPresetEngine.Gradient => _gradientTool,
+        ToolPresetEngine.Shape => _shapeTool,
+        ToolPresetEngine.Polyline => _polylineTool,
         _ => _canvas.BrushTool
     };
 

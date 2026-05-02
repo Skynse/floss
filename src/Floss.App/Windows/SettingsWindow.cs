@@ -213,6 +213,7 @@ public sealed class SettingsWindow : Window
 
         _bindingDescriptors =
         [
+            ("New File",               () => sc.FileNew,                v => sc.FileNew = v),
             ("Open file",               () => sc.FileOpen,               v => sc.FileOpen = v),
             ("Save file",               () => sc.FileSave,               v => sc.FileSave = v),
             ("Save File As",            () => sc.FileSaveAs,             v => sc.FileSaveAs = v),
@@ -253,6 +254,7 @@ public sealed class SettingsWindow : Window
         ];
 
         content.Children.Add(GroupHeader("File"));
+        content.Children.Add(BindingRow("New File", sc.FileNew, v => sc.FileNew = v));
         content.Children.Add(BindingRow("Open file", sc.FileOpen, v => sc.FileOpen = v));
         content.Children.Add(BindingRow("Save file", sc.FileSave, v => sc.FileSave = v));
         content.Children.Add(BindingRow("Save File As", sc.FileSaveAs, v => sc.FileSaveAs = v));
@@ -601,24 +603,30 @@ public sealed class SettingsWindow : Window
         var yesBtn = new Button
         {
             Content = "Reassign",
-            Height = 28, Padding = new Thickness(14, 0), FontSize = 11,
+            Height = 28,
+            Padding = new Thickness(14, 0),
+            FontSize = 11,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
             Background = new SolidColorBrush(Color.Parse(AccentSoft)),
             Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
             BorderBrush = new SolidColorBrush(Color.Parse(Accent)),
-            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3)
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(3)
         };
         var noBtn = new Button
         {
             Content = "Cancel",
-            Height = 28, Padding = new Thickness(14, 0), FontSize = 11,
+            Height = 28,
+            Padding = new Thickness(14, 0),
+            FontSize = 11,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
             Background = new SolidColorBrush(Color.Parse(Bg2)),
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3)
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(3)
         };
 
         var buttons = new StackPanel
@@ -632,8 +640,10 @@ public sealed class SettingsWindow : Window
         var dlg = new Window
         {
             Title = "Shortcut conflict",
-            Width = 320, SizeToContent = SizeToContent.Height,
-            CanResize = false, ShowInTaskbar = false,
+            Width = 320,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            ShowInTaskbar = false,
             Background = new SolidColorBrush(Color.Parse(Bg1)),
             Content = new StackPanel
             {
@@ -642,9 +652,9 @@ public sealed class SettingsWindow : Window
             }
         };
 
-        yesBtn.Click += (_, _) => { tcs.TrySetResult(true);  dlg.Close(); };
-        noBtn.Click  += (_, _) => { tcs.TrySetResult(false); dlg.Close(); };
-        dlg.Closed   += (_, _) => tcs.TrySetResult(false);
+        yesBtn.Click += (_, _) => { tcs.TrySetResult(true); dlg.Close(); };
+        noBtn.Click += (_, _) => { tcs.TrySetResult(false); dlg.Close(); };
+        dlg.Closed += (_, _) => tcs.TrySetResult(false);
 
         dlg.ShowDialog(this);
         return tcs.Task;

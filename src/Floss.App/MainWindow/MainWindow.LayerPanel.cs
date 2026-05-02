@@ -9,13 +9,21 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.Styling;
 using Floss.App.Canvas;
 using Floss.App.Document;
+using Avalonia.Controls.Templates;
 
 namespace Floss.App;
 
 public partial class MainWindow
-{// ── Pre-Allocated Layer Brushes (Performance Optimization) ──────────────
+{
+
+    private readonly Avalonia.Collections.AvaloniaList<DrawingLayer> _visibleLayers = new();
+    private ListBox _layerListBox = null!;
+    private ContentControl _paperRowContainer = null!;
+
+    // ── Pre-Allocated Layer Brushes (Performance Optimization) ──────────────
 
     // Row Backgrounds
     private static readonly IBrush RowBgActive = new SolidColorBrush(Color.Parse("#1a2a50"));
@@ -43,14 +51,23 @@ public partial class MainWindow
     private static readonly IBrush IconAlphaOn = new SolidColorBrush(Color.Parse("#6ab8c8"));
     private static readonly IBrush IconClipOn = new SolidColorBrush(Color.Parse("#a87ad8"));
 
-    private static readonly IBrush IconFolder = new SolidColorBrush(Color.Parse("#6a7a96"));
+    private static readonly IBrush GroupIconFg = new SolidColorBrush(Color.Parse("#6a7a96"));
     private static readonly IBrush IconStandard = new SolidColorBrush(Color.Parse("#30343d"));
+
+    // Miscellaneous UI Elements
+    private static readonly IBrush PreviewFrameBg = new SolidColorBrush(Color.Parse("#1e2028"));
+    private static readonly IBrush PreviewFrameBorder = new SolidColorBrush(Color.Parse("#2e3340"));
+    private static readonly IBrush PaperRowBg = new SolidColorBrush(Color.Parse("#0f1016"));
+    private static readonly IBrush PaperRowBorder = new SolidColorBrush(Color.Parse("#1a1c22"));
+    private static readonly IBrush PaperTextLabel = new SolidColorBrush(Color.Parse("#4a5468"));
+    private static readonly IBrush SwatchBorder = new SolidColorBrush(Color.Parse("#3a4050"));
+
+    // Fonts
+    private static readonly FontFamily MonospaceFont = new FontFamily("Consolas, Courier New, monospace");
+
     // ── Layers section ────────────────────────────────────────────────────────
     private Control BuildLayersSection()
     {
-
-
-
         // Layer name
         _layerNameBox = new TextBox
         {
@@ -65,12 +82,29 @@ public partial class MainWindow
             Padding = new Thickness(6, 0),
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
-        _layerNameBox.KeyDown += (_, e) =>
+
+        _layerNameBox.AddHandler(PointerPressedEvent, (s, e) =>
         {
-            if (e.Key != Key.Enter) return;
-            ApplyLayerName();
+            // Prevent the click from bubbling up to the Window or ListBox
             e.Handled = true;
-        };
+            _layerNameBox.Focus(); // Force focus locally
+        }, RoutingStrategies.Bubble);
+
+
+        _layerNameBox.AddHandler(KeyDownEvent, (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+            {
+                ApplyLayerName();
+                e.Handled = true;
+            }
+            // Block all other keys (B, E, V, etc.) from reaching global shortcuts
+            e.Handled = true;
+
+
+        }, RoutingStrategies.Tunnel
+
+        );
         _layerNameBox.LostFocus += (_, _) => ApplyLayerName();
 
         // Blend mode
@@ -129,22 +163,70 @@ public partial class MainWindow
             Children = { addBtn, folderBtn, dupBtn, _deleteLayerButton, _moveLayerUpButton, _moveLayerDownButton }
         };
 
-        _layerPanel = new StackPanel { Spacing = 2 };
-
-        return new StackPanel
+        // 1. Initialize the Virtualized ListBox
+        _layerListBox = new ListBox
         {
-            Spacing = 4,
-            Margin = new Thickness(8, 4, 8, 8),
-            Children =
+            ItemsSource = _visibleLayers,
+            Background = Avalonia.Media.Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            // Strip out the ugly default hover/selection styles of the ListBoxItem
+            Styles =
             {
-                _layerNameBox,
-                blendOpRow,
-                ctrlRow,
-                _layerPanel
-            }
-        };
-    }
+                new Style(x => x.OfType<ListBoxItem>())
+                {
+                    Setters =
+                    {
+                        // FIXED: Use ListBoxItem instead of Control for these properties
+                        new Setter(ListBoxItem.PaddingProperty, new Thickness(0)),
+                        new Setter(ListBoxItem.MarginProperty, new Thickness(0, 0, 0, 2)),
+                        new Setter(ListBoxItem.BackgroundProperty, Avalonia.Media.Brushes.Transparent),
+                        new Setter(ListBoxItem.BorderThicknessProperty, new Thickness(0))
+                    }
+                }
+            },
+            ItemTemplate = new FuncDataTemplate<DrawingLayer>((layer, _) =>
+            {
+                if (layer == null) return new Border();
+                var i = LayerIndexOf(layer);
+                var (row, refs) = BuildLayerRow(i, layer);
 
+                if (i >= 0)
+                {
+                    _layerRows[i] = refs;
+                }
+
+                return row;
+            })
+        };
+
+        // 2. The Paper Row Container
+        _paperRowContainer = new ContentControl { Margin = new Thickness(0, 2, 0, 0) };
+
+        // 3. Constrained Grid for Virtualization
+        var mainGrid = new Grid
+        {
+            Margin = new Thickness(8, 4, 8, 8),
+
+            RowDefinitions = new RowDefinitions("Auto, Auto, Auto, *, Auto")
+        };
+
+        Grid.SetRow(_layerNameBox, 0);
+        Grid.SetRow(blendOpRow, 1);
+        Grid.SetRow(ctrlRow, 2);
+        Grid.SetRow(_layerListBox, 3);
+        Grid.SetRow(_paperRowContainer, 4);
+
+        blendOpRow.Margin = new Thickness(0, 4, 0, 0);
+        ctrlRow.Margin = new Thickness(0, 4, 0, 4);
+
+        mainGrid.Children.Add(_layerNameBox);
+        mainGrid.Children.Add(blendOpRow);
+        mainGrid.Children.Add(ctrlRow);
+        mainGrid.Children.Add(_layerListBox);
+        mainGrid.Children.Add(_paperRowContainer);
+
+        return mainGrid;
+    }
     private void ApplyLayerName()
     {
         var name = _layerNameBox.Text?.Trim();
@@ -155,20 +237,21 @@ public partial class MainWindow
     // ── Layer panel ───────────────────────────────────────────────────────────
     private void BuildLayerList()
     {
-        _layerPanel.Children.Clear();
         _layerRows.Clear();
+        if (_canvas == null || _canvas.Layers == null) return; // Defense 1
+
         var layers = _canvas.Layers;
+        var visibleIndexes = VisibleLayerIndexes().ToList();
+        var layersToDisplay = visibleIndexes.Select(i => layers[i]).ToList();
 
-        foreach (var i in VisibleLayerIndexes())
+        _visibleLayers.Clear();
+        _visibleLayers.InsertRange(0, layersToDisplay);
+
+        // Defense 2: Only update the paper row if the container actually exists yet
+        if (_paperRowContainer != null)
         {
-            var layer = layers[i];
-            var (row, refs) = BuildLayerRow(i, layer);
-            _layerPanel.Children.Add(row);
-            _layerRows[i] = refs;
+            _paperRowContainer.Content = BuildPaperRow();
         }
-
-        // Paper row — always at the bottom, non-interactive
-        _layerPanel.Children.Add(BuildPaperRow());
 
         if (layers.Count > 0)
         {
@@ -227,13 +310,15 @@ public partial class MainWindow
     {
         var isActive = i == _canvas.ActiveLayerIndex;
         var isSelected = _selectedLayerIndices.Contains(i);
-        var dimColor = isActive ? Color.Parse("#5a80c8") : isSelected ? Color.Parse("#4a6090") : Color.Parse("#383d47");
-        var fgColor = isActive ? Color.Parse("#d8e0f0") : isSelected ? Color.Parse("#a8c0e0") : Color.Parse("#7a8494");
+
+        // Pre-allocated brush selections
+        var dimBrush = isActive ? TextDimActive : isSelected ? TextDimSelected : TextDimDefault;
+        var fgBrush = isActive ? TextFgActive : isSelected ? TextFgSelected : TextFgDefault;
 
         var row = new Border
         {
-            Background = new SolidColorBrush(isActive ? Color.Parse("#1a2a50") : isSelected ? Color.Parse("#141e38") : Color.Parse("#16181f")),
-            BorderBrush = new SolidColorBrush(isActive ? Color.Parse("#2e5fb8") : isSelected ? Color.Parse("#2a4a88") : Color.Parse("#1e2128")),
+            Background = isActive ? RowBgActive : isSelected ? RowBgSelected : RowBgDefault,
+            BorderBrush = isActive ? RowBorderActive : isSelected ? RowBorderSelected : RowBorderDefault,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(4),
             Padding = new Thickness(3, 2),
@@ -257,7 +342,7 @@ public partial class MainWindow
         var visBtn = LayerIconBtn(
             layer.IsVisible ? Icons.Eye : Icons.EyeOff,
             "Toggle visibility",
-            layer.IsVisible ? "#6a9fd8" : "#404550", i);
+            layer.IsVisible ? IconVisOn : IconOff, i);
         visBtn.Click += (_, _) => _canvas.ToggleLayerVisibility((int)visBtn.Tag!);
 
         var (preview, previewImage) = BuildLayerPreview(layer);
@@ -273,29 +358,30 @@ public partial class MainWindow
         var lockBtn = LayerIconBtn(
             layer.IsLocked ? Icons.LockOutline : Icons.LockOpenOutline,
             "Toggle lock",
-            layer.IsLocked ? "#c89050" : "#404550", i);
+            layer.IsLocked ? IconLockOn : IconOff, i);
         lockBtn.Click += (_, _) => _canvas.ToggleLayerLock((int)lockBtn.Tag!);
 
         var alphaLockBtn = LayerIconBtn(
             Icons.AlphaLock,
             "Toggle alpha lock",
-            layer.IsAlphaLocked ? "#6ab8c8" : "#404550", i);
+            layer.IsAlphaLocked ? IconAlphaOn : IconOff, i);
         alphaLockBtn.Click += (_, _) => _canvas.ToggleLayerAlphaLock((int)alphaLockBtn.Tag!);
 
         var clipBtn = LayerIconBtn(
             Icons.ClipToBelow,
             "Toggle clipping mask",
-            layer.IsClipping ? "#a87ad8" : "#404550", i);
+            layer.IsClipping ? IconClipOn : IconOff, i);
         clipBtn.Click += (_, _) => _canvas.ToggleLayerClipping((int)clipBtn.Tag!);
 
         var nameText = new TextBlock
         {
             Text = layer.Name,
-            Foreground = new SolidColorBrush(fgColor),
+            Foreground = fgBrush,
             Padding = new Thickness(2, 0),
             FontSize = 11,
+
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis,
+            //TextTrimming = TextTrimming.CharacterEllipsis,
             IsHitTestVisible = false
         };
         var nameHost = new ContentControl
@@ -310,9 +396,9 @@ public partial class MainWindow
         var blendText = new TextBlock
         {
             Text = BlendAbbr(layer.BlendMode),
-            Foreground = new SolidColorBrush(dimColor),
+            Foreground = dimBrush,
             FontSize = 9,
-            FontFamily = new FontFamily("Consolas, Courier New, monospace"),
+            FontFamily = MonospaceFont,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
             Margin = new Thickness(0, 0, 2, 0),
@@ -322,9 +408,9 @@ public partial class MainWindow
         var opacityText = new TextBlock
         {
             Text = $"{Math.Round(layer.Opacity * 100):0}%",
-            Foreground = new SolidColorBrush(dimColor),
+            Foreground = dimBrush,
             FontSize = 9,
-            FontFamily = new FontFamily("Consolas, Courier New, monospace"),
+            FontFamily = MonospaceFont,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
             Margin = new Thickness(0, 0, 2, 0),
@@ -360,7 +446,7 @@ public partial class MainWindow
             Content = layer.IsGroup ? (layer.IsOpen ? "▾" : "▸") : "",
             Background = Avalonia.Media.Brushes.Transparent,
             BorderBrush = Avalonia.Media.Brushes.Transparent,
-            Foreground = new SolidColorBrush(Color.Parse(layer.IsGroup ? "#6a7a96" : "#30343d")),
+            Foreground = layer.IsGroup ? GroupIconFg : IconStandard,
             Padding = new Thickness(0),
             FontSize = 10,
             Tag = index,
@@ -452,8 +538,8 @@ public partial class MainWindow
             ItemsSource = new[]
             {
                 AsyncItem("_Gaussian Blur...", ApplyBlurFilter),
-                AsyncItem("_Sharpen...",        ApplySharpenFilter),
-                AsyncItem("_Noise...",          ApplyNoiseFilter),
+                AsyncItem("_Sharpen...",       ApplySharpenFilter),
+                AsyncItem("_Noise...",         ApplyNoiseFilter),
                 AsyncItem("_Color Curves...",   ApplyColorCurvesFilter),
             }
         });
@@ -673,7 +759,20 @@ public partial class MainWindow
 
     private Control BuildPaperRow()
     {
-        var doc = _canvas.Document;
+        var doc = _canvas?.Document;
+
+        // Defense 3: If there's no document yet, return a placeholder row
+        if (doc == null)
+        {
+            return new Border
+            {
+                Background = PaperRowBg,
+                BorderBrush = PaperRowBorder,
+                BorderThickness = new Thickness(1),
+                Height = 30
+            };
+        }
+
         var paperColor = doc.PaperColor;
 
         _paperSwatch = new Border
@@ -682,7 +781,7 @@ public partial class MainWindow
             Height = 26,
             Margin = new Thickness(2, 0, 2, 0),
             Background = new SolidColorBrush(paperColor),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3a4050")),
+            BorderBrush = SwatchBorder,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(3)
         };
@@ -698,7 +797,7 @@ public partial class MainWindow
         _paperVisBtn = new Button
         {
             Content = Icons.Make(doc.PaperVisible ? Icons.Eye : Icons.EyeOff, 10,
-                new SolidColorBrush(Color.Parse(doc.PaperVisible ? "#6a9fd8" : "#404550"))),
+                doc.PaperVisible ? IconVisOn : IconOff),
             Width = 14,
             Height = 14,
             Padding = new Thickness(0),
@@ -707,14 +806,14 @@ public partial class MainWindow
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
-        _paperVisBtn.Click += (_, _) => _canvas.SetPaperVisible(!doc.PaperVisible);
+        _paperVisBtn.Click += (_, _) => _canvas?.SetPaperVisible(!doc.PaperVisible);
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("16,16,30,16,16,16,*,26,28") };
         var nameLabel = new TextBlock
         {
             Text = "Paper",
             FontSize = 11,
-            Foreground = new SolidColorBrush(Color.Parse("#4a5468")),
+            Foreground = PaperTextLabel,
             Padding = new Thickness(2, 0),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
@@ -727,8 +826,9 @@ public partial class MainWindow
 
         var row = new Border
         {
-            Background = new SolidColorBrush(Color.Parse("#0f1016")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#1a1c22")),
+            Height = 30,
+            Background = PaperRowBg,
+            BorderBrush = PaperRowBorder,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(4),
             Padding = new Thickness(3, 2),
@@ -751,7 +851,7 @@ public partial class MainWindow
         var doc = _canvas.Document;
         _paperSwatch.Background = new SolidColorBrush(doc.PaperColor);
         _paperVisBtn.Content = Icons.Make(doc.PaperVisible ? Icons.Eye : Icons.EyeOff, 10,
-            new SolidColorBrush(Color.Parse(doc.PaperVisible ? "#6a9fd8" : "#404550")));
+            doc.PaperVisible ? IconVisOn : IconOff);
     }
 
     private void OpenPaperColorPicker()
@@ -777,7 +877,7 @@ public partial class MainWindow
         var hexBox = new TextBox
         {
             Text = $"#{doc.PaperColor.R:X2}{doc.PaperColor.G:X2}{doc.PaperColor.B:X2}",
-            FontFamily = new FontFamily("Consolas, Courier New, monospace"),
+            FontFamily = MonospaceFont,
             FontSize = 12,
             Height = 26,
             Padding = new Thickness(6, 0),
@@ -872,30 +972,31 @@ public partial class MainWindow
         var layers = _canvas.Layers;
         if (index < 0 || index >= layers.Count || !_layerRows.TryGetValue(index, out var refs))
         {
-            BuildLayerList();
+            // The row is scrolled off-screen and recycled. We don't need to update its visuals.
             return;
         }
 
         var layer = layers[index];
         var isActive = index == _canvas.ActiveLayerIndex;
-        var dimColor = isActive ? Color.Parse("#5a80c8") : Color.Parse("#383d47");
-        var fgColor = isActive ? Color.Parse("#d8e0f0") : Color.Parse("#7a8494");
+        var dimBrush = isActive ? TextDimActive : TextDimDefault;
+        var fgBrush = isActive ? TextFgActive : TextFgDefault;
 
-        refs.Row.Background = new SolidColorBrush(isActive ? Color.Parse("#1a2a50") : Color.Parse("#16181f"));
-        refs.Row.BorderBrush = new SolidColorBrush(isActive ? Color.Parse("#2e5fb8") : Color.Parse("#1e2128"));
+        refs.Row.Background = isActive ? RowBgActive : RowBgDefault;
+        refs.Row.BorderBrush = isActive ? RowBorderActive : RowBorderDefault;
 
         SetLayerIconBtnIcon(refs.VisibilityButton,
             layer.IsVisible ? Icons.Eye : Icons.EyeOff,
-            layer.IsVisible ? "#6a9fd8" : "#404550");
+            layer.IsVisible ? IconVisOn : IconOff);
         SetLayerIconBtnIcon(refs.LockButton,
             layer.IsLocked ? Icons.LockOutline : Icons.LockOpenOutline,
-            layer.IsLocked ? "#c89050" : "#404550");
+            layer.IsLocked ? IconLockOn : IconOff);
         SetLayerIconBtnIcon(refs.AlphaLockButton,
             Icons.AlphaLock,
-            layer.IsAlphaLocked ? "#6ab8c8" : "#404550");
+            layer.IsAlphaLocked ? IconAlphaOn : IconOff);
         SetLayerIconBtnIcon(refs.ClipButton,
             Icons.ClipToBelow,
-            layer.IsClipping ? "#a87ad8" : "#404550");
+            layer.IsClipping ? IconClipOn : IconOff);
+
         refs.DisclosureButton.Content = layer.IsGroup ? (layer.IsOpen ? "▾" : "▸") : "";
         refs.DisclosureButton.IsHitTestVisible = layer.IsGroup;
         if (_renamingLayerIndex != index)
@@ -903,16 +1004,16 @@ public partial class MainWindow
             refs.NameHost.Content = new TextBlock
             {
                 Text = layer.Name,
-                Foreground = new SolidColorBrush(fgColor),
+                Foreground = fgBrush,
                 Padding = new Thickness(4, 1),
                 FontSize = 11,
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
             };
         }
         refs.BlendText.Text = BlendAbbr(layer.BlendMode);
-        refs.BlendText.Foreground = new SolidColorBrush(dimColor);
+        refs.BlendText.Foreground = dimBrush;
         refs.OpacityText.Text = $"{Math.Round(layer.Opacity * 100):0}%";
-        refs.OpacityText.Foreground = new SolidColorBrush(dimColor);
+        refs.OpacityText.Foreground = dimBrush;
 
         if (isActive && !_syncingLayerUi)
         {
@@ -931,8 +1032,8 @@ public partial class MainWindow
             Width = 26,
             Height = 26,
             Margin = new Thickness(2, 0, 2, 0),
-            Background = new SolidColorBrush(Color.Parse("#1e2028")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#2e3340")),
+            Background = PreviewFrameBg,
+            BorderBrush = PreviewFrameBorder,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(3),
             ClipToBounds = true
@@ -943,7 +1044,7 @@ public partial class MainWindow
             frame.Child = new TextBlock
             {
                 Text = layer.IsOpen ? "▾" : "▸",
-                Foreground = new SolidColorBrush(Color.Parse("#6a7a96")),
+                Foreground = GroupIconFg,
                 FontSize = 11,
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center

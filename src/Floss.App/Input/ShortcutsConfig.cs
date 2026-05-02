@@ -51,6 +51,7 @@ public sealed class ShortcutsConfig
 
     // ── File ──────────────────────────────────────────────────────────────────
 
+    public KeyBinding FileNew { get; set; } = new(Key.N, KeyModifiers.Control);
     public KeyBinding FileOpen { get; set; } = new(Key.O, KeyModifiers.Control);
     public KeyBinding FileSave { get; set; } = new(Key.S, KeyModifiers.Control);
     public KeyBinding FileSaveAs { get; set; } = new(Key.S, KeyModifiers.Control | KeyModifiers.Shift);
