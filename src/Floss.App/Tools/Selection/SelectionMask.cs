@@ -19,8 +19,9 @@ public sealed class SelectionMask
     private SKRectI _geoRect;
     private List<SKPoint> _geoPoly = [];
     private SelectionGeometry _geoType = SelectionGeometry.None;
+    private StreamGeometry? _cachedMaskGeo;
 
-    private enum SelectionGeometry { None, Rect, Polygon }
+    private enum SelectionGeometry { None, Rect, Polygon, Mask }
 
     public bool HasSelection => _mask != null;
 
@@ -36,6 +37,7 @@ public sealed class SelectionMask
         _mask = null;
         _geoType = SelectionGeometry.None;
         _geoPoly.Clear();
+        _cachedMaskGeo = null;
     }
 
     public bool IsSelected(int x, int y)
@@ -73,6 +75,7 @@ public sealed class SelectionMask
                 _mask[i] = _mask[i] > 0 ? (byte)0 : (byte)255;
         }
         _geoType = SelectionGeometry.None;
+        _cachedMaskGeo = null;
     }
 
     public void SetFromRect(int x, int y, int w, int h, SelectOp op = SelectOp.Replace)
@@ -92,6 +95,7 @@ public sealed class SelectionMask
         CommitMask(next);
         _geoType = SelectionGeometry.Rect;
         _geoRect = new SKRectI(x1, y1, x2, y2);
+        _cachedMaskGeo = null;
     }
 
     public void SetFromPolygon(IReadOnlyList<SKPoint> points, SelectOp op = SelectOp.Replace)
@@ -121,6 +125,7 @@ public sealed class SelectionMask
         CommitMask(next);
         _geoType = SelectionGeometry.Polygon;
         _geoPoly = new List<SKPoint>(points);
+        _cachedMaskGeo = null;
     }
 
     public void SetFromFloodFill(TiledPixelBuffer pixels, int srcX, int srcY,
@@ -147,8 +152,6 @@ public sealed class SelectionMask
         var queue = new Queue<(int x, int y)>();
         queue.Enqueue((srcX, srcY));
 
-        int minX = _docW, minY = _docH, maxX = -1, maxY = -1;
-
         while (queue.Count > 0)
         {
             var (cx, cy) = queue.Dequeue();
@@ -163,28 +166,15 @@ public sealed class SelectionMask
             var docX = cx + offsetX;
             var docY = cy + offsetY;
             if ((uint)docX < (uint)_docW && (uint)docY < (uint)_docH)
-            {
                 Apply(next, docX, docY, op, true);
-                if (docX < minX) minX = docX;
-                if (docY < minY) minY = docY;
-                if (docX > maxX) maxX = docX;
-                if (docY > maxY) maxY = docY;
-            }
 
             queue.Enqueue((cx + 1, cy)); queue.Enqueue((cx - 1, cy));
             queue.Enqueue((cx, cy + 1)); queue.Enqueue((cx, cy - 1));
         }
 
         CommitMask(next);
-        if (maxX >= minX)
-        {
-            _geoType = SelectionGeometry.Rect;
-            _geoRect = new SKRectI(minX, minY, maxX + 1, maxY + 1);
-        }
-        else
-        {
-            _geoType = SelectionGeometry.None;
-        }
+        _geoType = SelectionGeometry.Mask;
+        _cachedMaskGeo = null;
         _geoPoly.Clear();
     }
 
@@ -218,6 +208,113 @@ public sealed class SelectionMask
             dc.DrawGeometry(null, penW, geo);
             dc.DrawGeometry(null, penK, geo);
         }
+        else if (_geoType == SelectionGeometry.Mask)
+        {
+            var geo = _cachedMaskGeo ??= BuildMaskOutline();
+            if (geo != null)
+            {
+                dc.DrawGeometry(null, penW, geo);
+                dc.DrawGeometry(null, penK, geo);
+            }
+        }
+    }
+
+    // Build a StreamGeometry tracing every boundary edge between selected and unselected pixels.
+    // Edges are 1-pixel-wide segments; horizontal edges run along top/bottom of a row,
+    // vertical edges along left/right of a column. Consecutive collinear edges are merged.
+    private StreamGeometry? BuildMaskOutline()
+    {
+        if (_mask == null) return null;
+        var bounds = GetMaskBounds();
+        if (bounds == null) return null;
+        var b = bounds.Value;
+
+        // Collect all boundary segments as axis-aligned lines, then merge collinear runs.
+        // Key: (isHorizontal, fixedCoord, minVar, maxVar)
+        // For horizontal edges: fixedCoord = y row edge (pixel y or y+1), x range [x, x+1]
+        // For vertical edges:   fixedCoord = x col edge (pixel x or x+1), y range [y, y+1]
+
+        bool Selected(int x, int y) =>
+            (uint)x < (uint)_docW && (uint)y < (uint)_docH && _mask[y * _docW + x] > 0;
+
+        // Horizontal edge segments grouped by y-edge position, then by x
+        var hEdges = new Dictionary<int, List<int>>(); // y-edge → list of x starts
+        // Vertical edge segments grouped by x-edge position, then by y
+        var vEdges = new Dictionary<int, List<int>>(); // x-edge → list of y starts
+
+        for (int y = b.Top; y < b.Bottom; y++)
+        {
+            for (int x = b.Left; x < b.Right; x++)
+            {
+                if (!Selected(x, y)) continue;
+
+                // Top edge: between (x,y-1) and (x,y)
+                if (!Selected(x, y - 1))
+                {
+                    if (!hEdges.TryGetValue(y, out var list)) hEdges[y] = list = [];
+                    list.Add(x);
+                }
+                // Bottom edge: between (x,y) and (x,y+1)
+                if (!Selected(x, y + 1))
+                {
+                    if (!hEdges.TryGetValue(y + 1, out var list)) hEdges[y + 1] = list = [];
+                    list.Add(x);
+                }
+                // Left edge: between (x-1,y) and (x,y)
+                if (!Selected(x - 1, y))
+                {
+                    if (!vEdges.TryGetValue(x, out var list)) vEdges[x] = list = [];
+                    list.Add(y);
+                }
+                // Right edge: between (x,y) and (x+1,y)
+                if (!Selected(x + 1, y))
+                {
+                    if (!vEdges.TryGetValue(x + 1, out var list)) vEdges[x + 1] = list = [];
+                    list.Add(y);
+                }
+            }
+        }
+
+        var geo = new StreamGeometry();
+        using var ctx = geo.Open();
+
+        // Merge horizontal runs and emit
+        foreach (var (fy, xs) in hEdges)
+        {
+            xs.Sort();
+            int start = xs[0], prev = xs[0];
+            for (int i = 1; i < xs.Count; i++)
+            {
+                if (xs[i] == prev + 1) { prev = xs[i]; continue; }
+                ctx.BeginFigure(new Avalonia.Point(start, fy), false);
+                ctx.LineTo(new Avalonia.Point(prev + 1, fy));
+                ctx.EndFigure(false);
+                start = xs[i]; prev = xs[i];
+            }
+            ctx.BeginFigure(new Avalonia.Point(start, fy), false);
+            ctx.LineTo(new Avalonia.Point(prev + 1, fy));
+            ctx.EndFigure(false);
+        }
+
+        // Merge vertical runs and emit
+        foreach (var (fx, ys) in vEdges)
+        {
+            ys.Sort();
+            int start = ys[0], prev = ys[0];
+            for (int i = 1; i < ys.Count; i++)
+            {
+                if (ys[i] == prev + 1) { prev = ys[i]; continue; }
+                ctx.BeginFigure(new Avalonia.Point(fx, start), false);
+                ctx.LineTo(new Avalonia.Point(fx, prev + 1));
+                ctx.EndFigure(false);
+                start = ys[i]; prev = ys[i];
+            }
+            ctx.BeginFigure(new Avalonia.Point(fx, start), false);
+            ctx.LineTo(new Avalonia.Point(fx, prev + 1));
+            ctx.EndFigure(false);
+        }
+
+        return geo;
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

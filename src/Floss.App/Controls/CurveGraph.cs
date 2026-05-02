@@ -68,6 +68,14 @@ public sealed class CurveGraph : Control
 
     public CurveGraph() => UpdateCursor();
 
+    public byte[] ComputeLut()
+    {
+        var lut = new byte[256];
+        for (var i = 0; i < 256; i++)
+            lut[i] = (byte)Math.Clamp((int)(Eval(i / 255f) * 255f + 0.5f), 0, 255);
+        return lut;
+    }
+
     // ── Rendering ─────────────────────────────────────────────────────────────
 
     public override void Render(DrawingContext ctx)

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -151,9 +152,9 @@ public partial class MainWindow : Window
             CornerRadius = new CornerRadius(4),
             FontSize = 10
         };
-        newCatBtn.Click += (_, _) =>
+        newCatBtn.Click += async (_, _) =>
         {
-            var name = PromptForNewCategory();
+            var name = await PromptForNewCategory();
             if (!string.IsNullOrWhiteSpace(name) && !group.Categories.Any(c => c.Name == name))
             {
                 group.Categories.Add(new ToolCategory { Name = name });
@@ -335,12 +336,12 @@ public partial class MainWindow : Window
                 e.Handled = true;
             }
         });
-        target.AddHandler(DragDrop.DropEvent, (_, e) =>
+        target.AddHandler(DragDrop.DropEvent, async (_, e) =>
         {
             if (!e.DataTransfer.Contains(PresetIdDragFormat)) return;
             var presetId = e.DataTransfer.TryGetValue<string>(PresetIdDragFormat);
             if (string.IsNullOrWhiteSpace(presetId)) return;
-            var name = PromptForNewCategory();
+            var name = await PromptForNewCategory();
             if (!string.IsNullOrWhiteSpace(name) && !group.Categories.Any(c => c.Name == name))
             {
                 group.Categories.Add(new ToolCategory { Name = name });
@@ -362,8 +363,9 @@ public partial class MainWindow : Window
         RefreshGroupPresets();
     }
 
-    private string? PromptForNewCategory()
+    private async Task<string?> PromptForNewCategory()
     {
+        var tcs = new TaskCompletionSource<string?>();
         var dialog = new Window
         {
             Title = "New Category",
@@ -374,16 +376,17 @@ public partial class MainWindow : Window
         };
         var tb = new TextBox { Margin = new Thickness(12), PlaceholderText = "Category name" };
         var ok = new Button { Content = "Create", Margin = new Thickness(12, 0, 12, 12) };
-        var result = (string?)null;
-        ok.Click += (_, _) => { result = tb.Text; dialog.Close(); };
-        tb.KeyDown += (_, e) => { if (e.Key == Key.Enter) { result = tb.Text; dialog.Close(); } };
+        ok.Click += (_, _) => { tcs.TrySetResult(tb.Text); dialog.Close(); };
+        tb.KeyDown += (_, e) => { if (e.Key == Key.Enter) { tcs.TrySetResult(tb.Text); dialog.Close(); } };
+        dialog.Closed += (_, _) => tcs.TrySetResult(null);
         dialog.Content = new StackPanel { Children = { tb, ok } };
-        dialog.ShowDialog(this);
-        return result;
+        await dialog.ShowDialog(this);
+        return await tcs.Task;
     }
 
-    private void RenameCategoryPrompt(ToolGroup group, ToolCategory cat)
+    private async void RenameCategoryPrompt(ToolGroup group, ToolCategory cat)
     {
+        var tcs = new TaskCompletionSource<string?>();
         var dialog = new Window
         {
             Title = "Rename Category",
@@ -394,13 +397,13 @@ public partial class MainWindow : Window
         };
         var tb = new TextBox { Margin = new Thickness(12), Text = cat.Name };
         var ok = new Button { Content = "Rename", Margin = new Thickness(12, 0, 12, 12) };
-        string? result = null;
-        ok.Click += (_, _) => { result = tb.Text; dialog.Close(); };
-        tb.KeyDown += (_, e) => { if (e.Key == Key.Enter) { result = tb.Text; dialog.Close(); } };
+        ok.Click += (_, _) => { tcs.TrySetResult(tb.Text); dialog.Close(); };
+        tb.KeyDown += (_, e) => { if (e.Key == Key.Enter) { tcs.TrySetResult(tb.Text); dialog.Close(); } };
+        dialog.Closed += (_, _) => tcs.TrySetResult(null);
         dialog.Content = new StackPanel { Children = { tb, ok } };
-        dialog.ShowDialog(this);
+        await dialog.ShowDialog(this);
 
-        var newName = result?.Trim();
+        var newName = (await tcs.Task)?.Trim();
         if (string.IsNullOrWhiteSpace(newName) || newName == cat.Name) return;
         if (group.Categories.Any(c => c.Name == newName)) return;
 
@@ -461,7 +464,7 @@ public partial class MainWindow : Window
     private void LoadBrushAssets()
     {
         _brushAssets = _brushLibrary.Load();
-        App.ToolGroups.SyncWithAssets(_brushAssets);
+        App.ToolGroups.SyncWithAssets(_brushAssets, _activeToolGroup);
         App.ToolGroups.Save();
         RefreshGroupPresets();
     }
@@ -471,6 +474,22 @@ public partial class MainWindow : Window
         var initial = _brushAssets.FirstOrDefault(b => b.Preset.Name == App.Config.LastBrushName)
             ?? _brushAssets.FirstOrDefault()
             ?? BrushAsset.FromPreset(BrushPreset.Defaults[0]);
+
+        // Find the group+preset that owns this brush asset and do a full activation
+        foreach (var group in App.ToolGroups.Groups)
+        {
+            var preset = group.Presets.FirstOrDefault(p => p.BrushId == initial.Id);
+            if (preset != null) { ActivatePreset(group, preset); return; }
+        }
+
+        // No linked preset yet — activate the brush group's first preset and load the brush
+        var brushGroup = App.ToolGroups.Groups.FirstOrDefault(g => g.DefaultEngine == ToolPresetEngine.Brush)
+            ?? App.ToolGroups.Groups.FirstOrDefault();
+        if (brushGroup != null)
+        {
+            var fallback = brushGroup.ActivePreset ?? brushGroup.Presets.FirstOrDefault();
+            if (fallback != null) ActivatePreset(brushGroup, fallback);
+        }
         ApplyBrushAsset(initial);
     }
 

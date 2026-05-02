@@ -118,6 +118,7 @@ public sealed class DrawingCanvas : Control
     public SmudgeTool SmudgeTool => _smudgeTool;
     public TransformTool TransformTool => _transformTool;
     public bool HasSelection => _ctx.Selection.HasSelection;
+    public SelectionMask Selection => _ctx.Selection;
     public bool IsDirty => _document.IsDirty;
 
     public bool PaintInputSuspended { get; set; }
@@ -258,6 +259,8 @@ public sealed class DrawingCanvas : Control
 
     public void MergeSelectedLayers(IReadOnlyList<int> indices) => _document.MergeSelectedLayers(indices, _compositor);
     public void FlattenGroup(int groupIndex) => _document.FlattenGroup(groupIndex, _compositor);
+    public void ApplyFilter(IReadOnlyList<int> layerIndices, Action<DrawingLayer> apply)
+        => _document.ApplyFilterToLayers(layerIndices, apply);
 
     public void MergeDown(IReadOnlyList<int>? selectedIndices = null)
     {
@@ -276,6 +279,13 @@ public sealed class DrawingCanvas : Control
         // Merge with the next layer below in the flat list
         if (active + 1 < _document.Layers.Count)
             _document.MergeSelectedLayers([active, active + 1], _compositor);
+    }
+
+    public void ResizeCanvas(int newW, int newH, int offsetX, int offsetY)
+    {
+        _document.ResizeCanvas(newW, newH, offsetX, offsetY);
+        _ctx.Selection.Resize(newW, newH);
+        InvalidateVisual();
     }
 
     public void SelectAll()

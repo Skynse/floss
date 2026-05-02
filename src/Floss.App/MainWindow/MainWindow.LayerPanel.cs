@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -377,6 +378,47 @@ public partial class MainWindow
                         _canvas.MergeDown();
                 }));
         }
+
+        // Selection helpers
+        var visibleCount = VisibleLayerIndexes().Count();
+        items.Add(new() { Header = "-" });
+        if (_selectedLayerIndices.Count < visibleCount)
+        {
+            var selectAll = new MenuItem { Header = "Select All Layers" };
+            selectAll.Click += (_, _) =>
+            {
+                _selectedLayerIndices.Clear();
+                foreach (var i in VisibleLayerIndexes()) _selectedLayerIndices.Add(i);
+                BuildLayerList();
+            };
+            items.Add(selectAll);
+        }
+        if (_selectedLayerIndices.Count > 1)
+        {
+            var deselectAll = new MenuItem { Header = "Deselect All" };
+            deselectAll.Click += (_, _) => { _selectedLayerIndices.Clear(); BuildLayerList(); };
+            items.Add(deselectAll);
+        }
+
+        // Filters submenu
+        MenuItem AsyncItem(string header, Func<Task> action)
+        {
+            var mi = new MenuItem { Header = header };
+            mi.Click += async (_, _) => await action();
+            return mi;
+        }
+        items.Add(new() { Header = "-" });
+        items.Add(new MenuItem
+        {
+            Header = "Filters",
+            ItemsSource = new[]
+            {
+                AsyncItem("_Gaussian Blur...", ApplyBlurFilter),
+                AsyncItem("_Sharpen...",        ApplySharpenFilter),
+                AsyncItem("_Noise...",          ApplyNoiseFilter),
+                AsyncItem("_Color Curves...",   ApplyColorCurvesFilter),
+            }
+        });
 
         return new ContextMenu { ItemsSource = items };
     }

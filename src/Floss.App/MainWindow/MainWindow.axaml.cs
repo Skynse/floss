@@ -401,6 +401,28 @@ public partial class MainWindow : Window
             }
         };
 
+        var canvasMenu = new MenuItem
+        {
+            Header = "_Canvas",
+            ItemsSource = new object[]
+            {
+                MenuAction("_Resize Canvas...", async () => await ShowResizeCanvasDialog()),
+            }
+        };
+
+        var filterMenu = new MenuItem
+        {
+            Header = "F_ilter",
+            ItemsSource = new object[]
+            {
+                MenuAction("_Gaussian Blur...",  async () => await ApplyBlurFilter()),
+                MenuAction("_Sharpen...",         async () => await ApplySharpenFilter()),
+                MenuAction("_Noise...",           async () => await ApplyNoiseFilter()),
+                new Separator(),
+                MenuAction("_Color Curves...",    async () => await ApplyColorCurvesFilter()),
+            }
+        };
+
         return new Border
         {
             Background = new SolidColorBrush(Color.Parse(Bg1)),
@@ -410,7 +432,7 @@ public partial class MainWindow : Window
             {
                 Background = Avalonia.Media.Brushes.Transparent,
                 Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-                ItemsSource = new[] { fileMenu, brushMenu, layerMenu }
+                ItemsSource = new[] { fileMenu, brushMenu, layerMenu, canvasMenu, filterMenu }
             }
         };
     }
@@ -787,8 +809,8 @@ public partial class MainWindow : Window
         _canvas.HistoryChanged += (_, _) => UpdateStatus();
         _canvas.LayersChanged += (_, _) =>
         {
-            _selectedLayerIndices.Clear();
-            if (_canvas.Layers.Count > 0)
+            _selectedLayerIndices.RemoveWhere(i => i < 0 || i >= _canvas.Layers.Count);
+            if (_selectedLayerIndices.Count == 0 && _canvas.Layers.Count > 0)
                 _selectedLayerIndices.Add(_canvas.ActiveLayerIndex);
             BuildLayerList();
             UpdateStatus();

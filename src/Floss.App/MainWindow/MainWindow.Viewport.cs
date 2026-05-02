@@ -283,22 +283,22 @@ public partial class MainWindow
 
         if (!e.Handled)
         {
-            foreach (var pair in _toolGroupButtons)
+            // Collect all groups that share this shortcut
+            var matching = _toolGroupButtons
+                .Where(p => !p.Group.Shortcut.IsEmpty && p.Group.Shortcut.Matches(key, mods))
+                .ToList();
+
+            if (matching.Count > 0)
             {
-                if (pair.Group.Shortcut.IsEmpty || !pair.Group.Shortcut.Matches(key, mods)) continue;
-                if (_activeToolGroup == pair.Group && pair.Group.Presets.Count > 1)
+                var activeIdx = matching.FindIndex(p => p.Group == _activeToolGroup);
+                // Single group already active → do nothing; otherwise advance to next group
+                if (!(matching.Count == 1 && activeIdx >= 0))
                 {
-                    var current = pair.Group.ActivePreset;
-                    var idx = current == null ? 0 : pair.Group.Presets.IndexOf(current);
-                    ActivatePreset(pair.Group, pair.Group.Presets[(idx + 1) % pair.Group.Presets.Count]);
-                }
-                else
-                {
-                    var preset = pair.Group.ActivePreset ?? pair.Group.Presets.FirstOrDefault();
-                    if (preset != null) ActivatePreset(pair.Group, preset);
+                    var next = matching[(activeIdx + 1) % matching.Count];
+                    var preset = next.Group.ActivePreset ?? next.Group.Presets.FirstOrDefault();
+                    if (preset != null) ActivatePreset(next.Group, preset);
                 }
                 e.Handled = true;
-                break;
             }
         }
     }

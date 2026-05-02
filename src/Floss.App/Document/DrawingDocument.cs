@@ -95,6 +95,57 @@ public sealed class DrawingDocument
         DirtyStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    // --- Canvas Resize ---
+    public void ResizeCanvas(int newW, int newH, int contentOffsetX, int contentOffsetY)
+    {
+        if (newW <= 0 || newH <= 0) return;
+        BeginDocumentMutation();
+
+        var newLayers = new List<DrawingLayer>(_layers.Count);
+        var map = new Dictionary<DrawingLayer, DrawingLayer>(_layers.Count);
+
+        foreach (var layer in _layers)
+        {
+            var nl = new DrawingLayer(layer.Name, newW, newH)
+            {
+                IsVisible = layer.IsVisible, IsLocked = layer.IsLocked, Opacity = layer.Opacity,
+                BlendMode = layer.BlendMode, OffsetX = layer.OffsetX, OffsetY = layer.OffsetY,
+                IsGroup = layer.IsGroup, IsOpen = layer.IsOpen, IsClipping = layer.IsClipping,
+                IndentLevel = layer.IndentLevel, IsAlphaLocked = layer.IsAlphaLocked
+            };
+            if (!layer.IsGroup)
+            {
+                var pixels = layer.CapturePixels();
+                var region = new PixelRegion(contentOffsetX, contentOffsetY, layer.Width, layer.Height);
+                nl.Pixels.CopyFromBgra(region, pixels, layer.Width * 4);
+                nl.MarkThumbnailDirty();
+            }
+            map[layer] = nl;
+            newLayers.Add(nl);
+        }
+
+        for (var i = 0; i < _layers.Count; i++)
+        {
+            var parent = _layers[i].Parent;
+            if (parent != null && map.TryGetValue(parent, out var np))
+            {
+                newLayers[i].Parent = np;
+                np.Children.Add(newLayers[i]);
+            }
+        }
+
+        foreach (var l in _layers) l.Dispose();
+        _layers.Clear();
+        _layers.AddRange(newLayers);
+
+        Width = newW;
+        Height = newH;
+
+        ActiveLayerIndex = Math.Clamp(ActiveLayerIndex, 0, _layers.Count - 1);
+        NotifyLayersChanged();
+        NotifyChanged();
+    }
+
     // --- Import / Setup ---
     public void ResizeForImport(int width, int height)
     {
@@ -179,6 +230,16 @@ public sealed class DrawingDocument
 
         PushHistoryState(new LayerTileHistoryState(layerIndex, patches.ToArray(), dirtyRegion));
         NotifyChanged(dirtyRegion, layerIndex);
+    }
+
+    public void ApplyFilterToLayers(IReadOnlyList<int> indices, Action<DrawingLayer> apply)
+    {
+        var valid = indices.Where(i => i >= 0 && i < _layers.Count && !_layers[i].IsGroup && !_layers[i].IsLocked).ToList();
+        if (valid.Count == 0) return;
+        BeginDocumentMutation();
+        foreach (var idx in valid)
+            apply(_layers[idx]);
+        NotifyChanged();
     }
 
     public void CommitStroke()

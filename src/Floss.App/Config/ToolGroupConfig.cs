@@ -95,10 +95,32 @@ public sealed class ToolGroupConfig
         {
             var path = AppPaths.ToolGroupConfigPath;
             if (File.Exists(path))
-                return JsonSerializer.Deserialize<ToolGroupConfig>(File.ReadAllText(path), JsonOpts) ?? new();
+            {
+                var cfg = JsonSerializer.Deserialize<ToolGroupConfig>(File.ReadAllText(path), JsonOpts) ?? new();
+                cfg.EnsureDefaultPresets();
+                return cfg;
+            }
         }
         catch { }
         return new();
+    }
+
+    private void EnsureDefaultPresets()
+    {
+        foreach (var group in Groups)
+        {
+            if (group.Presets.Count == 0)
+            {
+                group.Presets.Add(new ToolPreset { Name = group.Name, Engine = group.DefaultEngine });
+            }
+            else if (group.DefaultEngine is not (ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge))
+            {
+                // Old configs serialised without an Engine field — it defaults to Brush (0).
+                // Correct any preset in a non-paint group that still carries the Brush default.
+                foreach (var p in group.Presets.Where(p => p.Engine == ToolPresetEngine.Brush))
+                    p.Engine = group.DefaultEngine;
+            }
+        }
     }
 
     public void Save()
@@ -110,7 +132,7 @@ public sealed class ToolGroupConfig
     // ── Sync with brush assets ────────────────────────────────────────────────
     // Ensures every BrushAsset on disk is represented as a ToolPreset in some group.
 
-    public void SyncWithAssets(IReadOnlyList<BrushAsset> assets)
+    public void SyncWithAssets(IReadOnlyList<BrushAsset> assets, ToolGroup? preferredGroup = null)
     {
         var allBrushIds = Groups
             .SelectMany(g => g.Presets)
@@ -118,8 +140,12 @@ public sealed class ToolGroupConfig
             .Select(p => p.BrushId!)
             .ToHashSet();
 
-        var brushGroup  = Groups.FirstOrDefault(g => g.DefaultEngine == ToolPresetEngine.Brush)  ?? Groups.First();
-        var eraserGroup = Groups.FirstOrDefault(g => g.DefaultEngine == ToolPresetEngine.Eraser) ?? brushGroup;
+        var brushGroup  = (preferredGroup?.DefaultEngine == ToolPresetEngine.Brush  ? preferredGroup : null)
+                       ?? Groups.FirstOrDefault(g => g.DefaultEngine == ToolPresetEngine.Brush)
+                       ?? Groups.First();
+        var eraserGroup = (preferredGroup?.DefaultEngine == ToolPresetEngine.Eraser ? preferredGroup : null)
+                       ?? Groups.FirstOrDefault(g => g.DefaultEngine == ToolPresetEngine.Eraser)
+                       ?? brushGroup;
 
         foreach (var asset in assets)
         {
@@ -161,8 +187,10 @@ public sealed class ToolGroupConfig
 
     private static List<ToolGroup> Defaults() =>
     [
-        new() { Name = "Brush",      DefaultEngine = ToolPresetEngine.Brush,      Shortcut = new(Key.B) },
-        new() { Name = "Eraser",     DefaultEngine = ToolPresetEngine.Eraser,     Shortcut = new(Key.E) },
+        new() { Name = "Brush",  DefaultEngine = ToolPresetEngine.Brush,  Shortcut = new(Key.B),
+            Presets = [new() { Name = "Brush",  Engine = ToolPresetEngine.Brush }] },
+        new() { Name = "Eraser", DefaultEngine = ToolPresetEngine.Eraser, Shortcut = new(Key.E),
+            Presets = [new() { Name = "Eraser", Engine = ToolPresetEngine.Eraser }] },
         new()
         {
             Name = "Smudge", DefaultEngine = ToolPresetEngine.Smudge, Shortcut = new(Key.U),

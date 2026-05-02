@@ -224,8 +224,11 @@ public partial class MainWindow
             CaretBrush = new SolidColorBrush(Color.Parse(TextPrimary))
         };
 
+        var done = false;
         void Commit()
         {
+            if (done) return;
+            done = true;
             var name = box.Text?.Trim();
             if (!string.IsNullOrEmpty(name)) group.Name = name;
             App.ToolGroups.Save();
@@ -235,7 +238,7 @@ public partial class MainWindow
         box.KeyDown += (_, e) =>
         {
             if (e.Key == Key.Return || e.Key == Key.Enter) { Commit(); e.Handled = true; }
-            else if (e.Key == Key.Escape) { BuildToolRail(); e.Handled = true; }
+            else if (e.Key == Key.Escape) { done = true; BuildToolRail(); e.Handled = true; }
         };
         box.LostFocus += (_, _) => Commit();
 
@@ -266,16 +269,6 @@ public partial class MainWindow
         if (_recordingToolGroup == null) return;
         var group = _recordingToolGroup;
         CancelToolGroupShortcutRecording();
-
-        if (!kb.IsEmpty)
-        {
-            var conflict = App.ToolGroups.Groups.FirstOrDefault(g =>
-                g != group && !g.Shortcut.IsEmpty &&
-                g.Shortcut.Key == kb.Key && g.Shortcut.Modifiers == kb.Modifiers);
-            if (conflict != null)
-                conflict.Shortcut = Input.KeyBinding.Empty;
-        }
-
         group.Shortcut = kb;
         App.ToolGroups.Save();
         BuildToolRail();
