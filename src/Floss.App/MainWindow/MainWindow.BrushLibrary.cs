@@ -14,16 +14,16 @@ using Floss.App.Document;
 
 namespace Floss.App;
 
-public partial class MainWindow
+public partial class MainWindow : Window
 {
     // ── Brush section ─────────────────────────────────────────────────────────
     private Control BuildBrushSection()
     {
         // ── Library part ──────────────────────────────────────────────────────
-        _brushCategoryPanel = new StackPanel
+        _brushCategoryPanel = new WrapPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
-            Spacing = 4
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch
         };
         _presetPanel = new StackPanel { Spacing = 2, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
 
@@ -79,14 +79,6 @@ public partial class MainWindow
         foreach (var b in new[] { importPngBtn, importAbrBtn, _saveBrushButton, duplicateBrushBtn, editBrushBtn })
             b.Margin = new Thickness(0, 0, 3, 3);
 
-        var categoryScrollRow = new ScrollViewer
-        {
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            Height = 30,
-            ClipToBounds = true,
-            Content = _brushCategoryPanel
-        };
 
         return new StackPanel
         {
@@ -98,7 +90,7 @@ public partial class MainWindow
                 new Border { Height = 4 },
                 _activeBrushLabel,
                 new Border { Height = 4 },
-                categoryScrollRow,
+                _brushCategoryPanel,
                 new Border { Height = 4 },
                 presetScroll,
                 new Border { Height = 2 },
@@ -128,7 +120,8 @@ public partial class MainWindow
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(4),
                 FontSize = 10,
-                Tag = cat
+                Tag = cat,
+                Margin = new Thickness(0, 0, 3, 3)
             };
             btn.Click += (_, _) =>
             {
@@ -181,36 +174,36 @@ public partial class MainWindow
 
         foreach (var asset in assets)
         {
-            var preset  = asset.Preset;
+            var preset = asset.Preset;
             var isActive = _activeBrushAsset?.Id == asset.Id;
 
             // Stroke preview fills the full row
             var strokePreview = new BrushStrokePreview
             {
-                Brush  = preset,
+                Brush = preset,
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
-                VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Stretch,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
             };
 
             // Name pill — right-aligned, floating over the preview
             var nameText = new TextBlock
             {
-                Text       = preset.Name,
-                FontSize   = 11,
+                Text = preset.Name,
+                FontSize = 11,
                 FontWeight = FontWeight.SemiBold,
                 Foreground = new SolidColorBrush(Colors.White),
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                MaxWidth   = 160,
+                MaxWidth = 160,
             };
             var namePill = new Border
             {
-                Background    = new SolidColorBrush(Color.FromArgb(160, 15, 13, 18)),
-                Padding       = new Thickness(7, 2),
-                CornerRadius  = new CornerRadius(3),
-                Child         = nameText,
+                Background = new SolidColorBrush(Color.FromArgb(160, 15, 13, 18)),
+                Padding = new Thickness(7, 2),
+                CornerRadius = new CornerRadius(3),
+                Child = nameText,
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
-                VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
-                Margin        = new Thickness(0, 0, 7, 0),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 7, 0),
             };
 
             var panel = new Panel { ClipToBounds = true };
@@ -219,17 +212,17 @@ public partial class MainWindow
 
             var row = new Button
             {
-                Height      = 48,
-                Padding     = new Thickness(0),
-                HorizontalAlignment        = Avalonia.Layout.HorizontalAlignment.Stretch,
+                Height = 48,
+                Padding = new Thickness(0),
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
                 HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
-                VerticalContentAlignment   = Avalonia.Layout.VerticalAlignment.Stretch,
-                Background  = new SolidColorBrush(Color.Parse(Bg2)),
+                VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
+                Background = new SolidColorBrush(Color.Parse(Bg2)),
                 BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke)),
                 BorderThickness = new Thickness(isActive ? 2 : 1),
-                CornerRadius    = new CornerRadius(4),
+                CornerRadius = new CornerRadius(4),
                 Content = panel,
-                Tag     = asset,
+                Tag = asset,
             };
             row.Click += (_, _) => ApplyBrushAsset(asset);
             EnablePresetDrag(row, asset);
@@ -402,7 +395,7 @@ public partial class MainWindow
             var dragged = e.DataTransfer.TryGetValue<string>(CategoryDragFormat);
             if (string.IsNullOrEmpty(dragged) || dragged == cat) return;
             var from = _brushPaletteConfig.Categories.IndexOf(dragged);
-            var to   = _brushPaletteConfig.Categories.IndexOf(cat);
+            var to = _brushPaletteConfig.Categories.IndexOf(cat);
             if (from < 0 || to < 0) return;
             _brushPaletteConfig.Categories.RemoveAt(from);
             _brushPaletteConfig.Categories.Insert(to, dragged);
@@ -561,8 +554,8 @@ public partial class MainWindow
         });
         if (files.Count == 0) return;
 
-        var imported    = 0;
-        var lastDiag    = "";
+        var imported = 0;
+        var lastDiag = "";
         foreach (var file in files)
         {
             await using var stream = await file.OpenReadAsync();

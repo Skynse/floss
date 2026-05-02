@@ -42,6 +42,7 @@ public sealed class DrawingCanvas : Control
 
     public DrawingCanvas()
     {
+        _document.DirtyStateChanged += (_, _) => DirtyStateChanged?.Invoke(this, EventArgs.Empty);
         Focusable = true;
         ClipToBounds = false;
         RenderOptions.SetBitmapInterpolationMode(this, BitmapInterpolationMode.None);
@@ -98,6 +99,7 @@ public sealed class DrawingCanvas : Control
     public event EventHandler? LayersChanged;
     public event EventHandler<LayerMetadataChangedEventArgs>? LayerMetadataChanged;
     public event EventHandler<Color>? ColorSampled;
+    public event EventHandler? DirtyStateChanged;
 
     public int ActiveSampleCount => _canvasTool.ActiveSampleCount;
     public int CommittedStrokeCount => _document.CommittedStrokeCount;
@@ -116,6 +118,7 @@ public sealed class DrawingCanvas : Control
     public SmudgeTool SmudgeTool => _smudgeTool;
     public TransformTool TransformTool => _transformTool;
     public bool HasSelection => _ctx.Selection.HasSelection;
+    public bool IsDirty => _document.IsDirty;
 
     public bool PaintInputSuspended { get; set; }
     public double CanvasZoom { get; set; } = 1.0;

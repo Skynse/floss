@@ -139,7 +139,7 @@ public partial class MainWindow : Window
     private TextBox _hexInput = null!;
     private Border _colorWell = null!;
     private WrapPanel _swatchPanel = null!;
-    private StackPanel _brushCategoryPanel = null!;
+    private WrapPanel _brushCategoryPanel = null!;
     private StackPanel _presetPanel = null!;
     private StackPanel _toolPropertyPanel = null!;
     private TextBlock _toolPropertyTitle = null!;
@@ -251,6 +251,12 @@ public partial class MainWindow : Window
         BuildLayerList();
         UpdateStatus();
         Closing += (_, _) => SaveToConfig();
+        _canvas.DirtyStateChanged += (_, _) =>
+        {
+            string fileName = _currentFlossPath == null ? "Untitled" : Path.GetFileName(_currentFlossPath);
+            string dirtyStar = _canvas.IsDirty ? "*" : "";
+            Title = $"Floss Studio - {fileName}{dirtyStar}";
+        };
     }
 
     // ── Root layout ───────────────────────────────────────────────────────────
@@ -367,6 +373,7 @@ public partial class MainWindow : Window
             Header = "_File",
             ItemsSource = new object[]
             {
+                MenuAction("_New...", async () => await NewDocumentAsync()),
                 MenuAction("_Open...", async () => await OpenDocumentAsync()),
                 MenuAction("_Save Floss", async () => await SaveFlossAsync()),
                 MenuAction("_Save Floss As...", async () => await SaveFlossAsAsync()),

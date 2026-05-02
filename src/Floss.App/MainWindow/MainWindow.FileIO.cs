@@ -11,6 +11,26 @@ using Floss.App.Psd;
 
 namespace Floss.App;
 
+using Avalonia.Media;
+using SkiaSharp;
+
+
+public static class ColorExtensions
+{
+    // Convert Avalonia Color to Skia Color
+    public static SKColor ToSkia(this Color color)
+    {
+        return new SKColor(color.R, color.G, color.B, color.A);
+    }
+
+    // Convert Skia Color to Avalonia Color
+    public static Color ToAvalonia(this SKColor color)
+    {
+        return new Color(color.Alpha, color.Red, color.Green, color.Blue);
+    }
+}
+
+
 public partial class MainWindow
 {
     // ── File I/O ──────────────────────────────────────────────────────────────
@@ -39,6 +59,53 @@ public partial class MainWindow
         Patterns = ["*.png", "*.jpg", "*.jpeg", "*.jpe", "*.webp", "*.bmp", "*.dib", "*.gif", "*.tif", "*.tiff", "*.ico", "*.wbmp"]
     };
 
+    private async System.Threading.Tasks.Task NewDocumentAsync()
+    {
+        // 1. Check for unsaved changes FIRST
+        if (_canvas.Document.IsDirty)
+        {
+            // NOTE: A proper save prompt should return a bool? (Yes = true, No = false, Cancel = null).
+            // If the user clicks "Cancel" or closes the window, you must abort the New Document process.
+            var wantsToSave = await new UnsavedChangesDialog().ShowDialog<bool?>(this);
+
+            if (wantsToSave == null)
+            {
+                return; // User canceled the operation entirely
+            }
+
+            if (wantsToSave == true)
+            {
+                await SaveFlossAsync();
+
+                // Safety check: If they clicked "Save" but then canceled out of the
+                // "Save As" file picker, the document is STILL dirty. Abort.
+                if (_canvas.Document.IsDirty) return;
+            }
+            // If wantsToSave == false, they clicked "Don't Save". We just continue and discard.
+        }
+
+        // 2. Show the New Document Wizard
+        var result = await new NewDocumentDialog().ShowDialog<DocumentSettings?>(this);
+        if (result == null) return; // User canceled the wizard
+
+        // 3. Create the new document USING the result parameters
+        var newDoc = new DrawingDocument(result.Width, result.Height)
+        {
+            PaperColor = result.BackgroundColor.ToAvalonia(),
+        };
+
+        // 4. Swap it in and reset session state
+        _canvas.Document.ReplaceWith(newDoc);
+        _currentFlossPath = null;
+        _canvas.Document.MarkAsSaved(); // Force IsDirty to false for the fresh canvas
+
+        // 5. Sync the UI
+        SyncCanvasFrameToDocument(fitToViewport: true);
+        BuildLayerList();
+        UpdateStatus(); // This will trigger your title bar update
+
+        _footerStatusText.Text = $"Created '{result.FileName}'";
+    }
     private async System.Threading.Tasks.Task OpenDocumentAsync()
     {
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions

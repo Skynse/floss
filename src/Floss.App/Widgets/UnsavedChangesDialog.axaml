@@ -1,0 +1,20 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Floss.App.UnsavedChangesDialog" Title="Unsaved Changes"
+        Width="380" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#202226" Foreground="#d8dbe0">
+
+    <StackPanel Margin="20" Spacing="20">
+        <TextBlock Text="Save changes to the current document before closing?"
+                   FontSize="14"
+                   TextWrapping="Wrap"/>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+            <Button Content="Cancel" Click="OnCancelClick" Width="80" HorizontalContentAlignment="Center"/>
+            <Button Content="Don't Save" Click="OnDontSaveClick" Width="90" HorizontalContentAlignment="Center"/>
+            <Button Content="Save" Click="OnSaveClick" Width="80" HorizontalContentAlignment="Center" Background="#2f7bff" Foreground="White"/>
+        </StackPanel>
+    </StackPanel>
+</Window>
