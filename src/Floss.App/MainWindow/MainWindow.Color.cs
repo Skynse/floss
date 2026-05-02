@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -84,7 +85,16 @@ public partial class MainWindow
     {
         _colorWell.Background = new SolidColorBrush(color);
         _canvas.SetPaintColor(color);
-        if (switchToBrush) SetTool("brush");
+        if (switchToBrush)
+        {
+            var brushGroup = App.ToolGroups.Groups.FirstOrDefault(g => g.DefaultEngine == ToolPresetEngine.Brush)
+                ?? App.ToolGroups.Groups.FirstOrDefault();
+            if (brushGroup != null)
+            {
+                var preset = brushGroup.ActivePreset ?? brushGroup.Presets.FirstOrDefault();
+                if (preset != null) ActivatePreset(brushGroup, preset);
+            }
+        }
         if (syncPicker) SyncPickerFromColor(color);
     }
 

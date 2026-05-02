@@ -83,8 +83,7 @@ public partial class MainWindow : Window
         Color.Parse("#2d0015"),
     ];
 
-    private readonly BrushPaletteConfig _brushPaletteConfig = new();
-    private string? _selectedBrushCategory;
+    private string? _selectedCategory;
 
     // ── Blend modes ───────────────────────────────────────────────────────────
     private static readonly string[] BlendModes =
@@ -157,18 +156,6 @@ public partial class MainWindow : Window
     private TextBox _layerNameBox = null!;
     private Button _undoButton = null!;
     private Button _redoButton = null!;
-    private Button _brushToolButton = null!;
-    private Button _eraserToolButton = null!;
-    private Button _smudgeToolButton = null!;
-    private Button _moveToolButton = null!;
-    private Button _selectToolButton = null!;
-    private Button _wandToolButton = null!;
-    private Button _fillToolButton = null!;
-    private Button _lassoFillToolButton = null!;
-    private Button _eyedropToolButton = null!;
-    private Button _gradientToolButton = null!;
-    private Button _shapeToolButton = null!;
-    private Button _polylineToolButton = null!;
     private Button _deleteLayerButton = null!;
     private Button _moveLayerUpButton = null!;
     private Button _moveLayerDownButton = null!;
@@ -213,6 +200,11 @@ public partial class MainWindow : Window
     private readonly ShapeTool _shapeTool = new();
     private readonly PolylineTool _polylineTool = new();
     private readonly List<Button> _toolButtons = [];
+    private readonly List<(ToolGroup Group, Button Button)> _toolGroupButtons = [];
+    private ToolGroup? _activeToolGroup;
+    private ToolGroup? _recordingToolGroup;
+    private Button? _recordingToolGroupButton;
+    private StackPanel _toolRailStack = null!;
 
     private enum GestureMode { None, Pan, Zoom, Rotate, BrushSize }
     private GestureMode _activeGesture;
@@ -237,12 +229,10 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         _brushLibrary = new BrushLibrary(AppPaths.BrushesDirectory);
-        _brushPaletteConfig = BrushPaletteConfig.Load(AppPaths.BrushPaletteConfigPath);
         BuildUi();
         WireControls();
         RestoreFromConfig();
         BuildSwatches();
-        BuildBrushCategories();
         LoadBrushAssets();
         SelectInitialBrush();
         SetColor(Color.Parse(App.Config.LastColor));
@@ -830,7 +820,7 @@ public partial class MainWindow : Window
     // ── Tool selection ────────────────────────────────────────────────────────
     private Button? _activeToolButton;
 
-    private void ActivateTool(ITool tool, Button button)
+    private void ActivateTool(ITool tool, Button? button)
     {
         if (_canvas.IsTransformActive)
         {
@@ -849,20 +839,31 @@ public partial class MainWindow : Window
         RefreshToolProperties();
     }
 
-    private string ToolDisplayName(ITool tool) => tool switch
+    private string ToolDisplayName(ITool tool)
     {
-        BrushTool bt => bt.IsEraser ? "Eraser" : _canvas.Brush.Name,
-        MoveTool => "Move",
-        SelectTool => $"Select: {_selectTool.Mode}",
-        TransformTool => "Transform",
-        MagicWandTool => "Magic Wand",
-        FillTool => "Fill",
-        EyedropperTool => "Eyedropper",
-        GradientTool => $"Gradient: {_gradientTool.GradientType}",
-        ShapeTool => $"Shape: {_shapeTool.Kind}",
-        PolylineTool => _polylineTool.ClosePath ? "Polyline: Closed" : "Polyline: Open",
-        _ => "Tool"
-    };
+        var baseName = _activeToolGroup?.Name ?? tool switch
+        {
+            BrushTool bt  => bt.IsEraser ? "Eraser" : "Brush",
+            MoveTool      => "Move",
+            SelectTool    => "Select",
+            TransformTool => "Transform",
+            MagicWandTool => "Magic Wand",
+            FillTool      => "Fill",
+            EyedropperTool => "Eyedropper",
+            GradientTool  => "Gradient",
+            ShapeTool     => "Shape",
+            PolylineTool  => "Polyline",
+            _             => "Tool"
+        };
+        return tool switch
+        {
+            SelectTool   => $"{baseName}: {_selectTool.Mode}",
+            GradientTool => $"{baseName}: {_gradientTool.GradientType}",
+            ShapeTool    => $"{baseName}: {_shapeTool.Kind}",
+            PolylineTool => $"{baseName}: {(_polylineTool.ClosePath ? "Closed" : "Open")}",
+            _            => baseName
+        };
+    }
 
     private void CycleSelectMode()
     {
@@ -904,16 +905,71 @@ public partial class MainWindow : Window
         RefreshToolProperties();
     }
 
-    private void SetTool(string tool)
+    internal void ActivatePreset(ToolGroup group, ToolPreset preset)
     {
-        var (itool, btn) = tool switch
+        group.LastActivePresetId = preset.Id;
+        _activeToolGroup = group;
+
+        // Apply engine-specific tool state before switching
+        switch (preset.Engine)
         {
-            "eraser" => ((ITool)_canvas.EraserTool, _eraserToolButton),
-            _ => (_canvas.BrushTool, _brushToolButton)
-        };
-        if (ReferenceEquals(_canvas.ActiveTool, itool)) return;
-        ActivateTool(itool, btn);
+            case ToolPresetEngine.Select:
+                _selectTool.Mode = preset.SelectMode;
+                break;
+            case ToolPresetEngine.MagicWand:
+                _magicWandTool.Tolerance = preset.Tolerance;
+                break;
+            case ToolPresetEngine.Fill:
+                _fillTool.Tolerance = preset.Tolerance;
+                break;
+            case ToolPresetEngine.Gradient:
+                _gradientTool.GradientType = preset.GradientType;
+                break;
+            case ToolPresetEngine.Shape:
+                _shapeTool.Kind        = preset.ShapeKind;
+                _shapeTool.DrawMode    = preset.ShapeDrawMode;
+                _shapeTool.StrokeWidth = preset.ShapeStrokeWidth;
+                break;
+            case ToolPresetEngine.Polyline:
+                _polylineTool.ClosePath    = preset.PolylineClosePath;
+                _polylineTool.StrokeWidth  = preset.PolylineStrokeWidth;
+                break;
+        }
+
+        var btn = _toolGroupButtons.FirstOrDefault(x => x.Group == group).Button;
+        ActivateTool(ToolForPresetEngine(preset.Engine), btn);
+
+        // Reflect active preset engine in the rail button icon
+        if (btn != null) btn.Content = MaterialIcon(group.ActiveIcon, 18);
+
+        // For brush-based engines, load the referenced brush asset
+        if (preset.BrushId != null &&
+            preset.Engine is ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge)
+        {
+            var asset = _brushAssets.FirstOrDefault(a => a.Id == preset.BrushId);
+            if (asset != null) ApplyBrushSettings(asset.ToPreset(), syncSliders: true);
+        }
+
+        RefreshGroupPresets();
+        App.ToolGroups.Save();
     }
+
+    internal ITool ToolForPresetEngine(ToolPresetEngine engine) => engine switch
+    {
+        ToolPresetEngine.Brush      => _canvas.BrushTool,
+        ToolPresetEngine.Eraser     => _canvas.EraserTool,
+        ToolPresetEngine.Smudge     => _canvas.SmudgeTool,
+        ToolPresetEngine.Move       => _moveTool,
+        ToolPresetEngine.Select     => _selectTool,
+        ToolPresetEngine.MagicWand  => _magicWandTool,
+        ToolPresetEngine.Fill       => _fillTool,
+        ToolPresetEngine.LassoFill  => _lassoFillTool,
+        ToolPresetEngine.Eyedropper => _eyedropperTool,
+        ToolPresetEngine.Gradient   => _gradientTool,
+        ToolPresetEngine.Shape      => _shapeTool,
+        ToolPresetEngine.Polyline   => _polylineTool,
+        _ => _canvas.BrushTool
+    };
 
     private static void SetRailActive(Button button, bool active)
     {

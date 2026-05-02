@@ -28,6 +28,9 @@ public static class AppPaths
     public static string BrushPaletteConfigPath { get; } =
         Path.Combine(AppDirectory, "brush-palette.json");
 
+    public static string ToolGroupConfigPath { get; } =
+        Path.Combine(AppDirectory, "tool-groups.json");
+
     public static void EnsureDirectories()
     {
         Directory.CreateDirectory(AppDirectory);

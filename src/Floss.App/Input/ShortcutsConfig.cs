@@ -75,19 +75,6 @@ public sealed class ShortcutsConfig
     public KeyBinding RotateRight { get; set; } = new(Key.OemCloseBrackets, KeyModifiers.Shift);
     public KeyBinding RotateReset { get; set; } = new(Key.R, KeyModifiers.Control | KeyModifiers.Shift);
 
-    // ── Tools ─────────────────────────────────────────────────────────────────
-
-    public KeyBinding ToolBrush { get; set; } = new(Key.B);
-    public KeyBinding ToolEraser { get; set; } = new(Key.E);
-    public KeyBinding ToolMove { get; set; } = new(Key.V);
-    public KeyBinding ToolSelect { get; set; } = new(Key.S);
-    public KeyBinding ToolWand { get; set; } = new(Key.W);
-    public KeyBinding ToolFill { get; set; } = new(Key.G);
-    public KeyBinding ToolLasso { get; set; } = new(Key.L);
-    public KeyBinding ToolEyedropper { get; set; } = new(Key.I);
-    public KeyBinding ToolSmudge { get; set; } = new(Key.U);
-    public KeyBinding ToolTransform { get; set; } = new(Key.T, KeyModifiers.Control);
-
     // ── Selection ─────────────────────────────────────────────────────────────
 
     public KeyBinding SelectAll { get; set; } = new(Key.A, KeyModifiers.Control);

@@ -46,6 +46,43 @@ public static class Icons
     public const string LayerPlus           = "M17,13H13V17H11V13H7V11H11V7H13V11H17M19,3H5C3.89,3 3,3.89 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5C21,3.89 20.1,3 19,3Z";
     public const string BlurLinear         = "M5,17.5A1.5,1.5 0 0,1 3.5,16A1.5,1.5 0 0,1 5,14.5A1.5,1.5 0 0,1 6.5,16A1.5,1.5 0 0,1 5,17.5M9,13.5A1.5,1.5 0 0,1 7.5,12A1.5,1.5 0 0,1 9,10.5A1.5,1.5 0 0,1 10.5,12A1.5,1.5 0 0,1 9,13.5M5,9.5A1.5,1.5 0 0,1 3.5,8A1.5,1.5 0 0,1 5,6.5A1.5,1.5 0 0,1 6.5,8A1.5,1.5 0 0,1 5,9.5M13,9.5A1.5,1.5 0 0,1 11.5,8A1.5,1.5 0 0,1 13,6.5A1.5,1.5 0 0,1 14.5,8A1.5,1.5 0 0,1 13,9.5M19,6H17V4H7V2H17A2,2 0 0,1 19,4V6M19,22H17V20H7V18H17V16H19V22M21,8H15V16H21V8M19,14H17V10H19V14Z";
 
+    public static readonly (string Name, string Path)[] ToolIcons =
+    [
+        ("Brush",      BrushOutline),
+        ("Eraser",     Eraser),
+        ("Smudge",     BlurLinear),
+        ("Move",       ArrowAll),
+        ("Select",     SelectionRect),
+        ("Lasso",      Lasso),
+        ("Wand",       AutoFix),
+        ("Fill",       FormatColorFill),
+        ("Eyedropper", Eyedropper),
+        ("Gradient",   GradientHorizontal),
+        ("Rectangle",  RectangleOutline),
+        ("Ellipse",    EllipseOutline),
+        ("Line",       LineVariant),
+        ("Polyline",   VectorPolyline),
+        ("Shape",      ShapeOutline),
+        ("Image",      ImageOutline),
+    ];
+
+    public static string DefaultIcon(ToolPresetEngine engine) => engine switch
+    {
+        ToolPresetEngine.Brush      => BrushOutline,
+        ToolPresetEngine.Eraser     => Eraser,
+        ToolPresetEngine.Smudge     => BlurLinear,
+        ToolPresetEngine.Move       => ArrowAll,
+        ToolPresetEngine.Select     => SelectionRect,
+        ToolPresetEngine.MagicWand  => AutoFix,
+        ToolPresetEngine.Fill       => FormatColorFill,
+        ToolPresetEngine.LassoFill  => Lasso,
+        ToolPresetEngine.Eyedropper => Eyedropper,
+        ToolPresetEngine.Gradient   => GradientHorizontal,
+        ToolPresetEngine.Shape      => RectangleOutline,
+        ToolPresetEngine.Polyline   => VectorPolyline,
+        _ => BrushOutline
+    };
+
     public static PathIcon Make(string pathData, double size, IBrush foreground) => new()
     {
         Data       = Geometry.Parse(pathData),

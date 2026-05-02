@@ -196,6 +196,17 @@ public partial class MainWindow
             return;
         }
 
+        // Tool group shortcut recording
+        if (_recordingToolGroup != null)
+        {
+            if (e.Key == Key.Escape) { CancelToolGroupShortcutRecording(); e.Handled = true; return; }
+            if (e.Key is Key.Back or Key.Delete) { CommitToolGroupShortcut(Input.KeyBinding.Empty); e.Handled = true; return; }
+            if (e.Key is Key.LeftCtrl or Key.RightCtrl or Key.LeftShift or Key.RightShift or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin) return;
+            CommitToolGroupShortcut(new Input.KeyBinding(e.Key, mods));
+            e.Handled = true;
+            return;
+        }
+
         if (sc.Undo.Matches(key, mods)) { _canvas.Undo(); e.Handled = true; }
         else if (sc.Redo.Matches(key, mods)) { _canvas.Redo(); e.Handled = true; }
         else if (sc.RedoAlt.Matches(key, mods)) { _canvas.Redo(); e.Handled = true; }
@@ -217,16 +228,6 @@ public partial class MainWindow
         else if (sc.RotateReset.Matches(key, mods)) { SetRotation(0); e.Handled = true; }
         else if (sc.RotateLeft.Matches(key, mods)) { SetRotation(_rotation - sc.RotateKeyStep); e.Handled = true; }
         else if (sc.RotateRight.Matches(key, mods)) { SetRotation(_rotation + sc.RotateKeyStep); e.Handled = true; }
-        else if (sc.ToolBrush.Matches(key, mods)) { SetTool("brush"); e.Handled = true; }
-        else if (sc.ToolEraser.Matches(key, mods)) { SetTool("eraser"); e.Handled = true; }
-        else if (sc.ToolMove.Matches(key, mods)) { ActivateTool(_moveTool, _moveToolButton); e.Handled = true; }
-        else if (sc.ToolSelect.Matches(key, mods)) { ActivateTool(_selectTool, _selectToolButton); e.Handled = true; }
-        else if (sc.ToolWand.Matches(key, mods)) { ActivateTool(_magicWandTool, _wandToolButton); e.Handled = true; }
-        else if (sc.ToolFill.Matches(key, mods)) { ActivateTool(_fillTool, _fillToolButton); e.Handled = true; }
-        else if (sc.ToolLasso.Matches(key, mods)) { ActivateTool(_lassoFillTool, _lassoFillToolButton); e.Handled = true; }
-        else if (sc.ToolEyedropper.Matches(key, mods)) { ActivateTool(_eyedropperTool, _eyedropToolButton); e.Handled = true; }
-        else if (sc.ToolSmudge.Matches(key, mods)) { ActivateTool(_canvas.SmudgeTool, _smudgeToolButton); e.Handled = true; }
-        else if (sc.ToolTransform.Matches(key, mods)) { _canvas.BeginSelectionTransform(); UpdateStatus(); e.Handled = true; }
         else if (sc.SelectAll.Matches(key, mods)) { _canvas.SelectAll(); e.Handled = true; }
         else if (sc.Deselect.Matches(key, mods)) { _canvas.Deselect(); e.Handled = true; }
         else if (sc.InvertSelect.Matches(key, mods)) { _canvas.InvertSelection(); e.Handled = true; }
@@ -235,8 +236,9 @@ public partial class MainWindow
             if (_preAltTool == null && _canvas.ActiveTool != _eyedropperTool)
             {
                 _preAltTool = _canvas.ActiveTool;
-                _preAltToolButton = _activeToolButton ?? _brushToolButton;
-                ActivateTool(_eyedropperTool, _eyedropToolButton);
+                _preAltToolButton = _activeToolButton;
+                var eyedropPair = _toolGroupButtons.FirstOrDefault(x => x.Group.DefaultEngine == ToolPresetEngine.Eyedropper);
+                ActivateTool(_eyedropperTool, eyedropPair.Button);
             }
             e.Handled = true;
         }
@@ -278,6 +280,27 @@ public partial class MainWindow
             _opacitySlider.Value = Math.Min(_opacitySlider.Maximum, _opacitySlider.Value + sc.BrushOpacityStep);
             e.Handled = true;
         }
+
+        if (!e.Handled)
+        {
+            foreach (var pair in _toolGroupButtons)
+            {
+                if (pair.Group.Shortcut.IsEmpty || !pair.Group.Shortcut.Matches(key, mods)) continue;
+                if (_activeToolGroup == pair.Group && pair.Group.Presets.Count > 1)
+                {
+                    var current = pair.Group.ActivePreset;
+                    var idx = current == null ? 0 : pair.Group.Presets.IndexOf(current);
+                    ActivatePreset(pair.Group, pair.Group.Presets[(idx + 1) % pair.Group.Presets.Count]);
+                }
+                else
+                {
+                    var preset = pair.Group.ActivePreset ?? pair.Group.Presets.FirstOrDefault();
+                    if (preset != null) ActivatePreset(pair.Group, preset);
+                }
+                e.Handled = true;
+                break;
+            }
+        }
     }
 
     private void OnKeyUp(object? sender, KeyEventArgs e)
@@ -300,7 +323,7 @@ public partial class MainWindow
 
         if ((e.Key == Key.LeftAlt || e.Key == Key.RightAlt) && _preAltTool != null)
         {
-            ActivateTool(_preAltTool, _preAltToolButton ?? _brushToolButton);
+            ActivateTool(_preAltTool, _preAltToolButton);
             _preAltTool = null;
             _preAltToolButton = null;
             e.Handled = true;

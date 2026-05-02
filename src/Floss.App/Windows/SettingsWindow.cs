@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -42,6 +44,11 @@ public sealed class SettingsWindow : Window
     private bool _isRecording;
     private bool _recordingGesture;
     private KeyModifiers _recordingPendingModifiers;
+    private string? _recordingLabel;
+
+    // All binding descriptors — rebuilt each time the keyboard page is shown.
+    // Used for conflict detection when recording a new shortcut.
+    private (string Label, Func<KeyBinding> Getter, Action<KeyBinding> Setter)[] _bindingDescriptors = [];
 
     public SettingsWindow()
     {
@@ -204,6 +211,47 @@ public sealed class SettingsWindow : Window
 
         var sc = _sc;
 
+        _bindingDescriptors =
+        [
+            ("Open file",               () => sc.FileOpen,               v => sc.FileOpen = v),
+            ("Save file",               () => sc.FileSave,               v => sc.FileSave = v),
+            ("Save File As",            () => sc.FileSaveAs,             v => sc.FileSaveAs = v),
+            ("Undo",                    () => sc.Undo,                   v => sc.Undo = v),
+            ("Redo",                    () => sc.Redo,                   v => sc.Redo = v),
+            ("Redo (alt)",              () => sc.RedoAlt,                v => sc.RedoAlt = v),
+            ("Zoom in",                 () => sc.ZoomIn,                 v => sc.ZoomIn = v),
+            ("Zoom in (alt)",           () => sc.ZoomInAlt,              v => sc.ZoomInAlt = v),
+            ("Zoom out",                () => sc.ZoomOut,                v => sc.ZoomOut = v),
+            ("Reset view",              () => sc.ZoomReset,              v => sc.ZoomReset = v),
+            ("Fit to view",             () => sc.ZoomFit,                v => sc.ZoomFit = v),
+            ("Rotate left",             () => sc.RotateLeft,             v => sc.RotateLeft = v),
+            ("Rotate right",            () => sc.RotateRight,            v => sc.RotateRight = v),
+            ("Reset rotation",          () => sc.RotateReset,            v => sc.RotateReset = v),
+            ("Select all",              () => sc.SelectAll,              v => sc.SelectAll = v),
+            ("Deselect",                () => sc.Deselect,               v => sc.Deselect = v),
+            ("Invert select",           () => sc.InvertSelect,           v => sc.InvertSelect = v),
+            ("Size decrease (small)",   () => sc.BrushSizeDecrease,      v => sc.BrushSizeDecrease = v),
+            ("Size increase (small)",   () => sc.BrushSizeIncrease,      v => sc.BrushSizeIncrease = v),
+            ("Size decrease (large)",   () => sc.BrushSizeDecreaseLarge, v => sc.BrushSizeDecreaseLarge = v),
+            ("Size increase (large)",   () => sc.BrushSizeIncreaseLarge, v => sc.BrushSizeIncreaseLarge = v),
+            ("Opacity decrease",        () => sc.BrushOpacityDecrease,   v => sc.BrushOpacityDecrease = v),
+            ("Opacity increase",        () => sc.BrushOpacityIncrease,   v => sc.BrushOpacityIncrease = v),
+            ("Cycle swatch",            () => sc.ColorCycle,             v => sc.ColorCycle = v),
+            ("Default black",           () => sc.ColorDefault,           v => sc.ColorDefault = v),
+            ("New layer",               () => sc.LayerNew,               v => sc.LayerNew = v),
+            ("Duplicate layer",         () => sc.LayerDuplicate,         v => sc.LayerDuplicate = v),
+            ("Delete layer",            () => sc.LayerDelete,            v => sc.LayerDelete = v),
+            ("Move up",                 () => sc.LayerMoveUp,            v => sc.LayerMoveUp = v),
+            ("Move down",               () => sc.LayerMoveDown,          v => sc.LayerMoveDown = v),
+            ("Merge / Flatten",         () => sc.LayerMerge,             v => sc.LayerMerge = v),
+            ("Open settings",           () => sc.OpenSettings,           v => sc.OpenSettings = v),
+            ("Open brush editor",       () => sc.OpenBrushEditor,        v => sc.OpenBrushEditor = v),
+            ("Pan canvas",              () => sc.GesturePan,             v => sc.GesturePan = v),
+            ("Zoom  (drag ↑↓)",         () => sc.GestureZoom,            v => sc.GestureZoom = v),
+            ("Rotate (drag ←→)",        () => sc.GestureRotate,          v => sc.GestureRotate = v),
+            ("Brush size (←→)",         () => sc.GestureBrushSize,       v => sc.GestureBrushSize = v),
+        ];
+
         content.Children.Add(GroupHeader("File"));
         content.Children.Add(BindingRow("Open file", sc.FileOpen, v => sc.FileOpen = v));
         content.Children.Add(BindingRow("Save file", sc.FileSave, v => sc.FileSave = v));
@@ -225,18 +273,6 @@ public sealed class SettingsWindow : Window
         content.Children.Add(BindingRow("Rotate left", sc.RotateLeft, v => sc.RotateLeft = v));
         content.Children.Add(BindingRow("Rotate right", sc.RotateRight, v => sc.RotateRight = v));
         content.Children.Add(BindingRow("Reset rotation", sc.RotateReset, v => sc.RotateReset = v));
-
-        content.Children.Add(GroupHeader("Tools"));
-        content.Children.Add(BindingRow("Brush", sc.ToolBrush, v => sc.ToolBrush = v));
-        content.Children.Add(BindingRow("Eraser", sc.ToolEraser, v => sc.ToolEraser = v));
-        content.Children.Add(BindingRow("Move", sc.ToolMove, v => sc.ToolMove = v));
-        content.Children.Add(BindingRow("Select", sc.ToolSelect, v => sc.ToolSelect = v));
-        content.Children.Add(BindingRow("Magic wand", sc.ToolWand, v => sc.ToolWand = v));
-        content.Children.Add(BindingRow("Fill", sc.ToolFill, v => sc.ToolFill = v));
-        content.Children.Add(BindingRow("Lasso fill", sc.ToolLasso, v => sc.ToolLasso = v));
-        content.Children.Add(BindingRow("Eyedropper", sc.ToolEyedropper, v => sc.ToolEyedropper = v));
-        content.Children.Add(BindingRow("Smudge", sc.ToolSmudge, v => sc.ToolSmudge = v));
-        content.Children.Add(BindingRow("Transform selection", sc.ToolTransform, v => sc.ToolTransform = v));
 
         content.Children.Add(GroupHeader("Selection"));
         content.Children.Add(BindingRow("Select all", sc.SelectAll, v => sc.SelectAll = v));
@@ -376,7 +412,7 @@ public sealed class SettingsWindow : Window
                 setter(v);
                 keyDisplay.Text = v.Display();
                 keyDisplay.Foreground = new SolidColorBrush(Color.Parse(v.IsEmpty ? TextMuted : TextPrimary));
-            });
+            }, label);
         };
 
         return rowBorder;
@@ -549,7 +585,72 @@ public sealed class SettingsWindow : Window
 
     // ── Recording ─────────────────────────────────────────────────────────────
 
-    private void StartRecording(Border rowBorder, TextBlock display, bool gesture, Action<KeyBinding> setter)
+    private Task<bool> ConfirmConflictAsync(string conflictLabel)
+    {
+        var tcs = new TaskCompletionSource<bool>();
+
+        var msg = new TextBlock
+        {
+            Text = $"\"{conflictLabel}\" already uses this shortcut.\nReassign it here and clear that binding?",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 16)
+        };
+
+        var yesBtn = new Button
+        {
+            Content = "Reassign",
+            Height = 28, Padding = new Thickness(14, 0), FontSize = 11,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Background = new SolidColorBrush(Color.Parse(AccentSoft)),
+            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Accent)),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3)
+        };
+        var noBtn = new Button
+        {
+            Content = "Cancel",
+            Height = 28, Padding = new Thickness(14, 0), FontSize = 11,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3)
+        };
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Children = { noBtn, yesBtn }
+        };
+
+        var dlg = new Window
+        {
+            Title = "Shortcut conflict",
+            Width = 320, SizeToContent = SizeToContent.Height,
+            CanResize = false, ShowInTaskbar = false,
+            Background = new SolidColorBrush(Color.Parse(Bg1)),
+            Content = new StackPanel
+            {
+                Margin = new Thickness(20),
+                Children = { msg, buttons }
+            }
+        };
+
+        yesBtn.Click += (_, _) => { tcs.TrySetResult(true);  dlg.Close(); };
+        noBtn.Click  += (_, _) => { tcs.TrySetResult(false); dlg.Close(); };
+        dlg.Closed   += (_, _) => tcs.TrySetResult(false);
+
+        dlg.ShowDialog(this);
+        return tcs.Task;
+    }
+
+    private void StartRecording(Border rowBorder, TextBlock display, bool gesture, Action<KeyBinding> setter, string label)
     {
         _isRecording = true;
         _recordingGesture = gesture;
@@ -557,6 +658,7 @@ public sealed class SettingsWindow : Window
         _recordingSetter = setter;
         _recordingDisplay = display;
         _recordingRow = rowBorder;
+        _recordingLabel = label;
 
         display.Text = "Press keys...";
         display.Foreground = new SolidColorBrush(Color.Parse(Accent));
@@ -575,12 +677,13 @@ public sealed class SettingsWindow : Window
         _recordingSetter = null;
         _recordingDisplay = null;
         _recordingRow = null;
+        _recordingLabel = null;
         _recordingGesture = false;
         _recordingPendingModifiers = KeyModifiers.None;
         Cursor = Cursor.Default;
     }
 
-    private void OnWindowKeyDown(object? sender, KeyEventArgs e)
+    private async void OnWindowKeyDown(object? sender, KeyEventArgs e)
     {
         if (!_isRecording) return;
         var mods = KeyBinding.ModifiersWithKeyDown(e.Key, e.KeyModifiers);
@@ -603,38 +706,52 @@ public sealed class SettingsWindow : Window
         }
 
         var setter = _recordingSetter;
-        var display = _recordingDisplay;
+        var currentLabel = _recordingLabel;
 
-        // ESC cancels without changing the binding (just restore old text via full page rebuild)
+        // ESC cancels without changing the binding
         if (e.Key == Key.Escape)
         {
             StopRecording();
-            // Rebuild page to restore previous display values
             SelectPage(_activePage);
             e.Handled = true;
             return;
         }
 
-        // Backspace / Delete clears the binding
-        KeyBinding newBinding;
-        if (e.Key is Key.Back or Key.Delete)
+        KeyBinding newBinding = e.Key is Key.Back or Key.Delete
+            ? KeyBinding.Empty
+            : new KeyBinding(e.Key, mods);
+
+        e.Handled = true;
+
+        if (!newBinding.IsEmpty)
         {
-            newBinding = KeyBinding.Empty;
-        }
-        else
-        {
-            newBinding = new KeyBinding(e.Key, mods);
+            var conflict = _bindingDescriptors.FirstOrDefault(d =>
+            {
+                if (d.Label == currentLabel) return false;
+                var b = d.Getter();
+                return !b.IsEmpty && b.Key == newBinding.Key && b.Modifiers == newBinding.Modifiers;
+            });
+
+            if (conflict.Label != null)
+            {
+                StopRecording();
+                var confirmed = await ConfirmConflictAsync(conflict.Label);
+                if (confirmed)
+                {
+                    conflict.Setter(KeyBinding.Empty);
+                    setter?.Invoke(newBinding);
+                }
+                SelectPage(_activePage);
+                return;
+            }
         }
 
         setter?.Invoke(newBinding);
-
         StopRecording();
-        // Rebuild so all display labels are consistent
         SelectPage(_activePage);
-        e.Handled = true;
     }
 
-    private void OnWindowKeyUp(object? sender, KeyEventArgs e)
+    private async void OnWindowKeyUp(object? sender, KeyEventArgs e)
     {
         if (!_isRecording || !_recordingGesture || _recordingPendingModifiers == KeyModifiers.None)
             return;
@@ -647,10 +764,35 @@ public sealed class SettingsWindow : Window
             return;
         }
 
-        _recordingSetter?.Invoke(new KeyBinding(Key.None, _recordingPendingModifiers));
+        var newBinding = new KeyBinding(Key.None, _recordingPendingModifiers);
+        var setter = _recordingSetter;
+        var currentLabel = _recordingLabel;
+
+        e.Handled = true;
+
+        var conflict = _bindingDescriptors.FirstOrDefault(d =>
+        {
+            if (d.Label == currentLabel) return false;
+            var b = d.Getter();
+            return !b.IsEmpty && b.Key == newBinding.Key && b.Modifiers == newBinding.Modifiers;
+        });
+
+        if (conflict.Label != null)
+        {
+            StopRecording();
+            var confirmed = await ConfirmConflictAsync(conflict.Label);
+            if (confirmed)
+            {
+                conflict.Setter(KeyBinding.Empty);
+                setter?.Invoke(newBinding);
+            }
+            SelectPage(_activePage);
+            return;
+        }
+
+        setter?.Invoke(newBinding);
         StopRecording();
         SelectPage(_activePage);
-        e.Handled = true;
     }
 
     private static int CountModifiers(KeyModifiers modifiers)
