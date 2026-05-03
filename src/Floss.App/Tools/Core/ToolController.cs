@@ -33,15 +33,16 @@ public sealed class ToolController
     public event Action<BrushPreset>? BrushSettingsChanged;
     public bool HasSavedSettings(ToolPresetEngine engine) => _enginePresets.ContainsKey(engine);
 
+    // Alternate tool runs *on top* of the active tool without switching engines.
+    // Used by the viewport-wide eyedropper (Alt key).
+    public ITool? AlternateTool { get; set; }
+
     public void SetActiveTool(ITool tool, ToolPreset? preset = null)
     {
         if (ActiveTool == tool) return;
 
         // Save current brush settings into the active engine's preset before switching
-        var currentEngine = ActiveEngine;
-        if (!_enginePresets.ContainsKey(currentEngine))
-            _enginePresets[currentEngine] = new ToolPreset { Engine = currentEngine };
-        _enginePresets[currentEngine].CaptureFromBrushPreset(_context.Brush);
+        SaveEnginePreset();
 
         ActiveTool.Deactivate(_context);
         _context.ActivePreset = preset;
@@ -66,6 +67,16 @@ public sealed class ToolController
         }
     }
 
+    public void SaveEnginePreset()
+    {
+        var engine = ActiveEngine;
+        if (engine is not (ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge))
+            return;
+        if (!_enginePresets.ContainsKey(engine))
+            _enginePresets[engine] = new ToolPreset { Engine = engine };
+        _enginePresets[engine].CaptureFromBrushPreset(_context.Brush);
+    }
+
     private static ToolPresetEngine EngineForTool(ITool tool) => tool switch
     {
         BrushTool bt when bt.IsEraser => ToolPresetEngine.Eraser,
@@ -76,24 +87,26 @@ public sealed class ToolController
 
     public void Dispatch(ToolInputEvent input)
     {
+        var tool = AlternateTool ?? ActiveTool;
         switch (input.Kind)
         {
             case ToolInputEventKind.Down:
-                ActiveTool.PointerDown(_context, input.Sample);
+                tool.PointerDown(_context, input.Sample);
                 break;
             case ToolInputEventKind.Move:
-                ActiveTool.PointerMove(_context, input.Sample);
+                tool.PointerMove(_context, input.Sample);
                 break;
             case ToolInputEventKind.Up:
-                ActiveTool.PointerUp(_context, input.Sample);
+                tool.PointerUp(_context, input.Sample);
                 break;
         }
     }
 
     public bool Cancel()
     {
-        var hadPendingOperation = ActiveTool.HasPendingOperation;
-        ActiveTool.Cancel(_context);
+        var tool = AlternateTool ?? ActiveTool;
+        var hadPendingOperation = tool.HasPendingOperation;
+        tool.Cancel(_context);
         return hadPendingOperation;
     }
 

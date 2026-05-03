@@ -58,7 +58,7 @@ public sealed class BrushEngine : IDisposable
         if (!eraser && brush.ColorMix > 0.001)
             PrepareStampColors(layer, brush, stroke);
 
-        var clippedDirty = dirty.ClipTo(layer.Width, layer.Height);
+        var clippedDirty = dirty;
         if (clippedDirty.IsEmpty) return PixelRegion.Empty;
 
         layer.Pixels.RenderWithSkia(clippedDirty, canvas => RenderPreparedStamps(stroke, canvas));
@@ -85,7 +85,7 @@ public sealed class BrushEngine : IDisposable
         if (!eraser && brush.ColorMix > 0.001)
             PrepareStampColors(layer, brush, stroke);
 
-        var dirty = StampBounds(stamp).ClipTo(layer.Width, layer.Height);
+        var dirty = StampBounds(stamp);
         if (dirty.IsEmpty) return PixelRegion.Empty;
 
         layer.Pixels.RenderWithSkia(dirty, canvas => RenderPreparedStamps(stroke, canvas));
@@ -107,8 +107,7 @@ public sealed class BrushEngine : IDisposable
         var minY = (int)Math.Floor(Math.Min(from.Y, to.Y) - radius);
         var maxX = (int)Math.Ceiling(Math.Max(from.X, to.X) + radius);
         var maxY = (int)Math.Ceiling(Math.Max(from.Y, to.Y) + radius);
-        return new PixelRegion(minX, minY, maxX - minX + 1, maxY - minY + 1)
-            .ClipTo(layer.Width, layer.Height);
+        return new PixelRegion(minX, minY, maxX - minX + 1, maxY - minY + 1);
     }
 
     public PixelRegion EstimateDabRegion(DrawingLayer layer, BrushPreset brush, CanvasInputSample sample)

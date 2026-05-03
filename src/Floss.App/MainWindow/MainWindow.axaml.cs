@@ -203,6 +203,8 @@ public partial class MainWindow : Window
     private ToolGroup? _activeToolGroup;
     private ToolGroup? _recordingToolGroup;
     private Button? _recordingToolGroupButton;
+    private ToolPreset? _recordingPresetAltInvocation;
+    private KeyModifiers _recordingPresetPendingMods;
     private StackPanel _toolRailStack = null!;
 
     private enum GestureMode { None, Pan, Zoom, Rotate, BrushSize }
@@ -214,20 +216,30 @@ public partial class MainWindow : Window
     private Point _gestureStartPoint;
     private SettingsWindow? _settingsWindow;
 
+    private ScaleTransform _canvasFlip = null!;
     private ScaleTransform _canvasScale = null!;
     private RotateTransform _canvasRotate = null!;
     private TranslateTransform _canvasPan = null!;
 
     private bool _syncingLayerUi;
     private bool _syncingBrushUi;
-    private ITool? _preAltTool;
-    private Button? _preAltToolButton;
+    private Control? _leftRail;
+    private Control? _rightPanel;
+    private Control? _splitterControl;
+    private Control? _shellMenu;
+    private Control? _shellToolbar;
+    private Control? _statusBar;
+    private Control? _footer;
+    private Control? _rulerOverlay;
+    private bool _canvasOnly;
+    private bool _showRulers;
 
     // ── Constructor ───────────────────────────────────────────────────────────
     public MainWindow()
     {
         InitializeComponent();
         _brushLibrary = new BrushLibrary(AppPaths.BrushesDirectory);
+        _showRulers = App.Config.ShowRulers;
         BuildUi();
         WireControls();
         RestoreFromConfig();
@@ -254,9 +266,11 @@ public partial class MainWindow : Window
         _canvas = new DrawingCanvas();
 
         var tg = new TransformGroup();
+        _canvasFlip = new ScaleTransform(1, 1);
         _canvasScale = new ScaleTransform(1, 1);
         _canvasRotate = new RotateTransform(0);
         _canvasPan = new TranslateTransform(0, 0);
+        tg.Children.Add(_canvasFlip);
         tg.Children.Add(_canvasScale);
         tg.Children.Add(_canvasRotate);
         tg.Children.Add(_canvasPan);
@@ -276,6 +290,10 @@ public partial class MainWindow : Window
             Background = new SolidColorBrush(Color.Parse("#111112"))
         };
         _workspaceViewport.Children.Add(_canvasFrame);
+
+        _rulerOverlay = new RulerOverlay(_canvas);
+        _rulerOverlay.IsVisible = _showRulers;
+        _workspaceViewport.Children.Add(_rulerOverlay);
 
         _canvasStatusText = MiniText();
         _footerStatusText = MiniText();
@@ -344,6 +362,14 @@ public partial class MainWindow : Window
         shell.Children.Add(toolbar);
         shell.Children.Add(root);
 
+        _shellMenu = menu;
+        _shellToolbar = toolbar;
+        _leftRail = leftRail;
+        _rightPanel = rightPanel;
+        _splitterControl = splitter;
+        _statusBar = statusBar;
+        _footer = footer;
+
         Content = shell;
         AddHandler(PointerPressedEvent, WindowPointerPressed, RoutingStrategies.Tunnel);
     }
@@ -374,15 +400,55 @@ public partial class MainWindow : Window
             }
         };
 
-        var brushMenu = new MenuItem
+        var editMenu = new MenuItem
         {
-            Header = "_Brush",
+            Header = "_Edit",
             ItemsSource = new object[]
             {
-                MenuAction("_Save Brush", SaveActiveBrush),
-                MenuAction("_Duplicate Brush", DuplicateActiveBrush),
-                MenuAction("_Import Tip PNG...", async () => await ImportBrushTipPngAsync()),
-                MenuAction("_Import .abr Brushes...", async () => await ImportAbrAsync())
+                MenuAction("_Undo", () => _canvas.Undo()),
+                MenuAction("_Redo", () => _canvas.Redo()),
+                new Separator(),
+                MenuAction("_Copy", () => _canvas.CopyToClipboard()),
+                MenuAction("_Paste", () => _canvas.PasteFromClipboard()),
+                new Separator(),
+                MenuAction("_Delete", () => _canvas.ClearSelectionContent())
+            }
+        };
+
+        var viewMenu = new MenuItem
+        {
+            Header = "_View",
+            ItemsSource = new object[]
+            {
+                MenuAction("_Mirror Horizontal", () =>
+                {
+                    _canvasFlip.ScaleX = -_canvasFlip.ScaleX;
+                    _canvas.FlipX = (int)_canvasFlip.ScaleX;
+                    _rulerOverlay?.InvalidateVisual();
+                    ClampCanvasPan(); UpdateStatus();
+                }),
+                MenuAction("Mirror _Vertical", () =>
+                {
+                    _canvasFlip.ScaleY = -_canvasFlip.ScaleY;
+                    _canvas.FlipY = (int)_canvasFlip.ScaleY;
+                    _rulerOverlay?.InvalidateVisual();
+                    ClampCanvasPan(); UpdateStatus();
+                }),
+                new Separator(),
+                MenuAction("_Show Canvas Only", ToggleCanvasOnly),
+                MenuAction("Show _Rulers", ToggleRulers),
+            }
+        };
+
+        var imageMenu = new MenuItem
+        {
+            Header = "_Image",
+            ItemsSource = new object[]
+            {
+                MenuAction("Flip Canvas _Horizontal", () => _canvas.FlipCanvas(horizontal: true)),
+                MenuAction("Flip Canvas _Vertical", () => _canvas.FlipCanvas(horizontal: false)),
+                new Separator(),
+                MenuAction("_Resize Canvas...", async () => await ShowResizeCanvasDialog()),
             }
         };
 
@@ -400,12 +466,15 @@ public partial class MainWindow : Window
             }
         };
 
-        var canvasMenu = new MenuItem
+        var brushMenu = new MenuItem
         {
-            Header = "_Canvas",
+            Header = "_Brush",
             ItemsSource = new object[]
             {
-                MenuAction("_Resize Canvas...", async () => await ShowResizeCanvasDialog()),
+                MenuAction("_Save Brush", SaveActiveBrush),
+                MenuAction("_Duplicate Brush", DuplicateActiveBrush),
+                MenuAction("_Import Tip PNG...", async () => await ImportBrushTipPngAsync()),
+                MenuAction("_Import .abr Brushes...", async () => await ImportAbrAsync())
             }
         };
 
@@ -431,7 +500,7 @@ public partial class MainWindow : Window
             {
                 Background = Avalonia.Media.Brushes.Transparent,
                 Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-                ItemsSource = new[] { fileMenu, brushMenu, layerMenu, canvasMenu, filterMenu }
+                ItemsSource = new[] { fileMenu, editMenu, viewMenu, imageMenu, layerMenu, brushMenu, filterMenu }
             }
         };
     }
@@ -811,9 +880,11 @@ public partial class MainWindow : Window
         _canvas.HistoryChanged += (_, _) => UpdateStatus();
         _canvas.LayersChanged += (_, _) =>
         {
-            _selectedLayerIndices.RemoveWhere(i => i < 0 || i >= _canvas.Layers.Count);
-            if (_selectedLayerIndices.Count == 0 && _canvas.Layers.Count > 0)
+            _selectedLayerIndices.Clear();
+            if (_canvas.Layers.Count > 0)
                 _selectedLayerIndices.Add(_canvas.ActiveLayerIndex);
+            SyncCanvasFrameToDocument(fitToViewport: false);
+            _rulerOverlay?.InvalidateVisual();
             BuildLayerList();
             UpdateStatus();
         };
@@ -947,8 +1018,9 @@ public partial class MainWindow : Window
 
     internal void ActivatePreset(ToolGroup group, ToolPreset preset)
     {
-        // Snapshot current brush settings into the preset we're leaving
+        // Snapshot ALL tool settings into the preset we're leaving
         CaptureActiveBrushToPreset();
+        CaptureActiveToolStateToPreset();
 
         group.LastActivePresetId = preset.Id;
         _activeToolGroup = group;
@@ -980,11 +1052,20 @@ public partial class MainWindow : Window
         }
 
         // For brush-based engines, load the referenced brush asset first
-        // to establish the correct Tip, Dynamics, Kind etc. The ToolController's
-        // per-engine restore (fired inside ActivateTool below) then overlays the
-        // user's last-used scalar values (size, opacity, etc.) on top.
-        // We must NOT call ApplyBrushSettings here — it calls _canvas.SetBrush()
-        // which can prematurely trigger SetActiveTool for eraser presets.
+        // and overlay the tool-preset scalar values (size, opacity etc.).
+        // ActivateTool below calls SetActiveTool which short-circuits when
+        // Snapshot the *current* brush into the engine preset BEFORE we
+        // touch _ctx.Brush via SyncBrushFromContext.  If we don't do this
+        // first, SetActiveTool will save the *new* brush to the old engine
+        // slot, swapping Brush ↔ Eraser presets on every cross-engine switch.
+        _canvas.SaveBrushEnginePreset();
+
+        var btn = _toolGroupButtons.FirstOrDefault(x => x.Group == group).Button;
+        ActivateTool(ToolForPresetEngine(preset.Engine), btn, preset);
+
+        // Now load the brush asset and sync the tool-property panel.
+        // This runs after ActivateTool so that SetActiveTool's per-engine
+        // save correctly recorded the *previous* brush.
         if (preset.Engine is ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge)
         {
             BrushPreset? assetPreset = null;
@@ -997,10 +1078,28 @@ public partial class MainWindow : Window
 
             if (assetPreset != null)
             {
-                _activePreset = assetPreset;
-                _canvas.SyncBrushFromContext(assetPreset);
+                var overridden = preset.ApplyToBrushPreset(assetPreset);
+                _activePreset = overridden;
+                _canvas.SyncBrushFromContext(overridden);
                 _activeBrushLabel.Text = assetPreset.Name;
-                _strokePreview.Brush = assetPreset;
+                _strokePreview.Brush = overridden;
+                _syncingBrushUi = true;
+                _sizeSlider.Value = Math.Clamp(overridden.Size, _sizeSlider.Minimum, _sizeSlider.Maximum);
+                _opacitySlider.Value = Math.Clamp(overridden.Opacity, _opacitySlider.Minimum, _opacitySlider.Maximum);
+                _flowSlider.Value = Math.Clamp(overridden.Flow, _flowSlider.Minimum, _flowSlider.Maximum);
+                _hardnessSlider.Value = Math.Clamp(overridden.Hardness, _hardnessSlider.Minimum, _hardnessSlider.Maximum);
+                _spacingSlider.Value = Math.Clamp(overridden.Spacing, _spacingSlider.Minimum, _spacingSlider.Maximum);
+                _smoothingSlider.Value = Math.Clamp(overridden.Smoothing, _smoothingSlider.Minimum, _smoothingSlider.Maximum);
+                _grainSlider.Value = Math.Clamp(overridden.Grain, _grainSlider.Minimum, _grainSlider.Maximum);
+                _syncingBrushUi = false;
+            }
+            else
+            {
+                var overridden = preset.ApplyToBrushPreset(_canvas.Brush);
+                _activePreset = overridden;
+                _canvas.SyncBrushFromContext(overridden);
+                _activeBrushLabel.Text = preset.Name;
+                _strokePreview.Brush = overridden;
             }
 
             // Ensure the brush Kind matches the target engine even when there's
@@ -1016,9 +1115,12 @@ public partial class MainWindow : Window
                 _strokePreview.Brush = fixedBrush;
             }
         }
-
-        var btn = _toolGroupButtons.FirstOrDefault(x => x.Group == group).Button;
-        ActivateTool(ToolForPresetEngine(preset.Engine), btn, preset);
+        else
+        {
+            _activePreset = null;
+            _strokePreview.Brush = null;
+            _activeBrushLabel.Text = preset.Name;
+        }
 
         // Reflect active preset engine in the rail button icon
         if (btn != null) btn.Content = MaterialIcon(group.ActiveIcon, 18);
@@ -1034,6 +1136,37 @@ public partial class MainWindow : Window
         if (active == null || _activePreset == null) return;
         if (active.Engine is not (ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge)) return;
         active.CaptureFromBrushPreset(_activePreset);
+    }
+
+    private void CaptureActiveToolStateToPreset()
+    {
+        if (_activeToolGroup == null) return;
+        var active = _activeToolGroup.ActivePreset;
+        if (active == null) return;
+        switch (active.Engine)
+        {
+            case ToolPresetEngine.Select:
+                active.SelectMode = _selectTool.Mode;
+                break;
+            case ToolPresetEngine.MagicWand:
+                active.Tolerance = _magicWandTool.Tolerance;
+                break;
+            case ToolPresetEngine.Fill:
+                active.Tolerance = _fillTool.Tolerance;
+                break;
+            case ToolPresetEngine.Gradient:
+                active.GradientType = _gradientTool.GradientType;
+                break;
+            case ToolPresetEngine.Shape:
+                active.ShapeKind = _shapeTool.Kind;
+                active.ShapeDrawMode = _shapeTool.DrawMode;
+                active.ShapeStrokeWidth = _shapeTool.StrokeWidth;
+                break;
+            case ToolPresetEngine.Polyline:
+                active.PolylineClosePath = _polylineTool.ClosePath;
+                active.PolylineStrokeWidth = _polylineTool.StrokeWidth;
+                break;
+        }
     }
 
     internal ITool ToolForPresetEngine(ToolPresetEngine engine) => engine switch
@@ -1082,7 +1215,81 @@ public partial class MainWindow : Window
         {
             layer.MarkThumbnailDirty();
             layer.RefreshThumbnail();
-            refs.PreviewImage.InvalidateVisual();
+            refs.PreviewImage.Source = layer.GetThumbnail(26);
+        }
+    }
+}
+
+internal sealed class RulerOverlay : Control
+{
+    private readonly DrawingCanvas _canvas;
+    private const double RulerThickness = 20;
+
+    public RulerOverlay(DrawingCanvas canvas) { _canvas = canvas; IsHitTestVisible = false; }
+
+    public override void Render(DrawingContext ctx)
+    {
+        base.Render(ctx);
+        var w = Bounds.Width;
+        var h = Bounds.Height;
+        var docW = _canvas.Document.Width;
+        var docH = _canvas.Document.Height;
+        var zoom = _canvas.CanvasZoom;
+        var flipX = _canvas.FlipX;
+        var flipY = _canvas.FlipY;
+        var panX = _canvas.PanOffsetX;
+        var panY = _canvas.PanOffsetY;
+
+        var bg = new SolidColorBrush(Color.FromArgb(180, 30, 30, 35));
+        var tickPen = new Pen(new SolidColorBrush(Color.FromArgb(160, 180, 200, 220)), 1);
+        var labelBrush = new SolidColorBrush(Color.FromArgb(220, 200, 210, 220));
+
+        var scaledW = docW * zoom;
+        var stepSize = scaledW <= 400 ? 25 : scaledW <= 800 ? 50 : 100;
+
+        // Horizontal ruler bar (top of viewport)
+        ctx.FillRectangle(bg, new Rect(0, 0, w, RulerThickness));
+        if (scaledW > 0)
+        {
+            for (var x = 0.0; x <= docW; x += stepSize)
+            {
+                var sx = flipX == 1
+                    ? (w - scaledW) * 0.5 + x * zoom + panX
+                    : (w + scaledW) * 0.5 - x * zoom + panX;
+                if (sx < -0.5 || sx > w) continue;
+                var isMajor = (x % (stepSize * 5)) == 0 || (stepSize >= 50 && (x % (stepSize * 2)) == 0);
+                var tickH = isMajor ? RulerThickness : RulerThickness * 0.4;
+                ctx.DrawLine(tickPen, new Point(sx, 0), new Point(sx, tickH));
+                if (isMajor)
+                {
+                    var ft = new FormattedText(((int)x).ToString(), CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                        Typeface.Default, 9, labelBrush);
+                    ctx.DrawText(ft, new Point(sx + 2, tickH - 12));
+                }
+            }
+        }
+
+        // Vertical ruler bar (left of viewport)
+        ctx.FillRectangle(bg, new Rect(0, 0, RulerThickness, h));
+        var scaledH = docH * zoom;
+        if (scaledH > 0)
+        {
+            for (var y = 0.0; y <= docH; y += stepSize)
+            {
+                var sy = flipY == 1
+                    ? (h - scaledH) * 0.5 + y * zoom + panY
+                    : (h + scaledH) * 0.5 - y * zoom + panY;
+                if (sy < -0.5 || sy > h) continue;
+                var isMajor = (y % (stepSize * 5)) == 0 || (stepSize >= 50 && (y % (stepSize * 2)) == 0);
+                var tickW = isMajor ? RulerThickness : RulerThickness * 0.4;
+                ctx.DrawLine(tickPen, new Point(0, sy), new Point(tickW, sy));
+                if (isMajor)
+                {
+                    var ft = new FormattedText(((int)y).ToString(), CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                        Typeface.Default, 9, labelBrush);
+                    ctx.DrawText(ft, new Point(tickW - 15, sy + 2));
+                }
+            }
         }
     }
 }

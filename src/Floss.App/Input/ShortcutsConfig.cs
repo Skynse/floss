@@ -61,6 +61,19 @@ public sealed class ShortcutsConfig
     public KeyBinding Undo { get; set; } = new(Key.Z, KeyModifiers.Control);
     public KeyBinding Redo { get; set; } = new(Key.Z, KeyModifiers.Control | KeyModifiers.Shift);
     public KeyBinding RedoAlt { get; set; } = new(Key.Y, KeyModifiers.Control);
+    public KeyBinding Copy { get; set; } = new(Key.C, KeyModifiers.Control);
+    public KeyBinding Paste { get; set; } = new(Key.V, KeyModifiers.Control);
+    public KeyBinding DeleteSelection { get; set; } = new(Key.Delete, KeyModifiers.None);
+
+    // ── View — flip ───────────────────────────────────────────────────────────
+
+    public KeyBinding FlipHorizontal { get; set; } = new(Key.H, KeyModifiers.Control | KeyModifiers.Shift);
+    public KeyBinding FlipVertical { get; set; } = new(Key.V, KeyModifiers.Control | KeyModifiers.Shift);
+
+    // ── View — mirror ─────────────────────────────────────────────────────────
+
+    public KeyBinding MirrorHorizontal { get; set; } = new(Key.None);
+    public KeyBinding MirrorVertical { get; set; } = new(Key.None);
 
     // ── View — zoom ───────────────────────────────────────────────────────────
 
@@ -124,6 +137,9 @@ public sealed class ShortcutsConfig
 
     public KeyBinding OpenSettings { get; set; } = new(Key.OemComma, KeyModifiers.Control);
     public KeyBinding OpenBrushEditor { get; set; } = new(Key.B, KeyModifiers.Control | KeyModifiers.Shift);
+    public KeyBinding ToggleCanvasOnly { get; set; } = new(Key.Tab, KeyModifiers.None);
+    public KeyBinding ToggleRulers { get; set; } = new(Key.R, KeyModifiers.Control);
+    public KeyBinding AlternateInvocation { get; set; } = new(Key.LeftAlt, KeyModifiers.Alt);
 
     // ── Serialisation ─────────────────────────────────────────────────────────
 

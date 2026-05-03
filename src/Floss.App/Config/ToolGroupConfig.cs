@@ -39,6 +39,7 @@ public sealed class ToolPreset
     public string Name { get; set; } = "";
     public ToolPresetEngine Engine { get; set; }
     public ToolOutputProcess OutputProcess { get; set; } = ToolOutputProcess.DirectDraw;
+    public KeyBinding AlternateInvocation { get; set; } = KeyBinding.Empty;
     public double? BrushSize { get; set; }
     public double? BrushOpacity { get; set; }
     public double? BrushFlow { get; set; }

@@ -56,11 +56,7 @@ public sealed class LayerCompositor
             _fullDirty = true;
             _dirtyRegion = null;
         }
-        else if (_fullDirty)
-        {
-            return;
-        }
-        else
+        else if (!_fullDirty)
         {
             _dirtyRegion = _dirtyRegion is { } existing ? existing.Union(region.Value) : region.Value;
         }

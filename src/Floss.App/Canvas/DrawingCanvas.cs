@@ -126,12 +126,18 @@ public sealed class DrawingCanvas : Control
 
     public bool PaintInputSuspended { get; set; }
     public double CanvasZoom { get; set; } = 1.0;
+    public double PanOffsetX { get; set; }
+    public double PanOffsetY { get; set; }
+    public int FlipX { get; set; } = 1;
+    public int FlipY { get; set; } = 1;
 
     public void SetActiveTool(ITool tool, ToolPreset? preset = null)
     {
         _toolController.SetActiveTool(tool, preset);
         InvalidateVisual();
     }
+
+    public void SetAlternateTool(ITool? tool) => _toolController.AlternateTool = tool;
 
     public void SetBrush(BrushPreset preset)
     {
@@ -141,6 +147,8 @@ public sealed class DrawingCanvas : Control
             SetActiveTool(_eraserTool);
         InvalidateVisual();
     }
+
+    public void SaveBrushEnginePreset() => _toolController.SaveEnginePreset();
 
     internal void SyncBrushFromContext(BrushPreset brush)
     {
@@ -351,6 +359,88 @@ public sealed class DrawingCanvas : Control
         InvalidateVisual();
     }
 
+    public void FlipCanvas(bool horizontal)
+    {
+        var doc = _document;
+        doc.BeginDocumentMutation();
+        for (var li = 0; li < doc.Layers.Count; li++)
+        {
+            var layer = doc.Layers[li];
+            if (layer.IsGroup || layer.IsLocked) continue;
+
+            var lw = layer.Width;
+            var lh = layer.Height;
+            var pixels = layer.CapturePixels();
+            if (pixels.Length == 0 || pixels.Length != lw * lh * 4) continue;
+
+            // Preserve layer position relative to document center after flip.
+            // A layer at offset (ox, oy) must land at (docW - ox - lw, oy)
+            // for a horizontal flip (and similarly for vertical).
+            if (horizontal)
+            {
+                layer.OffsetX = doc.Width - layer.OffsetX - lw;
+
+                for (var y = 0; y < lh; y++)
+                {
+                    var rowStart = y * lw * 4;
+                    for (var x = 0; x < lw / 2; x++)
+                    {
+                        var left = rowStart + x * 4;
+                        var right = rowStart + (lw - 1 - x) * 4;
+                        (pixels[left], pixels[right]) = (pixels[right], pixels[left]);
+                        (pixels[left + 1], pixels[right + 1]) = (pixels[right + 1], pixels[left + 1]);
+                        (pixels[left + 2], pixels[right + 2]) = (pixels[right + 2], pixels[left + 2]);
+                        (pixels[left + 3], pixels[right + 3]) = (pixels[right + 3], pixels[left + 3]);
+                    }
+                }
+            }
+            else
+            {
+                layer.OffsetY = doc.Height - layer.OffsetY - lh;
+
+                var rowSize = lw * 4;
+                var flipped = new byte[pixels.Length];
+                for (var y = 0; y < lh; y++)
+                    System.Buffer.BlockCopy(pixels, y * rowSize, flipped, (lh - 1 - y) * rowSize, rowSize);
+                pixels = flipped;
+            }
+
+            layer.RestorePixels(pixels);
+        }
+        doc.NotifyChanged();
+        InvalidateVisual();
+    }
+
+    // In-app clipboard buffer (avoids platform clipboard API differences)
+    private static byte[]? _clipboardPixels;
+    private static int _clipboardW, _clipboardH;
+
+    public void CopyToClipboard()
+    {
+        var composite = _compositor.CompositeToBgra(_document.Layers, _document.Width, _document.Height);
+        if (composite.Length == 0) return;
+        _clipboardPixels = composite;
+        _clipboardW = _document.Width;
+        _clipboardH = _document.Height;
+    }
+
+    public bool CanPaste => _clipboardPixels != null && _clipboardW > 0 && _clipboardH > 0;
+
+    public void PasteFromClipboard()
+    {
+        if (!CanPaste) return;
+        var pixels = _clipboardPixels!;
+        var w = _clipboardW;
+        var h = _clipboardH;
+
+        _document.BeginDocumentMutation();
+        var layer = new DrawingLayer("Pasted", _document.Width, _document.Height);
+        layer.Pixels.CopyFromBgra(pixels, w, h);
+        var insertIdx = Math.Min(_document.ActiveLayerIndex + 1, _document.Layers.Count);
+        _document.InsertAndSelectLayer(layer, insertIdx);
+        InvalidateVisual();
+    }
+
     public bool IsTransformActive => _toolController.ActiveTool is TransformTool tt && tt.HasPendingOperation;
 
     public void Clear(bool pushHistory = true) => _document.ClearActiveLayer(pushHistory);
@@ -374,7 +464,7 @@ public sealed class DrawingCanvas : Control
     public void SetActiveLayerName(string name) => _document.SetActiveLayerName(name);
 
     private bool IsPaintBlockedByLock =>
-        _toolController.ActiveTool is BrushTool && !_document.CanPaintActiveLayer;
+        _toolController.ActiveTool is BrushTool && !_document.CanPaintActiveLayer && _toolController.AlternateTool == null;
 
     public override void Render(DrawingContext context)
     {
@@ -420,7 +510,7 @@ public sealed class DrawingCanvas : Control
                 context.DrawEllipse(CursorInnerBrush, null, pos, Math.Max(0.5 / CanvasZoom, r * 0.45), Math.Max(0.5 / CanvasZoom, r * 0.45));
             }
 
-            if (_toolController.ActiveTool is EyedropperTool)
+            if (_toolController.ActiveTool is EyedropperTool || _toolController.AlternateTool is EyedropperTool)
             {
                 var swatchR = 10.0 / CanvasZoom;
                 var swatchPos = new Point(pos.X + swatchR * 1.6, pos.Y - swatchR * 1.6);
@@ -434,7 +524,7 @@ public sealed class DrawingCanvas : Control
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
-        if (PaintInputSuspended) return;
+        if (PaintInputSuspended && _toolController.AlternateTool == null) return;
         if (IsPaintBlockedByLock) return;
 
         var point = e.GetCurrentPoint(this);
@@ -498,7 +588,7 @@ public sealed class DrawingCanvas : Control
                 Cursor = new Cursor(cursor.Value);
         }
 
-        if (PaintInputSuspended)
+        if (PaintInputSuspended && _toolController.AlternateTool == null)
         {
             if (_activePointerId >= 0)
             {

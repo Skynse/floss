@@ -297,14 +297,23 @@ public sealed class DrawingDocument
 
     public void DuplicateActiveLayer()
     {
-        if (ActiveLayerIndex < 0) return;
-        BeginDocumentMutation();
-
         var source = ActiveLayer;
-        var copy = CloneLayerTree(source, $"{source.Name} Copy");
+        if (source == null) return;
+        BeginDocumentMutation();
+        var copy = new DrawingLayer(source.Name + " copy", Width, Height);
+        copy.Pixels.CopyFromBgra(source.CapturePixels(), Width, Height);
         InsertLayerNear(copy, source, LayerDropPlacement.Above);
-        RebuildFlatLayerOrder();
         ActiveLayerIndex = _layers.IndexOf(copy);
+        NotifyLayersChanged();
+    }
+
+    public void InsertAndSelectLayer(DrawingLayer layer, int index)
+    {
+        if (index < 0) index = 0;
+        if (index > _layers.Count) index = _layers.Count;
+        BeginDocumentMutation();
+        _layers.Insert(index, layer);
+        ActiveLayerIndex = index;
         NotifyLayersChanged();
     }
 
@@ -502,12 +511,10 @@ public sealed class DrawingDocument
         var mergedLayer = new DrawingLayer("Merged", Width, Height);
         mergedLayer.Pixels.CopyFromBgra(merged, Width, Height);
 
-        if (anchor != null) InsertLayerNear(mergedLayer, anchor, LayerDropPlacement.Above);
+        if (anchor != null)
+            InsertLayerNear(mergedLayer, anchor, LayerDropPlacement.Above);
         else
-        {
-            mergedLayer.Parent = topmostLayer.Parent;
-            (topmostLayer.Parent?.Children ?? RootLayers()).Add(mergedLayer);
-        }
+            InsertLayerNear(mergedLayer, topmostLayer, LayerDropPlacement.Above);
 
         foreach (var layer in toMerge)
         {

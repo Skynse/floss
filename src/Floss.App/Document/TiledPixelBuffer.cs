@@ -17,8 +17,17 @@ public sealed class TiledPixelBuffer
         Height = Math.Max(1, height);
     }
 
-    public int Width { get; }
-    public int Height { get; }
+    public int Width { get; private set; }
+    public int Height { get; private set; }
+
+    // Automatically grow the buffer when a write lands beyond the current extent.
+    // Only extends right/bottom; left/top extension requires offset adjustment
+    // which is handled at the layer level.
+    public void EnsureCapacity(int right, int bottom)
+    {
+        if (right > Width) Width = right;
+        if (bottom > Height) Height = bottom;
+    }
 
     public PixelRegion Bounds => new(0, 0, Width, Height);
 
@@ -211,28 +220,30 @@ public sealed class TiledPixelBuffer
 
     public void CopyFromBgra(PixelRegion region, byte[] src, int srcStride)
     {
-        var clipped = region.ClipTo(Width, Height);
-        if (clipped.IsEmpty) return;
+        if (region.IsEmpty) return;
 
-        for (var y = 0; y < clipped.Height; y++)
+        for (var y = 0; y < region.Height; y++)
         {
-            for (var x = 0; x < clipped.Width; x++)
+            for (var x = 0; x < region.Width; x++)
             {
                 var srcOffset = y * srcStride + x * BytesPerPixel;
                 if (src[srcOffset + 3] == 0) continue;
-                WritePixel(clipped.X + x, clipped.Y + y, src, srcOffset);
+                WritePixel(region.X + x, region.Y + y, src, srcOffset);
             }
         }
 
-        PruneTransparentTiles(clipped);
+        PruneTransparentTiles(region);
     }
 
     public unsafe void RenderWithSkia(PixelRegion region, Action<SKCanvas> render)
     {
-        var clipped = region.ClipTo(Width, Height);
-        if (clipped.IsEmpty) return;
+        if (region.IsEmpty) return;
 
-        ForEachTile(clipped, (tileX, tileY, tile, tileRegion) =>
+        // Auto-extend buffer when rendering outside current bounds (right/bottom only).
+        if (region.Right > Width) Width = region.Right;
+        if (region.Bottom > Height) Height = region.Bottom;
+
+        ForEachTile(region, (tileX, tileY, tile, tileRegion) =>
         {
             fixed (byte* tilePtr = tile)
             {
@@ -249,7 +260,7 @@ public sealed class TiledPixelBuffer
             }
         }, create: true);
 
-        PruneTransparentTiles(clipped);
+        PruneTransparentTiles(region);
     }
 
     public void ReadPixel(int x, int y, byte[] dst, int dstOffset)
@@ -282,7 +293,8 @@ public sealed class TiledPixelBuffer
 
     public void WritePixel(int x, int y, byte[] src, int srcOffset)
     {
-        if ((uint)x >= Width || (uint)y >= Height) return;
+        if (x < 0 || y < 0) return;
+        if (x >= Width || y >= Height) EnsureCapacity(x + 1, y + 1);
 
         var tile = GetOrCreateTile(x, y);
         var offset = OffsetInTile(x, y);
@@ -294,7 +306,8 @@ public sealed class TiledPixelBuffer
 
     public void SetPixel(int x, int y, byte b, byte g, byte r, byte a)
     {
-        if ((uint)x >= Width || (uint)y >= Height) return;
+        if (x < 0 || y < 0) return;
+        if (x >= Width || y >= Height) EnsureCapacity(x + 1, y + 1);
 
         var tile = GetOrCreateTile(x, y);
         var offset = OffsetInTile(x, y);

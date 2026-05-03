@@ -290,6 +290,22 @@ private ContextMenu BuildPresetContextMenu(ToolGroup group, ToolPreset preset)
     var renameItem = new MenuItem { Header = "Rename" };
     renameItem.Click += async (_, _) => await RenamePresetPrompt(group, preset);
 
+    var setAltInvocationItem = new MenuItem
+    {
+        Header = preset.AlternateInvocation.IsEmpty
+            ? "Set Alt Invocation"
+            : $"Alt Invocation:  {preset.AlternateInvocation.Display()}"
+    };
+    setAltInvocationItem.Click += (_, _) =>
+    {
+        if (_recordingPresetAltInvocation == preset)
+        {
+            CancelPresetAltInvocationRecording();
+            return;
+        }
+        StartPresetAltInvocationRecording(group, preset);
+    };
+
     var duplicateItem = new MenuItem { Header = "Duplicate" };
     duplicateItem.Click += (_, _) => DuplicatePreset(group, preset);
 
@@ -298,6 +314,7 @@ private ContextMenu BuildPresetContextMenu(ToolGroup group, ToolPreset preset)
 
     menu.Items.Add(propertiesItem);
     menu.Items.Add(renameItem);
+    menu.Items.Add(setAltInvocationItem);
     menu.Items.Add(duplicateItem);
     menu.Items.Add(new Separator());
     menu.Items.Add(deleteItem);
@@ -862,5 +879,29 @@ private void DeletePreset(ToolGroup group, ToolPreset preset)
             Smoothing = _smoothingSlider.Value,
             Grain = _grainSlider.Value,
         };
+    }
+
+    private void StartPresetAltInvocationRecording(ToolGroup group, ToolPreset preset)
+    {
+        _recordingPresetAltInvocation = preset;
+        _footerStatusText.Text = $"Press a key for \"{preset.Name}\" alternate invocation… (Esc = cancel)";
+    }
+
+    internal void CommitPresetAltInvocation(Input.KeyBinding kb)
+    {
+        if (_recordingPresetAltInvocation == null) return;
+        var preset = _recordingPresetAltInvocation;
+        CancelPresetAltInvocationRecording();
+        preset.AlternateInvocation = kb;
+        App.ToolGroups.Save();
+        RefreshGroupPresets();
+        _footerStatusText.Text = $"Alt invocation set to {kb.Display()}";
+    }
+
+    internal void CancelPresetAltInvocationRecording()
+    {
+        _recordingPresetAltInvocation = null;
+        RefreshGroupPresets();
+        _footerStatusText.Text = "";
     }
 }

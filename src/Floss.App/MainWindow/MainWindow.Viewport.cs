@@ -68,9 +68,12 @@ public partial class MainWindow
         switch (_activeGesture)
         {
             case GestureMode.Pan:
-            case GestureMode.None: // middle-mouse pan
+            case GestureMode.None:
                 _canvasPan.X += d.X;
                 _canvasPan.Y += d.Y;
+                _canvas.PanOffsetX = _canvasPan.X;
+                _canvas.PanOffsetY = _canvasPan.Y;
+                _rulerOverlay?.InvalidateVisual();
                 ClampCanvasPan();
                 break;
             case GestureMode.Zoom:
@@ -117,6 +120,9 @@ public partial class MainWindow
             _canvasPan.Y = (c.Y - vpH * 0.5) * (1 - ratio) + _canvasPan.Y * ratio;
         }
 
+        _canvas.PanOffsetX = _canvasPan.X;
+        _canvas.PanOffsetY = _canvasPan.Y;
+        _rulerOverlay?.InvalidateVisual();
         ClampCanvasPan();
         _zoomDisplay.Text = $"{Math.Round(_zoom * 100)}%";
         UpdateStatus();
@@ -135,6 +141,10 @@ public partial class MainWindow
     {
         _rotation = 0;
         _canvasRotate.Angle = 0;
+        _canvasFlip.ScaleX = 1;
+        _canvasFlip.ScaleY = 1;
+        _canvas.FlipX = 1;
+        _canvas.FlipY = 1;
 
         var w = Math.Max(1, _canvas.Document.Width);
         var h = Math.Max(1, _canvas.Document.Height);
@@ -150,11 +160,34 @@ public partial class MainWindow
         _canvas.CanvasZoom = _zoom;
         _canvasPan.X = 0;
         _canvasPan.Y = 0;
+        _canvas.PanOffsetX = 0;
+        _canvas.PanOffsetY = 0;
+        _rulerOverlay?.InvalidateVisual();
         ClampCanvasPan();
 
         _zoomDisplay.Text = $"{Math.Round(_zoom * 100)}%";
         _rotDisplay.Text = "0°";
         UpdateStatus();
+    }
+
+    private void ToggleCanvasOnly()
+    {
+        _canvasOnly = !_canvasOnly;
+        if (_shellMenu != null) _shellMenu.IsVisible = !_canvasOnly;
+        if (_shellToolbar != null) _shellToolbar.IsVisible = !_canvasOnly;
+        if (_leftRail != null) _leftRail.IsVisible = !_canvasOnly;
+        if (_rightPanel != null) _rightPanel.IsVisible = !_canvasOnly;
+        if (_splitterControl != null) _splitterControl.IsVisible = !_canvasOnly;
+        if (_statusBar != null) _statusBar.IsVisible = !_canvasOnly;
+        if (_footer != null) _footer.IsVisible = !_canvasOnly;
+    }
+
+    private void ToggleRulers()
+    {
+        _showRulers = !_showRulers;
+        if (_rulerOverlay != null) _rulerOverlay.IsVisible = _showRulers;
+        App.Config.ShowRulers = _showRulers;
+        App.Config.Save();
     }
 
     private void ClampCanvasPan()
@@ -184,7 +217,6 @@ public partial class MainWindow
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
 
-
         var focused = FocusManager.GetFocusedElement();
         if (focused is TextBox or ComboBox)
         {
@@ -195,7 +227,8 @@ public partial class MainWindow
         var mods = Floss.App.Input.KeyBinding.ModifiersWithKeyDown(key, e.KeyModifiers);
         var sc = App.Shortcuts;
 
-        // Pen gestures take priority — they suspend drawing and activate a drag mode
+        // Gestures must be checked before other shortcuts since they
+        // consume modifier-only key-downs that shouldn't trigger tool shortcuts.
         var (gesture, gestureBinding) = DetectGesture(key, mods, sc);
         if (gesture != GestureMode.None)
         {
@@ -215,9 +248,27 @@ public partial class MainWindow
             return;
         }
 
+        // Preset alternate invocation recording
+        if (_recordingPresetAltInvocation != null)
+        {
+            if (e.Key == Key.Escape) { CancelPresetAltInvocationRecording(); e.Handled = true; return; }
+            if (e.Key is Key.Back or Key.Delete) { CommitPresetAltInvocation(Input.KeyBinding.Empty); e.Handled = true; return; }
+            if (e.Key is Key.LeftCtrl or Key.RightCtrl or Key.LeftShift or Key.RightShift or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin)
+            {
+                _recordingPresetPendingMods = mods;
+                return;
+            }
+            _recordingPresetPendingMods = KeyModifiers.None;
+            CommitPresetAltInvocation(new Input.KeyBinding(e.Key, mods));
+            e.Handled = true;
+            return;
+        }
+
         if (sc.Undo.Matches(key, mods)) { _canvas.Undo(); e.Handled = true; }
         else if (sc.Redo.Matches(key, mods)) { _canvas.Redo(); e.Handled = true; }
         else if (sc.RedoAlt.Matches(key, mods)) { _canvas.Redo(); e.Handled = true; }
+        else if (sc.ToggleCanvasOnly.Matches(key, mods)) { ToggleCanvasOnly(); e.Handled = true; }
+        else if (sc.ToggleRulers.Matches(key, mods)) { ToggleRulers(); e.Handled = true; }
         else if (sc.FileNew.Matches(key, mods)) { _ = NewDocumentAsync(); e.Handled = true; }
         else if (sc.FileSave.Matches(key, mods)) { _ = SaveDocumentAsync(); e.Handled = true; }
         else if (sc.FileSaveAs.Matches(key, mods)) { _ = SaveDocumentAsAsync(); e.Handled = true; }
@@ -250,17 +301,12 @@ public partial class MainWindow
             }
             e.Handled = true;
         }
-        else if ((key == Key.Delete || key == Key.Back) && mods == KeyModifiers.None)
+        else if (key == Key.Back && mods == KeyModifiers.None)
         { _canvas.ClearSelectionContent(); e.Handled = true; }
-        else if ((key == Key.LeftAlt || key == Key.RightAlt) && mods == KeyModifiers.Alt)
+        else if ((_activeToolGroup?.ActivePreset?.AlternateInvocation ?? sc.AlternateInvocation).Matches(key, mods))
         {
-            if (_preAltTool == null && _canvas.ActiveTool != _eyedropperTool)
-            {
-                _preAltTool = _canvas.ActiveTool;
-                _preAltToolButton = _activeToolButton;
-                var eyedropPair = _toolGroupButtons.FirstOrDefault(x => x.Group.DefaultEngine == ToolPresetEngine.Eyedropper);
-                ActivateTool(_eyedropperTool, eyedropPair.Button);
-            }
+            if (_canvas.ActiveTool != _eyedropperTool)
+                _canvas.SetAlternateTool(_eyedropperTool);
             e.Handled = true;
         }
         else if (key == Key.Escape)
@@ -269,6 +315,13 @@ public partial class MainWindow
         { _canvas.CommitActiveTool(); e.Handled = true; }
         else if (sc.ColorCycle.Matches(key, mods)) { CycleColor(); e.Handled = true; }
         else if (sc.ColorDefault.Matches(key, mods)) { SetColor(Color.Parse("#111111")); e.Handled = true; }
+        else if (sc.Copy.Matches(key, mods)) { _canvas.CopyToClipboard(); e.Handled = true; }
+        else if (sc.Paste.Matches(key, mods)) { _canvas.PasteFromClipboard(); e.Handled = true; }
+        else if (sc.FlipHorizontal.Matches(key, mods)) { _canvas.FlipCanvas(horizontal: true); e.Handled = true; }
+        else if (sc.FlipVertical.Matches(key, mods)) { _canvas.FlipCanvas(horizontal: false); e.Handled = true; }
+        else if (sc.MirrorHorizontal.Matches(key, mods)) { _canvasFlip.ScaleX = -_canvasFlip.ScaleX; _canvas.FlipX = (int)_canvasFlip.ScaleX; _rulerOverlay?.InvalidateVisual(); ClampCanvasPan(); UpdateStatus(); e.Handled = true; }
+        else if (sc.MirrorVertical.Matches(key, mods)) { _canvasFlip.ScaleY = -_canvasFlip.ScaleY; _canvas.FlipY = (int)_canvasFlip.ScaleY; _rulerOverlay?.InvalidateVisual(); ClampCanvasPan(); UpdateStatus(); e.Handled = true; }
+        else if (sc.DeleteSelection.Matches(key, mods)) { _canvas.ClearSelectionContent(); e.Handled = true; }
         else if (sc.OpenSettings.Matches(key, mods)) { OpenSettings(); e.Handled = true; }
         else if (sc.OpenBrushEditor.Matches(key, mods)) { OpenBrushEditor(); e.Handled = true; }
         else if (sc.BrushSizeDecrease.Matches(key, mods))
@@ -342,11 +395,23 @@ public partial class MainWindow
             e.Handled = true;
         }
 
-        if ((e.Key == Key.LeftAlt || e.Key == Key.RightAlt) && _preAltTool != null)
+        // Commit pending modifier-only key for preset alt invocation recording
+        if (_recordingPresetAltInvocation != null && _recordingPresetPendingMods != KeyModifiers.None)
         {
-            ActivateTool(_preAltTool, _preAltToolButton);
-            _preAltTool = null;
-            _preAltToolButton = null;
+            var pending = _recordingPresetPendingMods;
+            _recordingPresetPendingMods = KeyModifiers.None;
+            if (pending != KeyModifiers.None)
+            {
+                CommitPresetAltInvocation(new Input.KeyBinding(Key.None, pending));
+                e.Handled = true;
+                return;
+            }
+        }
+
+        var altInvocation = _activeToolGroup?.ActivePreset?.AlternateInvocation ?? App.Shortcuts.AlternateInvocation;
+        if (altInvocation.Key != Key.None && e.Key == altInvocation.Key)
+        {
+            _canvas.SetAlternateTool(null);
             e.Handled = true;
         }
     }
@@ -366,6 +431,8 @@ public partial class MainWindow
         _gestureKey = binding?.IsModifierOnly == true ? Key.None : key;
         _gestureModifiers = binding?.Modifiers ?? KeyModifiers.None;
         _canvas.PaintInputSuspended = true;
+        // Clear alternate tool during gestures so brush-size/zoom don't color-pick
+        _canvas.SetAlternateTool(null);
         Cursor = gesture switch
         {
             GestureMode.Pan => new Cursor(StandardCursorType.SizeAll),

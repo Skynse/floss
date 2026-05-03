@@ -220,6 +220,14 @@ public sealed class SettingsWindow : Window
             ("Undo",                    () => sc.Undo,                   v => sc.Undo = v),
             ("Redo",                    () => sc.Redo,                   v => sc.Redo = v),
             ("Redo (alt)",              () => sc.RedoAlt,                v => sc.RedoAlt = v),
+            ("Copy",                    () => sc.Copy,                   v => sc.Copy = v),
+            ("Paste",                   () => sc.Paste,                  v => sc.Paste = v),
+            ("Delete selection",        () => sc.DeleteSelection,         v => sc.DeleteSelection = v),
+            ("Transform selection",     () => sc.Transform,               v => sc.Transform = v),
+            ("Flip canvas horizontal",  () => sc.FlipHorizontal,         v => sc.FlipHorizontal = v),
+            ("Flip canvas vertical",    () => sc.FlipVertical,           v => sc.FlipVertical = v),
+            ("Mirror horizontal",      () => sc.MirrorHorizontal,      v => sc.MirrorHorizontal = v),
+            ("Mirror vertical",        () => sc.MirrorVertical,        v => sc.MirrorVertical = v),
             ("Zoom in",                 () => sc.ZoomIn,                 v => sc.ZoomIn = v),
             ("Zoom in (alt)",           () => sc.ZoomInAlt,              v => sc.ZoomInAlt = v),
             ("Zoom out",                () => sc.ZoomOut,                v => sc.ZoomOut = v),
@@ -247,6 +255,9 @@ public sealed class SettingsWindow : Window
             ("Merge / Flatten",         () => sc.LayerMerge,             v => sc.LayerMerge = v),
             ("Open settings",           () => sc.OpenSettings,           v => sc.OpenSettings = v),
             ("Open brush editor",       () => sc.OpenBrushEditor,        v => sc.OpenBrushEditor = v),
+            ("Toggle canvas only",      () => sc.ToggleCanvasOnly,       v => sc.ToggleCanvasOnly = v),
+            ("Toggle rulers",           () => sc.ToggleRulers,           v => sc.ToggleRulers = v),
+            ("Alternate invocation",    () => sc.AlternateInvocation,    v => sc.AlternateInvocation = v),
             ("Pan canvas",              () => sc.GesturePan,             v => sc.GesturePan = v),
             ("Zoom  (drag ↑↓)",         () => sc.GestureZoom,            v => sc.GestureZoom = v),
             ("Rotate (drag ←→)",        () => sc.GestureRotate,          v => sc.GestureRotate = v),
@@ -263,6 +274,10 @@ public sealed class SettingsWindow : Window
         content.Children.Add(BindingRow("Undo", sc.Undo, v => sc.Undo = v));
         content.Children.Add(BindingRow("Redo", sc.Redo, v => sc.Redo = v));
         content.Children.Add(BindingRow("Redo (alt)", sc.RedoAlt, v => sc.RedoAlt = v));
+        content.Children.Add(BindingRow("Copy", sc.Copy, v => sc.Copy = v));
+        content.Children.Add(BindingRow("Paste", sc.Paste, v => sc.Paste = v));
+        content.Children.Add(BindingRow("Delete selection", sc.DeleteSelection, v => sc.DeleteSelection = v));
+        content.Children.Add(BindingRow("Transform selection", sc.Transform, v => sc.Transform = v));
 
         content.Children.Add(GroupHeader("View — Zoom"));
         content.Children.Add(BindingRow("Zoom in", sc.ZoomIn, v => sc.ZoomIn = v));
@@ -275,6 +290,14 @@ public sealed class SettingsWindow : Window
         content.Children.Add(BindingRow("Rotate left", sc.RotateLeft, v => sc.RotateLeft = v));
         content.Children.Add(BindingRow("Rotate right", sc.RotateRight, v => sc.RotateRight = v));
         content.Children.Add(BindingRow("Reset rotation", sc.RotateReset, v => sc.RotateReset = v));
+
+        content.Children.Add(GroupHeader("Image"));
+        content.Children.Add(BindingRow("Flip canvas horizontal", sc.FlipHorizontal, v => sc.FlipHorizontal = v));
+        content.Children.Add(BindingRow("Flip canvas vertical", sc.FlipVertical, v => sc.FlipVertical = v));
+
+        content.Children.Add(GroupHeader("View — Mirror"));
+        content.Children.Add(BindingRow("Mirror horizontal", sc.MirrorHorizontal, v => sc.MirrorHorizontal = v));
+        content.Children.Add(BindingRow("Mirror vertical", sc.MirrorVertical, v => sc.MirrorVertical = v));
 
         content.Children.Add(GroupHeader("Selection"));
         content.Children.Add(BindingRow("Select all", sc.SelectAll, v => sc.SelectAll = v));
@@ -306,12 +329,41 @@ public sealed class SettingsWindow : Window
         content.Children.Add(GroupHeader("Misc"));
         content.Children.Add(BindingRow("Open settings", sc.OpenSettings, v => sc.OpenSettings = v));
         content.Children.Add(BindingRow("Open brush editor", sc.OpenBrushEditor, v => sc.OpenBrushEditor = v));
+        content.Children.Add(BindingRow("Toggle canvas only", sc.ToggleCanvasOnly, v => sc.ToggleCanvasOnly = v));
+        content.Children.Add(BindingRow("Toggle rulers", sc.ToggleRulers, v => sc.ToggleRulers = v));
+        content.Children.Add(BindingRow("Alternate invocation", sc.AlternateInvocation, v => sc.AlternateInvocation = v));
 
         content.Children.Add(GroupHeader("Pen Gestures  (hold key + drag pen)"));
         content.Children.Add(BindingRow("Pan canvas", sc.GesturePan, v => sc.GesturePan = v, gesture: true));
         content.Children.Add(BindingRow("Zoom  (drag ↑↓)", sc.GestureZoom, v => sc.GestureZoom = v, gesture: true));
         content.Children.Add(BindingRow("Rotate (drag ←→)", sc.GestureRotate, v => sc.GestureRotate = v, gesture: true));
         content.Children.Add(BindingRow("Brush size (←→)", sc.GestureBrushSize, v => sc.GestureBrushSize = v, gesture: true));
+
+        // ── Tool-group alternate invocation ─────────────────────────────────
+        var toolGroups = App.ToolGroups.Groups;
+        if (toolGroups.Count > 0)
+        {
+            content.Children.Add(GroupHeader("Tool Groups  (alt invocation per preset)"));
+            foreach (var group in toolGroups)
+            {
+                var groupLabel = string.IsNullOrEmpty(group.Shortcut.IsEmpty ? "" : group.Shortcut.Display())
+                    ? group.Name
+                    : $"{group.Name}  [{group.Shortcut.Display()}]";
+                content.Children.Add(SubGroupHeader(groupLabel));
+                foreach (var preset in group.Presets)
+                {
+                    var label = $"    {preset.Name}";
+                    content.Children.Add(PresetBindingRow(
+                        label,
+                        preset.AlternateInvocation,
+                        v =>
+                        {
+                            preset.AlternateInvocation = v;
+                            App.ToolGroups.Save();
+                        }));
+                }
+            }
+        }
 
         return new ScrollViewer
         {
@@ -414,6 +466,104 @@ public sealed class SettingsWindow : Window
                 setter(v);
                 keyDisplay.Text = v.Display();
                 keyDisplay.Foreground = new SolidColorBrush(Color.Parse(v.IsEmpty ? TextMuted : TextPrimary));
+            }, label);
+        };
+
+        return rowBorder;
+    }
+
+    private Border PresetBindingRow(string label, KeyBinding altInvocation, Action<KeyBinding> altSetter)
+    {
+        var labelText = new TextBlock
+        {
+            Text = label,
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            VerticalAlignment = VerticalAlignment.Center,
+            MinWidth = 200,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+
+        var altDisplay = new TextBlock
+        {
+            Text = altInvocation.IsEmpty ? "—" : altInvocation.Display(),
+            FontSize = 11,
+            Width = 130,
+            FontFamily = new FontFamily("Consolas, Courier New, monospace"),
+            Foreground = new SolidColorBrush(Color.Parse(altInvocation.IsEmpty ? TextMuted : TextPrimary)),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var recordBtn = new Button
+        {
+            Content = "Record",
+            Height = 22,
+            Padding = new Thickness(8, 0),
+            FontSize = 10,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(3)
+        };
+
+        var clearBtn = new Button
+        {
+            Content = MaterialIcon(Icons.Close, 13),
+            Width = 22,
+            Height = 22,
+            Padding = new Thickness(0),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(3)
+        };
+
+        var row = new DockPanel { LastChildFill = false };
+        DockPanel.SetDock(labelText, Dock.Left);
+        DockPanel.SetDock(altDisplay, Dock.Left);
+        DockPanel.SetDock(clearBtn, Dock.Right);
+        DockPanel.SetDock(recordBtn, Dock.Right);
+        row.Children.Add(labelText);
+        row.Children.Add(altDisplay);
+        row.Children.Add(clearBtn);
+        row.Children.Add(new Border { Width = 4 });
+        row.Children.Add(recordBtn);
+
+        var rowBorder = new Border
+        {
+            Padding = new Thickness(8, 5),
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            Child = row
+        };
+
+        clearBtn.Click += (_, _) =>
+        {
+            StopRecording();
+            altSetter(KeyBinding.Empty);
+            altDisplay.Text = "—";
+            altDisplay.Foreground = new SolidColorBrush(Color.Parse(TextMuted));
+        };
+
+        recordBtn.Click += (_, _) =>
+        {
+            if (_isRecording && _recordingSetter != null && ReferenceEquals(_recordingRow, rowBorder))
+            {
+                StopRecording();
+                return;
+            }
+            StopRecording();
+            StartRecording(rowBorder, altDisplay, false, v =>
+            {
+                altSetter(v);
+                altDisplay.Text = v.IsEmpty ? "—" : v.Display();
+                altDisplay.Foreground = new SolidColorBrush(Color.Parse(v.IsEmpty ? TextMuted : TextPrimary));
             }, label);
         };
 
@@ -698,14 +848,15 @@ public sealed class SettingsWindow : Window
         if (!_isRecording) return;
         var mods = KeyBinding.ModifiersWithKeyDown(e.Key, e.KeyModifiers);
 
-        // Normal keyboard shortcuts need a real key. Gesture bindings may use
-        // modifiers only, so holding Ctrl+Alt can become a pen-drag gesture.
+        // Modifier keys are tracked as a pending chord and committed on key-up if
+        // no regular key follows. This lets users record modifier-only bindings
+        // like Alt or Ctrl+Shift for alternate-invocation shortcuts.
         if (e.Key is Key.LeftCtrl or Key.RightCtrl or
                      Key.LeftShift or Key.RightShift or
                      Key.LeftAlt or Key.RightAlt or
                      Key.LWin or Key.RWin)
         {
-            if (_recordingGesture && mods != KeyModifiers.None)
+            if (mods != KeyModifiers.None)
             {
                 _recordingPendingModifiers = mods;
                 if (_recordingDisplay != null)
@@ -763,10 +914,13 @@ public sealed class SettingsWindow : Window
 
     private async void OnWindowKeyUp(object? sender, KeyEventArgs e)
     {
-        if (!_isRecording || !_recordingGesture || _recordingPendingModifiers == KeyModifiers.None)
+        if (!_isRecording || _recordingPendingModifiers == KeyModifiers.None)
             return;
 
-        if (CountModifiers(_recordingPendingModifiers) < 2)
+        // Gesture bindings require a 2+ modifier chord (e.g. Ctrl+Alt).
+        // Normal bindings accept single-modifier chords (e.g. Alt for
+        // alternate invocation).
+        if (_recordingGesture && CountModifiers(_recordingPendingModifiers) < 2)
         {
             if (_recordingDisplay != null)
                 _recordingDisplay.Text = "Press chord...";
@@ -840,6 +994,20 @@ public sealed class SettingsWindow : Window
             FontWeight = FontWeight.SemiBold,
             Foreground = new SolidColorBrush(Color.Parse("#6f7888")),
             LetterSpacing = 1.0
+        }
+    };
+
+    private static Control SubGroupHeader(string text) => new Border
+    {
+        Margin = new Thickness(0, 6, 0, 0),
+        Padding = new Thickness(12, 3),
+        Background = new SolidColorBrush(Color.Parse("#12141a")),
+        Child = new TextBlock
+        {
+            Text = text,
+            FontSize = 10,
+            FontWeight = FontWeight.Normal,
+            Foreground = new SolidColorBrush(Color.Parse("#8891a0")),
         }
     };
 
