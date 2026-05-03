@@ -21,11 +21,8 @@ public sealed class BrushTool : ITool
     {
         _inner.SetKind(IsEraser ? ToolKind.Eraser : ToolKind.Brush);
 
-        // 🔑 Restore runtime params from preset if available
-        // if (ctx.ActivePreset != null && ctx.Brush != null)
-        // {
-        //     ctx.ActivePreset.ApplyToBrushPreset(ref ctx.Brush);
-        // }
+        if (ctx.ActivePreset != null)
+            ctx.Brush = ctx.ActivePreset.ApplyToBrushPreset(ctx.Brush);
     }
     public void Deactivate(ToolContext ctx) { }
 

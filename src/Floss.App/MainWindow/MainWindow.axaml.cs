@@ -817,6 +817,7 @@ public partial class MainWindow : Window
         };
         _canvas.LayerMetadataChanged += (_, e) => { UpdateLayerRow(e.LayerIndex); UpdateStatus(); };
         _canvas.ColorSampled += (_, c) => SetColor(c, syncPicker: true, switchToBrush: false);
+        _canvas.BrushSettingsRestored += brush => ApplyBrushSettings(brush, syncSliders: true);
         _canvas.Document.PaperChanged += (_, _) => RefreshPaperRow();
 
         SliderChanged(_sizeSlider, v => UpdateCurrentBrush(p => p with { Size = v }));
@@ -842,7 +843,7 @@ public partial class MainWindow : Window
     // ── Tool selection ────────────────────────────────────────────────────────
     private Button? _activeToolButton;
 
-    private void ActivateTool(ITool tool, Button? button)
+    private void ActivateTool(ITool tool, Button? button, ToolPreset? preset = null)
     {
         if (_canvas.IsTransformActive)
         {
@@ -853,7 +854,7 @@ public partial class MainWindow : Window
             if (_canvas.ActiveTool == tool) return;
         }
 
-        _canvas.SetActiveTool(tool);
+        _canvas.SetActiveTool(tool, preset);
         _activeToolButton = button;
         foreach (var b in _toolButtons) SetRailActive(b, b == button);
         _footerStatusText.Text = ToolDisplayName(tool);
@@ -958,8 +959,8 @@ public partial class MainWindow : Window
                 break;
         }
 
-        var btn = _toolGroupButtons.FirstOrDefault(x => x.Group == group).Button;
-        ActivateTool(ToolForPresetEngine(preset.Engine), btn);
+    var btn = _toolGroupButtons.FirstOrDefault(x => x.Group == group).Button;
+    ActivateTool(ToolForPresetEngine(preset.Engine), btn, preset);
 
         // Reflect active preset engine in the rail button icon
         if (btn != null) btn.Content = MaterialIcon(group.ActiveIcon, 18);

@@ -22,11 +22,23 @@ public enum ToolPresetEngine
     Gradient, Shape, Polyline
 }
 
+// Output process determines what the tool's input produces (CSP-style).
+public enum ToolOutputProcess
+{
+    DirectDraw,
+    Zoom,
+    Pan,
+    Rotate,
+    Eyedropper,
+    EraseIfTransparent
+}
+
 public sealed class ToolPreset
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N")[..8];
     public string Name { get; set; } = "";
     public ToolPresetEngine Engine { get; set; }
+    public ToolOutputProcess OutputProcess { get; set; } = ToolOutputProcess.DirectDraw;
     public double? BrushSize { get; set; }
     public double? BrushOpacity { get; set; }
     public double? BrushFlow { get; set; }
@@ -34,26 +46,23 @@ public sealed class ToolPreset
     public double? BrushSpacing { get; set; }
     public double? BrushSmoothing { get; set; }
     public double? BrushGrain { get; set; }
-    // Apply overrides to a BrushAsset by creating a modified preset copy
-    public void ApplyToBrushPreset(ref BrushPreset preset)
+    // Apply overrides to a BrushPreset, returning a modified copy
+    public BrushPreset ApplyToBrushPreset(BrushPreset preset)
     {
         var needsUpdate = BrushSize.HasValue || BrushOpacity.HasValue || BrushHardness.HasValue ||
-                         BrushSpacing.HasValue || BrushFlow.HasValue || BrushSmoothing.HasValue ||
-                         BrushGrain.HasValue;
+            BrushSpacing.HasValue || BrushFlow.HasValue || BrushSmoothing.HasValue ||
+            BrushGrain.HasValue;
 
-        if (needsUpdate)
+        return needsUpdate ? preset with
         {
-            preset = preset with
-            {
-                Size = BrushSize ?? preset.Size,
-                Opacity = BrushOpacity ?? preset.Opacity,
-                Hardness = BrushHardness ?? preset.Hardness,
-                Spacing = BrushSpacing ?? preset.Spacing,
-                Flow = BrushFlow ?? preset.Flow,
-                Smoothing = BrushSmoothing ?? preset.Smoothing,
-                Grain = BrushGrain ?? preset.Grain
-            };
-        }
+            Size = BrushSize ?? preset.Size,
+            Opacity = BrushOpacity ?? preset.Opacity,
+            Hardness = BrushHardness ?? preset.Hardness,
+            Spacing = BrushSpacing ?? preset.Spacing,
+            Flow = BrushFlow ?? preset.Flow,
+            Smoothing = BrushSmoothing ?? preset.Smoothing,
+            Grain = BrushGrain ?? preset.Grain
+        } : preset;
     }
 
     // Capture current brush preset state into override properties

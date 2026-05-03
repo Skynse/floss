@@ -72,6 +72,7 @@ public sealed class DrawingCanvas : Control
         _brushTool = new BrushTool(_canvasTool, isEraser: false);
         _eraserTool = new BrushTool(_canvasTool, isEraser: true);
         _toolController = new ToolController(_ctx, _brushTool);
+    _toolController.BrushSettingsChanged += brush => BrushSettingsRestored?.Invoke(brush);
 
         _document.Changed += (_, e) =>
         {
@@ -100,6 +101,7 @@ public sealed class DrawingCanvas : Control
     public event EventHandler<LayerMetadataChangedEventArgs>? LayerMetadataChanged;
     public event EventHandler<Color>? ColorSampled;
     public event EventHandler? DirtyStateChanged;
+    public event Action<BrushPreset>? BrushSettingsRestored;
 
     public int ActiveSampleCount => _canvasTool.ActiveSampleCount;
     public int CommittedStrokeCount => _document.CommittedStrokeCount;
@@ -124,9 +126,9 @@ public sealed class DrawingCanvas : Control
     public bool PaintInputSuspended { get; set; }
     public double CanvasZoom { get; set; } = 1.0;
 
-    public void SetActiveTool(ITool tool)
+    public void SetActiveTool(ITool tool, ToolPreset? preset = null)
     {
-        _toolController.SetActiveTool(tool);
+        _toolController.SetActiveTool(tool, preset);
         InvalidateVisual();
     }
 
