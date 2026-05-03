@@ -786,6 +786,7 @@ public partial class MainWindow : Window
 
     private void SaveToConfig()
     {
+        CaptureActiveBrushToPreset();
         var cfg = App.Config;
         cfg.LastBrushSize = _sizeSlider.Value;
         cfg.LastBrushOpacity = _opacitySlider.Value;
@@ -795,6 +796,7 @@ public partial class MainWindow : Window
         cfg.LastColor = $"#{c.R:X2}{c.G:X2}{c.B:X2}";
         cfg.LastBrushName = _activePreset?.Name ?? "";
         cfg.Save();
+        App.ToolGroups.Save();
     }
 
     // ── Wire-up ───────────────────────────────────────────────────────────────
@@ -817,7 +819,21 @@ public partial class MainWindow : Window
         };
         _canvas.LayerMetadataChanged += (_, e) => { UpdateLayerRow(e.LayerIndex); UpdateStatus(); };
         _canvas.ColorSampled += (_, c) => SetColor(c, syncPicker: true, switchToBrush: false);
-        _canvas.BrushSettingsRestored += brush => ApplyBrushSettings(brush, syncSliders: true);
+        _canvas.BrushSettingsRestored += brush =>
+        {
+            _syncingBrushUi = true;
+            _sizeSlider.Value = Math.Clamp(brush.Size, _sizeSlider.Minimum, _sizeSlider.Maximum);
+            _opacitySlider.Value = Math.Clamp(brush.Opacity, _opacitySlider.Minimum, _opacitySlider.Maximum);
+            _flowSlider.Value = Math.Clamp(brush.Flow, _flowSlider.Minimum, _flowSlider.Maximum);
+            _hardnessSlider.Value = Math.Clamp(brush.Hardness, _hardnessSlider.Minimum, _hardnessSlider.Maximum);
+            _spacingSlider.Value = Math.Clamp(brush.Spacing, _spacingSlider.Minimum, _spacingSlider.Maximum);
+            _smoothingSlider.Value = Math.Clamp(brush.Smoothing, _smoothingSlider.Minimum, _smoothingSlider.Maximum);
+            _grainSlider.Value = Math.Clamp(brush.Grain, _grainSlider.Minimum, _grainSlider.Maximum);
+            _syncingBrushUi = false;
+            _activePreset = brush;
+            _strokePreview.Brush = brush;
+            RefreshToolProperties();
+        };
         _canvas.Document.PaperChanged += (_, _) => RefreshPaperRow();
 
         SliderChanged(_sizeSlider, v => UpdateCurrentBrush(p => p with { Size = v }));
@@ -930,6 +946,9 @@ public partial class MainWindow : Window
 
     internal void ActivatePreset(ToolGroup group, ToolPreset preset)
     {
+        // Snapshot current brush settings into the preset we're leaving
+        CaptureActiveBrushToPreset();
+
         group.LastActivePresetId = preset.Id;
         _activeToolGroup = group;
 
@@ -962,19 +981,38 @@ public partial class MainWindow : Window
     var btn = _toolGroupButtons.FirstOrDefault(x => x.Group == group).Button;
     ActivateTool(ToolForPresetEngine(preset.Engine), btn, preset);
 
-        // Reflect active preset engine in the rail button icon
-        if (btn != null) btn.Content = MaterialIcon(group.ActiveIcon, 18);
+    // Reflect active preset engine in the rail button icon
+    if (btn != null) btn.Content = MaterialIcon(group.ActiveIcon, 18);
 
-        // For brush-based engines, load the referenced brush asset
+        // For brush-based engines, load the referenced brush asset — but only if we
+        // don't have saved per-engine settings (first activation). On subsequent
+        // switches, the ToolController restores the user's last-used values.
         if (preset.BrushId != null &&
-            preset.Engine is ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge)
+            preset.Engine is ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge &&
+            !_canvas.HasSavedBrushSettings(preset.Engine))
         {
             var asset = _brushAssets.FirstOrDefault(a => a.Id == preset.BrushId);
-            if (asset != null) ApplyBrushSettings(asset.ToPreset(), syncSliders: true);
+            if (asset != null)
+            {
+                ApplyBrushSettings(asset.ToPreset(), syncSliders: true);
+                // Re-apply the preset's saved overrides on top of the brush asset defaults
+                // so user-customised values (size, opacity, etc.) survive restart
+                var withOverrides = preset.ApplyToBrushPreset(_activePreset!);
+                if (withOverrides != _activePreset) ApplyBrushSettings(withOverrides, syncSliders: true);
+            }
         }
 
         RefreshGroupPresets();
         App.ToolGroups.Save();
+    }
+
+    private void CaptureActiveBrushToPreset()
+    {
+        if (_activeToolGroup == null) return;
+        var active = _activeToolGroup.ActivePreset;
+        if (active == null || _activePreset == null) return;
+        if (active.Engine is not (ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge)) return;
+        active.CaptureFromBrushPreset(_activePreset);
     }
 
     internal ITool ToolForPresetEngine(ToolPresetEngine engine) => engine switch

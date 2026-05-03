@@ -237,9 +237,15 @@ public partial class MainWindow
         else if (sc.RotateReset.Matches(key, mods)) { SetRotation(0); e.Handled = true; }
         else if (sc.RotateLeft.Matches(key, mods)) { SetRotation(_rotation - sc.RotateKeyStep); e.Handled = true; }
         else if (sc.RotateRight.Matches(key, mods)) { SetRotation(_rotation + sc.RotateKeyStep); e.Handled = true; }
-        else if (sc.SelectAll.Matches(key, mods)) { _canvas.SelectAll(); e.Handled = true; }
-        else if (sc.Deselect.Matches(key, mods)) { _canvas.Deselect(); e.Handled = true; }
-        else if (sc.InvertSelect.Matches(key, mods)) { _canvas.InvertSelection(); e.Handled = true; }
+else if (sc.SelectAll.Matches(key, mods)) { _canvas.SelectAll(); e.Handled = true; }
+else if (sc.Deselect.Matches(key, mods)) { _canvas.Deselect(); e.Handled = true; }
+else if (sc.InvertSelect.Matches(key, mods)) { _canvas.InvertSelection(); e.Handled = true; }
+else if (sc.Transform.Matches(key, mods))
+{
+    if (_canvas.IsTransformActive) { _canvas.CommitActiveTool(); }
+    else if (_canvas.HasSelection) { _canvas.BeginSelectionTransform(); }
+    e.Handled = true;
+}
         else if ((key == Key.LeftAlt || key == Key.RightAlt) && mods == KeyModifiers.Alt)
         {
             if (_preAltTool == null && _canvas.ActiveTool != _eyedropperTool)

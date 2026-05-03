@@ -31,6 +31,7 @@ public sealed class ToolController
     public ToolPresetEngine ActiveEngine { get; private set; } = ToolPresetEngine.Brush;
     public bool HasPendingOperation => ActiveTool.HasPendingOperation;
     public event Action<BrushPreset>? BrushSettingsChanged;
+    public bool HasSavedSettings(ToolPresetEngine engine) => _enginePresets.ContainsKey(engine);
 
     public void SetActiveTool(ITool tool, ToolPreset? preset = null)
     {
@@ -49,16 +50,21 @@ public sealed class ToolController
         var newEngine = EngineForTool(tool);
         ActiveEngine = newEngine;
 
-        // If a preset was provided, let ApplyToBrushPreset in Activate() handle it.
-        // Otherwise, restore the last-used brush settings for this engine.
-        if (preset == null && _enginePresets.TryGetValue(newEngine, out var saved))
+        // After Activate() applies the preset overrides, re-apply saved per-engine
+        // settings so the user's last-used slider values survive the switch.
+        if (_enginePresets.TryGetValue(newEngine, out var saved))
         {
+            var beforeActivate = _context.Brush;
+            ActiveTool = tool;
+            ActiveTool.Activate(_context);
             _context.Brush = saved.ApplyToBrushPreset(_context.Brush);
             BrushSettingsChanged?.Invoke(_context.Brush);
         }
-
-        ActiveTool = tool;
-        ActiveTool.Activate(_context);
+        else
+        {
+            ActiveTool = tool;
+            ActiveTool.Activate(_context);
+        }
     }
 
     private static ToolPresetEngine EngineForTool(ITool tool) => tool switch

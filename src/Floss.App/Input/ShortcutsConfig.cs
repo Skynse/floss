@@ -81,6 +81,7 @@ public sealed class ShortcutsConfig
     public KeyBinding SelectAll { get; set; } = new(Key.A, KeyModifiers.Control);
     public KeyBinding Deselect { get; set; } = new(Key.D, KeyModifiers.Control);
     public KeyBinding InvertSelect { get; set; } = new(Key.I, KeyModifiers.Control | KeyModifiers.Shift);
+    public KeyBinding Transform { get; set; } = new(Key.T, KeyModifiers.Control);
 
     // ── Brush — size ──────────────────────────────────────────────────────────
 

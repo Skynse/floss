@@ -122,6 +122,7 @@ public sealed class DrawingCanvas : Control
     public bool HasSelection => _ctx.Selection.HasSelection;
     public SelectionMask Selection => _ctx.Selection;
     public bool IsDirty => _document.IsDirty;
+    public bool HasSavedBrushSettings(ToolPresetEngine engine) => _toolController.HasSavedSettings(engine);
 
     public bool PaintInputSuspended { get; set; }
     public double CanvasZoom { get; set; } = 1.0;
