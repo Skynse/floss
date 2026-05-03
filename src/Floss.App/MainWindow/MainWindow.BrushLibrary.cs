@@ -761,6 +761,7 @@ private void DeletePreset(ToolGroup group, ToolPreset preset)
             _activeBrushAsset.Tip = BrushTipData.FromTip(updated.Tip);
         }
         ApplyBrushSettings(updated, syncSliders: false);
+        RefreshToolProperties();
     }
 
     private void OpenBrushEditor()
@@ -775,7 +776,27 @@ private void DeletePreset(ToolGroup group, ToolPreset preset)
 
         _brushEditorWindow = new BrushEditorWindow(_activePreset, preset =>
         {
-            UpdateCurrentBrush(_ => preset);
+            if (_syncingBrushUi || preset == null) return;
+            _activePreset = preset;
+            if (_activeBrushAsset != null)
+            {
+                _activeBrushAsset.Preset = preset;
+                _activeBrushAsset.Tip = BrushTipData.FromTip(preset.Tip);
+            }
+            _syncingBrushUi = true;
+            _sizeSlider.Value = Math.Clamp(preset.Size, _sizeSlider.Minimum, _sizeSlider.Maximum);
+            _opacitySlider.Value = Math.Clamp(preset.Opacity, _opacitySlider.Minimum, _opacitySlider.Maximum);
+            _flowSlider.Value = Math.Clamp(preset.Flow, _flowSlider.Minimum, _flowSlider.Maximum);
+            _hardnessSlider.Value = Math.Clamp(preset.Hardness, _hardnessSlider.Minimum, _hardnessSlider.Maximum);
+            _spacingSlider.Value = Math.Clamp(preset.Spacing, _spacingSlider.Minimum, _spacingSlider.Maximum);
+            _smoothingSlider.Value = Math.Clamp(preset.Smoothing, _smoothingSlider.Minimum, _smoothingSlider.Maximum);
+            _grainSlider.Value = Math.Clamp(preset.Grain, _grainSlider.Minimum, _grainSlider.Maximum);
+            _syncingBrushUi = false;
+            _canvas.SyncBrushFromContext(preset with { Color = _canvas.PaintColor });
+            _strokePreview.Brush = preset;
+            _activeBrushLabel.Text = preset.Name;
+            UpdateStatus();
+            RefreshToolProperties();
         });
         _brushEditorWindow.Closed += (_, _) => _brushEditorWindow = null;
         _brushEditorWindow.Show(this);
