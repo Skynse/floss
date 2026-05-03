@@ -54,7 +54,6 @@ public sealed class ToolController
         // settings so the user's last-used slider values survive the switch.
         if (_enginePresets.TryGetValue(newEngine, out var saved))
         {
-            var beforeActivate = _context.Brush;
             ActiveTool = tool;
             ActiveTool.Activate(_context);
             _context.Brush = saved.ApplyToBrushPreset(_context.Brush);

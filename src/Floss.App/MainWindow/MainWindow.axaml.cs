@@ -832,6 +832,7 @@ public partial class MainWindow : Window
             _syncingBrushUi = false;
             _activePreset = brush;
             _strokePreview.Brush = brush;
+            _canvas.SyncBrushFromContext(brush);
             RefreshToolProperties();
         };
         _canvas.Document.PaperChanged += (_, _) => RefreshPaperRow();
@@ -978,29 +979,49 @@ public partial class MainWindow : Window
                 break;
         }
 
-    var btn = _toolGroupButtons.FirstOrDefault(x => x.Group == group).Button;
-    ActivateTool(ToolForPresetEngine(preset.Engine), btn, preset);
-
-    // Reflect active preset engine in the rail button icon
-    if (btn != null) btn.Content = MaterialIcon(group.ActiveIcon, 18);
-
-        // For brush-based engines, load the referenced brush asset — but only if we
-        // don't have saved per-engine settings (first activation). On subsequent
-        // switches, the ToolController restores the user's last-used values.
-        if (preset.BrushId != null &&
-            preset.Engine is ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge &&
-            !_canvas.HasSavedBrushSettings(preset.Engine))
+        // For brush-based engines, load the referenced brush asset first
+        // to establish the correct Tip, Dynamics, Kind etc. The ToolController's
+        // per-engine restore (fired inside ActivateTool below) then overlays the
+        // user's last-used scalar values (size, opacity, etc.) on top.
+        // We must NOT call ApplyBrushSettings here — it calls _canvas.SetBrush()
+        // which can prematurely trigger SetActiveTool for eraser presets.
+        if (preset.Engine is ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge)
         {
-            var asset = _brushAssets.FirstOrDefault(a => a.Id == preset.BrushId);
-            if (asset != null)
+            BrushPreset? assetPreset = null;
+
+            if (preset.BrushId != null)
             {
-                ApplyBrushSettings(asset.ToPreset(), syncSliders: true);
-                // Re-apply the preset's saved overrides on top of the brush asset defaults
-                // so user-customised values (size, opacity, etc.) survive restart
-                var withOverrides = preset.ApplyToBrushPreset(_activePreset!);
-                if (withOverrides != _activePreset) ApplyBrushSettings(withOverrides, syncSliders: true);
+                var asset = _brushAssets.FirstOrDefault(a => a.Id == preset.BrushId);
+                if (asset != null) assetPreset = asset.ToPreset();
+            }
+
+            if (assetPreset != null)
+            {
+                _activePreset = assetPreset;
+                _canvas.SyncBrushFromContext(assetPreset);
+                _activeBrushLabel.Text = assetPreset.Name;
+                _strokePreview.Brush = assetPreset;
+            }
+
+            // Ensure the brush Kind matches the target engine even when there's
+            // no linked brush asset (e.g. default presets with BrushId == null).
+            var targetKind = preset.Engine == ToolPresetEngine.Eraser
+                ? BrushKind.Eraser
+                : BrushKind.Ink;
+            if ((_activePreset ?? _canvas.Brush).Kind != targetKind)
+            {
+                var fixedBrush = (_activePreset ?? _canvas.Brush) with { Kind = targetKind };
+                _canvas.SyncBrushFromContext(fixedBrush);
+                _activePreset = fixedBrush;
+                _strokePreview.Brush = fixedBrush;
             }
         }
+
+        var btn = _toolGroupButtons.FirstOrDefault(x => x.Group == group).Button;
+        ActivateTool(ToolForPresetEngine(preset.Engine), btn, preset);
+
+        // Reflect active preset engine in the rail button icon
+        if (btn != null) btn.Content = MaterialIcon(group.ActiveIcon, 18);
 
         RefreshGroupPresets();
         App.ToolGroups.Save();

@@ -93,7 +93,7 @@ public sealed class FreehandStrokeOperation : IToolOperation
         if (!_active) return;
         var layer = _document.ActiveLayer;
         var localSample = ToLayerSample(layer, sample);
-        RasterizeSegmentWithHistory(layer, sample, _lastSample, localSample);
+        RasterizeFinalSegmentWithHistory(layer, sample, _lastSample, localSample);
 
         // If the stroke never moved enough to render anything (just a tap), draw the
         // initial dab now so a pure tap still leaves a mark.
@@ -152,11 +152,23 @@ public sealed class FreehandStrokeOperation : IToolOperation
 
     private void RasterizeSegmentWithHistory(DrawingLayer layer, CanvasInputSample sourceSample, CanvasInputSample from, CanvasInputSample to)
     {
+        RasterizeSegmentWithHistoryInternal(layer, sourceSample, from, to, final: false);
+    }
+
+    private void RasterizeFinalSegmentWithHistory(DrawingLayer layer, CanvasInputSample sourceSample, CanvasInputSample from, CanvasInputSample to)
+    {
+        RasterizeSegmentWithHistoryInternal(layer, sourceSample, from, to, final: true);
+    }
+
+    private void RasterizeSegmentWithHistoryInternal(DrawingLayer layer, CanvasInputSample sourceSample, CanvasInputSample from, CanvasInputSample to, bool final)
+    {
         var region = _brushEngine.EstimateSegmentRegion(layer, _brush, from, to);
         if (region.IsEmpty) return;
 
         CaptureBeforeTiles(layer, region);
-        var dirty = _brushEngine.RasterizeSegment(layer, _brush, _eraser || sourceSample.Source == CanvasInputSource.Eraser, from, to);
+        var dirty = final
+            ? _brushEngine.RasterizeFinalSegment(layer, _brush, _eraser || sourceSample.Source == CanvasInputSource.Eraser, from, to)
+            : _brushEngine.RasterizeSegment(layer, _brush, _eraser || sourceSample.Source == CanvasInputSource.Eraser, from, to);
         if (dirty.IsEmpty) return;
         RestoreUnselectedPixels(layer, dirty);
 
@@ -191,8 +203,12 @@ public sealed class FreehandStrokeOperation : IToolOperation
         {
             for (int tx = firstTileX; tx <= lastTileX; tx++)
             {
-                // Look up the before-tile once per tile, not per pixel.
                 _beforeTiles.TryGetValue((tx, ty), out var beforeTile);
+
+                // Fast-path: if alpha-locked and the before-tile was entirely
+                // transparent, no existing pixels need preserving — skip.
+                if (alphaLocked && beforeTile != null && IsTileAllZero(beforeTile))
+                    continue;
 
                 int pxMin = Math.Max(clipped.X, tx * ts);
                 int pxMax = Math.Min(clipped.Right, tx * ts + ts);
@@ -221,5 +237,19 @@ public sealed class FreehandStrokeOperation : IToolOperation
                 }
             }
         }
+    }
+
+    private static unsafe bool IsTileAllZero(byte[] tile)
+    {
+        fixed (byte* p = tile)
+        {
+            var len = tile.Length / 4;
+            var w = (uint*)p;
+            for (var i = 0; i < len; i++)
+            {
+                if (w[i] != 0) return false;
+            }
+        }
+        return true;
     }
 }

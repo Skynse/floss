@@ -142,6 +142,13 @@ public sealed class DrawingCanvas : Control
         InvalidateVisual();
     }
 
+    internal void SyncBrushFromContext(BrushPreset brush)
+    {
+        _brush = brush with { Color = _paintColor };
+        _ctx.Brush = _brush;
+        InvalidateVisual();
+    }
+
     public void SetPaintColor(Color color)
     {
         _paintColor = color;
@@ -306,6 +313,41 @@ public sealed class DrawingCanvas : Control
     public void InvertSelection()
     {
         _ctx.Selection.Invert();
+        InvalidateVisual();
+    }
+
+    public void ClearSelectionContent()
+    {
+        if (!_ctx.Selection.HasSelection) return;
+        var layer = _ctx.ActiveLayer;
+        if (layer == null || layer.IsGroup || layer.IsLocked) return;
+
+        var bounds = _ctx.Selection.GetMaskBounds();
+        if (bounds == null) return;
+        var b = bounds.Value;
+
+        var layerBounds = new PixelRegion(
+            b.Left - layer.OffsetX, b.Top - layer.OffsetY, b.Width, b.Height)
+            .ClipTo(layer.Width, layer.Height);
+        if (layerBounds.IsEmpty) return;
+
+        var beforeTiles = layer.Pixels.CaptureTiles(layerBounds);
+
+        for (int docY = b.Top; docY < b.Bottom; docY++)
+        {
+            int layY = docY - layer.OffsetY;
+            if ((uint)layY >= (uint)layer.Height) continue;
+            for (int docX = b.Left; docX < b.Right; docX++)
+            {
+                if (!_ctx.Selection.IsSelected(docX, docY)) continue;
+                int layX = docX - layer.OffsetX;
+                if ((uint)layX >= (uint)layer.Width) continue;
+                layer.Pixels.SetPixel(layX, layY, 0, 0, 0, 0);
+            }
+        }
+
+        layer.MarkThumbnailDirty();
+        _ctx.CommitMutation(_ctx.ActiveLayerIndex, beforeTiles, layerBounds);
         InvalidateVisual();
     }
 

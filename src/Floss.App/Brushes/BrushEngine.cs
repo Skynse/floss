@@ -30,18 +30,29 @@ public sealed class BrushEngine : IDisposable
     }
 
     public PixelRegion RasterizeSegment(
-        DrawingLayer layer,
-        BrushPreset brush,
-        bool eraser,
-        CanvasInputSample from,
-        CanvasInputSample to)
+        DrawingLayer layer, BrushPreset brush, bool eraser,
+        CanvasInputSample from, CanvasInputSample to)
+    {
+        return RasterizeSegmentInternal(layer, brush, eraser, from, to, ensureEndpoint: false);
+    }
+
+    public PixelRegion RasterizeFinalSegment(
+        DrawingLayer layer, BrushPreset brush, bool eraser,
+        CanvasInputSample from, CanvasInputSample to)
+    {
+        return RasterizeSegmentInternal(layer, brush, eraser, from, to, ensureEndpoint: true);
+    }
+
+    private PixelRegion RasterizeSegmentInternal(
+        DrawingLayer layer, BrushPreset brush, bool eraser,
+        CanvasInputSample from, CanvasInputSample to, bool ensureEndpoint)
     {
         EnsureStroke(brush, eraser, from);
         var stroke = _activeStroke!;
         _stamps.Clear();
         _stampColors.Clear();
 
-        var dirty = BuildStamps(stroke, brush, from, to);
+        var dirty = BuildStamps(stroke, brush, from, to, ensureEndpoint);
         if (dirty.IsEmpty || _stamps.Count == 0) return PixelRegion.Empty;
 
         if (!eraser && brush.ColorMix > 0.001)
@@ -111,7 +122,7 @@ public sealed class BrushEngine : IDisposable
             BeginStroke(brush, eraser, sample);
     }
 
-    private PixelRegion BuildStamps(ActiveStroke stroke, BrushPreset brush, CanvasInputSample from, CanvasInputSample to)
+    private PixelRegion BuildStamps(ActiveStroke stroke, BrushPreset brush, CanvasInputSample from, CanvasInputSample to, bool ensureEndpoint = false)
     {
         if (from.Pressure <= 0 && to.Pressure <= 0) return PixelRegion.Empty;
 
@@ -172,6 +183,14 @@ public sealed class BrushEngine : IDisposable
             }
 
             previous = current;
+        }
+
+        // On the final segment, the spacing accumulator may leave a small gap to
+        // the pen-up endpoint. Expand the dirty region by one stamp radius to
+        // ensure soft brush edges cover any sub-spacing gap.
+        if (ensureEndpoint && _stamps.Count > 0)
+        {
+            dirty = dirty.Inflate((int)(_stamps[^1].Size * 0.25f + 1));
         }
 
         stroke.State.LastX = (float)to.X;

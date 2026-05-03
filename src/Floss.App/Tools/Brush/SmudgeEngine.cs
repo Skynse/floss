@@ -65,9 +65,14 @@ public sealed class SmudgeEngine
                 _cg = sumG / totalW;
                 _cb = sumB / totalW;
                 _hasCarried = true;
+                // Fall through to render immediately so the first dab on color
+                // produces visible output instead of requiring a second stroke.
             }
-            if (ownMask) mask.Dispose();
-            return PixelRegion.Empty;
+            else
+            {
+                if (ownMask) mask.Dispose();
+                return PixelRegion.Empty;
+            }
         }
 
         // Paint the carried color at the current position
