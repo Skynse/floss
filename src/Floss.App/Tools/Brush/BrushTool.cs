@@ -17,7 +17,16 @@ public sealed class BrushTool : ITool
         IsEraser = isEraser;
     }
 
-    public void Activate(ToolContext ctx) => _inner.SetKind(IsEraser ? ToolKind.Eraser : ToolKind.Brush);
+    public void Activate(ToolContext ctx)
+    {
+        _inner.SetKind(IsEraser ? ToolKind.Eraser : ToolKind.Brush);
+
+        // 🔑 Restore runtime params from preset if available
+        // if (ctx.ActivePreset != null && ctx.Brush != null)
+        // {
+        //     ctx.ActivePreset.ApplyToBrushPreset(ref ctx.Brush);
+        // }
+    }
     public void Deactivate(ToolContext ctx) { }
 
     public void PointerDown(ToolContext ctx, CanvasInputSample s)

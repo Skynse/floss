@@ -24,9 +24,49 @@ public enum ToolPresetEngine
 
 public sealed class ToolPreset
 {
-    public string Id   { get; set; } = Guid.NewGuid().ToString("N")[..8];
+    public string Id { get; set; } = Guid.NewGuid().ToString("N")[..8];
     public string Name { get; set; } = "";
     public ToolPresetEngine Engine { get; set; }
+    public double? BrushSize { get; set; }
+    public double? BrushOpacity { get; set; }
+    public double? BrushFlow { get; set; }
+    public double? BrushHardness { get; set; }
+    public double? BrushSpacing { get; set; }
+    public double? BrushSmoothing { get; set; }
+    public double? BrushGrain { get; set; }
+    // Apply overrides to a BrushAsset by creating a modified preset copy
+    public void ApplyToBrushPreset(ref BrushPreset preset)
+    {
+        var needsUpdate = BrushSize.HasValue || BrushOpacity.HasValue || BrushHardness.HasValue ||
+                         BrushSpacing.HasValue || BrushFlow.HasValue || BrushSmoothing.HasValue ||
+                         BrushGrain.HasValue;
+
+        if (needsUpdate)
+        {
+            preset = preset with
+            {
+                Size = BrushSize ?? preset.Size,
+                Opacity = BrushOpacity ?? preset.Opacity,
+                Hardness = BrushHardness ?? preset.Hardness,
+                Spacing = BrushSpacing ?? preset.Spacing,
+                Flow = BrushFlow ?? preset.Flow,
+                Smoothing = BrushSmoothing ?? preset.Smoothing,
+                Grain = BrushGrain ?? preset.Grain
+            };
+        }
+    }
+
+    // Capture current brush preset state into override properties
+    public void CaptureFromBrushPreset(BrushPreset preset)
+    {
+        BrushSize = preset.Size;
+        BrushOpacity = preset.Opacity;
+        BrushHardness = preset.Hardness;
+        BrushSpacing = preset.Spacing;
+        BrushFlow = preset.Flow;
+        BrushSmoothing = preset.Smoothing;
+        BrushGrain = preset.Grain;
+    }
 
     // Brush/Eraser/Smudge — references a BrushAsset on disk; null = use current brush
     public string? BrushId { get; set; }
@@ -41,31 +81,31 @@ public sealed class ToolPreset
     public GradientType GradientType { get; set; } = GradientType.Linear;
 
     // Shape
-    public ShapeKind      ShapeKind      { get; set; } = ShapeKind.Rectangle;
-    public ShapeDrawMode  ShapeDrawMode  { get; set; } = ShapeDrawMode.Fill;
-    public float          ShapeStrokeWidth { get; set; } = 4;
+    public ShapeKind ShapeKind { get; set; } = ShapeKind.Rectangle;
+    public ShapeDrawMode ShapeDrawMode { get; set; } = ShapeDrawMode.Fill;
+    public float ShapeStrokeWidth { get; set; } = 4;
 
     // Polyline
-    public bool  PolylineClosePath   { get; set; }
+    public bool PolylineClosePath { get; set; }
     public float PolylineStrokeWidth { get; set; } = 4;
 }
 
 public sealed class ToolCategory
 {
-    public string       Name      { get; set; } = "";
+    public string Name { get; set; } = "";
     public List<string> PresetIds { get; set; } = [];
 }
 
 public sealed class ToolGroup
 {
-    public string          Id              { get; set; } = Guid.NewGuid().ToString("N")[..8];
-    public string          Name            { get; set; } = "";
-    public KeyBinding      Shortcut        { get; set; } = KeyBinding.Empty;
-    public ToolPresetEngine DefaultEngine   { get; set; } = ToolPresetEngine.Brush;
-    public string?         CustomIcon      { get; set; }
-    public List<ToolPreset>  Presets        { get; set; } = [];
-    public List<ToolCategory> Categories   { get; set; } = [];
-    public string?         LastActivePresetId { get; set; }
+    public string Id { get; set; } = Guid.NewGuid().ToString("N")[..8];
+    public string Name { get; set; } = "";
+    public KeyBinding Shortcut { get; set; } = KeyBinding.Empty;
+    public ToolPresetEngine DefaultEngine { get; set; } = ToolPresetEngine.Brush;
+    public string? CustomIcon { get; set; }
+    public List<ToolPreset> Presets { get; set; } = [];
+    public List<ToolCategory> Categories { get; set; } = [];
+    public string? LastActivePresetId { get; set; }
 
     [JsonIgnore]
     public string ActiveIcon =>
@@ -140,7 +180,7 @@ public sealed class ToolGroupConfig
             .Select(p => p.BrushId!)
             .ToHashSet();
 
-        var brushGroup  = (preferredGroup?.DefaultEngine == ToolPresetEngine.Brush  ? preferredGroup : null)
+        var brushGroup = (preferredGroup?.DefaultEngine == ToolPresetEngine.Brush ? preferredGroup : null)
                        ?? Groups.FirstOrDefault(g => g.DefaultEngine == ToolPresetEngine.Brush)
                        ?? Groups.First();
         var eraserGroup = (preferredGroup?.DefaultEngine == ToolPresetEngine.Eraser ? preferredGroup : null)
@@ -152,24 +192,26 @@ public sealed class ToolGroupConfig
             if (allBrushIds.Contains(asset.Id)) continue;
 
             var isEraser = asset.Preset.Kind == BrushKind.Eraser;
-            var target   = isEraser ? eraserGroup : brushGroup;
-            var engine   = isEraser ? ToolPresetEngine.Eraser : ToolPresetEngine.Brush;
+            var target = isEraser ? eraserGroup : brushGroup;
+            var engine = isEraser ? ToolPresetEngine.Eraser : ToolPresetEngine.Brush;
 
             var preset = new ToolPreset { Name = asset.Preset.Name, Engine = engine, BrushId = asset.Id };
             target.Presets.Add(preset);
 
             var catName = asset.Preset.Kind switch
             {
-                BrushKind.Pencil   => "Pencils",
-                BrushKind.Ink      => "Pens",
-                BrushKind.Marker   => "Markers",
+                BrushKind.Pencil => "Pencils",
+                BrushKind.Ink => "Pens",
+                BrushKind.Marker => "Markers",
                 BrushKind.Airbrush => "Airbrush",
-                BrushKind.Eraser   => "Erasers",
-                _                  => "General"
+                BrushKind.Eraser => "Erasers",
+                _ => "General"
             };
             EnsureInCategory(target, preset.Id, catName);
         }
     }
+
+
 
     private static void EnsureInCategory(ToolGroup group, string presetId, string categoryName)
     {

@@ -83,28 +83,14 @@ public partial class MainWindow
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
 
-        _layerNameBox.AddHandler(PointerPressedEvent, (s, e) =>
+        _layerNameBox.KeyDown += (_, e) =>
         {
-            // Prevent the click from bubbling up to the Window or ListBox
-            e.Handled = true;
-            _layerNameBox.Focus(); // Force focus locally
-        }, RoutingStrategies.Bubble);
-
-
-        _layerNameBox.AddHandler(KeyDownEvent, (_, e) =>
-        {
-            if (e.Key == Key.Enter)
+            if (e.Key is Key.Enter or Key.Return)
             {
                 ApplyLayerName();
                 e.Handled = true;
             }
-            // Block all other keys (B, E, V, etc.) from reaching global shortcuts
-            e.Handled = true;
-
-
-        }, RoutingStrategies.Tunnel
-
-        );
+        };
         _layerNameBox.LostFocus += (_, _) => ApplyLayerName();
 
         // Blend mode

@@ -26,10 +26,11 @@ public sealed class ToolController
     public ITool ActiveTool { get; private set; }
     public bool HasPendingOperation => ActiveTool.HasPendingOperation;
 
-    public void SetActiveTool(ITool tool)
+    public void SetActiveTool(ITool tool, ToolPreset? preset = null)
     {
         if (ActiveTool == tool) return;
         ActiveTool.Deactivate(_context);
+        _context.ActivePreset = preset;
         ActiveTool = tool;
         ActiveTool.Activate(_context);
     }

@@ -32,6 +32,8 @@ public sealed record BrushPreset(
     public AngleSource BaseAngleSource { get; init; } = AngleSource.None;
     public float AngleJitter { get; init; } = 0f; // 0.0 to 1.0
     public ParameterDynamics SizeDynamics
+
+
     {
         get => BrushDynamics.ToParameterDynamics(Dynamics.Size);
         init

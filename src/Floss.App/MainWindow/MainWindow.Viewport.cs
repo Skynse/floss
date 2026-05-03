@@ -183,6 +183,14 @@ public partial class MainWindow
     // ── Keyboard ──────────────────────────────────────────────────────────────
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
+
+
+        var focused = FocusManager.GetFocusedElement();
+        if (focused is TextBox or ComboBox)
+        {
+            // Let the input control handle the key normally
+            return;
+        }
         var key = e.Key;
         var mods = Floss.App.Input.KeyBinding.ModifiersWithKeyDown(key, e.KeyModifiers);
         var sc = App.Shortcuts;

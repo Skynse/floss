@@ -39,7 +39,7 @@ public sealed class ToolContext
     public Action InvalidateRender { get; init; } = () => { };
     public Action<Color> OnColorSampled { get; init; } = _ => { };
     public Func<int, int, Color?> SampleDocumentColor { get; init; } = (_, _) => null;
-
+    public ToolPreset? ActivePreset { get; set; }
     public DrawingLayer? ActiveLayer =>
         Document.ActiveLayerIndex >= 0 && Document.ActiveLayerIndex < Document.Layers.Count
             ? Document.Layers[Document.ActiveLayerIndex]
