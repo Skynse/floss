@@ -13,6 +13,8 @@ public sealed class GradientOutput : IOutputProcess
     public bool Antialiasing { get; set; } = true;
     public GradientType GradientType { get; set; } = GradientType.Linear;
 
+    public void Preview(ToolContext ctx, IProcessedInput input) { }
+
     public void Execute(ToolContext ctx, IProcessedInput input)
     {
         if (input is not DragInput drag) return;

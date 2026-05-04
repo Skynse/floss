@@ -26,6 +26,7 @@ public sealed record BrushPreset(
     public double Grain { get; init; } = 0.0;
     public double Smoothing { get; init; } = 0.3;
     public IBrushTip Tip { get; init; } = new ProceduralBrushTip();
+    public SkiaSharp.SKBlendMode BlendMode { get; init; } = SkiaSharp.SKBlendMode.SrcOver;
     // Optional silhouette mask multiplied against Tip at render time.
     // Null = no extra clip (Tip stamps as-is, which is correct for procedural tips).
     public ProceduralBrushTip? Shape { get; init; } = null;

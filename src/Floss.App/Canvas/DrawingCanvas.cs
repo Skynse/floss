@@ -24,7 +24,6 @@ public sealed class DrawingCanvas : Control
 
     private readonly BrushTool _brushTool;
     private readonly BrushTool _eraserTool;
-    private readonly SmudgeTool _smudgeTool = new();
     private readonly TransformTool _transformTool = new();
 
     private BrushPreset _brush = BrushPreset.Defaults[0];
@@ -119,7 +118,6 @@ public sealed class DrawingCanvas : Control
     public ITool ActiveTool => _toolController.ActiveTool;
     public BrushTool BrushTool => _brushTool;
     public BrushTool EraserTool => _eraserTool;
-    public SmudgeTool SmudgeTool => _smudgeTool;
     public TransformTool TransformTool => _transformTool;
     public bool HasSelection => _ctx.Selection.HasSelection;
     public SelectionMask Selection => _ctx.Selection;
@@ -622,7 +620,7 @@ public sealed class DrawingCanvas : Control
         && IsPaintTool(_toolController.ActiveTool)
         && !_document.CanPaintActiveLayer;
 
-    private static bool IsPaintTool(ITool? tool) => tool is Tools.BrushTool or Tools.SmudgeTool or Tools.FillTool or Tools.GradientTool or Tools.ShapeTool or Tools.PolylineTool or Tools.LassoFillTool;
+    private static bool IsPaintTool(ITool? tool) => tool is Tools.BrushTool or Tools.FillTool or Tools.GradientTool or Tools.ShapeTool or Tools.PolylineTool or Tools.LassoFillTool;
 
     public override void Render(DrawingContext context)
     {

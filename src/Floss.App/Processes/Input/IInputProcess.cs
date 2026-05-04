@@ -17,6 +17,9 @@ public interface IInputProcess
     // Returns the processed input if complete, null otherwise.
     IProcessedInput? GetResult();
 
+    // Returns the current in-progress input for live preview, null if not available.
+    IProcessedInput? GetPreview();
+
     // Render real-time preview overlay.
     void RenderOverlay(DrawingContext dc, double zoom);
 }

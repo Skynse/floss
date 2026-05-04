@@ -64,19 +64,22 @@ public sealed class BrushStrokeInputProcess : IInputProcess
         return null;
     }
 
+    public IProcessedInput? GetPreview()
+    {
+        if (_active && _smoothed.Count > 0)
+        {
+            return new StrokeInput
+            {
+                RawSamples = new List<CanvasInputSample>(_raw),
+                SmoothedSamples = new List<CanvasInputSample>(_smoothed)
+            };
+        }
+        return null;
+    }
+
     public void RenderOverlay(DrawingContext dc, double zoom)
     {
-        if (_smoothed.Count < 2) return;
-        var geo = new StreamGeometry();
-        using (var c = geo.Open())
-        {
-            c.BeginFigure(new Avalonia.Point(_smoothed[0].X, _smoothed[0].Y), false);
-            for (int i = 1; i < _smoothed.Count; i++)
-                c.LineTo(new Avalonia.Point(_smoothed[i].X, _smoothed[i].Y));
-            c.EndFigure(false);
-        }
-        var t = Math.Max(0.5, 1.0 / zoom);
-        dc.DrawGeometry(null, new Pen(Avalonia.Media.Brushes.White, t), geo);
+        // Brush strokes don't need a path overlay — the brush dabs provide visual feedback.
     }
 
     private CanvasInputSample ApplyStabilization(CanvasInputSample raw)

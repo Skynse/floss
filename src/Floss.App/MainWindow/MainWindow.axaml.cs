@@ -1227,29 +1227,10 @@ public partial class MainWindow : Window
 
     internal ITool ToolForPreset(ToolPreset preset)
     {
-        // Use new process-based architecture if InputProcess is set.
-        if (preset.InputProcess != default && preset.OutputProcess != default)
-        {
-            return _toolFactory!.CreateTool(preset);
-        }
-
-        // Fallback to legacy tool instances.
-        return preset.Engine switch
-        {
-            ToolPresetEngine.Brush => _canvas.BrushTool,
-            ToolPresetEngine.Eraser => _canvas.EraserTool,
-            ToolPresetEngine.Smudge => _canvas.SmudgeTool,
-            ToolPresetEngine.Move => _moveTool,
-            ToolPresetEngine.Select => _selectTool,
-            ToolPresetEngine.MagicWand => _magicWandTool,
-            ToolPresetEngine.Fill => _fillTool,
-            ToolPresetEngine.LassoFill => _lassoFillTool,
-            ToolPresetEngine.Eyedropper => _eyedropperTool,
-            ToolPresetEngine.Gradient => _gradientTool,
-            ToolPresetEngine.Shape => _shapeTool,
-            ToolPresetEngine.Polyline => _polylineTool,
-            _ => _canvas.BrushTool
-        };
+        // Always use new process-based architecture.
+        if (preset.InputProcess == default || preset.OutputProcess == default)
+            preset.MigrateFromLegacy();
+        return _toolFactory!.CreateTool(preset);
     }
 
     private static void SetRailActive(Button button, bool active)

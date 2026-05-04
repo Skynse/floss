@@ -78,7 +78,9 @@ public partial class MainWindow
                     SliderProp("brush.hardness", "Anti-aliasing", true, _hardnessSlider, "%"),
                     SliderProp("brush.spacing", "Spacing", false, _spacingSlider, "%"),
                     SliderProp("brush.smoothing", "Smoothing", true, _smoothingSlider, "%"),
-                    SliderProp("brush.grain", "Grain", false, _grainSlider, "%")
+                    SliderProp("brush.grain", "Grain", false, _grainSlider, "%"),
+                    EnumProp("brush.blendMode", "Blend", false,
+                        () => _canvas.Brush.BlendMode, v => UpdateCurrentBrush(p => p with { BlendMode = v }))
                 ]);
                 break;
 

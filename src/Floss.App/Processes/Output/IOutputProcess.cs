@@ -7,5 +7,10 @@ public interface IOutputProcess
 {
     bool Antialiasing { get; set; }
 
+    // Called during active input for live visual updates (e.g., moving layer, applying brush dabs).
+    // Should modify state but NOT commit undo mutations.
+    void Preview(ToolContext ctx, IProcessedInput input);
+
+    // Called when input completes to finalize and commit undo mutation.
     void Execute(ToolContext ctx, IProcessedInput input);
 }

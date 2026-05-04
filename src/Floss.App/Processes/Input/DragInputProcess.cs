@@ -47,6 +47,15 @@ public sealed class DragInputProcess : IInputProcess
         return null;
     }
 
+    public IProcessedInput? GetPreview()
+    {
+        if (_active)
+        {
+            return new DragInput { Start = _start, Current = _current };
+        }
+        return null;
+    }
+
     public void RenderOverlay(DrawingContext dc, double zoom)
     {
         // No overlay by default — output processes handle their own preview.

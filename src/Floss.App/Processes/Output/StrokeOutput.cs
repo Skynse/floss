@@ -14,6 +14,8 @@ public sealed class StrokeOutput : IOutputProcess
     public float StrokeWidth { get; set; } = 4;
     public bool ClosePath { get; set; }
 
+    public void Preview(ToolContext ctx, IProcessedInput input) { }
+
     public void Execute(ToolContext ctx, IProcessedInput input)
     {
         if (input is not PolygonInput poly) return;

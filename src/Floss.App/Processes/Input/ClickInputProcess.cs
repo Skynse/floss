@@ -40,5 +40,7 @@ public sealed class ClickInputProcess : IInputProcess
         return null;
     }
 
+    public IProcessedInput? GetPreview() => null;
+
     public void RenderOverlay(DrawingContext dc, double zoom) { }
 }

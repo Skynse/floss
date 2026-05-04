@@ -45,8 +45,7 @@ public sealed class ToolFactory
         {
             OutputProcessType.DirectDraw => new DirectDrawOutput(_brushEngine, _document)
             {
-                Antialiasing = preset.Antialiasing,
-                IsEraser = preset.Engine == ToolPresetEngine.Eraser
+                Antialiasing = preset.Antialiasing
             },
             OutputProcessType.ClosedAreaFill => new ClosedAreaFillOutput
             {

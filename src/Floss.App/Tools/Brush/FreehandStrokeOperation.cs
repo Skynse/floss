@@ -45,7 +45,7 @@ public sealed class FreehandStrokeOperation : IToolOperation
         var localSample = ToLayerSample(layer, firstSample);
         _lastSample = localSample;
         _firstSample = localSample;
-        _brushEngine.BeginStroke(_brush, _eraser, localSample);
+        _brushEngine.BeginStroke(_brush, localSample);
 
         // For mouse/touch we render the initial dab immediately (a click should leave a mark).
         // For pen/eraser we defer — the PointerPressed event often reports incorrect pressure
@@ -141,7 +141,7 @@ public sealed class FreehandStrokeOperation : IToolOperation
 
         layer.ExpandToAccommodate(region.X, region.Y, region.Right, region.Bottom);
         CaptureBeforeTiles(layer, region);
-        var dirty = _brushEngine.RasterizeDab(layer, _brush, _eraser || sourceSample.Source == CanvasInputSource.Eraser, localSample, velocity);
+        var dirty = _brushEngine.RasterizeDab(layer, _brush, localSample, velocity);
         if (dirty.IsEmpty) return;
         RestoreUnselectedPixels(layer, dirty);
 
@@ -169,8 +169,8 @@ public sealed class FreehandStrokeOperation : IToolOperation
         layer.ExpandToAccommodate(region.X, region.Y, region.Right, region.Bottom);
         CaptureBeforeTiles(layer, region);
         var dirty = final
-            ? _brushEngine.RasterizeFinalSegment(layer, _brush, _eraser || sourceSample.Source == CanvasInputSource.Eraser, from, to)
-            : _brushEngine.RasterizeSegment(layer, _brush, _eraser || sourceSample.Source == CanvasInputSource.Eraser, from, to);
+            ? _brushEngine.RasterizeFinalSegment(layer, _brush, from, to)
+            : _brushEngine.RasterizeSegment(layer, _brush, from, to);
         if (dirty.IsEmpty) return;
         RestoreUnselectedPixels(layer, dirty);
 

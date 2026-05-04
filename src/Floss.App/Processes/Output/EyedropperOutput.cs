@@ -7,6 +7,8 @@ public sealed class EyedropperOutput : IOutputProcess
 {
     public bool Antialiasing { get; set; } = false;
 
+    public void Preview(ToolContext ctx, IProcessedInput input) { }
+
     public void Execute(ToolContext ctx, IProcessedInput input)
     {
         if (input is not ClickInput click) return;

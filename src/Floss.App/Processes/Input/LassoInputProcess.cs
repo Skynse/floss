@@ -65,6 +65,20 @@ public sealed class LassoInputProcess : IInputProcess
         return null;
     }
 
+    public IProcessedInput? GetPreview()
+    {
+        if (_active && _smoothed.Count > 0)
+        {
+            return new PolygonInput
+            {
+                RawPoints = new List<CanvasInputSample>(_raw),
+                SmoothedPoints = new List<CanvasInputSample>(_smoothed),
+                IsClosed = true
+            };
+        }
+        return null;
+    }
+
     public void RenderOverlay(DrawingContext dc, double zoom)
     {
         if (_smoothed.Count < 2) return;

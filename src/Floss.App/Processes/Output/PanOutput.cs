@@ -7,6 +7,8 @@ public sealed class PanOutput : IOutputProcess
 {
     public bool Antialiasing { get; set; } = false;
 
+    public void Preview(ToolContext ctx, IProcessedInput input) { }
+
     public void Execute(ToolContext ctx, IProcessedInput input)
     {
         // Pan is handled by the viewport directly via gesture system.

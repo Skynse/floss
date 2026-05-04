@@ -12,6 +12,8 @@ public sealed class SelectionAreaOutput : IOutputProcess
     public bool Antialiasing { get; set; } = false;
     public SelectOp Operation { get; set; } = SelectOp.Replace;
 
+    public void Preview(ToolContext ctx, IProcessedInput input) { }
+
     public void Execute(ToolContext ctx, IProcessedInput input)
     {
         switch (input)

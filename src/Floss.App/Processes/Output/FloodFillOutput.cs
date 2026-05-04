@@ -12,6 +12,8 @@ public sealed class FloodFillOutput : IOutputProcess
     public bool Antialiasing { get; set; } = false;
     public double Tolerance { get; set; } = 0.05;
 
+    public void Preview(ToolContext ctx, IProcessedInput input) { }
+
     public void Execute(ToolContext ctx, IProcessedInput input)
     {
         if (input is not ClickInput click) return;

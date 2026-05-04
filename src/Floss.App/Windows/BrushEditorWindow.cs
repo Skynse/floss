@@ -222,6 +222,7 @@ public sealed class BrushEditorWindow : Window
         {
             DynSliderRow("Opacity", _opacitySlider, "%", () => OpenOpacityDynamics()),
             DynSliderRow("Flow",    _flowSlider,    "%", () => OpenFlowDynamics()),
+            BuildBlendModeRow(),
             SectionHeader("COLOR MIXING"),
             PlainSliderRow("Mix",  _colorMixSlider,  "%"),
             PlainSliderRow("Load", _colorLoadSlider, "%"),
@@ -231,7 +232,7 @@ public sealed class BrushEditorWindow : Window
     private Control BuildAntiAliasingContent() => new StackPanel
     {
         Spacing = 0,
-        Children = { DynSliderRow("Hardness", _hardnessSlider, "%", () => OpenHardnessDynamics()) }
+        Children = { BuildAntialiasingLevelRow() }
     };
 
     private Control BuildBrushTipContent()
@@ -941,6 +942,8 @@ public sealed class BrushEditorWindow : Window
         _angleSlider.Value = Math.Clamp(preset.Angle, _angleSlider.Minimum, _angleSlider.Maximum);
         _colorMixSlider.Value  = Math.Clamp(preset.ColorMix,  _colorMixSlider.Minimum,  _colorMixSlider.Maximum);
         _colorLoadSlider.Value = Math.Clamp(preset.ColorLoad, _colorLoadSlider.Minimum, _colorLoadSlider.Maximum);
+        if (_blendModeCombo != null) _blendModeCombo.SelectedItem = preset.BlendMode;
+        if (_aaLevelCombo != null) _aaLevelCombo.SelectedIndex = HardnessToLevel(preset.Hardness);
 
         _stampLayers.Clear();
         if (preset.Tip is CompoundBrushTip compound)
@@ -1040,4 +1043,94 @@ public sealed class BrushEditorWindow : Window
             if (e.Property == Slider.ValueProperty) onChange(slider.Value);
         };
     }
+
+    // ── Blend mode row ────────────────────────────────────────────────────────
+    private ComboBox? _blendModeCombo;
+
+    private Control BuildBlendModeRow()
+    {
+        _blendModeCombo = new ComboBox
+        {
+            ItemsSource = new[]
+            {
+                SKBlendMode.SrcOver, SKBlendMode.Multiply, SKBlendMode.Screen, SKBlendMode.Overlay,
+                SKBlendMode.Darken, SKBlendMode.Lighten, SKBlendMode.ColorDodge, SKBlendMode.ColorBurn,
+                SKBlendMode.HardLight, SKBlendMode.SoftLight, SKBlendMode.Difference, SKBlendMode.Exclusion,
+                SKBlendMode.DstOut, SKBlendMode.Clear
+            },
+            SelectedItem = _preset.BlendMode,
+            FontSize = 11,
+            MinHeight = 28,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        _blendModeCombo.SelectionChanged += (_, _) =>
+        {
+            if (_blendModeCombo.SelectedItem is SKBlendMode mode)
+                Commit(p => p with { BlendMode = mode });
+        };
+        var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 2, 0, 2) };
+        var lbl = new TextBlock
+        {
+            Text = "Blend",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            Width = 72,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        DockPanel.SetDock(lbl, Dock.Left);
+        row.Children.Add(lbl);
+        row.Children.Add(_blendModeCombo);
+        return row;
+    }
+
+    // ── Antialiasing level row ────────────────────────────────────────────────
+    private ComboBox? _aaLevelCombo;
+
+    private Control BuildAntialiasingLevelRow()
+    {
+        var levels = new[] { "Pixel Art", "Low", "Medium", "High" };
+        _aaLevelCombo = new ComboBox
+        {
+            ItemsSource = levels,
+            SelectedIndex = HardnessToLevel(_preset.Hardness),
+            FontSize = 11,
+            MinHeight = 28,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        _aaLevelCombo.SelectionChanged += (_, _) =>
+        {
+            var level = _aaLevelCombo.SelectedIndex;
+            var hardness = LevelToHardness(level);
+            Commit(p => p with { Hardness = hardness });
+        };
+        var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 2, 0, 2) };
+        var lbl = new TextBlock
+        {
+            Text = "Quality",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            Width = 72,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        DockPanel.SetDock(lbl, Dock.Left);
+        row.Children.Add(lbl);
+        row.Children.Add(_aaLevelCombo);
+        return row;
+    }
+
+    private static int HardnessToLevel(double hardness) => hardness switch
+    {
+        >= 0.95 => 0, // Pixel Art
+        >= 0.6  => 1, // Low
+        >= 0.3  => 2, // Medium
+        _       => 3, // High
+    };
+
+    private static double LevelToHardness(int level) => level switch
+    {
+        0 => 1.0,   // Pixel Art
+        1 => 0.65,  // Low
+        2 => 0.35,  // Medium
+        _ => 0.05,  // High
+    };
 }

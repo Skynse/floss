@@ -15,10 +15,10 @@ public sealed class BrushEngine : IDisposable
     private readonly List<SKColor> _stampColors = new(InitialStampCapacity);
     private ActiveStroke? _activeStroke;
 
-    public void BeginStroke(BrushPreset brush, bool eraser, CanvasInputSample sample)
+    public void BeginStroke(BrushPreset brush, CanvasInputSample sample)
     {
         EndStroke();
-        _activeStroke = new ActiveStroke(brush, eraser, sample);
+        _activeStroke = new ActiveStroke(brush, sample);
     }
 
     public void EndStroke()
@@ -30,24 +30,24 @@ public sealed class BrushEngine : IDisposable
     }
 
     public PixelRegion RasterizeSegment(
-        DrawingLayer layer, BrushPreset brush, bool eraser,
+        DrawingLayer layer, BrushPreset brush,
         CanvasInputSample from, CanvasInputSample to)
     {
-        return RasterizeSegmentInternal(layer, brush, eraser, from, to, ensureEndpoint: false);
+        return RasterizeSegmentInternal(layer, brush, from, to, ensureEndpoint: false);
     }
 
     public PixelRegion RasterizeFinalSegment(
-        DrawingLayer layer, BrushPreset brush, bool eraser,
+        DrawingLayer layer, BrushPreset brush,
         CanvasInputSample from, CanvasInputSample to)
     {
-        return RasterizeSegmentInternal(layer, brush, eraser, from, to, ensureEndpoint: true);
+        return RasterizeSegmentInternal(layer, brush, from, to, ensureEndpoint: true);
     }
 
     private PixelRegion RasterizeSegmentInternal(
-        DrawingLayer layer, BrushPreset brush, bool eraser,
+        DrawingLayer layer, BrushPreset brush,
         CanvasInputSample from, CanvasInputSample to, bool ensureEndpoint)
     {
-        EnsureStroke(brush, eraser, from);
+        EnsureStroke(brush, from);
         var stroke = _activeStroke!;
         _stamps.Clear();
         _stampColors.Clear();
@@ -55,7 +55,7 @@ public sealed class BrushEngine : IDisposable
         var dirty = BuildStamps(stroke, brush, from, to, ensureEndpoint);
         if (dirty.IsEmpty || _stamps.Count == 0) return PixelRegion.Empty;
 
-        if (!eraser && brush.ColorMix > 0.001)
+        if (brush.BlendMode != SKBlendMode.DstOut && brush.ColorMix > 0.001)
             PrepareStampColors(layer, brush, stroke);
 
         var clippedDirty = dirty;
@@ -68,11 +68,11 @@ public sealed class BrushEngine : IDisposable
     public PixelRegion RasterizeDab(
         DrawingLayer layer,
         BrushPreset brush,
-        bool eraser,
+       
         CanvasInputSample sample,
         double velocity)
     {
-        EnsureStroke(brush, eraser, sample);
+        EnsureStroke(brush, sample);
         var stroke = _activeStroke!;
         _stamps.Clear();
         _stampColors.Clear();
@@ -82,7 +82,7 @@ public sealed class BrushEngine : IDisposable
         var stamp = CreateStamp(stroke, brush, sp);
         _stamps.Add(stamp);
 
-        if (!eraser && brush.ColorMix > 0.001)
+        if (brush.BlendMode != SKBlendMode.DstOut && brush.ColorMix > 0.001)
             PrepareStampColors(layer, brush, stroke);
 
         var dirty = StampBounds(stamp);
@@ -115,10 +115,10 @@ public sealed class BrushEngine : IDisposable
 
     public void Dispose() => EndStroke();
 
-    private void EnsureStroke(BrushPreset brush, bool eraser, CanvasInputSample sample)
+    private void EnsureStroke(BrushPreset brush, CanvasInputSample sample)
     {
-        if (_activeStroke == null || !_activeStroke.Matches(brush, eraser))
-            BeginStroke(brush, eraser, sample);
+        if (_activeStroke == null || !_activeStroke.Matches(brush))
+            BeginStroke(brush, sample);
     }
 
     private PixelRegion BuildStamps(ActiveStroke stroke, BrushPreset brush, CanvasInputSample from, CanvasInputSample to, bool ensureEndpoint = false)
@@ -375,15 +375,15 @@ public sealed class BrushEngine : IDisposable
     private sealed class ActiveStroke : IDisposable
     {
         private readonly BrushPreset _brush;
-        private readonly bool _eraser;
+        
         private readonly SKColor _baseColor;
         private SKColor _currentColor;
         private SKColorFilter? _mixedFilter;
 
-        public ActiveStroke(BrushPreset brush, bool eraser, CanvasInputSample sample)
+        public ActiveStroke(BrushPreset brush, CanvasInputSample sample)
         {
             _brush = brush;
-            _eraser = eraser;
+            
             StrokeRandom = Hash01((int)(sample.X * 997), (int)(sample.Y * 991));
             State = new StrokeState(
                 (float)sample.X, (float)sample.Y,
@@ -412,9 +412,9 @@ public sealed class BrushEngine : IDisposable
             Paint = new SKPaint
             {
                 IsAntialias = true,
-                BlendMode = eraser ? SKBlendMode.DstOut : SKBlendMode.SrcOver,
-                Color = eraser ? SKColors.White : _baseColor,
-                ColorFilter = eraser ? null : SKColorFilter.CreateBlendMode(_baseColor, SKBlendMode.SrcIn)
+                BlendMode = brush.BlendMode,
+                Color = brush.BlendMode == SKBlendMode.DstOut ? SKColors.White : _baseColor,
+                ColorFilter = brush.BlendMode == SKBlendMode.DstOut ? null : SKColorFilter.CreateBlendMode(_baseColor, SKBlendMode.SrcIn)
             };
         }
 
@@ -428,8 +428,8 @@ public sealed class BrushEngine : IDisposable
         public float CarriedR, CarriedG, CarriedB;
         public SKColor BaseColor => _baseColor;
 
-        public bool Matches(BrushPreset brush, bool eraser)
-            => ReferenceEquals(_brush, brush) && _eraser == eraser;
+        public bool Matches(BrushPreset brush)
+            => ReferenceEquals(_brush, brush);
 
         public void UpdateColor(SKColor color)
         {
@@ -443,7 +443,7 @@ public sealed class BrushEngine : IDisposable
         public void UpdateOpacity(float opacity)
         {
             var alpha = (byte)Math.Clamp((int)(opacity * 255), 0, 255);
-            Paint.Color = _eraser
+            Paint.Color = _brush.BlendMode == SKBlendMode.DstOut
                 ? new SKColor(255, 255, 255, alpha)
                 : new SKColor(_currentColor.Red, _currentColor.Green, _currentColor.Blue, alpha);
         }

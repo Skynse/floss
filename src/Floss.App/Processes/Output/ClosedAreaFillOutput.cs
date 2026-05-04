@@ -12,6 +12,8 @@ public sealed class ClosedAreaFillOutput : IOutputProcess
 {
     public bool Antialiasing { get; set; } = true;
 
+    public void Preview(ToolContext ctx, IProcessedInput input) { }
+
     public void Execute(ToolContext ctx, IProcessedInput input)
     {
         if (input is not PolygonInput poly) return;
@@ -41,7 +43,6 @@ public sealed class ClosedAreaFillOutput : IOutputProcess
 
         if (Antialiasing)
         {
-            // Antialiased fill: rasterize to a temporary bitmap with SKCanvas, then copy
             int bw = x2 - x1 + 1;
             int bh = y2 - y1 + 1;
             if (bw > 0 && bh > 0)
@@ -57,12 +58,10 @@ public sealed class ClosedAreaFillOutput : IOutputProcess
                     Style = SKPaintStyle.Fill
                 };
 
-                // Offset path to bitmap-local coordinates
                 using var localPath = new SKPath(skPath);
                 localPath.Offset(-x1, -y1);
                 canvas.DrawPath(localPath, paint);
 
-                // Copy antialiased pixels back to layer
                 for (int docY = y1; docY <= y2; docY++)
                 {
                     for (int docX = x1; docX <= x2; docX++)
@@ -88,7 +87,6 @@ public sealed class ClosedAreaFillOutput : IOutputProcess
                         }
                         else
                         {
-                            // Alpha blend
                             layer.Pixels.GetPixel(lx, ly, out byte b, out byte g, out byte r, out byte a);
                             float srcA = skColor.Alpha / 255f;
                             float dstA = a / 255f;
@@ -114,7 +112,6 @@ public sealed class ClosedAreaFillOutput : IOutputProcess
         }
         else
         {
-            // Pixel-exact fill (original behavior)
             using var region = new SKRegion();
             region.SetPath(skPath, new SKRegion(new SKRectI(0, 0, ctx.Document.Width, ctx.Document.Height)));
 

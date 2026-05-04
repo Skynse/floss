@@ -8,6 +8,8 @@ public sealed class ZoomOutput : IOutputProcess
     public bool Antialiasing { get; set; } = false;
     public double Sensitivity { get; set; } = 0.01;
 
+    public void Preview(ToolContext ctx, IProcessedInput input) { }
+
     public void Execute(ToolContext ctx, IProcessedInput input)
     {
         // Zoom is handled by the viewport directly via gesture system.

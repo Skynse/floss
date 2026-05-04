@@ -59,6 +59,20 @@ public sealed class PolylineInputProcess : IInputProcess
         return null;
     }
 
+    public IProcessedInput? GetPreview()
+    {
+        if (_active && _points.Count > 0)
+        {
+            return new PolygonInput
+            {
+                RawPoints = new List<CanvasInputSample>(_points),
+                SmoothedPoints = new List<CanvasInputSample>(_points),
+                IsClosed = ClosePath
+            };
+        }
+        return null;
+    }
+
     public void RenderOverlay(DrawingContext dc, double zoom)
     {
         if (_points.Count == 0) return;

@@ -70,7 +70,7 @@ public sealed class ToolController
     public void SaveEnginePreset()
     {
         var engine = ActiveEngine;
-        if (engine is not (ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge))
+        if (engine is not (ToolPresetEngine.Brush or ToolPresetEngine.Eraser))
             return;
         if (!_enginePresets.ContainsKey(engine))
             _enginePresets[engine] = new ToolPreset { Engine = engine };
@@ -81,7 +81,6 @@ public sealed class ToolController
     {
         BrushTool bt when bt.IsEraser => ToolPresetEngine.Eraser,
         BrushTool => ToolPresetEngine.Brush,
-        SmudgeTool => ToolPresetEngine.Smudge,
         _ => ToolPresetEngine.Brush
     };
 

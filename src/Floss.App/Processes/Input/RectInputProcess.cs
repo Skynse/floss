@@ -48,6 +48,15 @@ public sealed class RectInputProcess : IInputProcess
         return null;
     }
 
+    public IProcessedInput? GetPreview()
+    {
+        if (_active)
+        {
+            return new RectInput { Start = _start, End = _current };
+        }
+        return null;
+    }
+
     public void RenderOverlay(DrawingContext dc, double zoom)
     {
         if (!_active) return;
