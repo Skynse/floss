@@ -393,6 +393,13 @@ public partial class MainWindow
             _canvas.PaintInputSuspended = false;
             Cursor = Cursor.Default;
             e.Handled = true;
+
+            // Restore alternate tool if it was active before the gesture
+            if (_altToolBeforeGesture != null)
+            {
+                _canvas.SetAlternateTool(_altToolBeforeGesture);
+                _altToolBeforeGesture = null;
+            }
         }
 
         // Commit pending modifier-only key for preset alt invocation recording
@@ -432,12 +439,13 @@ public partial class MainWindow
         _gestureModifiers = binding?.Modifiers ?? KeyModifiers.None;
         _canvas.PaintInputSuspended = true;
         // Clear alternate tool during gestures so brush-size/zoom don't color-pick
+        _altToolBeforeGesture = _canvas.AlternateTool;
         _canvas.SetAlternateTool(null);
         Cursor = gesture switch
         {
-            GestureMode.Pan => new Cursor(StandardCursorType.SizeAll),
-            GestureMode.BrushSize => new Cursor(StandardCursorType.None),
-            _ => new Cursor(StandardCursorType.Arrow)
+            GestureMode.Pan => CursorPan,
+            GestureMode.BrushSize => CursorNone,
+            _ => CursorArrow
         };
     }
 

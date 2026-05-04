@@ -21,6 +21,11 @@ public interface ITool
     // Called when the tool becomes active or inactive
     void Activate(ToolContext ctx) { }
     void Deactivate(ToolContext ctx) { }
+    // Commit any pending operation (e.g. on Enter key or double-click).
+    // Default no-op — only tools with modal operations need to implement this.
+    void Commit(ToolContext ctx) { }
+    // Whether a double-click should commit the current operation.
+    bool CanCommitFromClick => false;
 }
 
 // Optional rendering hook for in-progress tool operations.

@@ -37,6 +37,10 @@ public sealed class DrawingCanvas : Control
     private bool _isCursorPreviewLocked;
     private bool _forceBrushOutlineCursor;
 
+    private static readonly Cursor CursorNo = new(StandardCursorType.No);
+    private static readonly Cursor CursorNone = new(StandardCursorType.None);
+    private static readonly Cursor CursorDefault = new(StandardCursorType.Arrow);
+
     private static readonly IBrush CursorOuterBrush = new SolidColorBrush(Color.FromArgb(160, 0, 0, 0));
     private static readonly IBrush CursorInnerBrush = new SolidColorBrush(Colors.White);
 
@@ -137,6 +141,7 @@ public sealed class DrawingCanvas : Control
         InvalidateVisual();
     }
 
+    public ITool? AlternateTool => _toolController.AlternateTool;
     public void SetAlternateTool(ITool? tool) => _toolController.AlternateTool = tool;
 
     public void SetBrush(BrushPreset preset)
@@ -245,9 +250,7 @@ public sealed class DrawingCanvas : Control
 
     public void CommitActiveTool()
     {
-        if (_toolController.ActiveTool is SelectTool st) st.CommitPolyline(_ctx);
-        else if (_toolController.ActiveTool is PolylineTool pt) pt.Commit(_ctx);
-        else if (_toolController.ActiveTool is TransformTool tt) tt.Commit(_ctx);
+        _toolController.ActiveTool.Commit(_ctx);
         if (_toolController.ActiveTool is TransformTool)
             EndSelectionTransform();
         InvalidateVisual();
@@ -411,9 +414,13 @@ public sealed class DrawingCanvas : Control
         InvalidateVisual();
     }
 
-    // In-app clipboard buffer (avoids platform clipboard API differences)
-    private static byte[]? _clipboardPixels;
-    private static int _clipboardW, _clipboardH;
+    // Pixel clipboard (for Copy/Paste from canvas) — instance-scoped so
+    // multi-window apps don't share state and memory can be reclaimed.
+    private byte[]? _clipboardPixels;
+    private int _clipboardW, _clipboardH;
+
+    // Layer clipboard (for layer panel Copy/Paste)
+    private DrawingLayer? _layerClipboard;
 
     public void CopyToClipboard()
     {
@@ -463,8 +470,27 @@ public sealed class DrawingCanvas : Control
     public void SetActiveLayerBlendMode(string blendMode) => _document.SetActiveLayerBlendMode(blendMode);
     public void SetActiveLayerName(string name) => _document.SetActiveLayerName(name);
 
+    public void CopyLayer(int index)
+    {
+        if (index < 0 || index >= _document.Layers.Count) return;
+        _layerClipboard = DrawingDocument.CloneLayerTree(_document.Layers[index]);
+    }
+
+    public bool CanPasteLayer => _layerClipboard != null;
+
+    public void PasteLayer(int targetIndex)
+    {
+        if (_layerClipboard == null) return;
+        if (targetIndex < 0 || targetIndex >= _document.Layers.Count) return;
+        _document.PasteLayer(_layerClipboard, targetIndex);
+    }
+
     private bool IsPaintBlockedByLock =>
-        _toolController.ActiveTool is BrushTool && !_document.CanPaintActiveLayer && _toolController.AlternateTool == null;
+        _toolController.AlternateTool == null
+        && IsPaintTool(_toolController.ActiveTool)
+        && !_document.CanPaintActiveLayer;
+
+    private static bool IsPaintTool(ITool? tool) => tool is Tools.BrushTool or Tools.SmudgeTool or Tools.FillTool or Tools.GradientTool or Tools.ShapeTool or Tools.PolylineTool or Tools.LassoFillTool;
 
     public override void Render(DrawingContext context)
     {
@@ -472,7 +498,7 @@ public sealed class DrawingCanvas : Control
 
         // Sync cursor to current state so layer lock changes take effect immediately.
         if (_isPointerOver && !(_toolController.ActiveTool is TransformTool { HasPendingOperation: true }))
-            Cursor = new Cursor(IsPaintBlockedByLock ? StandardCursorType.No : StandardCursorType.None);
+            Cursor = IsPaintBlockedByLock ? CursorNo : CursorNone;
 
         _compositor.Composite(_document.Layers, _document.Width, _document.Height, _document.PaperColor, _document.PaperVisible);
         var target = new Rect(Bounds.Size);
@@ -533,8 +559,8 @@ public sealed class DrawingCanvas : Control
         Focus();
         var sample = MakeSample(point, CanvasInputPhase.Down);
 
-        // Auto-switch to eraser when pen eraser tip is used.
-        if (sample.Source == CanvasInputSource.Eraser && _toolController.ActiveTool is BrushTool b && !b.IsEraser)
+        // Auto-switch to eraser when pen eraser tip is used with a brush-family tool.
+        if (sample.Source == CanvasInputSource.Eraser && _toolController.ActiveTool is BrushTool { IsEraser: false })
             SetActiveTool(_eraserTool);
 
         _activePointerId = point.Pointer.Id;
@@ -557,7 +583,7 @@ public sealed class DrawingCanvas : Control
     {
         base.OnPointerEntered(e);
         _isPointerOver = true;
-        Cursor = new Cursor(IsPaintBlockedByLock ? StandardCursorType.No : StandardCursorType.None);
+        Cursor = IsPaintBlockedByLock ? CursorNo : CursorNone;
         _pointerPos = e.GetCurrentPoint(this).Position;
         InvalidateVisual();
     }
@@ -643,12 +669,7 @@ public sealed class DrawingCanvas : Control
     }
 
     private bool CanCommitActiveToolFromClick() =>
-        _toolController.ActiveTool switch
-        {
-            SelectTool selectTool => selectTool.CanCommitFromClick,
-            PolylineTool polylineTool => polylineTool.CanCommitFromClick,
-            _ => false
-        };
+        _toolController.ActiveTool.CanCommitFromClick;
 
     private CanvasInputSample MakeSample(PointerPoint point, CanvasInputPhase phase)
         => CanvasInputSample.FromPointerPoint(

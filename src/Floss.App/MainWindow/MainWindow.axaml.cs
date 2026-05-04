@@ -216,6 +216,12 @@ public partial class MainWindow : Window
     private Point _gestureStartPoint;
     private SettingsWindow? _settingsWindow;
 
+    private bool _suppressBrushSettingsRestored;
+    private static readonly Cursor CursorPan = new(StandardCursorType.SizeAll);
+    private static readonly Cursor CursorArrow = new(StandardCursorType.Arrow);
+    private static readonly Cursor CursorNone = new(StandardCursorType.None);
+    private ITool? _altToolBeforeGesture;
+
     private ScaleTransform _canvasFlip = null!;
     private ScaleTransform _canvasScale = null!;
     private RotateTransform _canvasRotate = null!;
@@ -892,6 +898,7 @@ public partial class MainWindow : Window
         _canvas.ColorSampled += (_, c) => SetColor(c, syncPicker: true, switchToBrush: false);
         _canvas.BrushSettingsRestored += brush =>
         {
+            if (_suppressBrushSettingsRestored) return;
             _syncingBrushUi = true;
             _sizeSlider.Value = Math.Clamp(brush.Size, _sizeSlider.Minimum, _sizeSlider.Maximum);
             _opacitySlider.Value = Math.Clamp(brush.Opacity, _opacitySlider.Minimum, _opacitySlider.Maximum);
@@ -1053,7 +1060,7 @@ public partial class MainWindow : Window
 
         // For brush-based engines, load the referenced brush asset first
         // and overlay the tool-preset scalar values (size, opacity etc.).
-        // ActivateTool below calls SetActiveTool which short-circuits when
+        //
         // Snapshot the *current* brush into the engine preset BEFORE we
         // touch _ctx.Brush via SyncBrushFromContext.  If we don't do this
         // first, SetActiveTool will save the *new* brush to the old engine
@@ -1061,7 +1068,15 @@ public partial class MainWindow : Window
         _canvas.SaveBrushEnginePreset();
 
         var btn = _toolGroupButtons.FirstOrDefault(x => x.Group == group).Button;
-        ActivateTool(ToolForPresetEngine(preset.Engine), btn, preset);
+        _suppressBrushSettingsRestored = true;
+        try
+        {
+            ActivateTool(ToolForPresetEngine(preset.Engine), btn, preset);
+        }
+        finally
+        {
+            _suppressBrushSettingsRestored = false;
+        }
 
         // Now load the brush asset and sync the tool-property panel.
         // This runs after ActivateTool so that SetActiveTool's per-engine

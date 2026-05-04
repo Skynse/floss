@@ -457,11 +457,16 @@ public partial class MainWindow
             return item;
         }
 
+        var pasteItem = Item("_Paste", () => _canvas.PasteLayer(index));
+        pasteItem.IsEnabled = _canvas.CanPasteLayer;
+
         var items = new List<MenuItem>
         {
             Item("_New Layer Above", () => _canvas.AddLayer()),
             Item("New _Folder Above", () => _canvas.AddGroupLayer()),
             Item("_Duplicate", () => _canvas.DuplicateLayer()),
+            Item("_Copy", () => _canvas.CopyLayer(index)),
+            pasteItem,
             Item("_Delete", () => _canvas.DeleteLayer()),
             new() { Header = "-" },
             Item(layer.IsVisible ? "Hide Layer" : "Show Layer", () => _canvas.ToggleLayerVisibility(index)),
@@ -964,11 +969,12 @@ public partial class MainWindow
 
         var layer = layers[index];
         var isActive = index == _canvas.ActiveLayerIndex;
+        var isSelected = _selectedLayerIndices.Contains(index);
         var dimBrush = isActive ? TextDimActive : TextDimDefault;
         var fgBrush = isActive ? TextFgActive : TextFgDefault;
 
-        refs.Row.Background = isActive ? RowBgActive : RowBgDefault;
-        refs.Row.BorderBrush = isActive ? RowBorderActive : RowBorderDefault;
+        refs.Row.Background = isActive ? RowBgActive : isSelected ? RowBgSelected : RowBgDefault;
+        refs.Row.BorderBrush = isActive ? RowBorderActive : isSelected ? RowBorderSelected : RowBorderDefault;
 
         SetLayerIconBtnIcon(refs.VisibilityButton,
             layer.IsVisible ? Icons.Eye : Icons.EyeOff,

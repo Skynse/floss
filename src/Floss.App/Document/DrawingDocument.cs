@@ -300,9 +300,18 @@ public sealed class DrawingDocument
         var source = ActiveLayer;
         if (source == null) return;
         BeginDocumentMutation();
-        var copy = new DrawingLayer(source.Name + " copy", Width, Height);
-        copy.Pixels.CopyFromBgra(source.CapturePixels(), Width, Height);
+        var copy = CloneLayerTree(source, source.Name + " copy");
         InsertLayerNear(copy, source, LayerDropPlacement.Above);
+        ActiveLayerIndex = _layers.IndexOf(copy);
+        NotifyLayersChanged();
+    }
+
+    public void PasteLayer(DrawingLayer clipboard, int targetIndex)
+    {
+        if (targetIndex < 0 || targetIndex >= _layers.Count) return;
+        BeginDocumentMutation();
+        var copy = CloneLayerTree(clipboard);
+        InsertLayerNear(copy, _layers[targetIndex], LayerDropPlacement.Above);
         ActiveLayerIndex = _layers.IndexOf(copy);
         NotifyLayersChanged();
     }
@@ -636,7 +645,7 @@ public sealed class DrawingDocument
         return false;
     }
 
-    private void InsertLayerNear(DrawingLayer layer, DrawingLayer target, LayerDropPlacement placement)
+    internal void InsertLayerNear(DrawingLayer layer, DrawingLayer target, LayerDropPlacement placement)
     {
         DetachLayer(layer);
         var newParent = placement == LayerDropPlacement.Into ? target : target.Parent;
@@ -679,7 +688,7 @@ public sealed class DrawingDocument
         foreach (var child in layer.Children) UpdateIndentTree(child, indent + 1);
     }
 
-    private static DrawingLayer CloneLayerTree(DrawingLayer source, string? nameOverride = null)
+    internal static DrawingLayer CloneLayerTree(DrawingLayer source, string? nameOverride = null)
     {
         var copy = new DrawingLayer(nameOverride ?? source.Name, source.Width, source.Height)
         {

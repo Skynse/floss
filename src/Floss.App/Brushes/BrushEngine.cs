@@ -503,8 +503,10 @@ public sealed class BrushEngine : IDisposable
         {
             if (_brush.Tip is CompoundBrushTip)
                 Mask.Dispose();
-            _mixedFilter?.Dispose();
-            Paint.ColorFilter?.Dispose();
+            // _mixedFilter is assigned to Paint.ColorFilter; Paint.Dispose()
+            // releases the paint and its filter reference. Disposing the
+            // filter separately here would double-dispose the same native
+            // Skia object, which is undefined behavior.
             Paint.Dispose();
         }
 
