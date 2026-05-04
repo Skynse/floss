@@ -33,8 +33,8 @@ public sealed class AngleDynamicsPopupWindow : Window
         _onRandomChanged = onRandomChanged;
 
         Title = "Angle Dynamics";
-        Width = 260;
-        Height = 160;
+        Width = 340;
+        Height = 200;
         CanResize = false;
         Background = new SolidColorBrush(Color.Parse(Bg1));
         ShowInTaskbar = false;
@@ -79,7 +79,7 @@ public sealed class AngleDynamicsPopupWindow : Window
             TextAlignment = TextAlignment.Right
         };
 
-        _randomSlider = new Slider { Minimum = 0, Maximum = 1, Value = currentRandom, Height = 20 };
+        _randomSlider = new Slider { Minimum = 0, Maximum = 1, Value = currentRandom, Height = 26, MinHeight = 22 };
         _randomSlider.PropertyChanged += (_, e) =>
         {
             if (e.Property == Slider.ValueProperty)
@@ -97,13 +97,13 @@ public sealed class AngleDynamicsPopupWindow : Window
 
         Content = new StackPanel
         {
-            Margin = new Thickness(12, 10),
-            Spacing = 6,
+            Margin = new Thickness(16, 14),
+            Spacing = 8,
             Children =
             {
                 sourceLbl,
                 _sourceCombo,
-                new Border { Height = 1, Background = new SolidColorBrush(Color.Parse(Stroke)), Margin = new Thickness(0, 4) },
+                new Border { Height = 1, Background = new SolidColorBrush(Color.Parse(Stroke)), Margin = new Thickness(0, 6) },
                 jitterHeader,
                 _randomSlider
             }

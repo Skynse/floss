@@ -20,6 +20,13 @@ public sealed class TiledPixelBuffer
     public int Width { get; private set; }
     public int Height { get; private set; }
 
+    public void Resize(int width, int height)
+    {
+        Width = Math.Max(1, width);
+        Height = Math.Max(1, height);
+        _tiles.Clear();
+    }
+
     // Automatically grow the buffer when a write lands beyond the current extent.
     // Only extends right/bottom; left/top extension requires offset adjustment
     // which is handled at the layer level.

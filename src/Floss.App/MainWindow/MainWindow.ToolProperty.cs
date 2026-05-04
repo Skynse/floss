@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -46,7 +47,10 @@ public partial class MainWindow
         string Id,
         string Label,
         bool DefaultVisible,
-        Func<Control> BuildControl);
+        Func<Control> BuildControl,
+        Action? RefreshValue = null);
+
+    private string _lastToolPropertyKey = "";
 
     private IReadOnlyList<ToolPropertyDescriptor> CurrentToolProperties()
     {
@@ -133,56 +137,112 @@ public partial class MainWindow
         double min,
         double max,
         string fmt)
-        => new(id, label, visible, () =>
-        {
-            var slider = MkSlider(min, max, Math.Clamp(get(), min, max), label);
-            return LabelSlider(label, slider, fmt, set);
-        });
+    {
+        Slider? slider = null;
+        return new(id, label, visible,
+            () =>
+            {
+                slider = MkSlider(min, max, Math.Clamp(get(), min, max), label);
+                slider.PropertyChanged += (_, e) =>
+                {
+                    if (e.Property == Slider.ValueProperty) set(slider.Value);
+                };
+                return LabelSliderContent(label, slider, fmt);
+            },
+            () =>
+            {
+                if (slider != null)
+                    slider.Value = Math.Clamp(get(), min, max);
+            });
+    }
 
     private static ToolPropertyDescriptor EnumProp<T>(string id, string label, bool visible, Func<T> get, Action<T> set)
         where T : struct, Enum
-        => new(id, label, visible, () =>
-        {
-            var combo = new ComboBox
+    {
+        ComboBox? combo = null;
+        return new(id, label, visible,
+            () =>
             {
-                ItemsSource = Enum.GetValues<T>(),
-                SelectedItem = get(),
-                FontSize = 11,
-                MinHeight = 28,
-                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch
-            };
-            combo.SelectionChanged += (_, _) =>
+                combo = new ComboBox
+                {
+                    ItemsSource = Enum.GetValues<T>(),
+                    SelectedItem = get(),
+                    FontSize = 11,
+                    MinHeight = 28,
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch
+                };
+                combo.SelectionChanged += (_, _) =>
+                {
+                    if (combo.SelectedItem is T value) set(value);
+                };
+                return LabeledControl(label, combo);
+            },
+            () =>
             {
-                if (combo.SelectedItem is T value) set(value);
-            };
-            return LabeledControl(label, combo);
-        });
+                if (combo != null)
+                    combo.SelectedItem = get();
+            });
+    }
 
     private static ToolPropertyDescriptor BoolProp(string id, string label, bool visible, Func<bool> get, Action<bool> set)
-        => new(id, label, visible, () =>
-        {
-            var check = new CheckBox
-            {
-                IsChecked = get(),
-                Content = label,
-                FontSize = 11,
-                Foreground = new SolidColorBrush(Color.Parse(TextSecondary))
-            };
-            check.PropertyChanged += (_, e) =>
-            {
-                if (e.Property == ToggleButton.IsCheckedProperty)
-                    set(check.IsChecked == true);
-            };
-            return check;
-        });
-
-    private static Control LabelSlider(string label, Slider slider, string fmt, Action<double> onChange)
     {
-        var row = LabelSlider(label, slider, fmt);
+        CheckBox? check = null;
+        return new(id, label, visible,
+            () =>
+            {
+                check = new CheckBox
+                {
+                    IsChecked = get(),
+                    Content = label,
+                    FontSize = 11,
+                    Foreground = new SolidColorBrush(Color.Parse(TextSecondary))
+                };
+                check.PropertyChanged += (_, e) =>
+                {
+                    if (e.Property == ToggleButton.IsCheckedProperty)
+                        set(check.IsChecked == true);
+                };
+                return check;
+            },
+            () =>
+            {
+                if (check != null)
+                    check.IsChecked = get();
+            });
+    }
+
+    private static Control LabelSliderContent(string label, Slider slider, string fmt)
+    {
+        var valueLabel = new TextBlock
+        {
+            FontSize = 10,
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Width = 36,
+            TextAlignment = TextAlignment.Right,
+            FontFamily = new FontFamily("Consolas, Courier New, monospace")
+        };
         slider.PropertyChanged += (_, e) =>
         {
-            if (e.Property == Slider.ValueProperty) onChange(slider.Value);
+            if (e.Property == Slider.ValueProperty)
+                valueLabel.Text = FormatSliderValue(slider.Value, fmt);
         };
+        valueLabel.Text = FormatSliderValue(slider.Value, fmt);
+
+        var lbl = new TextBlock
+        {
+            Text = label,
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            Width = 72,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+        };
+        var row = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(lbl, Dock.Left);
+        DockPanel.SetDock(valueLabel, Dock.Right);
+        row.Children.Add(lbl);
+        row.Children.Add(valueLabel);
+        row.Children.Add(slider);
         return row;
     }
 
@@ -203,17 +263,42 @@ public partial class MainWindow
         return row;
     }
 
+    private bool _syncingToolPropertyPanel;
+
     private void RefreshToolProperties()
     {
         if (_toolPropertyPanel == null || _toolPropertyTitle == null) return;
 
         _toolPropertyTitle.Text = ToolDisplayName(_canvas.ActiveTool);
-        _toolPropertyPanel.Children.Clear();
 
-        foreach (var prop in CurrentToolProperties())
+        var props = CurrentToolProperties().Where(p => IsToolPropertyVisible(p)).ToList();
+
+        // Build a key from current property IDs to detect structural changes
+        var propKey = string.Join("|", props.Select(p => p.Id));
+        bool needsRebuild = propKey != _lastToolPropertyKey;
+        _lastToolPropertyKey = propKey;
+
+        if (needsRebuild)
         {
-            if (!IsToolPropertyVisible(prop)) continue;
-            _toolPropertyPanel.Children.Add(BuildDockerPropertyRow(prop));
+            _toolPropertyPanel.Children.Clear();
+            foreach (var prop in props)
+            {
+                var ctrl = BuildDockerPropertyRow(prop);
+                _toolPropertyPanel.Children.Add(ctrl);
+            }
+        }
+        else
+        {
+            _syncingToolPropertyPanel = true;
+            try
+            {
+                foreach (var prop in props)
+                    prop.RefreshValue?.Invoke();
+            }
+            finally
+            {
+                _syncingToolPropertyPanel = false;
+            }
         }
 
         if (_toolPropertyPanel.Children.Count == 0)

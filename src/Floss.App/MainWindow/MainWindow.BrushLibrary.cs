@@ -280,47 +280,161 @@ private Button BuildSimplePresetRow(ToolGroup group, ToolPreset preset, bool isA
 
 // ── Preset context menu ─────────────────────────────────────────────────
 
-private ContextMenu BuildPresetContextMenu(ToolGroup group, ToolPreset preset)
-{
-    var menu = new ContextMenu();
-
-    var propertiesItem = new MenuItem { Header = "Tool Properties…" };
-    propertiesItem.Click += (_, _) => ShowPresetPropertiesDialog(group, preset);
-
-    var renameItem = new MenuItem { Header = "Rename" };
-    renameItem.Click += async (_, _) => await RenamePresetPrompt(group, preset);
-
-    var setAltInvocationItem = new MenuItem
+    private ContextMenu BuildPresetContextMenu(ToolGroup group, ToolPreset preset)
     {
-        Header = preset.AlternateInvocation.IsEmpty
-            ? "Set Alt Invocation"
-            : $"Alt Invocation:  {preset.AlternateInvocation.Display()}"
-    };
-    setAltInvocationItem.Click += (_, _) =>
-    {
-        if (_recordingPresetAltInvocation == preset)
+        var menu = new ContextMenu();
+
+        var propertiesItem = new MenuItem { Header = "Tool Properties…" };
+        propertiesItem.Click += (_, _) => ShowPresetPropertiesDialog(group, preset);
+
+        var renameItem = new MenuItem { Header = "Rename" };
+        renameItem.Click += async (_, _) => await RenamePresetPrompt(group, preset);
+
+        var setAltInvocationItem = new MenuItem
         {
-            CancelPresetAltInvocationRecording();
-            return;
+            Header = preset.AlternateInvocation.IsEmpty
+                ? "Set Alt Invocation"
+                : $"Alt Invocation:  {preset.AlternateInvocation.Display()}"
+        };
+        setAltInvocationItem.Click += (_, _) =>
+        {
+            if (_recordingPresetAltInvocation == preset)
+            {
+                CancelPresetAltInvocationRecording();
+                return;
+            }
+            StartPresetAltInvocationRecording(group, preset);
+        };
+
+        var duplicateItem = new MenuItem { Header = "Duplicate" };
+        duplicateItem.Click += (_, _) => DuplicatePreset(group, preset);
+
+        var deleteItem = new MenuItem { Header = "Delete" };
+        deleteItem.Click += (_, _) => DeletePreset(group, preset);
+
+        menu.Items.Add(propertiesItem);
+        menu.Items.Add(renameItem);
+        menu.Items.Add(setAltInvocationItem);
+        menu.Items.Add(duplicateItem);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(deleteItem);
+
+        if (preset.BrushId != null)
+        {
+            menu.Items.Add(new Separator());
+            var restoreItem = new MenuItem { Header = "Restore Default State" };
+            restoreItem.Click += (_, _) => RestorePresetDefault(group, preset);
+            menu.Items.Add(restoreItem);
+            var saveDefaultItem = new MenuItem { Header = "Set Current as Default" };
+            saveDefaultItem.Click += (_, _) => SavePresetAsDefault(group, preset);
+            menu.Items.Add(saveDefaultItem);
         }
-        StartPresetAltInvocationRecording(group, preset);
-    };
 
-    var duplicateItem = new MenuItem { Header = "Duplicate" };
-    duplicateItem.Click += (_, _) => DuplicatePreset(group, preset);
+        return menu;
+    }
 
-    var deleteItem = new MenuItem { Header = "Delete" };
-    deleteItem.Click += (_, _) => DeletePreset(group, preset);
+    private void RestorePresetDefault(ToolGroup group, ToolPreset preset)
+    {
+        if (preset.BrushId == null) return;
 
-    menu.Items.Add(propertiesItem);
-    menu.Items.Add(renameItem);
-    menu.Items.Add(setAltInvocationItem);
-    menu.Items.Add(duplicateItem);
-    menu.Items.Add(new Separator());
-    menu.Items.Add(deleteItem);
+        preset.BrushSize = null;
+        preset.BrushOpacity = null;
+        preset.BrushFlow = null;
+        preset.BrushHardness = null;
+        preset.BrushSpacing = null;
+        preset.BrushSmoothing = null;
+        preset.BrushGrain = null;
+        preset.BrushDynamicsJson = null;
+        App.ToolGroups.Save();
 
-    return menu;
-}
+        if (_activeToolGroup == group && group.ActivePreset == preset)
+            SyncActivePresetToCanvas();
+
+        RefreshGroupPresets();
+        _footerStatusText.Text = $"Restored {preset.Name} to defaults";
+    }
+
+    private void SavePresetAsDefault(ToolGroup group, ToolPreset preset)
+    {
+        if (preset.BrushId == null) return;
+
+        // Ensure this preset is active so _activeBrushAsset points to the right asset
+        if (!(_activeToolGroup == group && group.ActivePreset == preset))
+        {
+            ActivatePreset(group, preset);
+        }
+
+        if (_activeBrushAsset != null)
+        {
+            _activeBrushAsset.WithPreset(CurrentBrushFromUi());
+            _brushLibrary.Save(_activeBrushAsset);
+            _footerStatusText.Text = $"Saved {preset.Name} as new default";
+        }
+
+        preset.BrushSize = null;
+        preset.BrushOpacity = null;
+        preset.BrushFlow = null;
+        preset.BrushHardness = null;
+        preset.BrushSpacing = null;
+        preset.BrushSmoothing = null;
+        preset.BrushGrain = null;
+        preset.BrushDynamicsJson = null;
+        App.ToolGroups.Save();
+
+        SyncActivePresetToCanvas();
+        RefreshGroupPresets();
+    }
+
+    private void SyncActivePresetToCanvas()
+    {
+        var active = _activeToolGroup?.ActivePreset;
+        if (active == null || active.Engine is not (ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge)) return;
+
+        BrushPreset? basePreset = null;
+        if (active.BrushId != null)
+        {
+            var asset = _brushAssets.FirstOrDefault(a => a.Id == active.BrushId);
+            if (asset != null) basePreset = asset.ToPreset();
+        }
+
+        if (basePreset != null)
+        {
+            var overridden = active.ApplyToBrushPreset(basePreset);
+            _activePreset = overridden;
+            _canvas.SyncBrushFromContext(overridden);
+            _activeBrushLabel.Text = basePreset.Name;
+            _strokePreview.Brush = overridden;
+            _syncingBrushUi = true;
+            _sizeSlider.Value = Math.Clamp(overridden.Size, _sizeSlider.Minimum, _sizeSlider.Maximum);
+            _opacitySlider.Value = Math.Clamp(overridden.Opacity, _opacitySlider.Minimum, _opacitySlider.Maximum);
+            _flowSlider.Value = Math.Clamp(overridden.Flow, _flowSlider.Minimum, _flowSlider.Maximum);
+            _hardnessSlider.Value = Math.Clamp(overridden.Hardness, _hardnessSlider.Minimum, _hardnessSlider.Maximum);
+            _spacingSlider.Value = Math.Clamp(overridden.Spacing, _spacingSlider.Minimum, _spacingSlider.Maximum);
+            _smoothingSlider.Value = Math.Clamp(overridden.Smoothing, _smoothingSlider.Minimum, _smoothingSlider.Maximum);
+            _grainSlider.Value = Math.Clamp(overridden.Grain, _grainSlider.Minimum, _grainSlider.Maximum);
+            _syncingBrushUi = false;
+        }
+        else
+        {
+            var overridden = active.ApplyToBrushPreset(_canvas.Brush);
+            _activePreset = overridden;
+            _canvas.SyncBrushFromContext(overridden);
+            _activeBrushLabel.Text = active.Name;
+            _strokePreview.Brush = overridden;
+        }
+
+        var targetKind = active.Engine == ToolPresetEngine.Eraser ? BrushKind.Eraser : BrushKind.Ink;
+        var current = _activePreset ?? _canvas.Brush;
+        if (current.Kind != targetKind)
+        {
+            var fixedBrush = current with { Kind = targetKind };
+            _canvas.SyncBrushFromContext(fixedBrush);
+            _activePreset = fixedBrush;
+            _strokePreview.Brush = fixedBrush;
+        }
+
+        UpdateStatus();
+    }
 
 private void ShowPresetPropertiesDialog(ToolGroup group, ToolPreset preset)
 {
@@ -457,30 +571,31 @@ private async System.Threading.Tasks.Task RenamePresetPrompt(ToolGroup group, To
         ActivatePreset(group, preset);
 }
 
-private void DuplicatePreset(ToolGroup group, ToolPreset preset)
-{
-    var copy = new ToolPreset
+    private void DuplicatePreset(ToolGroup group, ToolPreset preset)
     {
-        Name = preset.Name + " Copy",
-        Engine = preset.Engine,
-        OutputProcess = preset.OutputProcess,
-        BrushId = preset.BrushId,
-        BrushSize = preset.BrushSize,
-        BrushOpacity = preset.BrushOpacity,
-        BrushFlow = preset.BrushFlow,
-        BrushHardness = preset.BrushHardness,
-        BrushSpacing = preset.BrushSpacing,
-        BrushSmoothing = preset.BrushSmoothing,
-        BrushGrain = preset.BrushGrain,
-        Tolerance = preset.Tolerance,
-        SelectMode = preset.SelectMode,
-        GradientType = preset.GradientType,
-        ShapeKind = preset.ShapeKind,
-        ShapeDrawMode = preset.ShapeDrawMode,
-        ShapeStrokeWidth = preset.ShapeStrokeWidth,
-        PolylineClosePath = preset.PolylineClosePath,
-        PolylineStrokeWidth = preset.PolylineStrokeWidth
-    };
+        var copy = new ToolPreset
+        {
+            Name = preset.Name + " Copy",
+            Engine = preset.Engine,
+            OutputProcess = preset.OutputProcess,
+            BrushId = preset.BrushId,
+            BrushSize = preset.BrushSize,
+            BrushOpacity = preset.BrushOpacity,
+            BrushFlow = preset.BrushFlow,
+            BrushHardness = preset.BrushHardness,
+            BrushSpacing = preset.BrushSpacing,
+            BrushSmoothing = preset.BrushSmoothing,
+            BrushGrain = preset.BrushGrain,
+            BrushDynamicsJson = preset.BrushDynamicsJson,
+            Tolerance = preset.Tolerance,
+            SelectMode = preset.SelectMode,
+            GradientType = preset.GradientType,
+            ShapeKind = preset.ShapeKind,
+            ShapeDrawMode = preset.ShapeDrawMode,
+            ShapeStrokeWidth = preset.ShapeStrokeWidth,
+            PolylineClosePath = preset.PolylineClosePath,
+            PolylineStrokeWidth = preset.PolylineStrokeWidth
+        };
     group.Presets.Add(copy);
     App.ToolGroups.Save();
     RefreshGroupPresets();
@@ -689,6 +804,7 @@ private void DeletePreset(ToolGroup group, ToolPreset preset)
     private void LoadBrushAssets()
     {
         _brushAssets = _brushLibrary.Load();
+        _dirtyBrushAssetIds.Clear();
         App.ToolGroups.SyncWithAssets(_brushAssets, _activeToolGroup);
         App.ToolGroups.Save();
         RefreshGroupPresets();
@@ -752,16 +868,16 @@ private void DeletePreset(ToolGroup group, ToolPreset preset)
 
     private void UpdateCurrentBrush(Func<BrushPreset, BrushPreset> update)
     {
-        if (_syncingBrushUi || _activePreset == null) return;
+        if (_syncingBrushUi || _syncingToolPropertyPanel || _activePreset == null) return;
         var updated = update(_activePreset);
         _activePreset = updated;
         if (_activeBrushAsset != null)
         {
             _activeBrushAsset.Preset = updated;
             _activeBrushAsset.Tip = BrushTipData.FromTip(updated.Tip);
+            _dirtyBrushAssetIds.Add(_activeBrushAsset.Id);
         }
         ApplyBrushSettings(updated, syncSliders: false);
-        RefreshToolProperties();
     }
 
     private void OpenBrushEditor()
@@ -782,6 +898,7 @@ private void DeletePreset(ToolGroup group, ToolPreset preset)
             {
                 _activeBrushAsset.Preset = preset;
                 _activeBrushAsset.Tip = BrushTipData.FromTip(preset.Tip);
+                _dirtyBrushAssetIds.Add(_activeBrushAsset.Id);
             }
             _suppressBrushSettingsRestored = true;
             try
@@ -840,6 +957,7 @@ private void DeletePreset(ToolGroup group, ToolPreset preset)
         };
         _activeBrushAsset.Tip = tip;
         _activeBrushAsset.Preset = CurrentBrushFromUi() with { Tip = tip.CreateTip() };
+        _dirtyBrushAssetIds.Add(_activeBrushAsset.Id);
         ApplyBrushSettings(_activeBrushAsset.ToPreset(), syncSliders: false);
         RefreshGroupPresets();
         _footerStatusText.Text = $"Embedded PNG tip in {_activeBrushAsset.Preset.Name}";

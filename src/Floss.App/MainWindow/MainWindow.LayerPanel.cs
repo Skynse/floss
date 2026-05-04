@@ -21,7 +21,6 @@ public partial class MainWindow
 
     private readonly Avalonia.Collections.AvaloniaList<DrawingLayer> _visibleLayers = new();
     private ListBox _layerListBox = null!;
-    private ContentControl _paperRowContainer = null!;
 
     // ── Pre-Allocated Layer Brushes (Performance Optimization) ──────────────
 
@@ -57,9 +56,6 @@ public partial class MainWindow
     // Miscellaneous UI Elements
     private static readonly IBrush PreviewFrameBg = new SolidColorBrush(Color.Parse("#1e2028"));
     private static readonly IBrush PreviewFrameBorder = new SolidColorBrush(Color.Parse("#2e3340"));
-    private static readonly IBrush PaperRowBg = new SolidColorBrush(Color.Parse("#0f1016"));
-    private static readonly IBrush PaperRowBorder = new SolidColorBrush(Color.Parse("#1a1c22"));
-    private static readonly IBrush PaperTextLabel = new SolidColorBrush(Color.Parse("#4a5468"));
     private static readonly IBrush SwatchBorder = new SolidColorBrush(Color.Parse("#3a4050"));
 
     // Fonts
@@ -185,22 +181,18 @@ public partial class MainWindow
             })
         };
 
-        // 2. The Paper Row Container
-        _paperRowContainer = new ContentControl { Margin = new Thickness(0, 2, 0, 0) };
-
-        // 3. Constrained Grid for Virtualization
+        // 2. Constrained Grid for Virtualization
         var mainGrid = new Grid
         {
             Margin = new Thickness(8, 4, 8, 8),
 
-            RowDefinitions = new RowDefinitions("Auto, Auto, Auto, *, Auto")
+            RowDefinitions = new RowDefinitions("Auto, Auto, Auto, *")
         };
 
         Grid.SetRow(_layerNameBox, 0);
         Grid.SetRow(blendOpRow, 1);
         Grid.SetRow(ctrlRow, 2);
         Grid.SetRow(_layerListBox, 3);
-        Grid.SetRow(_paperRowContainer, 4);
 
         blendOpRow.Margin = new Thickness(0, 4, 0, 0);
         ctrlRow.Margin = new Thickness(0, 4, 0, 4);
@@ -209,7 +201,6 @@ public partial class MainWindow
         mainGrid.Children.Add(blendOpRow);
         mainGrid.Children.Add(ctrlRow);
         mainGrid.Children.Add(_layerListBox);
-        mainGrid.Children.Add(_paperRowContainer);
 
         return mainGrid;
     }
@@ -232,12 +223,6 @@ public partial class MainWindow
 
         _visibleLayers.Clear();
         _visibleLayers.InsertRange(0, layersToDisplay);
-
-        // Defense 2: Only update the paper row if the container actually exists yet
-        if (_paperRowContainer != null)
-        {
-            _paperRowContainer.Content = BuildPaperRow();
-        }
 
         if (layers.Count > 0)
         {
@@ -542,13 +527,26 @@ public partial class MainWindow
     {
         if (mods.HasFlag(KeyModifiers.Control))
         {
-            if (!_selectedLayerIndices.Add(index))
-                _selectedLayerIndices.Remove(index);
+            var wasSelected = _selectedLayerIndices.Contains(index);
+            var saved = _selectedLayerIndices.ToList();
             _canvas.SelectLayer(index);
+            _selectedLayerIndices.Clear();
+            foreach (var i in saved)
+                _selectedLayerIndices.Add(i);
+            if (wasSelected)
+                _selectedLayerIndices.Remove(index);
+            else
+                _selectedLayerIndices.Add(index);
         }
         else if (mods.HasFlag(KeyModifiers.Shift) && _selectedLayerIndices.Count > 0)
         {
+            var saved = _selectedLayerIndices.ToList();
             var active = _canvas.ActiveLayerIndex;
+            _canvas.SelectLayer(index);
+            _selectedLayerIndices.Clear();
+            foreach (var i in saved)
+                _selectedLayerIndices.Add(i);
+
             var visible = VisibleLayerIndexes().ToList();
             var ai = visible.IndexOf(active);
             var ti = visible.IndexOf(index);
@@ -559,7 +557,6 @@ public partial class MainWindow
                 for (var vi = lo; vi <= hi; vi++)
                     _selectedLayerIndices.Add(visible[vi]);
             }
-            _canvas.SelectLayer(index);
         }
         else
         {
@@ -746,204 +743,6 @@ public partial class MainWindow
         if (target.IsGroup && position.Y > height * 0.25 && position.Y < height * 0.75)
             return LayerDropPlacement.Into;
         return position.Y < height * 0.5 ? LayerDropPlacement.Above : LayerDropPlacement.Below;
-    }
-
-    private Control BuildPaperRow()
-    {
-        var doc = _canvas?.Document;
-
-        // Defense 3: If there's no document yet, return a placeholder row
-        if (doc == null)
-        {
-            return new Border
-            {
-                Background = PaperRowBg,
-                BorderBrush = PaperRowBorder,
-                BorderThickness = new Thickness(1),
-                Height = 30
-            };
-        }
-
-        var paperColor = doc.PaperColor;
-
-        _paperSwatch = new Border
-        {
-            Width = 26,
-            Height = 26,
-            Margin = new Thickness(2, 0, 2, 0),
-            Background = new SolidColorBrush(paperColor),
-            BorderBrush = SwatchBorder,
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
-        };
-        _paperSwatch.PointerPressed += (_, e) =>
-        {
-            if (e.GetCurrentPoint(_paperSwatch).Properties.IsLeftButtonPressed)
-            {
-                OpenPaperColorPicker();
-                e.Handled = true;
-            }
-        };
-
-        _paperVisBtn = new Button
-        {
-            Content = Icons.Make(doc.PaperVisible ? Icons.Eye : Icons.EyeOff, 10,
-                doc.PaperVisible ? IconVisOn : IconOff),
-            Width = 14,
-            Height = 14,
-            Padding = new Thickness(0),
-            Background = Avalonia.Media.Brushes.Transparent,
-            BorderBrush = Avalonia.Media.Brushes.Transparent,
-            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
-        };
-        _paperVisBtn.Click += (_, _) => _canvas?.SetPaperVisible(!doc.PaperVisible);
-
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("16,16,30,16,16,16,*,26,28") };
-        var nameLabel = new TextBlock
-        {
-            Text = "Paper",
-            FontSize = 11,
-            Foreground = PaperTextLabel,
-            Padding = new Thickness(2, 0),
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
-        };
-        Grid.SetColumn(_paperVisBtn, 1);
-        Grid.SetColumn(_paperSwatch, 2);
-        Grid.SetColumn(nameLabel, 6);
-        grid.Children.Add(_paperVisBtn);
-        grid.Children.Add(_paperSwatch);
-        grid.Children.Add(nameLabel);
-
-        var row = new Border
-        {
-            Height = 30,
-            Background = PaperRowBg,
-            BorderBrush = PaperRowBorder,
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(3, 2),
-            Child = grid
-        };
-        row.PointerPressed += (_, e) =>
-        {
-            if (e.GetCurrentPoint(row).Properties.IsLeftButtonPressed)
-            {
-                OpenPaperColorPicker();
-                e.Handled = true;
-            }
-        };
-        return row;
-    }
-
-    private void RefreshPaperRow()
-    {
-        if (_paperSwatch == null || _paperVisBtn == null) return;
-        var doc = _canvas.Document;
-        _paperSwatch.Background = new SolidColorBrush(doc.PaperColor);
-        _paperVisBtn.Content = Icons.Make(doc.PaperVisible ? Icons.Eye : Icons.EyeOff, 10,
-            doc.PaperVisible ? IconVisOn : IconOff);
-    }
-
-    private void OpenPaperColorPicker()
-    {
-        var doc = _canvas.Document;
-        var dialog = new Window
-        {
-            Title = "Paper Color",
-            Width = 280,
-            Height = 220,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            Background = new SolidColorBrush(Color.Parse(Bg0))
-        };
-
-        var picker = new HsvColorPicker
-        {
-            Height = 160,
-            Margin = new Thickness(12, 8, 12, 8)
-        };
-        var (ph, ps, pv) = RgbToHsv(doc.PaperColor.R / 255.0, doc.PaperColor.G / 255.0, doc.PaperColor.B / 255.0);
-        picker.SetHsv(ph, ps, pv);
-
-        var hexBox = new TextBox
-        {
-            Text = $"#{doc.PaperColor.R:X2}{doc.PaperColor.G:X2}{doc.PaperColor.B:X2}",
-            FontFamily = MonospaceFont,
-            FontSize = 12,
-            Height = 26,
-            Padding = new Thickness(6, 0),
-            Background = new SolidColorBrush(Color.Parse(Bg0)),
-            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
-            CaretBrush = new SolidColorBrush(Color.Parse(TextPrimary)),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3a4250")),
-            BorderThickness = new Thickness(1),
-            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
-            Width = 100
-        };
-
-        Color? result = null;
-        picker.HsvChanged += (h, s, v) =>
-        {
-            var (r, g, b) = HsvToRgb(h, s, v);
-            hexBox.Text = $"#{(byte)(r * 255):X2}{(byte)(g * 255):X2}{(byte)(b * 255):X2}";
-        };
-        hexBox.KeyDown += (_, e) =>
-        {
-            if (e.Key is Key.Enter or Key.Return && TryParseHexColor(hexBox.Text ?? "", out var c))
-            {
-                result = c;
-                dialog.Close();
-            }
-        };
-        hexBox.LostFocus += (_, _) =>
-        {
-            if (TryParseHexColor(hexBox.Text ?? "", out var c))
-            {
-                var (h, s, v) = RgbToHsv(c.R / 255.0, c.G / 255.0, c.B / 255.0);
-                picker.SetHsv(h, s, v);
-            }
-        };
-
-        var okBtn = new Button
-        {
-            Content = "OK",
-            Margin = new Thickness(12, 0, 12, 12),
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right
-        };
-        okBtn.Click += (_, _) =>
-        {
-            if (TryParseHexColor(hexBox.Text ?? "", out var c))
-                result = c;
-            else
-            {
-                var (h, s, v) = picker.Hsv;
-                var (r, g, b) = HsvToRgb(h, s, v);
-                result = Color.FromRgb((byte)(r * 255), (byte)(g * 255), (byte)(b * 255));
-            }
-            dialog.Close();
-        };
-
-        dialog.Content = new StackPanel
-        {
-            Spacing = 8,
-            Children =
-            {
-                picker,
-                new StackPanel
-                {
-                    Orientation = Avalonia.Layout.Orientation.Horizontal,
-                    Spacing = 8,
-                    Margin = new Thickness(12, 0, 12, 0),
-                    Children = { new TextBlock { Text = "Hex", VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center, Foreground = new SolidColorBrush(Color.Parse(TextSecondary)) }, hexBox }
-                },
-                okBtn
-            }
-        };
-        dialog.ShowDialog(this);
-        if (result.HasValue)
-            _canvas.SetPaperColor(result.Value);
-
     }
 
     private static bool TryParseHexColor(string input, out Color color)

@@ -28,8 +28,8 @@ public sealed class NewDocumentDialog : Window
 
         // Initialize inputs
         _nameInput = new TextBox { Text = "Untitled", Margin = new Thickness(0, 0, 0, 10) };
-        _widthInput = new NumericUpDown { Value = 1920, Minimum = 1, Maximum = 16384, Margin = new Thickness(0, 0, 0, 10) };
-        _heightInput = new NumericUpDown { Value = 1080, Minimum = 1, Maximum = 16384, Margin = new Thickness(0, 0, 0, 10) };
+        _widthInput = new NumericUpDown { Value = App.Config.NewCanvasWidth, Minimum = 1, Maximum = 16384, Margin = new Thickness(0, 0, 0, 10) };
+        _heightInput = new NumericUpDown { Value = App.Config.NewCanvasHeight, Minimum = 1, Maximum = 16384, Margin = new Thickness(0, 0, 0, 10) };
 
         _bgDropdown = new ComboBox
         {

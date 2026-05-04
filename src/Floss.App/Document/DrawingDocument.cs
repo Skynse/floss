@@ -9,9 +9,6 @@ public enum LayerDropPlacement { Above, Below, Into }
 
 public sealed class DrawingDocument
 {
-    private Color _paperColor = Color.Parse("#f7f4ed");
-    private bool _paperVisible = true;
-
     // --- History & State Tracking ---
     private readonly Stack<IHistoryState> _undo = new();
     private readonly Stack<IHistoryState> _redo = new();
@@ -38,12 +35,16 @@ public sealed class DrawingDocument
     public event EventHandler? LayersChanged;
     public event EventHandler<LayerMetadataChangedEventArgs>? LayerMetadataChanged;
     public event EventHandler<DrawingLayer>? LayerRemoved;
-    public event EventHandler? PaperChanged;
     public event EventHandler? DirtyStateChanged;
 
     // --- Properties ---
     public int Width { get; private set; }
     public int Height { get; private set; }
+
+    internal void SwapDimensions()
+    {
+        (Width, Height) = (Height, Width);
+    }
     public IReadOnlyList<DrawingLayer> Layers => _layers;
     public int ActiveLayerIndex { get; private set; }
     public DrawingLayer ActiveLayer => _layers[ActiveLayerIndex];
@@ -53,28 +54,6 @@ public sealed class DrawingDocument
     public bool CanDeleteLayer => _layers.Count > 1;
     public bool CanPaintActiveLayer => !ActiveLayer.IsLocked && ActiveLayer.IsVisible && !ActiveLayer.IsGroup;
     public bool IsDirty => _currentStateId != _savedStateId;
-
-    public Color PaperColor
-    {
-        get => _paperColor;
-        set
-        {
-            if (_paperColor == value) return;
-            _paperColor = value;
-            PaperChanged?.Invoke(this, EventArgs.Empty);
-        }
-    }
-
-    public bool PaperVisible
-    {
-        get => _paperVisible;
-        set
-        {
-            if (_paperVisible == value) return;
-            _paperVisible = value;
-            PaperChanged?.Invoke(this, EventArgs.Empty);
-        }
-    }
 
     // --- Save State Management ---
     public void MarkAsSaved()

@@ -82,11 +82,11 @@ public sealed class BrushEditorWindow : Window
         _preset = preset;
         _onChange = onChange;
 
-        Width = 340;
-        Height = 520;
+        Width = 420;
+        Height = 560;
         CanResize = true;
-        MinWidth = 280;
-        MinHeight = 380;
+        MinWidth = 360;
+        MinHeight = 420;
         Background = new SolidColorBrush(Color.Parse(Bg1));
         Title = $"Edit Brush — {preset.Name}";
         ShowInTaskbar = false;
@@ -103,6 +103,8 @@ public sealed class BrushEditorWindow : Window
         _texturePanel = WrapContent(BuildTextureContent());
 
         Content = BuildShell();
+        HighlightActiveCategory();
+        SelectCategory(0);
         SyncFromPreset(preset);
         WireSliderEvents();
     }
@@ -823,7 +825,8 @@ public sealed class BrushEditorWindow : Window
             Maximum = 1,
             Value = layer.Opacity,
             Width = 48,
-            Height = 20,
+            Height = 26,
+            MinHeight = 22,
             VerticalAlignment = VerticalAlignment.Center
         };
         opacSlider.PropertyChanged += (_, e) =>
@@ -977,8 +980,8 @@ public sealed class BrushEditorWindow : Window
             Minimum = min,
             Maximum = max,
             Value = value,
-            Height = 20,
-            MinHeight = 20,
+            Height = 26,
+            MinHeight = 22,
             VerticalAlignment = VerticalAlignment.Center
         };
         ToolTip.SetTip(s, tip);

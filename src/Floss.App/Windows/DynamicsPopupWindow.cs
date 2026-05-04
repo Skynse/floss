@@ -37,7 +37,7 @@ public sealed class DynamicsPopupWindow : Window
         _pressureToggle = MkToggle("Pressure");
         _velocityToggle = MkToggle("Velocity");
 
-        Width           = 272;
+        Width           = 360;
         SizeToContent   = SizeToContent.Height;
         CanResize       = false;
         ShowInTaskbar   = false;
@@ -91,7 +91,7 @@ public sealed class DynamicsPopupWindow : Window
 
         return new StackPanel
         {
-            Margin   = new Thickness(10, 8, 10, 12),
+            Margin   = new Thickness(16, 12, 16, 16),
             Spacing  = 0,
             Children = { _graph, pressureSection, velocitySection }
         };
@@ -99,13 +99,7 @@ public sealed class DynamicsPopupWindow : Window
 
     private void WireEvents()
     {
-        _graph.CurveChanged += (_, a) => Commit(d => d with
-        {
-            Kind  = a.Kind,
-            Gamma = a.Gamma,
-            X1    = a.X1, Y1 = a.Y1,
-            X2    = a.X2, Y2 = a.Y2
-        });
+        _graph.CurveChanged += (_, a) => Commit(d => d with { CurveData = a.CurvePoints });
 
         _pressureToggle.Click += (_, _) => Commit(d => d with { PressureEnabled = !d.PressureEnabled });
         _velocityToggle.Click += (_, _) => Commit(d => d with { VelocityEnabled = !d.VelocityEnabled });
@@ -128,10 +122,7 @@ public sealed class DynamicsPopupWindow : Window
         _syncing = true;
         _current = d;
 
-        _graph.Kind  = d.Kind;
-        _graph.Gamma = d.Gamma;
-        _graph.X1    = d.X1; _graph.Y1 = d.Y1;
-        _graph.X2    = d.X2; _graph.Y2 = d.Y2;
+        _graph.CurvePoints = d.CurveData;
 
         _minSlider.Value    = Math.Clamp(d.Min,              0, 1);
         _maxSlider.Value    = Math.Clamp(d.Max,              0, 1);
@@ -206,12 +197,12 @@ public sealed class DynamicsPopupWindow : Window
     {
         var s = new Slider
         {
-            Minimum           = min,
-            Maximum           = max,
-            Value             = value,
-            Height            = 26,
-            MinHeight         = 26,
-            VerticalAlignment = VerticalAlignment.Center
+            Minimum = min,
+            Maximum = max,
+            Value = value,
+            Height = 26,
+            MinHeight = 22,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
         ToolTip.SetTip(s, tip);
         return s;

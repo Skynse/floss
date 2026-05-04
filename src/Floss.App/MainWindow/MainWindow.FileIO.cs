@@ -88,11 +88,29 @@ public partial class MainWindow
         var result = await new NewDocumentDialog().ShowDialog<DocumentSettings?>(this);
         if (result == null) return; // User canceled the wizard
 
-        // 3. Create the new document USING the result parameters
-        var newDoc = new DrawingDocument(result.Width, result.Height)
+        // 3. Create the new document
+        var newDoc = new DrawingDocument(result.Width, result.Height);
+
+        // Add a locked paper layer with the chosen background color (if not transparent)
+        if (result.BackgroundColor.Alpha > 0)
         {
-            PaperColor = result.BackgroundColor.ToAvalonia(),
-        };
+            var bgColor = result.BackgroundColor.ToAvalonia();
+            var paperLayer = new DrawingLayer("Paper", result.Width, result.Height);
+            paperLayer.IsLocked = true;
+
+            var pixelCount = result.Width * result.Height;
+            var pixels = new byte[pixelCount * 4];
+            for (var i = 0; i < pixelCount; i++)
+            {
+                var off = i * 4;
+                pixels[off] = bgColor.B;
+                pixels[off + 1] = bgColor.G;
+                pixels[off + 2] = bgColor.R;
+                pixels[off + 3] = 255;
+            }
+            paperLayer.RestorePixels(pixels);
+            newDoc.InsertLayerNear(paperLayer, newDoc.Layers[0], LayerDropPlacement.Below);
+        }
 
         // 4. Swap it in and reset session state
         _canvas.Document.ReplaceWith(newDoc);
@@ -100,6 +118,7 @@ public partial class MainWindow
         _canvas.Document.MarkAsSaved(); // Force IsDirty to false for the fresh canvas
 
         // 5. Sync the UI
+        _canvasFrame.IsVisible = true;
         SyncCanvasFrameToDocument(fitToViewport: true);
         BuildLayerList();
         UpdateStatus(); // This will trigger your title bar update
@@ -160,6 +179,7 @@ public partial class MainWindow
     private void ApplyOpenedDocument(DrawingDocument imported, string path)
     {
         _canvas.Document.ReplaceWith(imported);
+        _canvasFrame.IsVisible = true;
         App.Config.AddRecentFile(path);
         if (IsFlossPath(path)) _currentFilePath = path;
         SyncCanvasFrameToDocument(fitToViewport: true);

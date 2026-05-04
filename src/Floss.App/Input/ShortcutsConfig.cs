@@ -89,6 +89,12 @@ public sealed class ShortcutsConfig
     public KeyBinding RotateRight { get; set; } = new(Key.OemCloseBrackets, KeyModifiers.Shift);
     public KeyBinding RotateReset { get; set; } = new(Key.R, KeyModifiers.Control | KeyModifiers.Shift);
 
+    // ── Image — rotate canvas ─────────────────────────────────────────────────
+
+    public KeyBinding RotateCanvas90Cw { get; set; } = new(Key.OemCloseBrackets, KeyModifiers.Control | KeyModifiers.Shift);
+    public KeyBinding RotateCanvas90Ccw { get; set; } = new(Key.OemOpenBrackets, KeyModifiers.Control | KeyModifiers.Shift);
+    public KeyBinding RotateCanvas180 { get; set; } = new(Key.D1, KeyModifiers.Control | KeyModifiers.Shift);
+
     // ── Selection ─────────────────────────────────────────────────────────────
 
     public KeyBinding SelectAll { get; set; } = new(Key.A, KeyModifiers.Control);

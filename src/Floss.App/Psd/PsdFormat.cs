@@ -231,7 +231,7 @@ public static class PsdExporter
     private static unsafe void WriteCompositeImageData(PsdBinaryWriter w, DrawingDocument document, int width, int height)
     {
         var compositor = new LayerCompositor();
-        compositor.Composite(document.Layers, width, height, document.PaperColor, document.PaperVisible);
+        compositor.Composite(document.Layers, width, height);
 
         w.WriteUInt16(0); // Raw (uncompressed)
 

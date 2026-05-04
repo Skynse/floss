@@ -95,11 +95,13 @@ public sealed partial class BrushDynamics
         var opt = new CurveOption { MinOutput = dyn.Min, MaxOutput = dyn.Max };
         if (hasPressure)
         {
-            CubicCurve curve;
-            if (dyn.Kind == ResponseCurveKind.Bezier)
-                curve = BezierCurve(dyn.X1, dyn.Y1, dyn.X2, dyn.Y2);
-            else
-                curve = GammaCurve(dyn.Kind == ResponseCurveKind.Linear ? 1f : dyn.Gamma);
+            var pts = new List<CurvePoint>();
+            for (var i = 0; i < dyn.CurveData.Length; i += 2)
+                pts.Add(new CurvePoint(
+                    Math.Clamp(dyn.CurveData[i], 0, 1),
+                    Math.Clamp(dyn.CurveData[i + 1], 0, 1)));
+            var curve = new CubicCurve();
+            curve.SetPoints([.. pts]);
             opt.Sensors.Add(new SensorConfig { Type = SensorType.Pressure, Curve = curve });
         }
         if (hasVelocity)
@@ -123,58 +125,26 @@ public sealed partial class BrushDynamics
                 speed = sensor;
         }
 
+        var curveData = new List<float> { 0f, 0f, 1f, 1f };
+        if (pressure != null && pressure.Curve.Points.Count >= 2)
+        {
+            curveData.Clear();
+            foreach (var p in pressure.Curve.Points)
+            {
+                curveData.Add(p.X);
+                curveData.Add(p.Y);
+            }
+        }
+
         return new ParameterDynamics
         {
             PressureEnabled = option.IsEnabled && pressure != null,
-            Kind = ResponseCurveKind.Power,
-            Gamma = pressure == null ? 1.25f : EstimateGamma(pressure.Curve),
+            CurveData = [.. curveData],
             Min = option.MinOutput,
             Max = option.MaxOutput,
             VelocityEnabled = option.IsEnabled && speed != null,
             VelocityStrength = speed == null ? 0.3f : Math.Clamp(1f - speed.Curve.Evaluate(1f), 0f, 1f)
         };
-    }
-
-    private static float EstimateGamma(CubicCurve curve)
-    {
-        var y = Math.Clamp(curve.Evaluate(0.5f), 0.001f, 1f);
-        return Math.Clamp(MathF.Log(y) / MathF.Log(0.5f), 0.1f, 4f);
-    }
-
-    private static CubicCurve GammaCurve(float gamma)
-    {
-        const int steps = 9;
-        var pts = new CurvePoint[steps];
-        for (int i = 0; i < steps; i++)
-        {
-            float x = i / (float)(steps - 1);
-            pts[i] = new CurvePoint(x, Math.Clamp(MathF.Pow(x, gamma), 0, 1));
-        }
-        var c = new CubicCurve();
-        c.SetPoints(pts);
-        return c;
-    }
-
-    private static CubicCurve BezierCurve(float x1, float y1, float x2, float y2)
-    {
-        const int steps = 9;
-        var pts = new CurvePoint[steps];
-        for (int i = 0; i < steps; i++)
-        {
-            float t = i / (float)(steps - 1);
-            float bx = CubicBez(t, 0, x1, x2, 1);
-            float by = Math.Clamp(CubicBez(t, 0, y1, y2, 1), 0, 1);
-            pts[i] = new CurvePoint(bx, by);
-        }
-        var c = new CubicCurve();
-        c.SetPoints(pts);
-        return c;
-    }
-
-    private static float CubicBez(float t, float p0, float p1, float p2, float p3)
-    {
-        float inv = 1 - t;
-        return inv * inv * inv * p0 + 3 * inv * inv * t * p1 + 3 * inv * t * t * p2 + t * t * t * p3;
     }
 
     // ── DTO layer ─────────────────────────────────────────────────────────────

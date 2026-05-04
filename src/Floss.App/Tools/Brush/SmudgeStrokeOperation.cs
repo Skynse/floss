@@ -59,8 +59,9 @@ public sealed class SmudgeStrokeOperation
         var radius = (float)brush.Size * 0.75f + 2;
         var region = new PixelRegion(
             (int)(local.X - radius), (int)(local.Y - radius),
-            (int)(radius * 2 + 4), (int)(radius * 2 + 4))
-            .ClipTo(layer.Width, layer.Height);
+            (int)(radius * 2 + 4), (int)(radius * 2 + 4));
+        layer.ExpandToAccommodate(region.X, region.Y, region.Right, region.Bottom);
+        region = region.ClipTo(layer.Width, layer.Height);
         if (region.IsEmpty) return;
 
         layer.CaptureTiles(region, _beforeTiles);

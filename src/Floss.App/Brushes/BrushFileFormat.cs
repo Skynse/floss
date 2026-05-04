@@ -120,34 +120,10 @@ public static class BrushFileFormat
                 by2 = reader.ReadSingle();
             }
 
-            var sizeDyn = new ParameterDynamics
-            {
-                PressureEnabled = pressToSize,
-                Kind = curveKind,
-                Gamma = (float)pressureCurve,
-                Min = (float)prSzMin,
-                Max = (float)prSzMax,
-                X1 = bx1,
-                Y1 = by1,
-                X2 = bx2,
-                Y2 = by2,
-                VelocityEnabled = velToSize,
-                VelocityStrength = (float)velocitySize
-            };
-            var opacDyn = new ParameterDynamics
-            {
-                PressureEnabled = pressToOpac,
-                Kind = curveKind,
-                Gamma = (float)pressureCurve,
-                Min = (float)prOpMin,
-                Max = (float)prOpMax,
-                X1 = bx1,
-                Y1 = by1,
-                X2 = bx2,
-                Y2 = by2,
-                VelocityEnabled = velToOpac,
-                VelocityStrength = (float)velocityOpac
-            };
+            var sizeDyn = OldParamsToNew(pressToSize, curveKind, (float)pressureCurve, bx1, by1, bx2, by2,
+                (float)prSzMin, (float)prSzMax, velToSize, (float)velocitySize);
+            var opacDyn = OldParamsToNew(pressToOpac, curveKind, (float)pressureCurve, bx1, by1, bx2, by2,
+                (float)prOpMin, (float)prOpMax, velToOpac, (float)velocityOpac);
 
             asset.Tip = ReadTip(reader);
             asset.Preset = new BrushPreset(name, kind, size, opacity, hardness, spacing, color, angle)
@@ -195,20 +171,68 @@ public static class BrushFileFormat
 
     // ── Helpers (kept exactly the same) ────────────────────────────────────
 
-    private static ParameterDynamics ReadParameterDynamics(BinaryReader r) => new()
+    private static ParameterDynamics ReadParameterDynamics(BinaryReader r)
     {
-        PressureEnabled = r.ReadBoolean(),
-        Kind = (ResponseCurveKind)r.ReadInt32(),
-        Gamma = r.ReadSingle(),
-        X1 = r.ReadSingle(),
-        Y1 = r.ReadSingle(),
-        X2 = r.ReadSingle(),
-        Y2 = r.ReadSingle(),
-        Min = r.ReadSingle(),
-        Max = r.ReadSingle(),
-        VelocityEnabled = r.ReadBoolean(),
-        VelocityStrength = r.ReadSingle()
-    };
+        var pressureEnabled = r.ReadBoolean();
+        var curveKind = (ResponseCurveKind)r.ReadInt32();
+        var gamma = r.ReadSingle();
+        var x1 = r.ReadSingle();
+        var y1 = r.ReadSingle();
+        var x2 = r.ReadSingle();
+        var y2 = r.ReadSingle();
+
+        return OldParamsToNew(pressureEnabled, curveKind, gamma, x1, y1, x2, y2,
+            r.ReadSingle(), r.ReadSingle(), r.ReadBoolean(), r.ReadSingle());
+    }
+
+    private static ParameterDynamics OldParamsToNew(
+        bool pressureEnabled, ResponseCurveKind curveKind, float gamma,
+        float x1, float y1, float x2, float y2,
+        float min, float max, bool velocityEnabled, float velocityStrength)
+    {
+        var curveData = new List<float> { 0f, 0f, 1f, 1f };
+        if (curveKind == ResponseCurveKind.Bezier)
+        {
+            const int steps = 9;
+            curveData.Clear();
+            for (var i = 0; i < steps; i++)
+            {
+                var t = i / (float)(steps - 1);
+                var bx = CubicBez(t, 0, x1, x2, 1);
+                var by = Math.Clamp(CubicBez(t, 0, y1, y2, 1), 0, 1);
+                curveData.Add(bx);
+                curveData.Add(by);
+            }
+        }
+        else if (curveKind == ResponseCurveKind.Power && Math.Abs(gamma - 1.0) > 0.01f)
+        {
+            const int steps = 9;
+            curveData.Clear();
+            for (var i = 0; i < steps; i++)
+            {
+                var x = i / (float)(steps - 1);
+                var y = Math.Clamp(MathF.Pow(x, gamma), 0, 1);
+                curveData.Add(x);
+                curveData.Add(y);
+            }
+        }
+
+        return new ParameterDynamics
+        {
+            PressureEnabled = pressureEnabled,
+            CurveData = [.. curveData],
+            Min = min,
+            Max = max,
+            VelocityEnabled = velocityEnabled,
+            VelocityStrength = velocityStrength
+        };
+    }
+
+    private static float CubicBez(float t, float p0, float p1, float p2, float p3)
+    {
+        var inv = 1 - t;
+        return inv * inv * inv * p0 + 3 * inv * inv * t * p1 + 3 * inv * t * t * p2 + t * t * t * p3;
+    }
 
     private static BrushTipData ReadTip(BinaryReader reader)
     {

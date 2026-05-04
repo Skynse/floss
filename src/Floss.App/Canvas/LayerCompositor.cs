@@ -69,7 +69,7 @@ public sealed class LayerCompositor
         InvalidateGroupCaches(region, layers, layerIndex);
     }
 
-    public unsafe void Composite(IReadOnlyList<DrawingLayer> layers, int width, int height, Color paperColor, bool paperVisible)
+    public unsafe void Composite(IReadOnlyList<DrawingLayer> layers, int width, int height)
     {
         SetSize(width, height);
         if (!_dirty) return;
@@ -84,11 +84,9 @@ public sealed class LayerCompositor
         _fullDirty = false;
         _dirtyRegion = null;
 
-        FillWithPaperColor(dst, stride, width, height, clip, paperColor, paperVisible);
+        ClearBuffer(dst, stride, width, height, clip);
 
         // Only process root-level layers; group children are composited inside CompositeGroup.
-        // Filtering by Parent==null avoids double-rendering when the flat document list
-        // contains both a group and its children (as happens after PSD import).
         var rootLayers = new System.Collections.Generic.List<DrawingLayer>(layers.Count);
         foreach (var l in layers)
             if (l.Parent == null) rootLayers.Add(l);
@@ -96,18 +94,13 @@ public sealed class LayerCompositor
         CompositeLayerList(dst, stride, width, height, rootLayers, opacityScale: 1.0, clip, originX: 0, originY: 0);
     }
 
-    private static unsafe void FillWithPaperColor(byte* dst, int stride, int width, int height, PixelRegion clip, Color paperColor, bool paperVisible)
+    private static unsafe void ClearBuffer(byte* dst, int stride, int width, int height, PixelRegion clip)
     {
-        uint pixel;
-        if (paperVisible)
-            pixel = (uint)(paperColor.B | (paperColor.G << 8) | (paperColor.R << 16) | (255u << 24));
-        else
-            pixel = 0u;
         for (int y = clip.Y; y < clip.Bottom; y++)
         {
             var row = (uint*)(dst + y * stride + clip.X * 4);
             for (int x = 0; x < clip.Width; x++)
-                row[x] = pixel;
+                row[x] = 0u;
         }
     }
 

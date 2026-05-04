@@ -33,11 +33,11 @@ public sealed class BrushTipBrowserWindow : Window
     {
         _onSelect = onSelect;
 
-        Width = 320;
-        Height = 420;
+        Width = 400;
+        Height = 480;
         CanResize = true;
-        MinWidth = 260;
-        MinHeight = 300;
+        MinWidth = 320;
+        MinHeight = 360;
         Background = new SolidColorBrush(Color.Parse(Bg1));
         Title = "Brush Tips";
         ShowInTaskbar = false;

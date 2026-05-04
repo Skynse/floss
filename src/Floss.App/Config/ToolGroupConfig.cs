@@ -47,14 +47,18 @@ public sealed class ToolPreset
     public double? BrushSpacing { get; set; }
     public double? BrushSmoothing { get; set; }
     public double? BrushGrain { get; set; }
+    public string? BrushDynamicsJson { get; set; }
+
     // Apply overrides to a BrushPreset, returning a modified copy
     public BrushPreset ApplyToBrushPreset(BrushPreset preset)
     {
         var needsUpdate = BrushSize.HasValue || BrushOpacity.HasValue || BrushHardness.HasValue ||
             BrushSpacing.HasValue || BrushFlow.HasValue || BrushSmoothing.HasValue ||
-            BrushGrain.HasValue;
+            BrushGrain.HasValue || !string.IsNullOrEmpty(BrushDynamicsJson);
 
-        return needsUpdate ? preset with
+        if (!needsUpdate) return preset;
+
+        var result = preset with
         {
             Size = BrushSize ?? preset.Size,
             Opacity = BrushOpacity ?? preset.Opacity,
@@ -62,8 +66,20 @@ public sealed class ToolPreset
             Spacing = BrushSpacing ?? preset.Spacing,
             Flow = BrushFlow ?? preset.Flow,
             Smoothing = BrushSmoothing ?? preset.Smoothing,
-            Grain = BrushGrain ?? preset.Grain
-        } : preset;
+            Grain = BrushGrain ?? preset.Grain,
+        };
+
+        if (!string.IsNullOrEmpty(BrushDynamicsJson))
+        {
+            try
+            {
+                var dynamics = BrushDynamics.Deserialize(BrushDynamicsJson);
+                result = result with { Dynamics = dynamics };
+            }
+            catch { }
+        }
+
+        return result;
     }
 
     // Capture current brush preset state into override properties
@@ -76,6 +92,7 @@ public sealed class ToolPreset
         BrushFlow = preset.Flow;
         BrushSmoothing = preset.Smoothing;
         BrushGrain = preset.Grain;
+        BrushDynamicsJson = preset.Dynamics.Serialize();
     }
 
     // Brush/Eraser/Smudge — references a BrushAsset on disk; null = use current brush

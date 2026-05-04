@@ -14,63 +14,6 @@ using SkiaSharp;
 
 namespace Floss.App.Tools;
 
-public sealed class TransformTool : ITool
-{
-    private SelectionTransformOperation? _operation;
-    private ITool? _previousTool;
-
-    public bool HasPendingOperation => _operation != null;
-
-    public void Deactivate(ToolContext ctx) => Cancel(ctx);
-
-    public bool BeginTransform(ToolContext ctx)
-    {
-        _operation?.Cancel();
-        _operation = SelectionTransformOperation.TryCreate(ctx);
-        ctx.InvalidateRender();
-        return _operation != null;
-    }
-
-    public void SetPreviousTool(ITool? tool) => _previousTool = tool;
-    public ITool? GetPreviousTool() => _previousTool;
-
-    public void PointerDown(ToolContext ctx, CanvasInputSample s)
-    {
-        if (_operation == null)
-            BeginTransform(ctx);
-        _operation?.PointerDown(s);
-
-        if (_operation?.RequestedAction == OverlayAction.Commit)
-            Commit(ctx);
-        else if (_operation?.RequestedAction == OverlayAction.Cancel)
-            Cancel(ctx);
-    }
-
-    public void PointerMove(ToolContext ctx, CanvasInputSample s) => _operation?.Update(s);
-
-    public void PointerUp(ToolContext ctx, CanvasInputSample s) => _operation?.PointerUp(s);
-
-    public void Cancel(ToolContext ctx)
-    {
-        _operation?.Cancel();
-        _operation = null;
-        ctx.InvalidateRender();
-    }
-
-    public void Commit(ToolContext ctx)
-    {
-        _operation?.CommitCurrent();
-        _operation = null;
-        ctx.InvalidateRender();
-    }
-
-    public void RenderOverlay(DrawingContext dc, ToolContext ctx, double zoom)
-        => _operation?.RenderOverlay(dc, zoom);
-
-    public StandardCursorType? CursorFor(Point canvasPos, double zoom)
-        => _operation?.CursorFor(canvasPos, zoom);
-}
-
 internal enum OverlayAction
 {
     None,
@@ -93,23 +36,70 @@ internal enum TransformDragPart
     Left
 }
 
+public sealed class TransformTool : ITool
+{
+    private SelectionTransformOperation? _operation;
+    private ITool? _previousTool;
+
+    public bool HasPendingOperation => _operation != null;
+
+    public void Deactivate(ToolContext ctx) => Cancel(ctx);
+
+    public bool BeginTransform(ToolContext ctx, IReadOnlyList<int>? layerIndices = null)
+    {
+        _operation?.Cancel();
+        _operation = SelectionTransformOperation.TryCreate(ctx, layerIndices);
+        ctx.InvalidateRender();
+        return _operation != null;
+    }
+
+    public void SetPreviousTool(ITool? tool) => _previousTool = tool;
+    public ITool? GetPreviousTool() => _previousTool;
+
+    public void PointerDown(ToolContext ctx, CanvasInputSample s)
+    {
+        if (_operation == null)
+            BeginTransform(ctx);
+        _operation?.PointerDown(s);
+
+        if (_operation?.RequestedAction == OverlayAction.Commit)
+            Commit(ctx);
+        else if (_operation?.RequestedAction == OverlayAction.Cancel)
+            Cancel(ctx);
+    }
+
+    public void PointerMove(ToolContext ctx, CanvasInputSample s) => _operation?.Update(s);
+    public void PointerUp(ToolContext ctx, CanvasInputSample s) => _operation?.PointerUp(s);
+    public void RenderOverlay(DrawingContext dc, ToolContext ctx, double zoom) => _operation?.RenderOverlay(dc, zoom);
+    public void Activate(ToolContext ctx) { }
+    public void Cancel(ToolContext ctx) { _operation?.Cancel(); _operation = null; ctx.InvalidateRender(); }
+    public void Commit(ToolContext ctx) { _operation?.CommitCurrent(); _operation = null; ctx.InvalidateRender(); }
+    public StandardCursorType? CursorFor(Point canvasPos, double zoom) => _operation?.CursorFor(canvasPos, zoom);
+}
+
 internal sealed class SelectionTransformOperation : IToolOperationOverlay
 {
+    // Per-layer extraction data
+    private readonly record struct LayerData(
+        int Index,
+        int SrcX, int SrcY, int SrcW, int SrcH,
+        byte[] FloatPixels,
+        Dictionary<(int, int), byte[]?> BeforeTiles);
+
     private readonly ToolContext _context;
-    private readonly int _layerIndex;
-    private readonly int _sourceX;
-    private readonly int _sourceY;
-    private readonly int _sourceW;
-    private readonly int _sourceH;
-    private readonly byte[] _floatPixels;
-    private readonly Dictionary<(int, int), byte[]?> _beforeTiles;
+    private readonly List<LayerData> _layerData = [];
+
+    // Combined bounds (bounds of all layers' content)
+    private readonly int _sourceX, _sourceY, _sourceW, _sourceH;
+
+    // Combined float buffer for overlay rendering
+    private readonly byte[] _combinedPixels;
 
     private WriteableBitmap? _overlayBitmap;
     private Rect _rect;
     private Rect _startRect;
     private double _angle;
     private double _startAngle;
-    private double _dragStartAngle;
     private Point _dragStart;
     private TransformDragPart _dragPart;
     private bool _isDragging;
@@ -126,138 +116,220 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
 
     private SelectionTransformOperation(
         ToolContext context,
-        int layerIndex,
-        int sourceX,
-        int sourceY,
-        int sourceW,
-        int sourceH,
-        byte[] floatPixels,
-        Dictionary<(int, int), byte[]?> beforeTiles)
+        int sourceX, int sourceY, int sourceW, int sourceH,
+        byte[] combinedPixels)
     {
         _context = context;
-        _layerIndex = layerIndex;
         _sourceX = sourceX;
         _sourceY = sourceY;
         _sourceW = sourceW;
         _sourceH = sourceH;
-        _floatPixels = floatPixels;
-        _beforeTiles = beforeTiles;
+        _combinedPixels = combinedPixels;
         _rect = new Rect(sourceX, sourceY, sourceW, sourceH);
     }
 
-    public static SelectionTransformOperation? TryCreate(ToolContext ctx)
+    public static SelectionTransformOperation? TryCreate(
+        ToolContext ctx, IReadOnlyList<int>? layerIndices = null)
     {
-        var layer = ctx.ActiveLayer;
-        if (layer == null || layer.IsGroup || layer.IsLocked) return null;
-
-        PixelRegion b;
-        bool usingSelection;
-
-        if (ctx.Selection.HasSelection)
+        // Determine which layers to transform
+        var layers = new List<(int Index, DrawingLayer Layer)>();
+        if (layerIndices is { Count: > 0 })
         {
-            var bounds = ctx.Selection.GetMaskBounds();
-            if (bounds == null) return null;
-            b = new PixelRegion(bounds.Value.Left, bounds.Value.Top, bounds.Value.Width, bounds.Value.Height);
-            usingSelection = true;
+            foreach (var idx in layerIndices)
+            {
+                if (idx < 0 || idx >= ctx.Document.Layers.Count) continue;
+                var l = ctx.Document.Layers[idx];
+                if (l.IsGroup || l.IsLocked) continue;
+                layers.Add((idx, l));
+            }
         }
         else
         {
-            var contentBounds = layer.Pixels.ComputeContentBounds();
-            if (contentBounds.IsEmpty) return null;
-            b = contentBounds.Translate(layer.OffsetX, layer.OffsetY);
-            usingSelection = false;
+            var layer = ctx.ActiveLayer;
+            if (layer == null || layer.IsGroup || layer.IsLocked) return null;
+            layers.Add((ctx.ActiveLayerIndex, layer));
         }
 
-        if (b.Width <= 0 || b.Height <= 0) return null;
+        if (layers.Count == 0) return null;
 
-        var layerBounds = new PixelRegion(
-            b.X - layer.OffsetX,
-            b.Y - layer.OffsetY,
-            b.Width,
-            b.Height).ClipTo(layer.Width, layer.Height);
-        if (layerBounds.IsEmpty) return null;
+        // Compute combined bounding box (document space)
+        PixelRegion? combinedBounds = null;
+        bool usingSelection = ctx.Selection.HasSelection;
 
-        var floatPixels = new byte[b.Width * b.Height * 4];
-        var beforeTiles = layer.Pixels.CaptureTiles(layerBounds);
-        var hasPixels = false;
-
-        for (var docY = b.Y; docY < b.Bottom; docY++)
+        if (usingSelection)
         {
-            var layY = docY - layer.OffsetY;
-            if ((uint)layY >= (uint)layer.Height) continue;
-            for (var docX = b.X; docX < b.Right; docX++)
+            var maskBounds = ctx.Selection.GetMaskBounds();
+            if (maskBounds == null) return null;
+            combinedBounds = new PixelRegion(maskBounds.Value.Left, maskBounds.Value.Top, maskBounds.Value.Width, maskBounds.Value.Height);
+        }
+        else
+        {
+            foreach (var (_, layer) in layers)
             {
-                if (usingSelection && !ctx.Selection.IsSelected(docX, docY)) continue;
+                var b = layer.Pixels.ComputeContentBounds();
+                if (b.IsEmpty) continue;
+                b = b.Translate(layer.OffsetX, layer.OffsetY);
+                combinedBounds = combinedBounds.HasValue ? combinedBounds.Value.Union(b) : b;
+            }
+        }
 
-                var layX = docX - layer.OffsetX;
-                if ((uint)layX >= (uint)layer.Width) continue;
-                layer.Pixels.GetPixel(layX, layY, out var pxB, out var pxG, out var pxR, out var pxA);
-                if (pxA == 0) continue;
+        if (combinedBounds == null || combinedBounds.Value.Width <= 0 || combinedBounds.Value.Height <= 0)
+            return null;
 
-                var fi = ((docY - b.Y) * b.Width + (docX - b.X)) * 4;
-                floatPixels[fi] = pxB;
-                floatPixels[fi + 1] = pxG;
-                floatPixels[fi + 2] = pxR;
-                floatPixels[fi + 3] = pxA;
-                layer.Pixels.SetPixel(layX, layY, 0, 0, 0, 0);
-                hasPixels = true;
+        var cb = combinedBounds.Value;
+        var combined = new byte[cb.Width * cb.Height * 4];
+
+        // Extract pixels from each layer
+        var operation = new SelectionTransformOperation(ctx, cb.X, cb.Y, cb.Width, cb.Height, combined);
+        bool hasPixels = false;
+
+        foreach (var (layerIdx, layer) in layers)
+        {
+            var layerBounds = new PixelRegion(
+                cb.X - layer.OffsetX,
+                cb.Y - layer.OffsetY,
+                cb.Width,
+                cb.Height).ClipTo(layer.Width, layer.Height);
+            if (layerBounds.IsEmpty) continue;
+
+            // Determine clipping base alpha (layer below's content at each pixel)
+            byte[]? clipAlpha = null;
+            if (layer.IsClipping)
+            {
+                var clipIdx = layerIdx - 1;
+                if (clipIdx >= 0)
+                {
+                    var clipLayer = ctx.Document.Layers[clipIdx];
+                    if (clipLayer != null && !layers.Any(d => d.Index == clipIdx))
+                    {
+                        clipAlpha = new byte[cb.Width * cb.Height];
+                        for (var docY = cb.Y; docY < cb.Bottom; docY++)
+                        {
+                            var clY = docY - clipLayer.OffsetY;
+                            if ((uint)clY >= (uint)clipLayer.Height) continue;
+                            for (var docX = cb.X; docX < cb.Right; docX++)
+                            {
+                                var clX = docX - clipLayer.OffsetX;
+                                if ((uint)clX >= (uint)clipLayer.Width) continue;
+                                clipLayer.Pixels.GetPixel(clX, clY, out _, out _, out _, out var ca);
+                                var idx = (docY - cb.Y) * cb.Width + (docX - cb.X);
+                                clipAlpha[idx] = ca;
+                            }
+                        }
+                    }
+                }
+            }
+
+            var floatPixels = new byte[cb.Width * cb.Height * 4];
+            var beforeTiles = layer.Pixels.CaptureTiles(layerBounds);
+            bool layerHasPixels = false;
+            float opacityScale = (float)Math.Clamp(layer.Opacity, 0, 1);
+
+            for (var docY = cb.Y; docY < cb.Bottom; docY++)
+            {
+                var layY = docY - layer.OffsetY;
+                if ((uint)layY >= (uint)layer.Height) continue;
+
+                for (var docX = cb.X; docX < cb.Right; docX++)
+                {
+                    if (usingSelection && !ctx.Selection.IsSelected(docX, docY)) continue;
+
+                    var layX = docX - layer.OffsetX;
+                    if ((uint)layX >= (uint)layer.Width) continue;
+
+                    layer.Pixels.GetPixel(layX, layY, out var pxB, out var pxG, out var pxR, out var pxA);
+                    if (pxA == 0) continue;
+
+                    // Apply clipping mask
+                    if (clipAlpha != null)
+                    {
+                        var ci = (docY - cb.Y) * cb.Width + (docX - cb.X);
+                        if (clipAlpha[ci] == 0) continue;
+                    }
+
+                    var fi = ((docY - cb.Y) * cb.Width + (docX - cb.X)) * 4;
+                    floatPixels[fi] = pxB;
+                    floatPixels[fi + 1] = pxG;
+                    floatPixels[fi + 2] = pxR;
+                    floatPixels[fi + 3] = pxA;
+
+                    // Composite into combined overlay (with layer opacity applied for display)
+                    var overlayA = (byte)(pxA * opacityScale + 0.5f);
+                    combined[fi] = pxB;
+                    combined[fi + 1] = pxG;
+                    combined[fi + 2] = pxR;
+                    combined[fi + 3] = overlayA;
+
+                    layer.Pixels.SetPixel(layX, layY, 0, 0, 0, 0);
+                    layerHasPixels = true;
+                    hasPixels = true;
+                }
+            }
+
+            if (layerHasPixels)
+            {
+                layer.MarkThumbnailDirty();
+                operation._layerData.Add(new LayerData(
+                    layerIdx, cb.X, cb.Y, cb.Width, cb.Height,
+                    floatPixels, beforeTiles));
             }
         }
 
         if (!hasPixels) return null;
 
-        layer.MarkThumbnailDirty();
-        ctx.Document.NotifyChanged(b, ctx.ActiveLayerIndex);
-        return new SelectionTransformOperation(ctx, ctx.ActiveLayerIndex, b.X, b.Y, b.Width, b.Height, floatPixels, beforeTiles);
+        ctx.Document.NotifyChanged(cb, ctx.ActiveLayerIndex);
+        return operation;
     }
 
     public void PointerDown(CanvasInputSample sample)
     {
-        RequestedAction = OverlayAction.None;
-
-        var btn = HitTestButton(sample.X, sample.Y);
-        if (btn == OverlayAction.Commit || btn == OverlayAction.Cancel)
+        var pt = new Point(sample.X, sample.Y);
+        var btn = HitTestButton(pt.X, pt.Y);
+        if (btn != OverlayAction.None)
         {
             RequestedAction = btn;
             return;
         }
 
-        _dragPart = HitTest(sample.X, sample.Y, _context.ActiveLayer == null ? 1 : 1);
-        if (_dragPart == TransformDragPart.None) return;
+        var zoom = _lastZoom;
+        var part = HitTest(pt.X, pt.Y, zoom);
+        if (part == TransformDragPart.None) return;
 
-        _isDragging = true;
-        _dragStart = new Point(sample.X, sample.Y);
-        _startRect = _rect;
+        _startRect = NormalizedRect(_rect);
         _startAngle = _angle;
-
-        if (_dragPart == TransformDragPart.Rotate)
-        {
-            var center = CenterOf(_rect);
-            _dragStartAngle = Math.Atan2(sample.Y - center.Y, sample.X - center.X) * 180 / Math.PI;
-        }
+        _dragPart = part;
+        _dragStart = pt;
+        _isDragging = true;
+        RequestedAction = OverlayAction.None;
     }
 
     public void Update(CanvasInputSample sample)
     {
         if (!_isDragging) return;
 
-        var current = new Point(sample.X, sample.Y);
-        var dx = current.X - _dragStart.X;
-        var dy = current.Y - _dragStart.Y;
+        var pt = new Point(sample.X, sample.Y);
+        var dx = pt.X - _dragStart.X;
+        var dy = pt.Y - _dragStart.Y;
+        var rect = _startRect;
 
-        if (_dragPart == TransformDragPart.Rotate)
+        switch (_dragPart)
         {
-            var center = CenterOf(_startRect);
-            var currentAngle = Math.Atan2(current.Y - center.Y, current.X - center.X) * 180 / Math.PI;
-            _angle = _startAngle + (currentAngle - _dragStartAngle);
-        }
-        else if (_dragPart == TransformDragPart.Move)
-        {
-            _rect = _startRect.Translate(new Vector(dx, dy));
-        }
-        else
-        {
-            _rect = ResizeRect(_startRect, _dragPart, dx, dy);
+            case TransformDragPart.Move:
+                _rect = new Rect(rect.X + dx, rect.Y + dy, rect.Width, rect.Height);
+                break;
+
+            case TransformDragPart.Rotate:
+            {
+                var c = CenterOf(rect);
+                var startAngle = Math.Atan2(_dragStart.Y - c.Y, _dragStart.X - c.X) * 180 / Math.PI;
+                var currentAngle = Math.Atan2(pt.Y - c.Y, pt.X - c.X) * 180 / Math.PI;
+                _angle = _startAngle + (currentAngle - startAngle);
+                break;
+            }
+
+            default:
+                _rect = ResizeRect(rect, _dragPart, dx, dy);
+                break;
         }
 
         _context.InvalidateRender();
@@ -265,36 +337,38 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
 
     public void PointerUp(CanvasInputSample sample)
     {
-        Update(sample);
         _isDragging = false;
-        _dragPart = TransformDragPart.None;
     }
 
     public void Cancel()
     {
-        var layer = _context.ActiveLayer;
-        if (layer != null && _layerIndex == _context.ActiveLayerIndex)
+        foreach (var data in _layerData)
         {
-            for (var relY = 0; relY < _sourceH; relY++)
+            var layer = _context.Document.Layers[data.Index];
+
+            for (var relY = 0; relY < data.SrcH; relY++)
             {
-                var layY = _sourceY + relY - layer.OffsetY;
+                var layY = data.SrcY + relY - layer.OffsetY;
                 if ((uint)layY >= (uint)layer.Height) continue;
-                for (var relX = 0; relX < _sourceW; relX++)
+
+                for (var relX = 0; relX < data.SrcW; relX++)
                 {
-                    var fi = (relY * _sourceW + relX) * 4;
-                    if (_floatPixels[fi + 3] == 0) continue;
-                    var layX = _sourceX + relX - layer.OffsetX;
+                    var fi = (relY * data.SrcW + relX) * 4;
+                    if (data.FloatPixels[fi + 3] == 0) continue;
+
+                    var layX = data.SrcX + relX - layer.OffsetX;
                     if ((uint)layX >= (uint)layer.Width) continue;
+
                     layer.Pixels.SetPixel(layX, layY,
-                        _floatPixels[fi],
-                        _floatPixels[fi + 1],
-                        _floatPixels[fi + 2],
-                        _floatPixels[fi + 3]);
+                        data.FloatPixels[fi],
+                        data.FloatPixels[fi + 1],
+                        data.FloatPixels[fi + 2],
+                        data.FloatPixels[fi + 3]);
                 }
             }
 
             layer.MarkThumbnailDirty();
-            _context.Document.NotifyChanged(new PixelRegion(_sourceX, _sourceY, _sourceW, _sourceH), _layerIndex);
+            _context.Document.NotifyChanged(new PixelRegion(_sourceX, _sourceY, _sourceW, _sourceH), data.Index);
         }
 
         _overlayBitmap?.Dispose();
@@ -303,27 +377,37 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
 
     public void CommitCurrent()
     {
-        var layer = _context.ActiveLayer;
-        if (layer == null || _layerIndex != _context.ActiveLayerIndex) return;
+        if (_layerData.Count == 0) return;
 
         var dest = RotatedBounds(_rect, _angle);
         if (dest.IsEmpty) return;
 
-        var destLayerRegion = new PixelRegion(
-            dest.X - layer.OffsetX,
-            dest.Y - layer.OffsetY,
-            dest.Width,
-            dest.Height).ClipTo(layer.Width, layer.Height);
-        var destTiles = layer.Pixels.CaptureTiles(destLayerRegion);
-        foreach (var (key, value) in destTiles)
-            _beforeTiles.TryAdd(key, value);
+        foreach (var data in _layerData)
+        {
+            var layer = _context.Document.Layers[data.Index];
+            if (layer == null) continue;
 
-        var dirty = new PixelRegion(_sourceX, _sourceY, _sourceW, _sourceH).Union(dest);
-        StampRotated(layer, dest);
+            var destLayerRegion = new PixelRegion(
+                dest.X - layer.OffsetX,
+                dest.Y - layer.OffsetY,
+                dest.Width,
+                dest.Height).ClipTo(layer.Width, layer.Height);
+            if (destLayerRegion.IsEmpty) continue;
 
-        layer.MarkThumbnailDirty();
+            // Capture destination tiles for undo
+            var destTiles = layer.Pixels.CaptureTiles(destLayerRegion);
+            var allBefore = new Dictionary<(int, int), byte[]?>(data.BeforeTiles);
+            foreach (var (key, value) in destTiles)
+                allBefore.TryAdd(key, value);
+
+            StampRotatedLayer(layer, dest, data);
+
+            layer.MarkThumbnailDirty();
+            var dirty = new PixelRegion(data.SrcX, data.SrcY, data.SrcW, data.SrcH).Union(dest);
+            _context.CommitMutation(data.Index, allBefore, dirty);
+        }
+
         _context.Selection.SetFromRect(dest.X, dest.Y, dest.Width, dest.Height);
-        _context.CommitMutation(_layerIndex, _beforeTiles, dirty);
         _overlayBitmap?.Dispose();
         _overlayBitmap = null;
     }
@@ -361,9 +445,61 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
             }
         }
 
-        // Draw OK / Cancel buttons below the transform box (in screen space, not rotated)
         DrawButtons(dc, rect, angleRad, center, zoom);
     }
+
+    // ── Per-layer stamp (same rotation applied to each layer's extracted pixels) ──
+
+    private unsafe void StampRotatedLayer(DrawingLayer layer, PixelRegion dest, LayerData data)
+    {
+        var clipped = new PixelRegion(
+            dest.X - layer.OffsetX,
+            dest.Y - layer.OffsetY,
+            dest.Width,
+            dest.Height).ClipTo(layer.Width, layer.Height);
+        if (clipped.IsEmpty) return;
+
+        var flat = layer.Pixels.Capture(clipped);
+        if (flat.Length == 0) flat = new byte[clipped.Width * clipped.Height * 4];
+
+        var srcInfo = new SKImageInfo(data.SrcW, data.SrcH, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+        using var srcBitmap = new SKBitmap();
+        var srcHandle = GCHandle.Alloc(data.FloatPixels, GCHandleType.Pinned);
+        try
+        {
+            srcBitmap.InstallPixels(srcInfo, srcHandle.AddrOfPinnedObject());
+
+            var dstInfo = new SKImageInfo(clipped.Width, clipped.Height, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+            fixed (byte* flatPtr = flat)
+            {
+                using var dstBitmap = new SKBitmap();
+                dstBitmap.InstallPixels(dstInfo, (IntPtr)flatPtr, clipped.Width * 4);
+                using var canvas = new SKCanvas(dstBitmap);
+
+                canvas.Translate(-(clipped.X + layer.OffsetX), -(clipped.Y + layer.OffsetY));
+
+                var center = CenterOf(NormalizedRect(_rect));
+                var r = NormalizedRect(_rect);
+
+                using var paint = new SKPaint { IsAntialias = true, BlendMode = SKBlendMode.SrcOver };
+                canvas.Translate((float)center.X, (float)center.Y);
+                canvas.RotateDegrees((float)_angle);
+                canvas.Translate(-(float)center.X, -(float)center.Y);
+                canvas.DrawBitmap(srcBitmap,
+                    new SKRect((float)r.X, (float)r.Y, (float)r.Right, (float)r.Bottom),
+                    paint);
+                canvas.Flush();
+            }
+        }
+        finally
+        {
+            srcHandle.Free();
+        }
+
+        layer.Pixels.Restore(clipped, flat);
+    }
+
+    // ── Helper methods (unchanged from original) ──
 
     public StandardCursorType? CursorFor(Point canvasPos, double zoom)
     {
@@ -391,7 +527,6 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         var gap = 6 / zoom;
         var below = 18 / zoom;
 
-        // Compute bottom-center of the rotated rect in canvas space
         var rotMatrix = Matrix.CreateTranslation(-center.X, -center.Y)
             * Matrix.CreateRotation(angleRad)
             * Matrix.CreateTranslation(center.X, center.Y);
@@ -454,7 +589,7 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
             PixelFormat.Bgra8888,
             AlphaFormat.Unpremul);
         using var fb = _overlayBitmap.Lock();
-        Marshal.Copy(_floatPixels, 0, fb.Address, _floatPixels.Length);
+        Marshal.Copy(_combinedPixels, 0, fb.Address, _combinedPixels.Length);
     }
 
     private TransformDragPart HitTest(double x, double y, double zoom)
@@ -481,107 +616,36 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         var right = rect.Right;
         var bottom = rect.Bottom;
 
-        if (part is TransformDragPart.TopLeft or TransformDragPart.Left or TransformDragPart.BottomLeft) left += dx;
-        if (part is TransformDragPart.TopRight or TransformDragPart.Right or TransformDragPart.BottomRight) right += dx;
-        if (part is TransformDragPart.TopLeft or TransformDragPart.Top or TransformDragPart.TopRight) top += dy;
-        if (part is TransformDragPart.BottomLeft or TransformDragPart.Bottom or TransformDragPart.BottomRight) bottom += dy;
+        if (part is TransformDragPart.TopLeft or TransformDragPart.Left or TransformDragPart.BottomLeft)
+            left += dx;
+        if (part is TransformDragPart.TopRight or TransformDragPart.Right or TransformDragPart.BottomRight)
+            right += dx;
+        if (part is TransformDragPart.TopLeft or TransformDragPart.Top or TransformDragPart.TopRight)
+            top += dy;
+        if (part is TransformDragPart.BottomLeft or TransformDragPart.Bottom or TransformDragPart.BottomRight)
+            bottom += dy;
 
-        if (Math.Abs(right - left) < 1) right = left + Math.Sign(right - left == 0 ? 1 : right - left);
-        if (Math.Abs(bottom - top) < 1) bottom = top + Math.Sign(bottom - top == 0 ? 1 : bottom - top);
-        return new Rect(new Point(left, top), new Point(right, bottom));
+        if (right - left < 8 || bottom - top < 8) return rect;
+        return new Rect(left, top, right - left, bottom - top);
     }
 
-    private static Rect NormalizedRect(Rect rect)
+    private static Rect NormalizedRect(Rect r)
+        => new(Math.Min(r.X, r.Right), Math.Min(r.Y, r.Bottom),
+               Math.Abs(r.Width), Math.Abs(r.Height));
+
+    private static PixelRegion RotatedBounds(Rect rect, double angle)
     {
-        var left = Math.Min(rect.Left, rect.Right);
-        var top = Math.Min(rect.Top, rect.Bottom);
-        var right = Math.Max(rect.Left, rect.Right);
-        var bottom = Math.Max(rect.Top, rect.Bottom);
-        return new Rect(left, top, Math.Max(1, right - left), Math.Max(1, bottom - top));
-    }
-
-    private static PixelRegion NormalizedPixelRect(Rect rect)
-    {
-        var r = NormalizedRect(rect);
-        var x = (int)Math.Round(r.X);
-        var y = (int)Math.Round(r.Y);
-        var w = Math.Max(1, (int)Math.Round(r.Width));
-        var h = Math.Max(1, (int)Math.Round(r.Height));
-        return new PixelRegion(x, y, w, h);
-    }
-
-    private static PixelRegion RotatedBounds(Rect rect, double angleDeg)
-    {
-        if (Math.Abs(angleDeg % 360) < 0.1)
-            return NormalizedPixelRect(rect);
-
-        var r = NormalizedRect(rect);
-        var cx = r.X + r.Width / 2;
-        var cy = r.Y + r.Height / 2;
-        var angle = angleDeg * Math.PI / 180;
-        var cos = Math.Abs(Math.Cos(angle));
-        var sin = Math.Abs(Math.Sin(angle));
-
-        var w = r.Width * cos + r.Height * sin;
-        var h = r.Width * sin + r.Height * cos;
-
-        var x = (int)Math.Round(cx - w / 2);
-        var y = (int)Math.Round(cy - h / 2);
-        return new PixelRegion(x, y, (int)Math.Round(w), (int)Math.Round(h));
-    }
-
-    private unsafe void StampRotated(DrawingLayer layer, PixelRegion dest)
-    {
-        var clipped = new PixelRegion(
-            dest.X - layer.OffsetX,
-            dest.Y - layer.OffsetY,
-            dest.Width,
-            dest.Height).ClipTo(layer.Width, layer.Height);
-        if (clipped.IsEmpty) return;
-
-        // Read existing pixels into one flat buffer, render the rotated source onto it
-        // in a single Skia draw call, then write back — avoids per-tile SKCanvas overhead.
-        var flat = layer.Pixels.Capture(clipped);
-        if (flat.Length == 0) flat = new byte[clipped.Width * clipped.Height * 4];
-
-        var srcInfo = new SKImageInfo(_sourceW, _sourceH, SKColorType.Bgra8888, SKAlphaType.Unpremul);
-        using var srcBitmap = new SKBitmap();
-        var srcHandle = GCHandle.Alloc(_floatPixels, GCHandleType.Pinned);
-        try
-        {
-            srcBitmap.InstallPixels(srcInfo, srcHandle.AddrOfPinnedObject());
-
-            var dstInfo = new SKImageInfo(clipped.Width, clipped.Height, SKColorType.Bgra8888, SKAlphaType.Unpremul);
-            fixed (byte* flatPtr = flat)
-            {
-                using var dstBitmap = new SKBitmap();
-                dstBitmap.InstallPixels(dstInfo, (IntPtr)flatPtr, clipped.Width * 4);
-                using var canvas = new SKCanvas(dstBitmap);
-
-                // Shift from document space to flat-buffer space
-                canvas.Translate(
-                    -(clipped.X + layer.OffsetX),
-                    -(clipped.Y + layer.OffsetY));
-
-                var center = CenterOf(NormalizedRect(_rect));
-                var r = NormalizedRect(_rect);
-
-                using var paint = new SKPaint { IsAntialias = true, BlendMode = SKBlendMode.SrcOver };
-                canvas.Translate((float)center.X, (float)center.Y);
-                canvas.RotateDegrees((float)_angle);
-                canvas.Translate(-(float)center.X, -(float)center.Y);
-                canvas.DrawBitmap(srcBitmap,
-                    new SKRect((float)r.X, (float)r.Y, (float)r.Right, (float)r.Bottom),
-                    paint);
-                canvas.Flush();
-            }
-        }
-        finally
-        {
-            srcHandle.Free();
-        }
-
-        layer.Pixels.Restore(clipped, flat);
+        var c = CenterOf(rect);
+        var rad = angle * Math.PI / 180;
+        var cos = Math.Abs(Math.Cos(rad));
+        var sin = Math.Abs(Math.Sin(rad));
+        var hw = rect.Width * 0.5;
+        var hh = rect.Height * 0.5;
+        var w = hw * cos + hh * sin;
+        var h = hw * sin + hh * cos;
+        var x = (int)Math.Floor(c.X - w);
+        var y = (int)Math.Floor(c.Y - h);
+        return new PixelRegion(x, y, (int)Math.Round(w * 2), (int)Math.Round(h * 2));
     }
 
     private static Point CenterOf(Rect rect)
@@ -606,7 +670,6 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         yield return (TransformDragPart.BottomLeft, rect.BottomLeft);
         yield return (TransformDragPart.Left, new Point(rect.Left, midY));
 
-        // Free rotation handle below the box
         var rotY = rect.Bottom + Math.Max(rect.Height * 0.25, 12);
         yield return (TransformDragPart.Rotate, new Point(midX, rotY));
     }

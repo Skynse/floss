@@ -111,5 +111,5 @@ public sealed class ToolController
     }
 
     public void RenderOverlay(DrawingContext dc, double zoom)
-        => ActiveTool.RenderOverlay(dc, _context, zoom);
+        => (AlternateTool ?? ActiveTool).RenderOverlay(dc, _context, zoom);
 }

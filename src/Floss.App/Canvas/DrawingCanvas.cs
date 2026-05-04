@@ -5,7 +5,6 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
-using Avalonia.Platform;
 using Floss.App.Brushes;
 using Floss.App.Document;
 using Floss.App.Input;
@@ -16,6 +15,22 @@ namespace Floss.App.Canvas;
 public sealed class DrawingCanvas : Control
 {
     private const double PenPressureThreshold = 0.02;
+
+    private static readonly IBrush CheckerboardBrush = new DrawingBrush
+    {
+        TileMode = Avalonia.Media.TileMode.Tile,
+        DestinationRect = new RelativeRect(0, 0, 16, 16, RelativeUnit.Absolute),
+        Drawing = new DrawingGroup
+        {
+            Children =
+            {
+                new GeometryDrawing { Brush = new SolidColorBrush(Color.Parse("#555555")), Geometry = new RectangleGeometry(new Rect(0, 0, 8, 8)) },
+                new GeometryDrawing { Brush = new SolidColorBrush(Color.Parse("#555555")), Geometry = new RectangleGeometry(new Rect(8, 8, 8, 8)) },
+                new GeometryDrawing { Brush = new SolidColorBrush(Color.Parse("#aaaaaa")), Geometry = new RectangleGeometry(new Rect(8, 0, 8, 8)) },
+                new GeometryDrawing { Brush = new SolidColorBrush(Color.Parse("#aaaaaa")), Geometry = new RectangleGeometry(new Rect(0, 8, 8, 8)) },
+            }
+        }
+    };
 
     private readonly DrawingDocument _document = new();
     private readonly CanvasTool _canvasTool;
@@ -93,11 +108,6 @@ public sealed class DrawingCanvas : Control
         };
         _document.LayerRemoved += (_, layer) => _compositor.RemoveGroupCache(layer);
         _document.LayerMetadataChanged += (_, e) => LayerMetadataChanged?.Invoke(this, e);
-        _document.PaperChanged += (_, _) =>
-        {
-            _compositor.Invalidate(null);
-            InvalidateVisual();
-        };
     }
 
     public event EventHandler? StatsChanged;
@@ -174,10 +184,6 @@ public sealed class DrawingCanvas : Control
         }
         InvalidateVisual();
     }
-
-    public void SetPaperColor(Color color) => _document.PaperColor = color;
-
-    public void SetPaperVisible(bool visible) => _document.PaperVisible = visible;
 
     public void SetBrushSize(double size)
     {
@@ -257,12 +263,12 @@ public sealed class DrawingCanvas : Control
         InvalidateVisual();
     }
 
-    public bool BeginSelectionTransform()
+    public bool BeginSelectionTransform(IReadOnlyList<int>? layerIndices = null)
     {
         var previousTool = _toolController.ActiveTool;
         SetActiveTool(_transformTool);
         _transformTool.SetPreviousTool(previousTool);
-        if (_transformTool.BeginTransform(_ctx))
+        if (_transformTool.BeginTransform(_ctx, layerIndices))
             return true;
 
         _transformTool.SetPreviousTool(null);
@@ -415,6 +421,143 @@ public sealed class DrawingCanvas : Control
         InvalidateVisual();
     }
 
+    public void RotateCanvas90Clockwise()
+    {
+        var doc = _document;
+        var oldW = doc.Width;
+        var oldH = doc.Height;
+        doc.BeginDocumentMutation();
+
+        foreach (var layer in doc.Layers)
+        {
+            if (layer.IsGroup || layer.IsLocked) continue;
+
+            var lw = layer.Width;
+            var lh = layer.Height;
+            var pixels = layer.CapturePixels();
+            if (pixels.Length == 0 || pixels.Length != lw * lh * 4) continue;
+
+            var ox = layer.OffsetX;
+            var oy = layer.OffsetY;
+
+            var rotated = new byte[pixels.Length];
+            var newW = lh;
+            var newH = lw;
+
+            for (var y = 0; y < lh; y++)
+            {
+                for (var x = 0; x < lw; x++)
+                {
+                    var src = (y * lw + x) * 4;
+                    var dst = (x * newW + (newW - 1 - y)) * 4;
+                    rotated[dst] = pixels[src];
+                    rotated[dst + 1] = pixels[src + 1];
+                    rotated[dst + 2] = pixels[src + 2];
+                    rotated[dst + 3] = pixels[src + 3];
+                }
+            }
+
+            layer.Pixels.Resize(newW, newH);
+            layer.Pixels.CopyFromBgra(rotated, newW, newH);
+            layer.OffsetX = oldH - oy - lh;
+            layer.OffsetY = ox;
+            layer.MarkThumbnailDirty();
+        }
+
+        doc.SwapDimensions();
+        _ctx.Selection.Resize(doc.Width, doc.Height);
+        doc.NotifyChanged();
+        InvalidateVisual();
+    }
+
+    public void RotateCanvas90CounterClockwise()
+    {
+        var doc = _document;
+        var oldW = doc.Width;
+        var oldH = doc.Height;
+        doc.BeginDocumentMutation();
+
+        foreach (var layer in doc.Layers)
+        {
+            if (layer.IsGroup || layer.IsLocked) continue;
+
+            var lw = layer.Width;
+            var lh = layer.Height;
+            var pixels = layer.CapturePixels();
+            if (pixels.Length == 0 || pixels.Length != lw * lh * 4) continue;
+
+            var ox = layer.OffsetX;
+            var oy = layer.OffsetY;
+
+            var rotated = new byte[pixels.Length];
+            var newW = lh;
+            var newH = lw;
+
+            for (var y = 0; y < lh; y++)
+            {
+                for (var x = 0; x < lw; x++)
+                {
+                    var src = (y * lw + x) * 4;
+                    var dst = ((newH - 1 - x) * newW + y) * 4;
+                    rotated[dst] = pixels[src];
+                    rotated[dst + 1] = pixels[src + 1];
+                    rotated[dst + 2] = pixels[src + 2];
+                    rotated[dst + 3] = pixels[src + 3];
+                }
+            }
+
+            layer.Pixels.Resize(newW, newH);
+            layer.Pixels.CopyFromBgra(rotated, newW, newH);
+            layer.OffsetX = oy;
+            layer.OffsetY = oldW - ox - lw;
+            layer.MarkThumbnailDirty();
+        }
+
+        doc.SwapDimensions();
+        _ctx.Selection.Resize(doc.Width, doc.Height);
+        doc.NotifyChanged();
+        InvalidateVisual();
+    }
+
+    public void RotateCanvas180()
+    {
+        var doc = _document;
+        doc.BeginDocumentMutation();
+
+        foreach (var layer in doc.Layers)
+        {
+            if (layer.IsGroup || layer.IsLocked) continue;
+
+            var lw = layer.Width;
+            var lh = layer.Height;
+            var pixels = layer.CapturePixels();
+            if (pixels.Length == 0 || pixels.Length != lw * lh * 4) continue;
+
+            var rotated = new byte[pixels.Length];
+
+            for (var y = 0; y < lh; y++)
+            {
+                for (var x = 0; x < lw; x++)
+                {
+                    var src = (y * lw + x) * 4;
+                    var dst = ((lh - 1 - y) * lw + (lw - 1 - x)) * 4;
+                    rotated[dst] = pixels[src];
+                    rotated[dst + 1] = pixels[src + 1];
+                    rotated[dst + 2] = pixels[src + 2];
+                    rotated[dst + 3] = pixels[src + 3];
+                }
+            }
+
+            layer.OffsetX = doc.Width - layer.OffsetX - lw;
+            layer.OffsetY = doc.Height - layer.OffsetY - lh;
+            layer.RestorePixels(rotated);
+            layer.MarkThumbnailDirty();
+        }
+
+        doc.NotifyChanged();
+        InvalidateVisual();
+    }
+
     // Pixel clipboard (for Copy/Paste from canvas) — instance-scoped so
     // multi-window apps don't share state and memory can be reclaimed.
     private byte[]? _clipboardPixels;
@@ -501,7 +644,7 @@ public sealed class DrawingCanvas : Control
         if (_isPointerOver && !(_toolController.ActiveTool is TransformTool { HasPendingOperation: true }))
             Cursor = IsPaintBlockedByLock ? CursorNo : CursorNone;
 
-        _compositor.Composite(_document.Layers, _document.Width, _document.Height, _document.PaperColor, _document.PaperVisible);
+        _compositor.Composite(_document.Layers, _document.Width, _document.Height);
         var target = new Rect(Bounds.Size);
         using (context.PushClip(new RoundedRect(target)))
         using (context.PushRenderOptions(new RenderOptions
@@ -510,6 +653,7 @@ public sealed class DrawingCanvas : Control
             EdgeMode = EdgeMode.Aliased
         }))
         {
+            context.DrawRectangle(CheckerboardBrush, null, target);
             context.DrawImage(_compositor.Bitmap, target);
         }
 

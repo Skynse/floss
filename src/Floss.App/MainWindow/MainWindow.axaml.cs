@@ -165,8 +165,6 @@ public partial class MainWindow : Window
     private TextBlock _rotDisplay = null!;
     private Button _saveBrushButton = null!;
     private BrushStrokePreview _strokePreview = null!;
-    private Border? _paperSwatch;
-    private Button? _paperVisBtn;
 
     // ── State ─────────────────────────────────────────────────────────────────
     private BrushEditorWindow? _brushEditorWindow;
@@ -240,6 +238,10 @@ public partial class MainWindow : Window
     private bool _canvasOnly;
     private bool _showRulers;
 
+    // Layout grids for canvas-only mode collapse
+    private Grid? _rootGrid;
+    private GridLength[]? _rootColumnWidths;
+
     // ── Constructor ───────────────────────────────────────────────────────────
     public MainWindow()
     {
@@ -253,11 +255,13 @@ public partial class MainWindow : Window
         LoadBrushAssets();
         SelectInitialBrush();
         SetColor(Color.Parse(App.Config.LastColor));
-        SyncCanvasFrameToDocument(fitToViewport: false);
+        // Hide canvas frame until user creates a document via the startup dialog
+        _canvasFrame.IsVisible = false;
         if (_canvas.Layers.Count > 0) _selectedLayerIndices.Add(_canvas.ActiveLayerIndex);
         BuildLayerList();
         UpdateStatus();
         Closing += (_, _) => SaveToConfig();
+        Loaded += async (_, _) => await NewDocumentAsync();
         _canvas.DirtyStateChanged += (_, _) =>
         {
             string fileName = _currentFilePath == null ? "Untitled" : Path.GetFileName(_currentFilePath);
@@ -293,7 +297,8 @@ public partial class MainWindow : Window
         _workspaceViewport = new Grid
         {
             ClipToBounds = true,
-            Background = new SolidColorBrush(Color.Parse("#111112"))
+            Background = new SolidColorBrush(Color.Parse("#111112")),
+            Focusable = true
         };
         _workspaceViewport.Children.Add(_canvasFrame);
 
@@ -340,6 +345,8 @@ public partial class MainWindow : Window
         root.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 320 });
         root.ColumnDefinitions.Add(new ColumnDefinition(5, GridUnitType.Pixel));
         root.ColumnDefinitions.Add(new ColumnDefinition(320, GridUnitType.Pixel) { MinWidth = 200, MaxWidth = 700 });
+        _rootGrid = root;
+        _rootColumnWidths = [.. root.ColumnDefinitions.Select(c => c.Width)];
 
         var splitter = new GridSplitter
         {
@@ -451,6 +458,10 @@ public partial class MainWindow : Window
             Header = "_Image",
             ItemsSource = new object[]
             {
+                MenuAction("Rotate 90° _Clockwise", () => { _canvas.RotateCanvas90Clockwise(); SyncCanvasFrameToDocument(false); ClampCanvasPan(); _rulerOverlay?.InvalidateVisual(); }),
+                MenuAction("Rotate 90° _Counter-Clockwise", () => { _canvas.RotateCanvas90CounterClockwise(); SyncCanvasFrameToDocument(false); ClampCanvasPan(); _rulerOverlay?.InvalidateVisual(); }),
+                MenuAction("Rotate _180°", () => _canvas.RotateCanvas180()),
+                new Separator(),
                 MenuAction("Flip Canvas _Horizontal", () => _canvas.FlipCanvas(horizontal: true)),
                 MenuAction("Flip Canvas _Vertical", () => _canvas.FlipCanvas(horizontal: false)),
                 new Separator(),
@@ -798,8 +809,8 @@ public partial class MainWindow : Window
             Minimum = min,
             Maximum = max,
             Value = value,
-            Height = 24,
-            MinHeight = 20,
+            Height = 28,
+            MinHeight = 24,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
         ToolTip.SetTip(s, tip);
@@ -859,9 +870,28 @@ public partial class MainWindow : Window
         _spacingSlider.Value = Math.Clamp(cfg.LastBrushSpacing, _spacingSlider.Minimum, _spacingSlider.Maximum);
     }
 
+    private readonly HashSet<string> _dirtyBrushAssetIds = new();
+
     private void SaveToConfig()
     {
         CaptureActiveBrushToPreset();
+
+        // Persist brush asset so curve edits, slider changes, etc. survive restart
+        if (_activeBrushAsset != null)
+        {
+            _activeBrushAsset.WithPreset(CurrentBrushFromUi());
+            _brushLibrary.Save(_activeBrushAsset);
+        }
+
+        // Save any other brush assets that were modified while not active
+        foreach (var assetId in _dirtyBrushAssetIds.ToList())
+        {
+            var asset = _brushAssets.FirstOrDefault(a => a.Id == assetId);
+            if (asset != null && asset != _activeBrushAsset)
+                _brushLibrary.Save(asset);
+        }
+        _dirtyBrushAssetIds.Clear();
+
         var cfg = App.Config;
         cfg.LastBrushSize = _sizeSlider.Value;
         cfg.LastBrushOpacity = _opacitySlider.Value;
@@ -913,7 +943,6 @@ public partial class MainWindow : Window
             _canvas.SyncBrushFromContext(brush);
             RefreshToolProperties();
         };
-        _canvas.Document.PaperChanged += (_, _) => RefreshPaperRow();
 
         SliderChanged(_sizeSlider, v => UpdateCurrentBrush(p => p with { Size = v }));
         SliderChanged(_opacitySlider, v => UpdateCurrentBrush(p => p with { Opacity = v }));
@@ -923,7 +952,7 @@ public partial class MainWindow : Window
         SliderChanged(_smoothingSlider, v => UpdateCurrentBrush(p => p with { Smoothing = v }));
         SliderChanged(_grainSlider, v => UpdateCurrentBrush(p => p with { Grain = v }));
 
-        KeyDown += OnKeyDown;
+        AddHandler(KeyDownEvent, OnKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         KeyUp += OnKeyUp;
     }
 

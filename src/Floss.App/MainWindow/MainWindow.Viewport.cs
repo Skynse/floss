@@ -173,13 +173,41 @@ public partial class MainWindow
     private void ToggleCanvasOnly()
     {
         _canvasOnly = !_canvasOnly;
-        if (_shellMenu != null) _shellMenu.IsVisible = !_canvasOnly;
-        if (_shellToolbar != null) _shellToolbar.IsVisible = !_canvasOnly;
+
+        // Krita-style: hide only the left/right dockers, keep
+        // menu bar, top toolbar, status bar and footer visible.
         if (_leftRail != null) _leftRail.IsVisible = !_canvasOnly;
         if (_rightPanel != null) _rightPanel.IsVisible = !_canvasOnly;
         if (_splitterControl != null) _splitterControl.IsVisible = !_canvasOnly;
-        if (_statusBar != null) _statusBar.IsVisible = !_canvasOnly;
-        if (_footer != null) _footer.IsVisible = !_canvasOnly;
+
+        // Collapse / restore layout grid columns so the canvas expands into
+        // the space freed by the hidden side panels.
+        if (_rootGrid != null && _rootColumnWidths != null)
+        {
+            for (var i = 0; i < _rootGrid.ColumnDefinitions.Count; i++)
+            {
+                var col = _rootGrid.ColumnDefinitions[i];
+                if (_canvasOnly)
+                {
+                    col.Width = i == 1
+                        ? new GridLength(1, GridUnitType.Star)
+                        : new GridLength(0);
+                    col.MinWidth = 0;
+                    col.MaxWidth = double.PositiveInfinity;
+                }
+                else
+                {
+                    col.Width = _rootColumnWidths[i];
+                    col.MinWidth = i == 1 ? 320 : (i == 3 ? 200 : 0);
+                    col.MaxWidth = i == 3 ? 700 : double.PositiveInfinity;
+                }
+            }
+        }
+
+        if (_canvasOnly)
+        {
+            _workspaceViewport.Focus();
+        }
     }
 
     private void ToggleRulers()
@@ -204,10 +232,8 @@ public partial class MainWindow
         var rotatedW = docW * cos + docH * sin;
         var rotatedH = docW * sin + docH * cos;
 
-        var marginX = Math.Min(vpW * 0.45, 360);
-        var marginY = Math.Min(vpH * 0.45, 360);
-        var maxX = Math.Max(marginX, (rotatedW - vpW) * 0.5 + marginX);
-        var maxY = Math.Max(marginY, (rotatedH - vpH) * 0.5 + marginY);
+        var maxX = Math.Max(100.0, vpW * 0.5 + rotatedW * 0.5 - 80);
+        var maxY = Math.Max(100.0, vpH * 0.5 + rotatedH * 0.5 - 80);
 
         _canvasPan.X = Math.Clamp(_canvasPan.X, -maxX, maxX);
         _canvasPan.Y = Math.Clamp(_canvasPan.Y, -maxY, maxY);
@@ -288,6 +314,11 @@ public partial class MainWindow
         else if (sc.RotateReset.Matches(key, mods)) { SetRotation(0); e.Handled = true; }
         else if (sc.RotateLeft.Matches(key, mods)) { SetRotation(_rotation - sc.RotateKeyStep); e.Handled = true; }
         else if (sc.RotateRight.Matches(key, mods)) { SetRotation(_rotation + sc.RotateKeyStep); e.Handled = true; }
+        else if (sc.RotateCanvas90Cw.Matches(key, mods))
+        { _canvas.RotateCanvas90Clockwise(); SyncCanvasFrameToDocument(false); ClampCanvasPan(); _rulerOverlay?.InvalidateVisual(); e.Handled = true; }
+        else if (sc.RotateCanvas90Ccw.Matches(key, mods))
+        { _canvas.RotateCanvas90CounterClockwise(); SyncCanvasFrameToDocument(false); ClampCanvasPan(); _rulerOverlay?.InvalidateVisual(); e.Handled = true; }
+        else if (sc.RotateCanvas180.Matches(key, mods)) { _canvas.RotateCanvas180(); e.Handled = true; }
         else if (sc.SelectAll.Matches(key, mods)) { _canvas.SelectAll(); e.Handled = true; }
         else if (sc.Deselect.Matches(key, mods)) { _canvas.Deselect(); e.Handled = true; }
         else if (sc.InvertSelect.Matches(key, mods)) { _canvas.InvertSelection(); e.Handled = true; }
@@ -296,8 +327,8 @@ public partial class MainWindow
             if (_canvas.IsTransformActive) { _canvas.CommitActiveTool(); }
             else
             {
-                if (!_canvas.HasSelection) _canvas.SelectAll();
-                _canvas.BeginSelectionTransform();
+                _canvas.BeginSelectionTransform(
+                    _selectedLayerIndices.Count > 1 ? _selectedLayerIndices.ToList() : null);
             }
             e.Handled = true;
         }

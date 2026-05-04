@@ -139,6 +139,7 @@ public sealed class FreehandStrokeOperation : IToolOperation
         var region = _brushEngine.EstimateDabRegion(layer, _brush, localSample);
         if (region.IsEmpty) return;
 
+        layer.ExpandToAccommodate(region.X, region.Y, region.Right, region.Bottom);
         CaptureBeforeTiles(layer, region);
         var dirty = _brushEngine.RasterizeDab(layer, _brush, _eraser || sourceSample.Source == CanvasInputSource.Eraser, localSample, velocity);
         if (dirty.IsEmpty) return;
@@ -165,6 +166,7 @@ public sealed class FreehandStrokeOperation : IToolOperation
         var region = _brushEngine.EstimateSegmentRegion(layer, _brush, from, to);
         if (region.IsEmpty) return;
 
+        layer.ExpandToAccommodate(region.X, region.Y, region.Right, region.Bottom);
         CaptureBeforeTiles(layer, region);
         var dirty = final
             ? _brushEngine.RasterizeFinalSegment(layer, _brush, _eraser || sourceSample.Source == CanvasInputSource.Eraser, from, to)
