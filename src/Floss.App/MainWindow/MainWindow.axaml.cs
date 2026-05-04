@@ -18,6 +18,7 @@ using Floss.App.ImageFiles;
 using Floss.App.Input;
 using Floss.App.Kra;
 using Floss.App.Psd;
+using Floss.App.Processes;
 using Floss.App.Tools;
 
 namespace Floss.App;
@@ -186,7 +187,10 @@ public partial class MainWindow : Window
     private TextBox? _activeLayerNameEdit;
     private Action<bool>? _finishLayerRename;
 
-    // ── Tool instances ────────────────────────────────────────────────────────
+    // ── Tool factory (new process-based architecture) ─────────────────────────
+    private ToolFactory? _toolFactory;
+
+    // ── Legacy tool instances (retained for property panel during migration) ──
     private readonly SelectTool _selectTool = new();
     private readonly MagicWandTool _magicWandTool = new();
     private readonly FillTool _fillTool = new();
@@ -275,6 +279,7 @@ public partial class MainWindow : Window
     private void BuildUi()
     {
         _canvas = new DrawingCanvas();
+        _toolFactory = new ToolFactory(_canvas.Document, _canvas.BrushEngine);
 
         var tg = new TransformGroup();
         _canvasFlip = new ScaleTransform(1, 1);
@@ -1064,30 +1069,33 @@ public partial class MainWindow : Window
         group.LastActivePresetId = preset.Id;
         _activeToolGroup = group;
 
-        // Apply engine-specific tool state before switching
-        switch (preset.Engine)
+        // Apply legacy tool state for tools not yet migrated to processes
+        if (preset.InputProcess == default || preset.OutputProcess == default)
         {
-            case ToolPresetEngine.Select:
-                _selectTool.Mode = preset.SelectMode;
-                break;
-            case ToolPresetEngine.MagicWand:
-                _magicWandTool.Tolerance = preset.Tolerance;
-                break;
-            case ToolPresetEngine.Fill:
-                _fillTool.Tolerance = preset.Tolerance;
-                break;
-            case ToolPresetEngine.Gradient:
-                _gradientTool.GradientType = preset.GradientType;
-                break;
-            case ToolPresetEngine.Shape:
-                _shapeTool.Kind = preset.ShapeKind;
-                _shapeTool.DrawMode = preset.ShapeDrawMode;
-                _shapeTool.StrokeWidth = preset.ShapeStrokeWidth;
-                break;
-            case ToolPresetEngine.Polyline:
-                _polylineTool.ClosePath = preset.PolylineClosePath;
-                _polylineTool.StrokeWidth = preset.PolylineStrokeWidth;
-                break;
+            switch (preset.Engine)
+            {
+                case ToolPresetEngine.Select:
+                    _selectTool.Mode = preset.SelectMode;
+                    break;
+                case ToolPresetEngine.MagicWand:
+                    _magicWandTool.Tolerance = preset.Tolerance;
+                    break;
+                case ToolPresetEngine.Fill:
+                    _fillTool.Tolerance = preset.Tolerance;
+                    break;
+                case ToolPresetEngine.Gradient:
+                    _gradientTool.GradientType = preset.GradientType;
+                    break;
+                case ToolPresetEngine.Shape:
+                    _shapeTool.Kind = preset.ShapeKind;
+                    _shapeTool.DrawMode = preset.ShapeDrawMode;
+                    _shapeTool.StrokeWidth = preset.ShapeStrokeWidth;
+                    break;
+                case ToolPresetEngine.Polyline:
+                    _polylineTool.ClosePath = preset.PolylineClosePath;
+                    _polylineTool.StrokeWidth = preset.PolylineStrokeWidth;
+                    break;
+            }
         }
 
         // For brush-based engines, load the referenced brush asset first
@@ -1103,7 +1111,7 @@ public partial class MainWindow : Window
         _suppressBrushSettingsRestored = true;
         try
         {
-            ActivateTool(ToolForPresetEngine(preset.Engine), btn, preset);
+            ActivateTool(ToolForPreset(preset), btn, preset);
         }
         finally
         {
@@ -1113,7 +1121,8 @@ public partial class MainWindow : Window
         // Now load the brush asset and sync the tool-property panel.
         // This runs after ActivateTool so that SetActiveTool's per-engine
         // save correctly recorded the *previous* brush.
-        if (preset.Engine is ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge)
+        if (preset.Engine is ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge
+            || (preset.InputProcess == InputProcessType.BrushStroke && preset.OutputProcess == OutputProcessType.DirectDraw))
         {
             BrushPreset? assetPreset = null;
 
@@ -1216,22 +1225,32 @@ public partial class MainWindow : Window
         }
     }
 
-    internal ITool ToolForPresetEngine(ToolPresetEngine engine) => engine switch
+    internal ITool ToolForPreset(ToolPreset preset)
     {
-        ToolPresetEngine.Brush => _canvas.BrushTool,
-        ToolPresetEngine.Eraser => _canvas.EraserTool,
-        ToolPresetEngine.Smudge => _canvas.SmudgeTool,
-        ToolPresetEngine.Move => _moveTool,
-        ToolPresetEngine.Select => _selectTool,
-        ToolPresetEngine.MagicWand => _magicWandTool,
-        ToolPresetEngine.Fill => _fillTool,
-        ToolPresetEngine.LassoFill => _lassoFillTool,
-        ToolPresetEngine.Eyedropper => _eyedropperTool,
-        ToolPresetEngine.Gradient => _gradientTool,
-        ToolPresetEngine.Shape => _shapeTool,
-        ToolPresetEngine.Polyline => _polylineTool,
-        _ => _canvas.BrushTool
-    };
+        // Use new process-based architecture if InputProcess is set.
+        if (preset.InputProcess != default && preset.OutputProcess != default)
+        {
+            return _toolFactory!.CreateTool(preset);
+        }
+
+        // Fallback to legacy tool instances.
+        return preset.Engine switch
+        {
+            ToolPresetEngine.Brush => _canvas.BrushTool,
+            ToolPresetEngine.Eraser => _canvas.EraserTool,
+            ToolPresetEngine.Smudge => _canvas.SmudgeTool,
+            ToolPresetEngine.Move => _moveTool,
+            ToolPresetEngine.Select => _selectTool,
+            ToolPresetEngine.MagicWand => _magicWandTool,
+            ToolPresetEngine.Fill => _fillTool,
+            ToolPresetEngine.LassoFill => _lassoFillTool,
+            ToolPresetEngine.Eyedropper => _eyedropperTool,
+            ToolPresetEngine.Gradient => _gradientTool,
+            ToolPresetEngine.Shape => _shapeTool,
+            ToolPresetEngine.Polyline => _polylineTool,
+            _ => _canvas.BrushTool
+        };
+    }
 
     private static void SetRailActive(Button button, bool active)
     {

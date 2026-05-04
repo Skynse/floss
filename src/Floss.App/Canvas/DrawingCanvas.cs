@@ -43,6 +43,8 @@ public sealed class DrawingCanvas : Control
     private static readonly IBrush CursorOuterBrush = new SolidColorBrush(Color.FromArgb(160, 0, 0, 0));
     private static readonly IBrush CursorInnerBrush = new SolidColorBrush(Colors.White);
 
+    public BrushEngine BrushEngine { get; }
+
     public DrawingCanvas()
     {
         _document.DirtyStateChanged += (_, _) => DirtyStateChanged?.Invoke(this, EventArgs.Empty);
@@ -51,7 +53,8 @@ public sealed class DrawingCanvas : Control
         RenderOptions.SetBitmapInterpolationMode(this, BitmapInterpolationMode.None);
         RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);
 
-        _canvasTool = new CanvasTool(_document, new BrushEngine());
+        BrushEngine = new BrushEngine();
+        _canvasTool = new CanvasTool(_document, BrushEngine);
         _compositor = new LayerCompositor();
 
         _ctx = new ToolContext(_document)

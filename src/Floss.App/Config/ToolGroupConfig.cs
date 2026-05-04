@@ -12,7 +12,33 @@ using KeyBinding = Floss.App.Input.KeyBinding;
 
 namespace Floss.App;
 
-// Engine lives on the preset, not the group — a group can hold mixed presets.
+// Input process determines how user input is captured (CSP-style).
+public enum InputProcessType
+{
+    BrushStroke,    // Freehand stroke with stabilization
+    Lasso,          // Freehand polygon with stabilization
+    Polyline,       // Click-to-add vertices
+    Rect,           // Drag rectangle
+    Click,          // Single click
+    Drag            // Drag start-to-end
+}
+
+// Output process determines what the tool's input produces (CSP-style).
+public enum OutputProcessType
+{
+    DirectDraw,      // Paint with brush engine
+    ClosedAreaFill,  // Fill enclosed region
+    SelectionArea,   // Create selection
+    FloodFill,       // Flood fill by color
+    Gradient,        // Apply gradient
+    Eyedropper,      // Sample color
+    MoveLayer,       // Move layer offset
+    Stroke,          // Stroke a path
+    Zoom,            // Zoom canvas
+    Pan              // Pan canvas
+}
+
+// Legacy enum for backward compat during migration.
 public enum ToolPresetEngine
 {
     Brush, Eraser, Smudge,
@@ -22,24 +48,27 @@ public enum ToolPresetEngine
     Gradient, Shape, Polyline
 }
 
-// Output process determines what the tool's input produces (CSP-style).
-public enum ToolOutputProcess
-{
-    DirectDraw,
-    Zoom,
-    Pan,
-    Rotate,
-    Eyedropper,
-    EraseIfTransparent
-}
-
 public sealed class ToolPreset
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N")[..8];
     public string Name { get; set; } = "";
+
+    // New process-based architecture (CSP-style)
+    public InputProcessType InputProcess { get; set; }
+    public OutputProcessType OutputProcess { get; set; }
+
+    // Legacy engine field for migration
     public ToolPresetEngine Engine { get; set; }
-    public ToolOutputProcess OutputProcess { get; set; } = ToolOutputProcess.DirectDraw;
+
     public KeyBinding AlternateInvocation { get; set; } = KeyBinding.Empty;
+
+    // Shared input process properties
+    public double Stabilization { get; set; } = 0.0;  // 0 = none, 1 = full
+
+    // Shared output process properties
+    public bool Antialiasing { get; set; } = true;
+
+    // Brush properties (for DirectDraw output)
     public double? BrushSize { get; set; }
     public double? BrushOpacity { get; set; }
     public double? BrushFlow { get; set; }
@@ -115,6 +144,37 @@ public sealed class ToolPreset
     // Polyline
     public bool PolylineClosePath { get; set; }
     public float PolylineStrokeWidth { get; set; } = 4;
+
+    // ── Legacy migration ──────────────────────────────────────────────────────
+    // Converts old Engine field to new InputProcess+OutputProcess.
+    // Should be called after deserialization.
+    public void MigrateFromLegacy()
+    {
+        if (InputProcess != default && OutputProcess != default) return; // Already migrated
+
+        (InputProcess, OutputProcess) = Engine switch
+        {
+            ToolPresetEngine.Brush      => (InputProcessType.BrushStroke, OutputProcessType.DirectDraw),
+            ToolPresetEngine.Eraser     => (InputProcessType.BrushStroke, OutputProcessType.DirectDraw),
+            ToolPresetEngine.Smudge     => (InputProcessType.BrushStroke, OutputProcessType.DirectDraw),
+            ToolPresetEngine.Select     => SelectMode switch
+            {
+                SelectMode.Rect          => (InputProcessType.Rect, OutputProcessType.SelectionArea),
+                SelectMode.Lasso         => (InputProcessType.Lasso, OutputProcessType.SelectionArea),
+                SelectMode.PolylineLasso => (InputProcessType.Polyline, OutputProcessType.SelectionArea),
+                _                        => (InputProcessType.Rect, OutputProcessType.SelectionArea)
+            },
+            ToolPresetEngine.MagicWand  => (InputProcessType.Click, OutputProcessType.SelectionArea),
+            ToolPresetEngine.Fill       => (InputProcessType.Click, OutputProcessType.FloodFill),
+            ToolPresetEngine.LassoFill  => (InputProcessType.Lasso, OutputProcessType.ClosedAreaFill),
+            ToolPresetEngine.Move       => (InputProcessType.Drag, OutputProcessType.MoveLayer),
+            ToolPresetEngine.Eyedropper => (InputProcessType.Click, OutputProcessType.Eyedropper),
+            ToolPresetEngine.Gradient   => (InputProcessType.Drag, OutputProcessType.Gradient),
+            ToolPresetEngine.Shape      => (InputProcessType.Rect, OutputProcessType.Stroke),
+            ToolPresetEngine.Polyline   => (InputProcessType.Polyline, OutputProcessType.Stroke),
+            _                           => (InputProcessType.BrushStroke, OutputProcessType.DirectDraw)
+        };
+    }
 }
 
 public sealed class ToolCategory
@@ -176,16 +236,14 @@ public sealed class ToolGroupConfig
     {
         foreach (var group in Groups)
         {
+            foreach (var preset in group.Presets)
+                preset.MigrateFromLegacy();
+
             if (group.Presets.Count == 0)
             {
-                group.Presets.Add(new ToolPreset { Name = group.Name, Engine = group.DefaultEngine });
-            }
-            else if (group.DefaultEngine is not (ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge))
-            {
-                // Old configs serialised without an Engine field — it defaults to Brush (0).
-                // Correct any preset in a non-paint group that still carries the Brush default.
-                foreach (var p in group.Presets.Where(p => p.Engine == ToolPresetEngine.Brush))
-                    p.Engine = group.DefaultEngine;
+                var defaultPreset = new ToolPreset { Name = group.Name, Engine = group.DefaultEngine };
+                defaultPreset.MigrateFromLegacy();
+                group.Presets.Add(defaultPreset);
             }
         }
     }
@@ -257,56 +315,56 @@ public sealed class ToolGroupConfig
     private static List<ToolGroup> Defaults() =>
     [
         new() { Name = "Brush",  DefaultEngine = ToolPresetEngine.Brush,  Shortcut = new(Key.B),
-            Presets = [new() { Name = "Brush",  Engine = ToolPresetEngine.Brush }] },
+            Presets = [new() { Name = "Brush",  InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw }] },
         new() { Name = "Eraser", DefaultEngine = ToolPresetEngine.Eraser, Shortcut = new(Key.E),
-            Presets = [new() { Name = "Eraser", Engine = ToolPresetEngine.Eraser }] },
+            Presets = [new() { Name = "Eraser", InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw }] },
         new()
         {
             Name = "Smudge", DefaultEngine = ToolPresetEngine.Smudge, Shortcut = new(Key.U),
-            Presets = [new() { Name = "Smudge", Engine = ToolPresetEngine.Smudge }]
+            Presets = [new() { Name = "Smudge", InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw }]
         },
         new()
         {
             Name = "Select", DefaultEngine = ToolPresetEngine.Select, Shortcut = new(Key.S),
             Presets =
             [
-                new() { Name = "Rectangle", Engine = ToolPresetEngine.Select, SelectMode = SelectMode.Rect },
-                new() { Name = "Lasso",     Engine = ToolPresetEngine.Select, SelectMode = SelectMode.Lasso },
-                new() { Name = "Polygon",   Engine = ToolPresetEngine.Select, SelectMode = SelectMode.PolylineLasso },
+                new() { Name = "Rectangle", InputProcess = InputProcessType.Rect, OutputProcess = OutputProcessType.SelectionArea, SelectMode = SelectMode.Rect },
+                new() { Name = "Lasso",     InputProcess = InputProcessType.Lasso, OutputProcess = OutputProcessType.SelectionArea, SelectMode = SelectMode.Lasso, Stabilization = 0.3 },
+                new() { Name = "Polygon",   InputProcess = InputProcessType.Polyline, OutputProcess = OutputProcessType.SelectionArea, SelectMode = SelectMode.PolylineLasso },
             ]
         },
         new()
         {
             Name = "Magic Wand", DefaultEngine = ToolPresetEngine.MagicWand, Shortcut = new(Key.W),
-            Presets = [new() { Name = "Magic Wand", Engine = ToolPresetEngine.MagicWand }]
+            Presets = [new() { Name = "Magic Wand", InputProcess = InputProcessType.Click, OutputProcess = OutputProcessType.SelectionArea }]
         },
         new()
         {
             Name = "Fill", DefaultEngine = ToolPresetEngine.Fill, Shortcut = new(Key.G),
-            Presets = [new() { Name = "Fill", Engine = ToolPresetEngine.Fill }]
+            Presets = [new() { Name = "Fill", InputProcess = InputProcessType.Click, OutputProcess = OutputProcessType.FloodFill }]
         },
         new()
         {
             Name = "Lasso Fill", DefaultEngine = ToolPresetEngine.LassoFill, Shortcut = new(Key.L),
-            Presets = [new() { Name = "Lasso Fill", Engine = ToolPresetEngine.LassoFill }]
+            Presets = [new() { Name = "Lasso Fill", InputProcess = InputProcessType.Lasso, OutputProcess = OutputProcessType.ClosedAreaFill, Stabilization = 0.3, Antialiasing = true }]
         },
         new()
         {
             Name = "Move", DefaultEngine = ToolPresetEngine.Move, Shortcut = new(Key.V),
-            Presets = [new() { Name = "Move", Engine = ToolPresetEngine.Move }]
+            Presets = [new() { Name = "Move", InputProcess = InputProcessType.Drag, OutputProcess = OutputProcessType.MoveLayer }]
         },
         new()
         {
             Name = "Eyedropper", DefaultEngine = ToolPresetEngine.Eyedropper, Shortcut = new(Key.I),
-            Presets = [new() { Name = "Eyedropper", Engine = ToolPresetEngine.Eyedropper }]
+            Presets = [new() { Name = "Eyedropper", InputProcess = InputProcessType.Click, OutputProcess = OutputProcessType.Eyedropper }]
         },
         new()
         {
             Name = "Gradient", DefaultEngine = ToolPresetEngine.Gradient,
             Presets =
             [
-                new() { Name = "Linear", Engine = ToolPresetEngine.Gradient, GradientType = GradientType.Linear },
-                new() { Name = "Radial", Engine = ToolPresetEngine.Gradient, GradientType = GradientType.Radial },
+                new() { Name = "Linear", InputProcess = InputProcessType.Drag, OutputProcess = OutputProcessType.Gradient, GradientType = GradientType.Linear },
+                new() { Name = "Radial", InputProcess = InputProcessType.Drag, OutputProcess = OutputProcessType.Gradient, GradientType = GradientType.Radial },
             ]
         },
         new()
@@ -314,9 +372,9 @@ public sealed class ToolGroupConfig
             Name = "Shape", DefaultEngine = ToolPresetEngine.Shape,
             Presets =
             [
-                new() { Name = "Rectangle", Engine = ToolPresetEngine.Shape, ShapeKind = ShapeKind.Rectangle },
-                new() { Name = "Ellipse",   Engine = ToolPresetEngine.Shape, ShapeKind = ShapeKind.Ellipse },
-                new() { Name = "Line",      Engine = ToolPresetEngine.Shape, ShapeKind = ShapeKind.Line },
+                new() { Name = "Rectangle", InputProcess = InputProcessType.Rect, OutputProcess = OutputProcessType.Stroke, ShapeKind = ShapeKind.Rectangle },
+                new() { Name = "Ellipse",   InputProcess = InputProcessType.Rect, OutputProcess = OutputProcessType.Stroke, ShapeKind = ShapeKind.Ellipse },
+                new() { Name = "Line",      InputProcess = InputProcessType.Rect, OutputProcess = OutputProcessType.Stroke, ShapeKind = ShapeKind.Line },
             ]
         },
         new()
@@ -324,8 +382,8 @@ public sealed class ToolGroupConfig
             Name = "Polyline", DefaultEngine = ToolPresetEngine.Polyline,
             Presets =
             [
-                new() { Name = "Open",   Engine = ToolPresetEngine.Polyline, PolylineClosePath = false },
-                new() { Name = "Closed", Engine = ToolPresetEngine.Polyline, PolylineClosePath = true },
+                new() { Name = "Open",   InputProcess = InputProcessType.Polyline, OutputProcess = OutputProcessType.Stroke, PolylineClosePath = false },
+                new() { Name = "Closed", InputProcess = InputProcessType.Polyline, OutputProcess = OutputProcessType.Stroke, PolylineClosePath = true },
             ]
         },
     ];

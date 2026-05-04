@@ -54,6 +54,79 @@ public partial class MainWindow
 
     private IReadOnlyList<ToolPropertyDescriptor> CurrentToolProperties()
     {
+        var preset = _activeToolGroup?.ActivePreset;
+        if (preset == null) return [];
+
+        var props = new List<ToolPropertyDescriptor>();
+
+        // Input process properties
+        if (preset.InputProcess == InputProcessType.BrushStroke ||
+            preset.InputProcess == InputProcessType.Lasso)
+        {
+            props.Add(SliderProp("input.stabilization", "Stabilization", true,
+                () => preset.Stabilization, v => preset.Stabilization = v, 0, 1, "%"));
+        }
+
+        // Output process properties
+        switch (preset.OutputProcess)
+        {
+            case OutputProcessType.DirectDraw:
+                props.AddRange([
+                    SliderProp("brush.size", "Brush Size", true, _sizeSlider, "px"),
+                    SliderProp("brush.opacity", "Opacity", true, _opacitySlider, "%"),
+                    SliderProp("brush.flow", "Flow", false, _flowSlider, "%"),
+                    SliderProp("brush.hardness", "Anti-aliasing", true, _hardnessSlider, "%"),
+                    SliderProp("brush.spacing", "Spacing", false, _spacingSlider, "%"),
+                    SliderProp("brush.smoothing", "Smoothing", true, _smoothingSlider, "%"),
+                    SliderProp("brush.grain", "Grain", false, _grainSlider, "%")
+                ]);
+                break;
+
+            case OutputProcessType.ClosedAreaFill:
+                props.Add(BoolProp("output.antialiasing", "Antialiasing", true,
+                    () => preset.Antialiasing, v => preset.Antialiasing = v));
+                break;
+
+            case OutputProcessType.SelectionArea:
+                props.AddRange([
+                    EnumProp("select.mode", "Selection Mode", true,
+                        () => preset.SelectMode, v => preset.SelectMode = v),
+                    EnumProp("select.op", "Operation", true,
+                        () => SelectOp.Replace, _ => { })  // TODO: add SelectOp to preset
+                ]);
+                break;
+
+            case OutputProcessType.FloodFill:
+                props.Add(SliderProp("fill.tolerance", "Tolerance", true,
+                    () => preset.Tolerance, v => preset.Tolerance = v, 0, 1, "%"));
+                break;
+
+            case OutputProcessType.Gradient:
+                props.Add(EnumProp("gradient.type", "Gradient Type", true,
+                    () => preset.GradientType, v => preset.GradientType = v));
+                break;
+
+            case OutputProcessType.Stroke:
+                props.AddRange([
+                    SliderProp("stroke.width", "Stroke Width", true,
+                        () => preset.PolylineStrokeWidth, v => preset.PolylineStrokeWidth = (float)v, 1, 200, "px"),
+                    BoolProp("stroke.closePath", "Close Path", true,
+                        () => preset.PolylineClosePath, v => preset.PolylineClosePath = v)
+                ]);
+                break;
+        }
+
+        // Legacy fallback for tools not yet migrated
+        if (preset.InputProcess == default || preset.OutputProcess == default)
+        {
+            return CurrentLegacyToolProperties();
+        }
+
+        return props;
+    }
+
+    private IReadOnlyList<ToolPropertyDescriptor> CurrentLegacyToolProperties()
+    {
         var tool = _canvas.ActiveTool;
         if (tool is BrushTool)
         {

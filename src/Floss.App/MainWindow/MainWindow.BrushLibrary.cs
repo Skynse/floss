@@ -463,7 +463,7 @@ private void ShowPresetPropertiesDialog(ToolGroup group, ToolPreset preset)
 
     var outputPicker = new ComboBox
     {
-        ItemsSource = Enum.GetValues<ToolOutputProcess>(),
+        ItemsSource = Enum.GetValues<OutputProcessType>(),
         SelectedItem = preset.OutputProcess,
         Width = 200,
         Height = 28,
@@ -528,7 +528,7 @@ private void ShowPresetPropertiesDialog(ToolGroup group, ToolPreset preset)
     {
         preset.Name = nameBox.Text?.Trim() ?? preset.Name;
         preset.Engine = (ToolPresetEngine)(enginePicker.SelectedItem ?? preset.Engine);
-        preset.OutputProcess = (ToolOutputProcess)(outputPicker.SelectedItem ?? preset.OutputProcess);
+        preset.OutputProcess = (OutputProcessType)(outputPicker.SelectedItem ?? preset.OutputProcess);
         App.ToolGroups.Save();
         RefreshGroupPresets();
         if (_activeToolGroup == group && group.ActivePreset == preset)
