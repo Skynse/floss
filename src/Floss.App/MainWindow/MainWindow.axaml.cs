@@ -235,6 +235,7 @@ public partial class MainWindow : Window
     private Control? _statusBar;
     private Control? _footer;
     private Control? _rulerOverlay;
+    private CheckerboardOverlay? _checkerboardOverlay;
     private bool _canvasOnly;
     private bool _showRulers;
 
@@ -297,9 +298,11 @@ public partial class MainWindow : Window
         _workspaceViewport = new Grid
         {
             ClipToBounds = true,
-            Background = new SolidColorBrush(Color.Parse("#111112")),
+            Background = CheckerboardOverlay.BackgroundBrush,
             Focusable = true
         };
+        _checkerboardOverlay = new CheckerboardOverlay(_canvas);
+        _workspaceViewport.Children.Add(_checkerboardOverlay);
         _workspaceViewport.Children.Add(_canvasFrame);
 
         _rulerOverlay = new RulerOverlay(_canvas);
@@ -925,7 +928,7 @@ public partial class MainWindow : Window
             UpdateStatus();
         };
         _canvas.LayerMetadataChanged += (_, e) => { UpdateLayerRow(e.LayerIndex); UpdateStatus(); };
-        _canvas.ColorSampled += (_, c) => SetColor(c, syncPicker: true, switchToBrush: false);
+        _canvas.ColorSampled += (_, c) => SetColor(c);
         _canvas.BrushSettingsRestored += brush =>
         {
             if (_suppressBrushSettingsRestored) return;

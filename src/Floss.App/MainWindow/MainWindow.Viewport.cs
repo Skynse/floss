@@ -23,6 +23,8 @@ public partial class MainWindow
 
         if (fitToViewport)
             ResetView();
+        else
+            _checkerboardOverlay?.InvalidateVisual();
     }
 
     private void Workspace_OnPointerWheelChanged(object? sender, PointerWheelEventArgs e)
@@ -74,6 +76,7 @@ public partial class MainWindow
                 _canvas.PanOffsetX = _canvasPan.X;
                 _canvas.PanOffsetY = _canvasPan.Y;
                 _rulerOverlay?.InvalidateVisual();
+                _checkerboardOverlay?.InvalidateVisual();
                 ClampCanvasPan();
                 break;
             case GestureMode.Zoom:
@@ -123,6 +126,7 @@ public partial class MainWindow
         _canvas.PanOffsetX = _canvasPan.X;
         _canvas.PanOffsetY = _canvasPan.Y;
         _rulerOverlay?.InvalidateVisual();
+        _checkerboardOverlay?.InvalidateVisual();
         ClampCanvasPan();
         _zoomDisplay.Text = $"{Math.Round(_zoom * 100)}%";
         UpdateStatus();
@@ -132,6 +136,8 @@ public partial class MainWindow
     {
         _rotation = degrees % 360;
         _canvasRotate.Angle = _rotation;
+        _canvas.CanvasRotation = _rotation;
+        _checkerboardOverlay?.InvalidateVisual();
         ClampCanvasPan();
         _rotDisplay.Text = $"{Math.Round(_rotation)}°";
         UpdateStatus();
@@ -141,6 +147,7 @@ public partial class MainWindow
     {
         _rotation = 0;
         _canvasRotate.Angle = 0;
+        _canvas.CanvasRotation = 0;
         _canvasFlip.ScaleX = 1;
         _canvasFlip.ScaleY = 1;
         _canvas.FlipX = 1;
@@ -350,8 +357,8 @@ public partial class MainWindow
         else if (sc.Paste.Matches(key, mods)) { _canvas.PasteFromClipboard(); e.Handled = true; }
         else if (sc.FlipHorizontal.Matches(key, mods)) { _canvas.FlipCanvas(horizontal: true); e.Handled = true; }
         else if (sc.FlipVertical.Matches(key, mods)) { _canvas.FlipCanvas(horizontal: false); e.Handled = true; }
-        else if (sc.MirrorHorizontal.Matches(key, mods)) { _canvasFlip.ScaleX = -_canvasFlip.ScaleX; _canvas.FlipX = (int)_canvasFlip.ScaleX; _rulerOverlay?.InvalidateVisual(); ClampCanvasPan(); UpdateStatus(); e.Handled = true; }
-        else if (sc.MirrorVertical.Matches(key, mods)) { _canvasFlip.ScaleY = -_canvasFlip.ScaleY; _canvas.FlipY = (int)_canvasFlip.ScaleY; _rulerOverlay?.InvalidateVisual(); ClampCanvasPan(); UpdateStatus(); e.Handled = true; }
+        else if (sc.MirrorHorizontal.Matches(key, mods)) { _canvasFlip.ScaleX = -_canvasFlip.ScaleX; _canvas.FlipX = (int)_canvasFlip.ScaleX; _rulerOverlay?.InvalidateVisual(); _checkerboardOverlay?.InvalidateVisual(); ClampCanvasPan(); UpdateStatus(); e.Handled = true; }
+        else if (sc.MirrorVertical.Matches(key, mods)) { _canvasFlip.ScaleY = -_canvasFlip.ScaleY; _canvas.FlipY = (int)_canvasFlip.ScaleY; _rulerOverlay?.InvalidateVisual(); _checkerboardOverlay?.InvalidateVisual(); ClampCanvasPan(); UpdateStatus(); e.Handled = true; }
         else if (sc.DeleteSelection.Matches(key, mods)) { _canvas.ClearSelectionContent(); e.Handled = true; }
         else if (sc.OpenSettings.Matches(key, mods)) { OpenSettings(); e.Handled = true; }
         else if (sc.OpenBrushEditor.Matches(key, mods)) { OpenBrushEditor(); e.Handled = true; }

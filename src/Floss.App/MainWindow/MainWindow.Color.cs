@@ -63,7 +63,7 @@ public partial class MainWindow
         var (r, g, b) = HsvToRgb(h, s, v);
         var color = Color.FromRgb((byte)(r * 255), (byte)(g * 255), (byte)(b * 255));
         _hexInput.Text = $"#{color.R:X2}{color.G:X2}{color.B:X2}";
-        SetColor(color, syncPicker: false, switchToBrush: true);
+        SetColor(color, syncPicker: false);
     }
 
     private void SyncPickerFromColor(Color color)
@@ -77,31 +77,21 @@ public partial class MainWindow
     {
         hex = hex.Trim().TrimStart('#');
         if (hex.Length == 6 && uint.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out var rgb))
-            SetColor(Color.FromRgb((byte)(rgb >> 16), (byte)((rgb >> 8) & 0xFF), (byte)(rgb & 0xFF)), switchToBrush: true);
+            SetColor(Color.FromRgb((byte)(rgb >> 16), (byte)((rgb >> 8) & 0xFF), (byte)(rgb & 0xFF)));
     }
 
     // ── Color application ─────────────────────────────────────────────────────
-    private void SetColor(Color color, bool syncPicker = true, bool switchToBrush = false)
+    private void SetColor(Color color, bool syncPicker = true)
     {
         _colorWell.Background = new SolidColorBrush(color);
         _canvas.SetPaintColor(color);
-        if (switchToBrush)
-        {
-            var brushGroup = App.ToolGroups.Groups.FirstOrDefault(g => g.DefaultEngine == ToolPresetEngine.Brush)
-                ?? App.ToolGroups.Groups.FirstOrDefault();
-            if (brushGroup != null)
-            {
-                var preset = brushGroup.ActivePreset ?? brushGroup.Presets.FirstOrDefault();
-                if (preset != null) ActivatePreset(brushGroup, preset);
-            }
-        }
         if (syncPicker) SyncPickerFromColor(color);
     }
 
     private void CycleColor()
     {
         _swatchIndex = (_swatchIndex + 1) % _swatches.Length;
-        SetColor(_swatches[_swatchIndex], switchToBrush: true);
+        SetColor(_swatches[_swatchIndex]);
     }
 
     // ── Swatch panel ──────────────────────────────────────────────────────────
@@ -127,7 +117,7 @@ public partial class MainWindow
                 Padding = new Thickness(0)
             };
             ToolTip.SetTip(btn, $"#{color.R:X2}{color.G:X2}{color.B:X2}");
-            btn.Click += (_, _) => { _swatchIndex = idx; SetColor(color, switchToBrush: true); };
+            btn.Click += (_, _) => { _swatchIndex = idx; SetColor(color); };
             _swatchPanel.Children.Add(btn);
         }
     }

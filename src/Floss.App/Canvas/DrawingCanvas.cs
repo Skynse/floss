@@ -16,22 +16,6 @@ public sealed class DrawingCanvas : Control
 {
     private const double PenPressureThreshold = 0.02;
 
-    private static readonly IBrush CheckerboardBrush = new DrawingBrush
-    {
-        TileMode = Avalonia.Media.TileMode.Tile,
-        DestinationRect = new RelativeRect(0, 0, 16, 16, RelativeUnit.Absolute),
-        Drawing = new DrawingGroup
-        {
-            Children =
-            {
-                new GeometryDrawing { Brush = new SolidColorBrush(Color.Parse("#555555")), Geometry = new RectangleGeometry(new Rect(0, 0, 8, 8)) },
-                new GeometryDrawing { Brush = new SolidColorBrush(Color.Parse("#555555")), Geometry = new RectangleGeometry(new Rect(8, 8, 8, 8)) },
-                new GeometryDrawing { Brush = new SolidColorBrush(Color.Parse("#aaaaaa")), Geometry = new RectangleGeometry(new Rect(8, 0, 8, 8)) },
-                new GeometryDrawing { Brush = new SolidColorBrush(Color.Parse("#aaaaaa")), Geometry = new RectangleGeometry(new Rect(0, 8, 8, 8)) },
-            }
-        }
-    };
-
     private readonly DrawingDocument _document = new();
     private readonly CanvasTool _canvasTool;
     private readonly LayerCompositor _compositor;
@@ -145,6 +129,7 @@ public sealed class DrawingCanvas : Control
     public double PanOffsetY { get; set; }
     public int FlipX { get; set; } = 1;
     public int FlipY { get; set; } = 1;
+    public double CanvasRotation { get; set; }
 
     public void SetActiveTool(ITool tool, ToolPreset? preset = null)
     {
@@ -653,7 +638,6 @@ public sealed class DrawingCanvas : Control
             EdgeMode = EdgeMode.Aliased
         }))
         {
-            context.DrawRectangle(CheckerboardBrush, null, target);
             context.DrawImage(_compositor.Bitmap, target);
         }
 
