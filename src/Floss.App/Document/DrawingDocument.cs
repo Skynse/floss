@@ -37,6 +37,7 @@ public sealed class DrawingDocument
     public event EventHandler? HistoryChanged;
     public event EventHandler? LayersChanged;
     public event EventHandler<LayerMetadataChangedEventArgs>? LayerMetadataChanged;
+    public event EventHandler<DrawingLayer>? LayerRemoved;
     public event EventHandler? PaperChanged;
     public event EventHandler? DirtyStateChanged;
 
@@ -339,6 +340,7 @@ public sealed class DrawingDocument
         foreach (var layer in EnumerateLayerTree(removed).ToArray())
         {
             _layers.Remove(layer);
+            LayerRemoved?.Invoke(this, layer);
             layer.Dispose();
         }
 
@@ -529,6 +531,7 @@ public sealed class DrawingDocument
         {
             DetachLayer(layer);
             _layers.Remove(layer);
+            LayerRemoved?.Invoke(this, layer);
             layer.Dispose();
         }
 
@@ -559,6 +562,7 @@ public sealed class DrawingDocument
         {
             DetachLayer(layer);
             _layers.Remove(layer);
+            LayerRemoved?.Invoke(this, layer);
             layer.Dispose();
         }
 

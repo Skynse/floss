@@ -91,6 +91,7 @@ public sealed class DrawingCanvas : Control
             _compositor.Invalidate(null);
             LayersChanged?.Invoke(this, EventArgs.Empty);
         };
+        _document.LayerRemoved += (_, layer) => _compositor.RemoveGroupCache(layer);
         _document.LayerMetadataChanged += (_, e) => LayerMetadataChanged?.Invoke(this, e);
         _document.PaperChanged += (_, _) =>
         {
@@ -677,17 +678,22 @@ public sealed class DrawingCanvas : Control
             _document.Width, _document.Height,
             phase);
 
-    private unsafe Color? SampleDocumentColor(int x, int y)
+    private Color? SampleDocumentColor(int x, int y)
     {
         if ((uint)x >= (uint)_document.Width || (uint)y >= (uint)_document.Height) return null;
 
-        _compositor.Composite(_document.Layers, _document.Width, _document.Height, _document.PaperColor, _document.PaperVisible);
-        using var frame = _compositor.Bitmap.Lock();
-        if (_compositor.Bitmap.Format != PixelFormat.Bgra8888) return null;
+        // Fast-path: sample directly from the active layer instead of
+        // re-compositing the entire document stack for a single pixel.
+        var layer = _document.ActiveLayer;
+        if (layer == null || layer.IsGroup) return null;
 
-        var row = (byte*)frame.Address + y * frame.RowBytes;
-        var px = row + x * 4;
-        return Color.FromArgb(px[3], px[2], px[1], px[0]);
+        int lx = x - layer.OffsetX;
+        int ly = y - layer.OffsetY;
+        if ((uint)lx >= (uint)layer.Width || (uint)ly >= (uint)layer.Height) return null;
+
+        layer.Pixels.GetPixel(lx, ly, out byte b, out byte g, out byte r, out byte a);
+        if (a == 0) return null;
+        return Color.FromArgb(a, r, g, b);
     }
 
     private static bool IsPaintInput(PointerPoint point)

@@ -18,6 +18,11 @@ public sealed class LayerCompositor
     private PixelRegion? _dirtyRegion;
     private readonly Dictionary<DrawingLayer, GroupProjectionCache> _groupCaches = new();
 
+    public void RemoveGroupCache(DrawingLayer group)
+    {
+        _groupCaches.Remove(group);
+    }
+
     public void SetSize(int width, int height)
     {
         if (_width == width && _height == height && _composited != null) return;
