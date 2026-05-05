@@ -35,6 +35,7 @@ public static class Icons
     public const string RectangleOutline = "M3,3H21V21H3V3M5,5V19H19V5H5Z";
     public const string EllipseOutline = "M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6Z";
     public const string LineVariant = "M21,6.5L17.5,3L3,17.5V21H6.5L21,6.5M17.5,5.9L19.1,7.5L6,20.6H4.4V19L17.5,5.9Z";
+    public const string WaterDrop = "M12,20A6,6 0 0,1 6,14C6,10 12,3.25 12,3.25C12,3.25 18,10 18,14A6,6 0 0,1 12,20Z";
 
     // Layer row icons
     public const string Eye = "M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z";
@@ -64,6 +65,7 @@ public static class Icons
         ("Polyline",   VectorPolyline),
         ("Shape",      ShapeOutline),
         ("Image",      ImageOutline),
+        ("Liquify",    WaterDrop),
     ];
 
     public static string DefaultIcon(ToolPresetEngine engine) => engine switch
@@ -80,6 +82,7 @@ public static class Icons
         ToolPresetEngine.Gradient => GradientHorizontal,
         ToolPresetEngine.Shape => RectangleOutline,
         ToolPresetEngine.Polyline => VectorPolyline,
+        ToolPresetEngine.Liquify => WaterDrop,
         _ => BrushOutline
     };
 

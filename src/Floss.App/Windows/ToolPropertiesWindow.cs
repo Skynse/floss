@@ -145,6 +145,7 @@ public sealed class ToolPropertiesWindow : Window
             OutputProcessType.Gradient => ["Gradient Settings", "Paint Settings"],
             OutputProcessType.Stroke => ["Stroke Settings", "Paint Settings"],
             OutputProcessType.MagicWand => ["Magic Wand Settings"],
+            OutputProcessType.Liquify => ["Liquify Settings"],
             OutputProcessType.Eyedropper or OutputProcessType.MoveLayer => ["Tool Info"],
             _ => ["Properties"]
         };
@@ -656,6 +657,15 @@ public sealed class ToolPropertiesWindow : Window
                     _toolPreset.SelectOp, v => CommitTool(p => p.SelectOp = v), toolPropId: "wand.op"));
                 panel.Children.Add(BuildGenericToggleRow("Contiguous",
                     _toolPreset.ContiguousFill, v => CommitTool(p => p.ContiguousFill = v), toolPropId: "wand.contiguous"));
+                break;
+
+            case OutputProcessType.Liquify when cat == "Liquify Settings":
+                panel.Children.Add(BuildGenericSliderRow("Size", 10, 500,
+                    _toolPreset.LiquifySize, v => CommitTool(p => p.LiquifySize = v), "px", step: 1, toolPropId: "liquify.size"));
+                panel.Children.Add(BuildGenericSliderRow("Strength", 0, 1.0,
+                    _toolPreset.LiquifyStrength, v => CommitTool(p => p.LiquifyStrength = v), "%", mult: 100, toolPropId: "liquify.strength"));
+                panel.Children.Add(BuildGenericComboRow<LiquifyMode>("Mode",
+                    _toolPreset.LiquifyMode, v => CommitTool(p => p.LiquifyMode = v), toolPropId: "liquify.mode"));
                 break;
 
             case OutputProcessType.Eyedropper or OutputProcessType.MoveLayer when cat == "Tool Info":

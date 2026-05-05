@@ -83,6 +83,7 @@ public sealed class ToolFactory
                 ShapeKind = preset.ShapeKind,
                 ShapeDrawMode = preset.ShapeDrawMode
             },
+            OutputProcessType.Liquify => new LiquifyOutput(),
             _ => new DirectDrawOutput(_brushEngine, _document)
         };
     }

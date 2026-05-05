@@ -39,6 +39,18 @@ public enum OutputProcessType
     Zoom,            // Zoom canvas
     Pan,             // Pan canvas
     MagicWand,       // Magic wand selection
+    Liquify,         // Warp/distort pixels
+}
+
+public enum LiquifyMode
+{
+    Push,
+    Expand,
+    Pinch,
+    PushLeft,
+    PushRight,
+    TwirlCW,
+    TwirlCCW,
 }
 
 // Legacy enum for backward compat during migration.
@@ -48,7 +60,8 @@ public enum ToolPresetEngine
     Select, MagicWand,
     Fill, LassoFill,
     Eyedropper, Move,
-    Gradient, Shape, Polyline
+    Gradient, Shape, Polyline,
+    Liquify
 }
 
 public sealed class ToolPreset
@@ -180,6 +193,11 @@ public sealed class ToolPreset
     // Polyline
     public bool PolylineClosePath { get; set; }
     public float PolylineStrokeWidth { get; set; } = 4;
+
+    // Liquify
+    public LiquifyMode LiquifyMode { get; set; } = LiquifyMode.Push;
+    public double LiquifySize { get; set; } = 80;
+    public double LiquifyStrength { get; set; } = 0.3;
 
     // ── Legacy migration ──────────────────────────────────────────────────────
     // Converts old Engine field to new InputProcess+OutputProcess.
@@ -422,6 +440,20 @@ public sealed class ToolGroupConfig
             [
                 new() { Name = "Open",   Engine = ToolPresetEngine.Polyline, InputProcess = InputProcessType.Polyline, OutputProcess = OutputProcessType.Stroke, PolylineClosePath = false },
                 new() { Name = "Closed", Engine = ToolPresetEngine.Polyline, InputProcess = InputProcessType.Polyline, OutputProcess = OutputProcessType.Stroke, PolylineClosePath = true },
+            ]
+        },
+        new()
+        {
+            Name = "Liquify", DefaultEngine = ToolPresetEngine.Liquify,
+            Presets =
+            [
+                new() { Name = "Push",      Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.Push,      LiquifySize = 80,  LiquifyStrength = 0.3 },
+                new() { Name = "Expand",    Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.Expand,    LiquifySize = 60,  LiquifyStrength = 0.4 },
+                new() { Name = "Pinch",     Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.Pinch,     LiquifySize = 60,  LiquifyStrength = 0.4 },
+                new() { Name = "Push Left", Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.PushLeft,  LiquifySize = 80,  LiquifyStrength = 0.3 },
+                new() { Name = "Push Right",Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.PushRight, LiquifySize = 80,  LiquifyStrength = 0.3 },
+                new() { Name = "Twirl CW",  Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.TwirlCW,   LiquifySize = 80,  LiquifyStrength = 0.5 },
+                new() { Name = "Twirl CCW", Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.TwirlCCW,  LiquifySize = 80,  LiquifyStrength = 0.5 },
             ]
         },
     ];

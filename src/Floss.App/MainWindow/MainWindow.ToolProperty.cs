@@ -179,6 +179,17 @@ public partial class MainWindow
                 ]);
                 break;
 
+            case OutputProcessType.Liquify:
+                props.AddRange([
+                    SliderProp("liquify.size", "Size", true,
+                        () => preset.LiquifySize, v => preset.LiquifySize = v, 10, 500, "px"),
+                    SliderProp("liquify.strength", "Strength", true,
+                        () => preset.LiquifyStrength, v => preset.LiquifyStrength = v, 0, 1, "%"),
+                    EnumProp("liquify.mode", "Mode", true,
+                        () => preset.LiquifyMode, v => preset.LiquifyMode = v),
+                ]);
+                break;
+
             case OutputProcessType.Eyedropper:
                 // Eyedropper is a passive tool — no configurable properties.
                 // Still show a label so the panel isn't empty.
