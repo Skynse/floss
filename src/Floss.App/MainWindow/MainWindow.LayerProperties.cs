@@ -15,6 +15,10 @@ public partial class MainWindow
     private Button _layerColorSquare = null!;
     private ComboBox _expressionColorCombo = null!;
 
+    // The last layer color used; independent of the brush color.
+    // Used when the user toggles layer color on and the current layer has none.
+    private Avalonia.Media.Color _lastLayerColor = Avalonia.Media.Color.Parse("#3d6fd8");
+
     private StackPanel BuildLayerPropertiesSection()
     {
         _layerPropertiesPanel = new StackPanel { Spacing = 6, Margin = new Thickness(10, 6, 10, 10) };
@@ -129,12 +133,16 @@ public partial class MainWindow
 
         if (enabled)
         {
-            // Enable with current foreground color
-            var color = canvas.Brush.Color;
+            // Use the layer's own stored color, or the last used layer color.
+            // Never use the brush color.
+            var color = layer.LayerColor ?? _lastLayerColor;
             canvas.SetActiveLayerColor(color);
         }
         else
         {
+            // Remember the color we are turning off so we can restore it later.
+            if (layer.LayerColor is { } c)
+                _lastLayerColor = c;
             canvas.SetActiveLayerColor(null);
         }
 
@@ -156,9 +164,11 @@ public partial class MainWindow
         var layer = canvas.Document?.ActiveLayer;
         if (layer == null) return;
 
-        var currentColor = layer.LayerColor ?? canvas.Brush.Color;
+        // Layer color has its own independent color — never falls back to brush.
+        var currentColor = layer.LayerColor ?? _lastLayerColor;
         var picker = new ColorPickerWindow(currentColor, color =>
         {
+            _lastLayerColor = color;
             canvas.SetActiveLayerColor(color);
             RefreshLayerProperties();
         });

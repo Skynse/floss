@@ -199,8 +199,11 @@ public partial class MainWindow
     {
         var layers = EffectiveLayerSelection();
 
-        // Capture pixels so we can revert during/after preview
-        var captured = new Dictionary<int, byte[]>();
+        // Capture pixels so we can revert during/after preview.
+        // We MUST snapshot the region alongside the bytes because unbounded
+        // painting can expand Pixels.Bounds after capture, and RestorePixels
+        // would then try to restore a larger region than the byte array holds.
+        var captured = new Dictionary<int, (PixelRegion Region, byte[] Bytes)>();
         if (buildPreview != null)
         {
             foreach (var idx in layers)
@@ -209,7 +212,10 @@ public partial class MainWindow
                 {
                     var layer = _canvas.Layers[idx];
                     if (!layer.IsGroup && !layer.IsLocked)
-                        captured[idx] = layer.CapturePixels();
+                    {
+                        var region = layer.Pixels.Bounds;
+                        captured[idx] = (region, layer.CapturePixels(region));
+                    }
                 }
             }
         }
@@ -221,9 +227,9 @@ public partial class MainWindow
         {
             if (!previewOn || buildPreview == null) return;
             var action = buildPreview();
-            foreach (var (idx, pixels) in captured)
+            foreach (var (idx, (region, pixels)) in captured)
             {
-                _canvas.Layers[idx].RestorePixels(pixels);
+                _canvas.Layers[idx].RestorePixels(region, pixels);
                 _canvas.Layers[idx].MarkThumbnailDirty();
             }
             foreach (var idx in layers)
@@ -253,9 +259,9 @@ public partial class MainWindow
         void RevertPreview()
         {
             debounce?.Stop();
-            foreach (var (idx, pixels) in captured)
+            foreach (var (idx, (region, pixels)) in captured)
             {
-                _canvas.Layers[idx].RestorePixels(pixels);
+                _canvas.Layers[idx].RestorePixels(region, pixels);
                 _canvas.Layers[idx].MarkThumbnailDirty();
             }
             if (captured.Count > 0)

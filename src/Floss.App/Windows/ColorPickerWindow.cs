@@ -130,7 +130,11 @@ public sealed class ColorPickerWindow : Window
             HorizontalAlignment = HorizontalAlignment.Right
         };
         var okBtn = new Button { Content = "OK", Width = 60 };
-        okBtn.Click += (_, _) => Close(ColorFromHsv(_hue, _saturation, _value));
+        okBtn.Click += (_, _) =>
+        {
+            _onChange(ColorFromHsv(_hue, _saturation, _value));
+            Close();
+        };
         var cancelBtn = new Button { Content = "Cancel", Width = 60 };
         cancelBtn.Click += (_, _) => Close();
         btnRow.Children.Add(okBtn);
@@ -253,7 +257,8 @@ public sealed class ColorPickerWindow : Window
         UpdateInputs();
         var color = ColorFromHsv(_hue, _saturation, _value);
         _previewBox.Background = new SolidColorBrush(color);
-        _onChange(color);
+        // NOTE: we do NOT call _onChange here — the callback is only fired
+        // when the user clicks OK so that dragging doesn't spam history.
         _syncing = false;
     }
 

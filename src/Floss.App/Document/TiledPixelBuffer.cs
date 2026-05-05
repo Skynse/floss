@@ -163,6 +163,21 @@ public sealed class TiledPixelBuffer
     {
         if (region.IsEmpty || bytes.Length == 0) return;
 
+        // Defensive: unbounded painting can expand Pixels.Bounds after Capture.
+        // If the caller passes a region larger than the byte array, clamp so we
+        // never read past the end of the array.
+        var expected = region.Width * region.Height * BytesPerPixel;
+        if (bytes.Length != expected)
+        {
+            // The captured region was smaller/larger than what the caller asked
+            // to restore.  Clamp to the intersection of the requested region and
+            // the region the byte array actually represents.
+            var actualHeight = bytes.Length / (region.Width * BytesPerPixel);
+            if (actualHeight <= 0) return;
+            region = new PixelRegion(region.X, region.Y, region.Width, Math.Min(region.Height, actualHeight));
+            if (region.IsEmpty) return;
+        }
+
         ForEachTile(region, (tileX, tileY, tile, tileRegion) =>
         {
             for (var y = tileRegion.Y; y < tileRegion.Bottom; y++)

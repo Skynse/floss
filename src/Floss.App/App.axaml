@@ -159,14 +159,18 @@
 
         <!-- ── Horizontal slider — chunky progress-bar style ───────────────── -->
         <Style Selector="Slider:horizontal">
+            <Setter Property="Background" Value="#161820"/>
             <Setter Property="MinHeight" Value="22"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <ControlTemplate>
                     <Grid MinHeight="24" VerticalAlignment="Center">
-                        <!-- track trough -->
+                        <!-- track trough — binds to the control's Background so colour
+                             sliders can set their own gradients, regular sliders get
+                             the default trough colour via the style below. -->
                         <Border VerticalAlignment="Center" Height="10" CornerRadius="5"
-                                Background="#161820" IsHitTestVisible="False"/>
+                                Background="{TemplateBinding Background}"
+                                IsHitTestVisible="False"/>
                         <Track Name="PART_Track" Orientation="Horizontal"
                                Minimum="{TemplateBinding Minimum}"
                                Maximum="{TemplateBinding Maximum}"

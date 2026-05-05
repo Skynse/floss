@@ -706,10 +706,22 @@ public sealed class LayerCompositor
                             var docX = srcX + offsetX;
                             var dstPtr = dstRow + (docX - originX) * 4;
 
-                            // Apply layer color tint to source pixels
-                            byte srcB = hasLayerColor ? (byte)(tile[tileOffset + 0] * lcB / 255) : tile[tileOffset + 0];
-                            byte srcG = hasLayerColor ? (byte)(tile[tileOffset + 1] * lcG / 255) : tile[tileOffset + 1];
-                            byte srcR = hasLayerColor ? (byte)(tile[tileOffset + 2] * lcR / 255) : tile[tileOffset + 2];
+                            // CSP-style layer color: dark pixels → layer color, light → white
+                            byte srcB, srcG, srcR;
+                            if (hasLayerColor)
+                            {
+                                var lum = (tile[tileOffset + 2] * 299 + tile[tileOffset + 1] * 587 + tile[tileOffset + 0] * 114) / 1000;
+                                var ink = 255 - lum;
+                                srcB = (byte)(lum + (lcB * ink) / 255);
+                                srcG = (byte)(lum + (lcG * ink) / 255);
+                                srcR = (byte)(lum + (lcR * ink) / 255);
+                            }
+                            else
+                            {
+                                srcB = tile[tileOffset + 0];
+                                srcG = tile[tileOffset + 1];
+                                srcR = tile[tileOffset + 2];
+                            }
 
                             if (srcA == 255)
                             {
@@ -769,10 +781,26 @@ public sealed class LayerCompositor
                         var docX = srcX + offsetX;
                         var dstIdx = (docX - originX) * 4;
 
-                        // Apply layer color tint to source pixels
-                        var srcB = (hasLayerColor ? tile[tileOffset + 0] * lcB / 255.0 : tile[tileOffset + 0]) / 255.0;
-                        var srcG = (hasLayerColor ? tile[tileOffset + 1] * lcG / 255.0 : tile[tileOffset + 1]) / 255.0;
-                        var srcR = (hasLayerColor ? tile[tileOffset + 2] * lcR / 255.0 : tile[tileOffset + 2]) / 255.0;
+                        // CSP-style layer color: dark pixels → layer color, light → white
+                        byte tintedB, tintedG, tintedR;
+                        if (hasLayerColor)
+                        {
+                            var lum = (tile[tileOffset + 2] * 299 + tile[tileOffset + 1] * 587 + tile[tileOffset + 0] * 114) / 1000;
+                            var ink = 255 - lum;
+                            tintedB = (byte)(lum + (lcB * ink) / 255);
+                            tintedG = (byte)(lum + (lcG * ink) / 255);
+                            tintedR = (byte)(lum + (lcR * ink) / 255);
+                        }
+                        else
+                        {
+                            tintedB = tile[tileOffset + 0];
+                            tintedG = tile[tileOffset + 1];
+                            tintedR = tile[tileOffset + 2];
+                        }
+
+                        var srcB = tintedB / 255.0;
+                        var srcG = tintedG / 255.0;
+                        var srcR = tintedR / 255.0;
                         var dstB = dstRow[dstIdx + 0] / 255.0;
                         var dstG = dstRow[dstIdx + 1] / 255.0;
                         var dstR = dstRow[dstIdx + 2] / 255.0;
