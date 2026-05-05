@@ -139,7 +139,10 @@ public sealed class FreehandStrokeOperation : IToolOperation
         var region = _brushEngine.EstimateDabRegion(layer, _brush, localSample);
         if (region.IsEmpty) return;
 
-        layer.ExpandToAccommodate(region.X, region.Y, region.Right, region.Bottom);
+        if (layer.ExpandToAccommodate(region.X, region.Y, region.Right, region.Bottom))
+        {
+            _beforeTiles.Clear();
+        }
         CaptureBeforeTiles(layer, region);
         var dirty = _brushEngine.RasterizeDab(layer, _brush, localSample, velocity);
         if (dirty.IsEmpty) return;
@@ -166,7 +169,10 @@ public sealed class FreehandStrokeOperation : IToolOperation
         var region = _brushEngine.EstimateSegmentRegion(layer, _brush, from, to);
         if (region.IsEmpty) return;
 
-        layer.ExpandToAccommodate(region.X, region.Y, region.Right, region.Bottom);
+        if (layer.ExpandToAccommodate(region.X, region.Y, region.Right, region.Bottom))
+        {
+            _beforeTiles.Clear();
+        }
         CaptureBeforeTiles(layer, region);
         var dirty = final
             ? _brushEngine.RasterizeFinalSegment(layer, _brush, from, to)

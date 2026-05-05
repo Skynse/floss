@@ -25,6 +25,8 @@ public sealed class AppConfig
     public BrushCursorMode BrushCursorMode { get; set; } = BrushCursorMode.Outline;
     public bool ShowRulers { get; set; }
     public Dictionary<string, bool> ToolPropertyDockerVisibility { get; set; } = new();
+    public static event Action? ToolPropertyVisibilityChanged;
+    public static void NotifyToolPropertyVisibilityChanged() => ToolPropertyVisibilityChanged?.Invoke();
     public string[] RecentFiles { get; set; } = [];
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };

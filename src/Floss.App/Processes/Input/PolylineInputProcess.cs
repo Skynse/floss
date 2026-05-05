@@ -11,9 +11,10 @@ public sealed class PolylineInputProcess : IInputProcess
     private readonly List<CanvasInputSample> _points = [];
     private CanvasInputSample _cursor;
     private bool _active;
+    private bool _committed;
 
     public bool IsActive => _active;
-    public double Stabilization { get; set; }  // Not used for polyline
+    public double Stabilization { get; set; }
     public bool ClosePath { get; set; }
 
     public void PointerDown(CanvasInputSample s)
@@ -21,6 +22,7 @@ public sealed class PolylineInputProcess : IInputProcess
         if (!_active)
         {
             _active = true;
+            _committed = false;
             _points.Clear();
         }
         _points.Add(s);
@@ -41,14 +43,18 @@ public sealed class PolylineInputProcess : IInputProcess
     public void Cancel()
     {
         _active = false;
+        _committed = false;
         _points.Clear();
     }
 
+    public void Commit() => _committed = true;
+
     public IProcessedInput? GetResult()
     {
-        if (_active && _points.Count >= 2)
+        if (_committed && _active && _points.Count >= 2)
         {
             _active = false;
+            _committed = false;
             return new PolygonInput
             {
                 RawPoints = new List<CanvasInputSample>(_points),
@@ -75,6 +81,7 @@ public sealed class PolylineInputProcess : IInputProcess
 
     public void RenderOverlay(DrawingContext dc, double zoom)
     {
+        if (!_active) return;
         if (_points.Count == 0) return;
         var geo = new StreamGeometry();
         using (var c = geo.Open())

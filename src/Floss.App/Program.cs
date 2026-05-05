@@ -19,6 +19,6 @@ class Program
         => AppBuilder.Configure<App>()
             .UsePlatformDetect()
             .WithInterFont()
-            .LogToTrace()
+            .LogToTrace(Avalonia.Logging.LogEventLevel.Debug)
             .With(new SkiaOptions { MaxGpuResourceSizeBytes = 512 * 1024 * 1024 });
 }

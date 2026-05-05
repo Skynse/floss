@@ -17,6 +17,9 @@ public interface IInputProcess
     // Returns the processed input if complete, null otherwise.
     IProcessedInput? GetResult();
 
+    // Force-finish the current input (for Enter key / double-click).
+    void Commit() { }
+
     // Returns the current in-progress input for live preview, null if not available.
     IProcessedInput? GetPreview();
 

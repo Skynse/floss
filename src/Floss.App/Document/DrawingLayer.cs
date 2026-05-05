@@ -174,14 +174,14 @@ public sealed class DrawingLayer : IDisposable
     /// Expands the layer's pixel buffer so that the given local-coordinate bounds fit.
     /// Adjusts OffsetX/OffsetY so the layer's position in document space is preserved.
     /// </summary>
-    public void ExpandToAccommodate(int minX, int minY, int maxX, int maxY)
+    public bool ExpandToAccommodate(int minX, int minY, int maxX, int maxY)
     {
         var needLeft   = minX < 0;
         var needTop    = minY < 0;
         var needRight  = maxX > Width;
         var needBottom = maxY > Height;
 
-        if (!needLeft && !needTop && !needRight && !needBottom) return;
+        if (!needLeft && !needTop && !needRight && !needBottom) return false;
 
         var expandLeft   = needLeft   ? -minX : 0;
         var expandTop    = needTop    ? -minY : 0;
@@ -206,5 +206,6 @@ public sealed class DrawingLayer : IDisposable
         }
 
         MarkThumbnailDirty();
+        return true;
     }
 }

@@ -29,8 +29,8 @@ public sealed class ToolFactory
     {
         return preset.InputProcess switch
         {
-            InputProcessType.BrushStroke => new BrushStrokeInputProcess { Stabilization = preset.Stabilization },
-            InputProcessType.Lasso => new LassoInputProcess { Stabilization = preset.Stabilization },
+            InputProcessType.BrushStroke => new BrushStrokeInputProcess { Stabilization = preset.Stabilization > 0.001 ? preset.Stabilization : 0.3 },
+            InputProcessType.Lasso => new LassoInputProcess { Stabilization = preset.Stabilization > 0.001 ? preset.Stabilization : 0.3 },
             InputProcessType.Polyline => new PolylineInputProcess { ClosePath = preset.PolylineClosePath },
             InputProcessType.Rect => new RectInputProcess(),
             InputProcessType.Click => new ClickInputProcess(),
@@ -70,11 +70,18 @@ public sealed class ToolFactory
             },
             OutputProcessType.Eyedropper => new EyedropperOutput(),
             OutputProcessType.MoveLayer => new MoveLayerOutput(),
+            OutputProcessType.MagicWand => new MagicWandOutput
+            {
+                Tolerance = preset.Tolerance,
+                Operation = SelectOp.Replace
+            },
             OutputProcessType.Stroke => new StrokeOutput
             {
                 Antialiasing = preset.Antialiasing,
                 StrokeWidth = preset.PolylineStrokeWidth,
-                ClosePath = preset.PolylineClosePath
+                ClosePath = preset.PolylineClosePath,
+                ShapeKind = preset.ShapeKind,
+                ShapeDrawMode = preset.ShapeDrawMode
             },
             _ => new DirectDrawOutput(_brushEngine, _document)
         };

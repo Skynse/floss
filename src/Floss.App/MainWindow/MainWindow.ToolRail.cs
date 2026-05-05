@@ -127,18 +127,14 @@ public partial class MainWindow
         btn.Click += (_, _) =>
         {
             if (_recordingToolGroup != null) return;
-            if (_activeToolGroup == group && group.Presets.Count > 1)
+            if (_activeToolGroup == group)
             {
-                var current = group.ActivePreset;
-                var idx = current == null ? 0 : group.Presets.IndexOf(current);
-                var next = group.Presets[(idx + 1) % group.Presets.Count];
-                ActivatePreset(group, next);
+                // Already active — do nothing. Preset cycling is handled
+                // through the sub-tool popup, not the main rail button.
+                return;
             }
-            else
-            {
-                var preset = group.ActivePreset ?? group.Presets.FirstOrDefault();
-                if (preset != null) ActivatePreset(group, preset);
-            }
+            var preset = group.ActivePreset ?? group.Presets.FirstOrDefault();
+            if (preset != null) ActivatePreset(group, preset);
         };
 
         var menu = new ContextMenu();

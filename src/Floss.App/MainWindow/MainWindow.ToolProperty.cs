@@ -6,6 +6,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Threading;
 using Floss.App.Tools;
 
 namespace Floss.App;
@@ -22,13 +23,7 @@ public partial class MainWindow
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
 
-        var detailBtn = SmBtn("⚙", "Open full tool property detail");
-        detailBtn.Click += (_, _) => OpenToolPropertyDetail();
-        detailBtn.Margin = new Thickness(4, 0, 0, 0);
-
         var header = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 4) };
-        DockPanel.SetDock(detailBtn, Dock.Right);
-        header.Children.Add(detailBtn);
         header.Children.Add(_toolPropertyTitle);
 
         _toolPropertyPanel = new StackPanel { Spacing = 3 };
@@ -39,6 +34,10 @@ public partial class MainWindow
             Children = { header, _toolPropertyPanel }
         };
         RefreshToolProperties();
+
+        // Listen for visibility changes from brush editor eye toggles
+        AppConfig.ToolPropertyVisibilityChanged += () => Avalonia.Threading.Dispatcher.UIThread.Post(RefreshToolProperties);
+
         return root;
     }
 
@@ -401,62 +400,6 @@ public partial class MainWindow
         row.Children.Add(eye);
         row.Children.Add(prop.BuildControl());
         return row;
-    }
-
-    private void OpenToolPropertyDetail()
-    {
-        if (_toolPropertyDetailWindow != null)
-        {
-            _toolPropertyDetailWindow.Activate();
-            return;
-        }
-
-        var content = new StackPanel { Spacing = 6, Margin = new Thickness(10) };
-        var window = new Window
-        {
-            Title = "Sub Tool Detail",
-            Width = 420,
-            Height = 520,
-            Background = new SolidColorBrush(Color.Parse(Bg1)),
-            Content = new ScrollViewer { Content = content }
-        };
-
-        void Rebuild()
-        {
-            content.Children.Clear();
-            content.Children.Add(new TextBlock
-            {
-                Text = ToolDisplayName(_canvas.ActiveTool),
-                FontSize = 13,
-                FontWeight = FontWeight.SemiBold,
-                Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
-                Margin = new Thickness(0, 0, 0, 4)
-            });
-
-            foreach (var prop in CurrentToolProperties())
-            {
-                var visible = IsToolPropertyVisible(prop);
-                var eye = SmBtn(visible ? "◉" : "○", visible ? "Hide from tool property docker" : "Show in tool property docker");
-                eye.Width = 28;
-                eye.Click += (_, _) =>
-                {
-                    SetToolPropertyVisible(prop, !IsToolPropertyVisible(prop));
-                    RefreshToolProperties();
-                    Rebuild();
-                };
-
-                var row = new DockPanel { LastChildFill = true };
-                DockPanel.SetDock(eye, Dock.Right);
-                row.Children.Add(eye);
-                row.Children.Add(prop.BuildControl());
-                content.Children.Add(row);
-            }
-        }
-
-        Rebuild();
-        _toolPropertyDetailWindow = window;
-        window.Closed += (_, _) => _toolPropertyDetailWindow = null;
-        window.Show(this);
     }
 
     private static bool IsToolPropertyVisible(ToolPropertyDescriptor prop)

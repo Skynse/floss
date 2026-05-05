@@ -32,8 +32,10 @@ public sealed record BrushPreset(
     public MixingMode MixingMode { get; init; } = MixingMode.Standard;
     // How much paint is deposited per dab (0 = none, 1 = full)
     public double AmountOfPaint { get; init; } = 1.0;
-    // Paint density/concentration (0 = thin, 1 = thick)
+    // Paint density/concentration (0 = pure canvas mixing/no own color, 1 = full brush color)
     public double DensityOfPaint { get; init; } = 1.0;
+    // Brush tip density — how much the texture/tip pattern influences stamp appearance (0 = none, 1 = full)
+    public double TipDensity { get; init; } = 1.0;
     public double Grain { get; init; } = 0.0;
     public double Smoothing { get; init; } = 0.3;
     public IBrushTip Tip { get; init; } = new ProceduralBrushTip();

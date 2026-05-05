@@ -1,5 +1,6 @@
 using Avalonia.Media;
 using Floss.App.Input;
+using Floss.App.Processes.Input;
 using Floss.App.Tools;
 
 namespace Floss.App.Processes;
@@ -41,6 +42,7 @@ public sealed class CompositeTool : ITool
         {
             Output.Execute(ctx, result);
         }
+        ctx.InvalidateRender();
     }
 
     public void Cancel(ToolContext ctx)
@@ -55,14 +57,15 @@ public sealed class CompositeTool : ITool
         Input.RenderOverlay(dc, zoom);
     }
 
+    public bool CanCommitFromClick => Input is PolylineInputProcess;
+
     public void Commit(ToolContext ctx)
     {
-        // For modal tools (polyline, etc.), commit current input if any.
+        // For modal tools (polyline, etc.), mark as explicitly committed.
+        Input.Commit();
         if (Input.GetResult() is { } result)
         {
             Output.Execute(ctx, result);
         }
     }
-
-    public bool CanCommitFromClick => false;
 }

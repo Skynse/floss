@@ -56,7 +56,7 @@ public sealed class BrushEngine : IDisposable
         var dirty = BuildStamps(stroke, brush, from, to, ensureEndpoint);
         if (dirty.IsEmpty || _stamps.Count == 0) return PixelRegion.Empty;
 
-        if (brush.BlendMode != SKBlendMode.DstOut && brush.ColorMix > 0.001)
+        if (brush.BlendMode != SKBlendMode.DstOut && (brush.ColorMix > 0.001 || brush.DensityOfPaint < 0.999))
             PrepareStampColors(layer, brush, stroke);
 
         var clippedDirty = dirty;
@@ -299,7 +299,6 @@ public sealed class BrushEngine : IDisposable
         var loadAmt = (float)brush.ColorLoad;
         var stretch = (float)brush.ColorStretch;
         var blur = (float)brush.BlurAmount;
-        var amount = (float)brush.AmountOfPaint;
         var density = (float)brush.DensityOfPaint;
         var mode = brush.MixingMode;
 
@@ -320,19 +319,35 @@ public sealed class BrushEngine : IDisposable
                 {
                     sampledR = r; sampledG = g; sampledB = b;
                 }
-                else
+                else if (stroke.CarriedR >= 0)
                 {
                     sampledR = stroke.CarriedR;
                     sampledG = stroke.CarriedG;
                     sampledB = stroke.CarriedB;
                 }
+                else
+                {
+                    sampledR = stroke.BaseColor.Red;
+                    sampledG = stroke.BaseColor.Green;
+                    sampledB = stroke.BaseColor.Blue;
+                }
+            }
+
+            // Initialize carried color from first canvas sample for smudge mode
+            if (stroke.CarriedR < 0)
+            {
+                // Blend between canvas sample and brush color based on density
+                // density=0: pure canvas (smudge), density=1: pure brush
+                stroke.CarriedR = sampledR + (stroke.BaseColor.Red - sampledR) * density;
+                stroke.CarriedG = sampledG + (stroke.BaseColor.Green - sampledG) * density;
+                stroke.CarriedB = sampledB + (stroke.BaseColor.Blue - sampledB) * density;
             }
 
             // Apply color stretch (non-linear mixing curve)
             var effectiveMix = mixAmt * (1.0f + stretch * 0.5f);
             effectiveMix = Math.Clamp(effectiveMix, 0.0f, 1.0f);
 
-            float newR, newG, newB;
+            float mixedR, mixedG, mixedB;
             if (mode == MixingMode.Perceptual)
             {
                 // Mix in LCh space for more natural color transitions
@@ -342,30 +357,25 @@ public sealed class BrushEngine : IDisposable
                     carriedLCh.X + (sampledLCh.X - carriedLCh.X) * effectiveMix,
                     carriedLCh.Y + (sampledLCh.Y - carriedLCh.Y) * effectiveMix,
                     MixHue(carriedLCh.Z, sampledLCh.Z, effectiveMix));
-                (newR, newG, newB) = LChToRgb(mixedLCh);
+                (mixedR, mixedG, mixedB) = LChToRgb(mixedLCh);
             }
             else
             {
                 // Standard RGB linear interpolation
-                newR = stroke.CarriedR + (sampledR - stroke.CarriedR) * effectiveMix;
-                newG = stroke.CarriedG + (sampledG - stroke.CarriedG) * effectiveMix;
-                newB = stroke.CarriedB + (sampledB - stroke.CarriedB) * effectiveMix;
+                mixedR = stroke.CarriedR + (sampledR - stroke.CarriedR) * effectiveMix;
+                mixedG = stroke.CarriedG + (sampledG - stroke.CarriedG) * effectiveMix;
+                mixedB = stroke.CarriedB + (sampledB - stroke.CarriedB) * effectiveMix;
             }
 
-            // Apply paint amount and density
-            newR *= density;
-            newG *= density;
-            newB *= density;
-
             _stampColors.Add(new SKColor(
-                (byte)Math.Clamp(newR, 0, 255),
-                (byte)Math.Clamp(newG, 0, 255),
-                (byte)Math.Clamp(newB, 0, 255)));
+                (byte)Math.Clamp(mixedR, 0, 255),
+                (byte)Math.Clamp(mixedG, 0, 255),
+                (byte)Math.Clamp(mixedB, 0, 255)));
 
             // Reload toward base brush color
-            stroke.CarriedR = newR + (stroke.BaseColor.Red   - newR) * loadAmt;
-            stroke.CarriedG = newG + (stroke.BaseColor.Green - newG) * loadAmt;
-            stroke.CarriedB = newB + (stroke.BaseColor.Blue  - newB) * loadAmt;
+            stroke.CarriedR = mixedR + (stroke.BaseColor.Red   - mixedR) * loadAmt;
+            stroke.CarriedG = mixedG + (stroke.BaseColor.Green - mixedG) * loadAmt;
+            stroke.CarriedB = mixedB + (stroke.BaseColor.Blue  - mixedB) * loadAmt;
         }
     }
 
@@ -577,9 +587,17 @@ public sealed class BrushEngine : IDisposable
             _baseColor = ToSkColor(brush.Color);
             _currentColor = _baseColor;
             // Carried color tracks the mixed ink across dabs (color mixing feature)
-            CarriedR = _baseColor.Red;
-            CarriedG = _baseColor.Green;
-            CarriedB = _baseColor.Blue;
+            // For smudge (DensityOfPaint ≈ 0), initialize from canvas later
+            if (brush.DensityOfPaint < 0.999)
+            {
+                CarriedR = CarriedG = CarriedB = -1; // uninitialized marker
+            }
+            else
+            {
+                CarriedR = _baseColor.Red;
+                CarriedG = _baseColor.Green;
+                CarriedB = _baseColor.Blue;
+            }
             Paint = new SKPaint
             {
                 IsAntialias = true,

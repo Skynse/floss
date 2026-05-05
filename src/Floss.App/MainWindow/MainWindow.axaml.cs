@@ -169,7 +169,6 @@ public partial class MainWindow : Window
 
     // ── State ─────────────────────────────────────────────────────────────────
     private BrushEditorWindow? _brushEditorWindow;
-    private Window? _toolPropertyDetailWindow;
     private double _zoom = 1.0;
     private double _rotation;
     private int _swatchIndex;
@@ -990,7 +989,6 @@ public partial class MainWindow : Window
         _activeToolButton = button;
         foreach (var b in _toolButtons) SetRailActive(b, b == button);
         _footerStatusText.Text = ToolDisplayName(tool);
-        _toolPropertyDetailWindow?.Close();
         RefreshToolProperties();
     }
 

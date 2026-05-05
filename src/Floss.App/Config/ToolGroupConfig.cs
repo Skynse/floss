@@ -15,6 +15,7 @@ namespace Floss.App;
 // Input process determines how user input is captured (CSP-style).
 public enum InputProcessType
 {
+    None = 0,
     BrushStroke,    // Freehand stroke with stabilization
     Lasso,          // Freehand polygon with stabilization
     Polyline,       // Click-to-add vertices
@@ -26,6 +27,7 @@ public enum InputProcessType
 // Output process determines what the tool's input produces (CSP-style).
 public enum OutputProcessType
 {
+    None = 0,
     DirectDraw,      // Paint with brush engine
     ClosedAreaFill,  // Fill enclosed region
     SelectionArea,   // Create selection
@@ -35,7 +37,8 @@ public enum OutputProcessType
     MoveLayer,       // Move layer offset
     Stroke,          // Stroke a path
     Zoom,            // Zoom canvas
-    Pan              // Pan canvas
+    Pan,             // Pan canvas
+    MagicWand,       // Magic wand selection
 }
 
 // Legacy enum for backward compat during migration.
@@ -83,6 +86,7 @@ public sealed class ToolPreset
     public MixingMode? BrushMixingMode { get; set; }
     public double? BrushAmountOfPaint { get; set; }
     public double? BrushDensityOfPaint { get; set; }
+    public double? BrushTipDensity { get; set; }
     public SkiaSharp.SKBlendMode? BrushBlendMode { get; set; }
     public string? BrushDynamicsJson { get; set; }
 
@@ -93,7 +97,7 @@ public sealed class ToolPreset
             BrushSpacing.HasValue || BrushFlow.HasValue || BrushSmoothing.HasValue ||
             BrushGrain.HasValue || BrushColorMix.HasValue || BrushColorLoad.HasValue ||
             BrushColorStretch.HasValue || BrushBlurAmount.HasValue || BrushMixingMode.HasValue ||
-            BrushAmountOfPaint.HasValue || BrushDensityOfPaint.HasValue ||
+            BrushAmountOfPaint.HasValue || BrushDensityOfPaint.HasValue || BrushTipDensity.HasValue ||
             BrushBlendMode.HasValue || !string.IsNullOrEmpty(BrushDynamicsJson);
 
         if (!needsUpdate) return preset;
@@ -114,6 +118,7 @@ public sealed class ToolPreset
             MixingMode = BrushMixingMode ?? preset.MixingMode,
             AmountOfPaint = BrushAmountOfPaint ?? preset.AmountOfPaint,
             DensityOfPaint = BrushDensityOfPaint ?? preset.DensityOfPaint,
+            TipDensity = BrushTipDensity ?? preset.TipDensity,
             BlendMode = BrushBlendMode ?? preset.BlendMode,
         };
 
@@ -147,6 +152,7 @@ public sealed class ToolPreset
         BrushMixingMode = preset.MixingMode;
         BrushAmountOfPaint = preset.AmountOfPaint;
         BrushDensityOfPaint = preset.DensityOfPaint;
+        BrushTipDensity = preset.TipDensity;
         BrushBlendMode = preset.BlendMode;
         BrushDynamicsJson = preset.Dynamics.Serialize();
     }
@@ -191,7 +197,9 @@ public sealed class ToolPreset
                 SelectMode.PolylineLasso => (InputProcessType.Polyline, OutputProcessType.SelectionArea),
                 _                        => (InputProcessType.Rect, OutputProcessType.SelectionArea)
             },
-            ToolPresetEngine.MagicWand  => (InputProcessType.Click, OutputProcessType.SelectionArea),
+            // MAGIC WAND MIGRATION: Map to MagicWand output (not SelectionArea).
+            // SelectionArea only handles PolygonInput/RectInput; ClickInput does nothing.
+            ToolPresetEngine.MagicWand  => (InputProcessType.Click, OutputProcessType.MagicWand),
             ToolPresetEngine.Fill       => (InputProcessType.Click, OutputProcessType.FloodFill),
             ToolPresetEngine.LassoFill  => (InputProcessType.Lasso, OutputProcessType.ClosedAreaFill),
             ToolPresetEngine.Move       => (InputProcessType.Drag, OutputProcessType.MoveLayer),
@@ -348,7 +356,7 @@ public sealed class ToolGroupConfig
         new()
         {
             Name = "Smudge", DefaultEngine = ToolPresetEngine.Smudge, Shortcut = new(Key.U),
-            Presets = [new() { Name = "Smudge", Engine = ToolPresetEngine.Smudge, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw, BrushColorMix = 0.5, BrushColorLoad = 0.0 }]
+            Presets = [new() { Name = "Smudge", Engine = ToolPresetEngine.Smudge, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw, BrushColorMix = 0.8, BrushColorLoad = 0.0, BrushDensityOfPaint = 0.0 }]
         },
         new()
         {
@@ -363,7 +371,7 @@ public sealed class ToolGroupConfig
         new()
         {
             Name = "Magic Wand", DefaultEngine = ToolPresetEngine.MagicWand, Shortcut = new(Key.W),
-            Presets = [new() { Name = "Magic Wand", Engine = ToolPresetEngine.MagicWand, InputProcess = InputProcessType.Click, OutputProcess = OutputProcessType.SelectionArea }]
+            Presets = [new() { Name = "Magic Wand", Engine = ToolPresetEngine.MagicWand, InputProcess = InputProcessType.Click, OutputProcess = OutputProcessType.MagicWand }]
         },
         new()
         {
@@ -401,7 +409,7 @@ public sealed class ToolGroupConfig
             [
                 new() { Name = "Rectangle", Engine = ToolPresetEngine.Shape, InputProcess = InputProcessType.Rect, OutputProcess = OutputProcessType.Stroke, ShapeKind = ShapeKind.Rectangle },
                 new() { Name = "Ellipse",   Engine = ToolPresetEngine.Shape, InputProcess = InputProcessType.Rect, OutputProcess = OutputProcessType.Stroke, ShapeKind = ShapeKind.Ellipse },
-                new() { Name = "Line",      Engine = ToolPresetEngine.Shape, InputProcess = InputProcessType.Rect, OutputProcess = OutputProcessType.Stroke, ShapeKind = ShapeKind.Line },
+                new() { Name = "Line",      Engine = ToolPresetEngine.Shape, InputProcess = InputProcessType.Rect, OutputProcess = OutputProcessType.Stroke, ShapeKind = ShapeKind.Line, ShapeDrawMode = ShapeDrawMode.Stroke },
             ]
         },
         new()

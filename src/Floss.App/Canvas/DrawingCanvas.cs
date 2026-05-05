@@ -351,7 +351,7 @@ public sealed class DrawingCanvas : Control
         }
 
         layer.MarkThumbnailDirty();
-        _ctx.CommitMutation(_ctx.ActiveLayerIndex, beforeTiles, layerBounds);
+        _ctx.CommitMutation(_ctx.ActiveLayerIndex, beforeTiles, layerBounds.Translate(layer.OffsetX, layer.OffsetY));
         InvalidateVisual();
     }
 
@@ -666,7 +666,8 @@ public sealed class DrawingCanvas : Control
                 context.DrawEllipse(CursorInnerBrush, null, pos, Math.Max(0.5 / CanvasZoom, r * 0.45), Math.Max(0.5 / CanvasZoom, r * 0.45));
             }
 
-            if (_toolController.ActiveTool is EyedropperTool || _toolController.AlternateTool is EyedropperTool)
+            if (_toolController.ActiveTool is EyedropperTool || _toolController.AlternateTool is EyedropperTool
+                || _ctx.ActivePreset?.OutputProcess == Floss.App.OutputProcessType.Eyedropper)
             {
                 var swatchR = 10.0 / CanvasZoom;
                 var swatchPos = new Point(pos.X + swatchR * 1.6, pos.Y - swatchR * 1.6);

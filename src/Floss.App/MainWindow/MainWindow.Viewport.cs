@@ -7,6 +7,7 @@ using Avalonia.Media;
 using Floss.App.Canvas;
 using Floss.App.Document;
 using Floss.App.Input;
+using Floss.App.Processes;
 using Floss.App.Tools;
 
 namespace Floss.App;
@@ -341,7 +342,7 @@ public partial class MainWindow
         }
         else if (key == Key.Back && mods == KeyModifiers.None)
         { _canvas.ClearSelectionContent(); e.Handled = true; }
-        else if ((_activeToolGroup?.ActivePreset?.AlternateInvocation ?? sc.AlternateInvocation).Matches(key, mods))
+        else if (EffectiveAltInvocation().Matches(key, mods))
         {
             if (_canvas.ActiveTool != _eyedropperTool)
                 _canvas.SetAlternateTool(_eyedropperTool);
@@ -349,7 +350,7 @@ public partial class MainWindow
         }
         else if (key == Key.Escape)
         { _canvas.CancelActiveTool(); e.Handled = true; }
-        else if ((key == Key.Return || key == Key.Enter) && _canvas.ActiveTool is SelectTool or PolylineTool or TransformTool)
+        else if ((key == Key.Return || key == Key.Enter) && _canvas.ActiveTool is SelectTool or PolylineTool or TransformTool or CompositeTool { CanCommitFromClick: true })
         { _canvas.CommitActiveTool(); e.Handled = true; }
         else if (sc.ColorCycle.Matches(key, mods)) { CycleColor(); e.Handled = true; }
         else if (sc.ColorDefault.Matches(key, mods)) { SetColor(Color.Parse("#111111")); e.Handled = true; }
@@ -453,7 +454,7 @@ public partial class MainWindow
             }
         }
 
-        var altInvocation = _activeToolGroup?.ActivePreset?.AlternateInvocation ?? App.Shortcuts.AlternateInvocation;
+        var altInvocation = EffectiveAltInvocation();
         if (altInvocation.Key != Key.None && e.Key == altInvocation.Key)
         {
             _canvas.SetAlternateTool(null);
@@ -485,6 +486,13 @@ public partial class MainWindow
             GestureMode.BrushSize => CursorNone,
             _ => CursorArrow
         };
+    }
+
+    private Floss.App.Input.KeyBinding EffectiveAltInvocation()
+    {
+        var preset = _activeToolGroup?.ActivePreset?.AlternateInvocation;
+        if (preset != null && !preset.IsEmpty) return preset;
+        return App.Shortcuts.AlternateInvocation;
     }
 
     private void OpenSettings()

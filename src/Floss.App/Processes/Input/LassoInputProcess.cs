@@ -81,6 +81,7 @@ public sealed class LassoInputProcess : IInputProcess
 
     public void RenderOverlay(DrawingContext dc, double zoom)
     {
+        if (!_active) return;
         if (_smoothed.Count < 2) return;
         var geo = new StreamGeometry();
         using (var c = geo.Open())

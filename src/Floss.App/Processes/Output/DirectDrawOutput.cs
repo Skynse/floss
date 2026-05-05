@@ -19,7 +19,6 @@ public sealed class DirectDrawOutput : IOutputProcess
     private int _lastProcessedIndex = -1;
     private System.Collections.Generic.Dictionary<(int, int), byte[]?>? _beforeTiles;
     private PixelRegion _dirtyRegion;        // per-preview dirty (reset after notify)
-    private PixelRegion _totalDirtyRegion;   // accumulated across entire stroke (for undo)
     private DrawingLayer? _currentLayer;
     private bool _strokeActive;
 
@@ -47,7 +46,6 @@ public sealed class DirectDrawOutput : IOutputProcess
             _lastProcessedIndex = -1;
             _beforeTiles = new System.Collections.Generic.Dictionary<(int, int), byte[]?>();
             _dirtyRegion = PixelRegion.Empty;
-            _totalDirtyRegion = PixelRegion.Empty;
             _currentLayer = layer;
             _brushEngine.BeginStroke(brush, ToLayerSample(layer, samples[0]));
 
@@ -73,7 +71,6 @@ public sealed class DirectDrawOutput : IOutputProcess
         {
             layer.MarkThumbnailDirty();
             _document.NotifyChanged(_dirtyRegion, ctx.ActiveLayerIndex);
-            _totalDirtyRegion = _totalDirtyRegion.Union(_dirtyRegion);
             _dirtyRegion = PixelRegion.Empty; // Reset after notifying
         }
     }
@@ -98,11 +95,16 @@ public sealed class DirectDrawOutput : IOutputProcess
 
         _brushEngine.EndStroke();
 
-        if (_beforeTiles != null && _beforeTiles.Count > 0 && !_totalDirtyRegion.IsEmpty)
+        if (_beforeTiles != null && _beforeTiles.Count > 0)
         {
-            layer.MarkThumbnailDirty();
-            _document.CommitLayerTileMutation(ctx.ActiveLayerIndex, _beforeTiles, _totalDirtyRegion);
-            _document.NotifyChanged(_totalDirtyRegion, ctx.ActiveLayerIndex);
+            // Compute dirty region from all captured tile bounds, translated to document space
+            var tileDirty = ComputeTileDirtyRegion(_beforeTiles).Translate(layer.OffsetX, layer.OffsetY);
+            if (!tileDirty.IsEmpty)
+            {
+                layer.MarkThumbnailDirty();
+                _document.CommitLayerTileMutation(ctx.ActiveLayerIndex, _beforeTiles, tileDirty);
+                _document.NotifyChanged(tileDirty, ctx.ActiveLayerIndex);
+            }
         }
 
         Cleanup();
@@ -114,7 +116,10 @@ public sealed class DirectDrawOutput : IOutputProcess
         var region = _brushEngine.EstimateDabRegion(layer, brush, localSample);
         if (region.IsEmpty) return;
 
-        layer.ExpandToAccommodate(region.X, region.Y, region.Right, region.Bottom);
+        if (layer.ExpandToAccommodate(region.X, region.Y, region.Right, region.Bottom))
+        {
+            _beforeTiles?.Clear();
+        }
         CaptureBeforeTiles(layer, region);
         var dirty = _brushEngine.RasterizeDab(layer, brush, localSample, velocity);
         if (!dirty.IsEmpty)
@@ -129,7 +134,10 @@ public sealed class DirectDrawOutput : IOutputProcess
         var region = _brushEngine.EstimateSegmentRegion(layer, brush, from, to);
         if (region.IsEmpty) return;
 
-        layer.ExpandToAccommodate(region.X, region.Y, region.Right, region.Bottom);
+        if (layer.ExpandToAccommodate(region.X, region.Y, region.Right, region.Bottom))
+        {
+            _beforeTiles?.Clear();
+        }
         CaptureBeforeTiles(layer, region);
         var dirty = _brushEngine.RasterizeSegment(layer, brush, from, to);
         if (!dirty.IsEmpty)
@@ -145,8 +153,23 @@ public sealed class DirectDrawOutput : IOutputProcess
         _lastProcessedIndex = -1;
         _beforeTiles = null;
         _dirtyRegion = PixelRegion.Empty;
-        _totalDirtyRegion = PixelRegion.Empty;
         _currentLayer = null;
+    }
+
+    private static PixelRegion ComputeTileDirtyRegion(System.Collections.Generic.Dictionary<(int, int), byte[]?> tiles)
+    {
+        if (tiles.Count == 0) return PixelRegion.Empty;
+        const int ts = TiledPixelBuffer.TileSize;
+        int minX = int.MaxValue, minY = int.MaxValue;
+        int maxX = int.MinValue, maxY = int.MinValue;
+        foreach (var ((tx, ty), _) in tiles)
+        {
+            minX = Math.Min(minX, tx * ts);
+            minY = Math.Min(minY, ty * ts);
+            maxX = Math.Max(maxX, tx * ts + ts);
+            maxY = Math.Max(maxY, ty * ts + ts);
+        }
+        return new PixelRegion(minX, minY, maxX - minX, maxY - minY);
     }
 
     private static CanvasInputSample ToLayerSample(DrawingLayer layer, CanvasInputSample s)

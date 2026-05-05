@@ -61,6 +61,7 @@ public sealed class BrushEditorWindow : Window
     private readonly Slider _smoothingSlider = MkSlider(0, 0.95, 0.3, "Input stabilization");
     private readonly Slider _angleSlider = MkSlider(0, 360, 0, "Base angle in degrees");
     private readonly Slider _grainSlider = MkSlider(0, 1, 0.0, "Noise texture strength");
+    private readonly Slider _tipDensitySlider = MkSlider(0, 1, 1.0, "Brush tip density (0=none, 1=full)");
 
     // ── Open dynamics popups ──────────────────────────────────────────────────
     private DynamicsPopupWindow? _sizeDynPopup;
@@ -186,6 +187,25 @@ public sealed class BrushEditorWindow : Window
     {
         _activeCategory = index;
         HighlightActiveCategory();
+        // Close any open dynamics popups before switching — prevents crashes
+        // from stale references to re-parented sliders.
+        _sizeDynPopup?.Close();
+        _sizeDynPopup = null;
+        _opacDynPopup?.Close();
+        _opacDynPopup = null;
+        _flowDynPopup?.Close();
+        _flowDynPopup = null;
+        _hardnessDynPopup?.Close();
+        _hardnessDynPopup = null;
+        _spacingDynPopup?.Close();
+        _spacingDynPopup = null;
+        _scatterDynPopup?.Close();
+        _scatterDynPopup = null;
+        _rotationDynPopup?.Close();
+        _rotationDynPopup = null;
+        _angleDynPopup?.Close();
+        _angleDynPopup = null;
+
         // BrushTip is rebuilt fresh (preset-dependent, no shared sliders).
         // All others are pre-built cached panels to avoid re-parenting sliders.
         _contentHost.Child = index switch
@@ -215,7 +235,7 @@ public sealed class BrushEditorWindow : Window
         Spacing = 0,
         Children =
         {
-            DynSliderRow("Size", _sizeSlider, "px", () => OpenSizeDynamics())
+            DynSliderRow("Size", _sizeSlider, "px", () => OpenSizeDynamics(), "brush.size")
         }
     };
 
@@ -224,17 +244,17 @@ public sealed class BrushEditorWindow : Window
         Spacing = 0,
         Children =
         {
-            DynSliderRow("Opacity", _opacitySlider, "%", () => OpenOpacityDynamics()),
-            DynSliderRow("Flow",    _flowSlider,    "%", () => OpenFlowDynamics()),
+            DynSliderRow("Opacity", _opacitySlider, "%", () => OpenOpacityDynamics(), "brush.opacity"),
+            DynSliderRow("Flow",    _flowSlider,    "%", () => OpenFlowDynamics(), "brush.flow"),
             BuildBlendModeRow(),
             SectionHeader("COLOR MIXING"),
-            PlainSliderRow("Mix",  _colorMixSlider,  "%"),
-            PlainSliderRow("Load", _colorLoadSlider, "%"),
-            PlainSliderRow("Stretch", _colorStretchSlider, "%"),
-            PlainSliderRow("Blur", _blurAmountSlider, "%"),
+            PlainSliderRow("Mix",  _colorMixSlider,  "%", "brush.colorMix"),
+            PlainSliderRow("Load", _colorLoadSlider, "%", "brush.colorLoad"),
+            PlainSliderRow("Stretch", _colorStretchSlider, "%", "brush.colorStretch"),
+            PlainSliderRow("Blur", _blurAmountSlider, "%", "brush.blurAmount"),
             BuildMixingModeRow(),
-            PlainSliderRow("Amount", _amountOfPaintSlider, "%"),
-            PlainSliderRow("Density", _densityOfPaintSlider, "%"),
+            PlainSliderRow("Amount", _amountOfPaintSlider, "%", "brush.amountOfPaint"),
+            PlainSliderRow("Density", _densityOfPaintSlider, "%", "brush.densityOfPaint"),
         }
     };
 
@@ -478,12 +498,9 @@ public sealed class BrushEditorWindow : Window
         Spacing = 0,
         Children =
         {
-            DynSliderRow("Spacing",   _spacingSlider,   "%", () => OpenSpacingDynamics()),
-            DynButtonRow("Scatter",   () => OpenScatterDynamics()),
-            DynButtonRow("Rotation",  () => OpenRotationDynamics()),
-            PlainSliderRow("Smoothing", _smoothingSlider, "%"),
-            // Angle slider, 0->360 degrees with dynamics
-            DynSliderRow("Angle", _angleSlider, "°", () => openAngleDynamics())
+            DynSliderRow("Spacing",   _spacingSlider,   "%", () => OpenSpacingDynamics(), "brush.spacing"),
+            PlainSliderRow("Smoothing", _smoothingSlider, "%", "brush.smoothing"),
+            DynSliderRow("Angle", _angleSlider, "°", () => openAngleDynamics(), "brush.angle")
         }
     };
 
@@ -507,7 +524,8 @@ public sealed class BrushEditorWindow : Window
             Spacing = 0,
             Children =
             {
-                PlainSliderRow("Grain", _grainSlider, "%"),
+                PlainSliderRow("Grain", _grainSlider, "%", "brush.grain"),
+                PlainSliderRow("Tip Density", _tipDensitySlider, "%", "brush.tipDensity"),
                 new Border { Height = 4 },
                 headerRow,
                 _stampPanel
@@ -517,7 +535,7 @@ public sealed class BrushEditorWindow : Window
 
     // ── Row builders ──────────────────────────────────────────────────────────
 
-    private Control DynSliderRow(string label, Slider slider, string fmt, Action openDyn)
+    private Control DynSliderRow(string label, Slider slider, string fmt, Action openDyn, string? toolPropId = null)
     {
         var dynBtn = new Button
         {
@@ -537,11 +555,11 @@ public sealed class BrushEditorWindow : Window
         ToolTip.SetTip(dynBtn, "Edit dynamics curve");
         dynBtn.Click += (_, _) => openDyn();
 
-        return BuildSliderRow(label, slider, fmt, dynBtn);
+        return BuildSliderRow(label, slider, fmt, dynBtn, toolPropId);
     }
 
-    private Control PlainSliderRow(string label, Slider slider, string fmt)
-        => BuildSliderRow(label, slider, fmt, null);
+    private Control PlainSliderRow(string label, Slider slider, string fmt, string? toolPropId = null)
+        => BuildSliderRow(label, slider, fmt, null, toolPropId);
 
     private Control DynButtonRow(string label, Action openDyn)
     {
@@ -593,7 +611,7 @@ public sealed class BrushEditorWindow : Window
         return row;
     }
 
-    private static Control BuildSliderRow(string label, Slider slider, string fmt, Control? extra)
+    private static Control BuildSliderRow(string label, Slider slider, string fmt, Control? extra, string? toolPropId = null)
     {
         var lbl = new TextBlock
         {
@@ -612,19 +630,55 @@ public sealed class BrushEditorWindow : Window
         var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 1, 0, 1) };
         DockPanel.SetDock(lbl, Dock.Left);
         DockPanel.SetDock(val, Dock.Right);
-        if (extra != null)
+
+        // Eye toggle for tool property docker visibility
+        if (toolPropId != null)
         {
-            DockPanel.SetDock(extra, Dock.Right);
+            bool visible = App.Config.ToolPropertyDockerVisibility.TryGetValue(toolPropId, out var v) ? v : false;
+            var eyeBtn = new Button
+            {
+                Content = visible ? "◉" : "○",
+                Width = 20,
+                Height = 20,
+                Padding = new Thickness(0),
+                FontSize = 10,
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                Background = new SolidColorBrush(Color.Parse(Bg2)),
+                Foreground = new SolidColorBrush(Color.Parse(visible ? Accent : TextMuted)),
+                BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(3),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            ToolTip.SetTip(eyeBtn, visible ? "Hide from tool property docker" : "Show in tool property docker");
+            eyeBtn.Click += (_, _) =>
+            {
+                var newVisible = !App.Config.ToolPropertyDockerVisibility.TryGetValue(toolPropId, out var cur) || !cur;
+                App.Config.ToolPropertyDockerVisibility[toolPropId] = newVisible;
+                App.Config.Save();
+                AppConfig.NotifyToolPropertyVisibilityChanged();
+                eyeBtn.Content = newVisible ? "◉" : "○";
+                eyeBtn.Foreground = new SolidColorBrush(Color.Parse(newVisible ? Accent : TextMuted));
+                ToolTip.SetTip(eyeBtn, newVisible ? "Hide from tool property docker" : "Show in tool property docker");
+            };
+            DockPanel.SetDock(eyeBtn, Dock.Right);
             row.Children.Add(lbl);
-            row.Children.Add(extra);
+            row.Children.Add(eyeBtn);
             row.Children.Add(new Border { Width = 4 });
-            row.Children.Add(val);
         }
         else
         {
             row.Children.Add(lbl);
-            row.Children.Add(val);
         }
+
+        if (extra != null)
+        {
+            DockPanel.SetDock(extra, Dock.Right);
+            row.Children.Add(extra);
+            row.Children.Add(new Border { Width = 4 });
+        }
+        row.Children.Add(val);
         row.Children.Add(slider);
         return row;
     }
@@ -906,6 +960,7 @@ public sealed class BrushEditorWindow : Window
         WireSlider(_blurAmountSlider, v => Commit(p => p with { BlurAmount = v }));
         WireSlider(_amountOfPaintSlider, v => Commit(p => p with { AmountOfPaint = v }));
         WireSlider(_densityOfPaintSlider, v => Commit(p => p with { DensityOfPaint = v }));
+        WireSlider(_tipDensitySlider, v => Commit(p => p with { TipDensity = v }));
     }
 
     private void Commit(Func<BrushPreset, BrushPreset> update)
@@ -914,7 +969,7 @@ public sealed class BrushEditorWindow : Window
         _preset = update(_preset);
         _preview.Brush = _preset;
         _preview.InvalidateBitmap();
-        _onChange(_preset);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => _onChange(_preset), Avalonia.Threading.DispatcherPriority.Background);
     }
 
     private void CommitMainTip(IBrushTip tip)
@@ -959,6 +1014,7 @@ public sealed class BrushEditorWindow : Window
         _blurAmountSlider.Value = Math.Clamp(preset.BlurAmount, _blurAmountSlider.Minimum, _blurAmountSlider.Maximum);
         _amountOfPaintSlider.Value = Math.Clamp(preset.AmountOfPaint, _amountOfPaintSlider.Minimum, _amountOfPaintSlider.Maximum);
         _densityOfPaintSlider.Value = Math.Clamp(preset.DensityOfPaint, _densityOfPaintSlider.Minimum, _densityOfPaintSlider.Maximum);
+        _tipDensitySlider.Value = Math.Clamp(preset.TipDensity, _tipDensitySlider.Minimum, _tipDensitySlider.Maximum);
         if (_blendModeCombo != null) _blendModeCombo.SelectedItem = preset.BlendMode;
         if (_mixingModeCombo != null) _mixingModeCombo.SelectedItem = preset.MixingMode;
         if (_aaLevelCombo != null) _aaLevelCombo.SelectedIndex = HardnessToLevel(preset.Hardness);
