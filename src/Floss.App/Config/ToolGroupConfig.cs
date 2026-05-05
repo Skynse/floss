@@ -78,6 +78,11 @@ public sealed class ToolPreset
     public double? BrushGrain { get; set; }
     public double? BrushColorMix { get; set; }
     public double? BrushColorLoad { get; set; }
+    public double? BrushColorStretch { get; set; }
+    public double? BrushBlurAmount { get; set; }
+    public MixingMode? BrushMixingMode { get; set; }
+    public double? BrushAmountOfPaint { get; set; }
+    public double? BrushDensityOfPaint { get; set; }
     public SkiaSharp.SKBlendMode? BrushBlendMode { get; set; }
     public string? BrushDynamicsJson { get; set; }
 
@@ -87,6 +92,8 @@ public sealed class ToolPreset
         var needsUpdate = BrushSize.HasValue || BrushOpacity.HasValue || BrushHardness.HasValue ||
             BrushSpacing.HasValue || BrushFlow.HasValue || BrushSmoothing.HasValue ||
             BrushGrain.HasValue || BrushColorMix.HasValue || BrushColorLoad.HasValue ||
+            BrushColorStretch.HasValue || BrushBlurAmount.HasValue || BrushMixingMode.HasValue ||
+            BrushAmountOfPaint.HasValue || BrushDensityOfPaint.HasValue ||
             BrushBlendMode.HasValue || !string.IsNullOrEmpty(BrushDynamicsJson);
 
         if (!needsUpdate) return preset;
@@ -102,6 +109,11 @@ public sealed class ToolPreset
             Grain = BrushGrain ?? preset.Grain,
             ColorMix = BrushColorMix ?? preset.ColorMix,
             ColorLoad = BrushColorLoad ?? preset.ColorLoad,
+            ColorStretch = BrushColorStretch ?? preset.ColorStretch,
+            BlurAmount = BrushBlurAmount ?? preset.BlurAmount,
+            MixingMode = BrushMixingMode ?? preset.MixingMode,
+            AmountOfPaint = BrushAmountOfPaint ?? preset.AmountOfPaint,
+            DensityOfPaint = BrushDensityOfPaint ?? preset.DensityOfPaint,
             BlendMode = BrushBlendMode ?? preset.BlendMode,
         };
 
@@ -130,6 +142,11 @@ public sealed class ToolPreset
         BrushGrain = preset.Grain;
         BrushColorMix = preset.ColorMix;
         BrushColorLoad = preset.ColorLoad;
+        BrushColorStretch = preset.ColorStretch;
+        BrushBlurAmount = preset.BlurAmount;
+        BrushMixingMode = preset.MixingMode;
+        BrushAmountOfPaint = preset.AmountOfPaint;
+        BrushDensityOfPaint = preset.DensityOfPaint;
         BrushBlendMode = preset.BlendMode;
         BrushDynamicsJson = preset.Dynamics.Serialize();
     }

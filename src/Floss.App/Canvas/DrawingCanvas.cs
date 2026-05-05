@@ -811,18 +811,37 @@ public sealed class DrawingCanvas : Control
     {
         if ((uint)x >= (uint)_document.Width || (uint)y >= (uint)_document.Height) return null;
 
-        // Fast-path: sample directly from the active layer instead of
-        // re-compositing the entire document stack for a single pixel.
-        var layer = _document.ActiveLayer;
-        if (layer == null || layer.IsGroup) return null;
+        // Composite sample from all visible layers (bottom to top).
+        double accR = 0, accG = 0, accB = 0, accA = 0;
+        bool any = false;
 
-        int lx = x - layer.OffsetX;
-        int ly = y - layer.OffsetY;
-        if ((uint)lx >= (uint)layer.Width || (uint)ly >= (uint)layer.Height) return null;
+        foreach (var layer in _document.Layers)
+        {
+            if (!layer.IsVisible || layer.IsGroup) continue;
+            int lx = x - layer.OffsetX;
+            int ly = y - layer.OffsetY;
+            if ((uint)lx >= (uint)layer.Width || (uint)ly >= (uint)layer.Height) continue;
 
-        layer.Pixels.GetPixel(lx, ly, out byte b, out byte g, out byte r, out byte a);
-        if (a == 0) return null;
-        return Color.FromArgb(a, r, g, b);
+            layer.Pixels.GetPixel(lx, ly, out byte b, out byte g, out byte r, out byte a);
+            if (a == 0) continue;
+            any = true;
+
+            double srcA = a / 255.0 * layer.Opacity;
+            if (srcA <= 0) continue;
+
+            double dstA = accA;
+            double outA = srcA + dstA * (1 - srcA);
+            if (outA > 0)
+            {
+                accR = (r * srcA + accR * dstA * (1 - srcA)) / outA;
+                accG = (g * srcA + accG * dstA * (1 - srcA)) / outA;
+                accB = (b * srcA + accB * dstA * (1 - srcA)) / outA;
+                accA = outA;
+            }
+        }
+
+        if (!any) return null;
+        return Color.FromArgb((byte)Math.Clamp(accA * 255, 0, 255), (byte)Math.Clamp(accR, 0, 255), (byte)Math.Clamp(accG, 0, 255), (byte)Math.Clamp(accB, 0, 255));
     }
 
     private static bool IsPaintInput(PointerPoint point)

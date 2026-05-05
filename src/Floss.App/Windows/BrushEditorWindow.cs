@@ -52,6 +52,10 @@ public sealed class BrushEditorWindow : Window
     private readonly Slider _flowSlider = MkSlider(0.01, 1, 1.0, "Paint buildup per dab");
     private readonly Slider _colorMixSlider = MkSlider(0, 1, 0.0, "Canvas color pickup per dab (0=pure brush, 1=full mix)");
     private readonly Slider _colorLoadSlider = MkSlider(0, 1, 1.0, "Paint reload rate (1=always fresh, 0=color accumulates)");
+    private readonly Slider _colorStretchSlider = MkSlider(0, 1, 0.5, "Color stretch intensity (0=gentle, 1=aggressive)");
+    private readonly Slider _blurAmountSlider = MkSlider(0, 1, 0.0, "Blur during mixing (0=none, 1=full)");
+    private readonly Slider _amountOfPaintSlider = MkSlider(0, 1, 1.0, "Amount of paint deposited (0=none, 1=full)");
+    private readonly Slider _densityOfPaintSlider = MkSlider(0, 1, 1.0, "Paint density (0=thin, 1=thick)");
     private readonly Slider _hardnessSlider = MkSlider(0, 1, 0.9, "Edge softness (anti-aliasing)");
     private readonly Slider _spacingSlider = MkSlider(0.01, 1, 0.1, "Stamp interval as fraction of size");
     private readonly Slider _smoothingSlider = MkSlider(0, 0.95, 0.3, "Input stabilization");
@@ -226,6 +230,11 @@ public sealed class BrushEditorWindow : Window
             SectionHeader("COLOR MIXING"),
             PlainSliderRow("Mix",  _colorMixSlider,  "%"),
             PlainSliderRow("Load", _colorLoadSlider, "%"),
+            PlainSliderRow("Stretch", _colorStretchSlider, "%"),
+            PlainSliderRow("Blur", _blurAmountSlider, "%"),
+            BuildMixingModeRow(),
+            PlainSliderRow("Amount", _amountOfPaintSlider, "%"),
+            PlainSliderRow("Density", _densityOfPaintSlider, "%"),
         }
     };
 
@@ -893,6 +902,10 @@ public sealed class BrushEditorWindow : Window
         WireSlider(_angleSlider, v => Commit(p => p with { Angle = v }));
         WireSlider(_colorMixSlider,  v => Commit(p => p with { ColorMix  = v }));
         WireSlider(_colorLoadSlider, v => Commit(p => p with { ColorLoad = v }));
+        WireSlider(_colorStretchSlider, v => Commit(p => p with { ColorStretch = v }));
+        WireSlider(_blurAmountSlider, v => Commit(p => p with { BlurAmount = v }));
+        WireSlider(_amountOfPaintSlider, v => Commit(p => p with { AmountOfPaint = v }));
+        WireSlider(_densityOfPaintSlider, v => Commit(p => p with { DensityOfPaint = v }));
     }
 
     private void Commit(Func<BrushPreset, BrushPreset> update)
@@ -942,7 +955,12 @@ public sealed class BrushEditorWindow : Window
         _angleSlider.Value = Math.Clamp(preset.Angle, _angleSlider.Minimum, _angleSlider.Maximum);
         _colorMixSlider.Value  = Math.Clamp(preset.ColorMix,  _colorMixSlider.Minimum,  _colorMixSlider.Maximum);
         _colorLoadSlider.Value = Math.Clamp(preset.ColorLoad, _colorLoadSlider.Minimum, _colorLoadSlider.Maximum);
+        _colorStretchSlider.Value = Math.Clamp(preset.ColorStretch, _colorStretchSlider.Minimum, _colorStretchSlider.Maximum);
+        _blurAmountSlider.Value = Math.Clamp(preset.BlurAmount, _blurAmountSlider.Minimum, _blurAmountSlider.Maximum);
+        _amountOfPaintSlider.Value = Math.Clamp(preset.AmountOfPaint, _amountOfPaintSlider.Minimum, _amountOfPaintSlider.Maximum);
+        _densityOfPaintSlider.Value = Math.Clamp(preset.DensityOfPaint, _densityOfPaintSlider.Minimum, _densityOfPaintSlider.Maximum);
         if (_blendModeCombo != null) _blendModeCombo.SelectedItem = preset.BlendMode;
+        if (_mixingModeCombo != null) _mixingModeCombo.SelectedItem = preset.MixingMode;
         if (_aaLevelCombo != null) _aaLevelCombo.SelectedIndex = HardnessToLevel(preset.Hardness);
 
         _stampLayers.Clear();
@@ -1080,6 +1098,39 @@ public sealed class BrushEditorWindow : Window
         DockPanel.SetDock(lbl, Dock.Left);
         row.Children.Add(lbl);
         row.Children.Add(_blendModeCombo);
+        return row;
+    }
+
+    // ── Mixing mode row ───────────────────────────────────────────────────────
+    private ComboBox? _mixingModeCombo;
+
+    private Control BuildMixingModeRow()
+    {
+        _mixingModeCombo = new ComboBox
+        {
+            ItemsSource = new[] { MixingMode.Standard, MixingMode.Perceptual },
+            SelectedItem = _preset.MixingMode,
+            FontSize = 11,
+            MinHeight = 28,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        _mixingModeCombo.SelectionChanged += (_, _) =>
+        {
+            if (_mixingModeCombo.SelectedItem is MixingMode mode)
+                Commit(p => p with { MixingMode = mode });
+        };
+        var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 2, 0, 2) };
+        var lbl = new TextBlock
+        {
+            Text = "Mixing",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            Width = 72,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        DockPanel.SetDock(lbl, Dock.Left);
+        row.Children.Add(lbl);
+        row.Children.Add(_mixingModeCombo);
         return row;
     }
 

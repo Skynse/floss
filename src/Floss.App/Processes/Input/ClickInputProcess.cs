@@ -22,7 +22,8 @@ public sealed class ClickInputProcess : IInputProcess
 
     public void PointerUp(CanvasInputSample s)
     {
-        _pending = false;
+        // Keep _pending true so GetResult can return the click.
+        // GetResult will clear the flag.
     }
 
     public void Cancel()

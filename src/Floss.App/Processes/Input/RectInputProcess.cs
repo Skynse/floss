@@ -65,6 +65,6 @@ public sealed class RectInputProcess : IInputProcess
         var w = Math.Abs(_current.X - _start.X);
         var h = Math.Abs(_current.Y - _start.Y);
         var t = Math.Max(0.5, 1.0 / zoom);
-        dc.DrawRectangle(null, new Pen(Avalonia.Media.Brushes.White, t), new Avalonia.Rect(x, y, w, h));
+        dc.DrawRectangle(null, new Pen(Avalonia.Media.Brushes.Black, t), new Avalonia.Rect(x, y, w, h));
     }
 }

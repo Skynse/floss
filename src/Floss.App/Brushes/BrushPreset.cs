@@ -6,6 +6,7 @@ using static Floss.App.Brushes.BrushDynamics;
 namespace Floss.App.Brushes;
 
 public enum BrushKind { Ink, Pencil, Marker, Airbrush, Eraser }
+public enum MixingMode { Standard, Perceptual }
 
 public sealed record BrushPreset(
     string Name,
@@ -23,6 +24,16 @@ public sealed record BrushPreset(
     public double ColorMix { get; init; } = 0.0;
     // How fast the brush reloads with fresh paint. 1 = always fresh, 0 = color accumulates
     public double ColorLoad { get; init; } = 1.0;
+    // How aggressively colors are stretched/mixed (0 = gentle, 1 = aggressive)
+    public double ColorStretch { get; init; } = 0.5;
+    // Blur intensity applied during color mixing (0 = none, 1 = full)
+    public double BlurAmount { get; init; } = 0.0;
+    // Color mixing algorithm: Standard (RGB) or Perceptual (LCh)
+    public MixingMode MixingMode { get; init; } = MixingMode.Standard;
+    // How much paint is deposited per dab (0 = none, 1 = full)
+    public double AmountOfPaint { get; init; } = 1.0;
+    // Paint density/concentration (0 = thin, 1 = thick)
+    public double DensityOfPaint { get; init; } = 1.0;
     public double Grain { get; init; } = 0.0;
     public double Smoothing { get; init; } = 0.3;
     public IBrushTip Tip { get; init; } = new ProceduralBrushTip();

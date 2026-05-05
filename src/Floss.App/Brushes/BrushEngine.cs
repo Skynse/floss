@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 using Avalonia.Media;
 using Floss.App.Document;
 using Floss.App.Input;
@@ -231,7 +232,7 @@ public sealed class BrushEngine : IDisposable
         var scatter = dyn.Scatter.IsEnabled ? dyn.EvalScatter(sp) : 0f;
         var rotDeg = dyn.EvalRotationDeg(sp);
         var size = Math.Max(0.5f, (float)brush.Size * sizeMul);
-        var opacity = (float)Math.Clamp(brush.Opacity * brush.Flow * opacMul * flowMul, 0, 1);
+        var opacity = (float)Math.Clamp(brush.Opacity * brush.Flow * opacMul * flowMul * brush.AmountOfPaint, 0, 1);
         var trajectoryDeg = sp.DrawingAngle * (180f / MathF.PI);
         float directionContrib = brush.BaseAngleSource switch
         {
@@ -296,17 +297,65 @@ public sealed class BrushEngine : IDisposable
         _stampColors.Clear();
         var mixAmt = (float)brush.ColorMix;
         var loadAmt = (float)brush.ColorLoad;
+        var stretch = (float)brush.ColorStretch;
+        var blur = (float)brush.BlurAmount;
+        var amount = (float)brush.AmountOfPaint;
+        var density = (float)brush.DensityOfPaint;
+        var mode = brush.MixingMode;
+
         for (var i = 0; i < _stamps.Count; i++)
         {
             var stamp = _stamps[i];
-            layer.Pixels.GetPixel((int)stamp.X, (int)stamp.Y, out var b, out var g, out var r, out var a);
-            float sampledR = a > 0 ? r : stroke.CarriedR;
-            float sampledG = a > 0 ? g : stroke.CarriedG;
-            float sampledB = a > 0 ? b : stroke.CarriedB;
+            float sampledR, sampledG, sampledB;
 
-            var newR = stroke.CarriedR + (sampledR - stroke.CarriedR) * mixAmt;
-            var newG = stroke.CarriedG + (sampledG - stroke.CarriedG) * mixAmt;
-            var newB = stroke.CarriedB + (sampledB - stroke.CarriedB) * mixAmt;
+            if (blur > 0.001f)
+            {
+                // Sample with blur (3x3 kernel weighted by blur amount)
+                (sampledR, sampledG, sampledB) = SampleBlurred(layer, (int)stamp.X, (int)stamp.Y, blur, stroke);
+            }
+            else
+            {
+                layer.Pixels.GetPixel((int)stamp.X, (int)stamp.Y, out var b, out var g, out var r, out var a);
+                if (a > 0)
+                {
+                    sampledR = r; sampledG = g; sampledB = b;
+                }
+                else
+                {
+                    sampledR = stroke.CarriedR;
+                    sampledG = stroke.CarriedG;
+                    sampledB = stroke.CarriedB;
+                }
+            }
+
+            // Apply color stretch (non-linear mixing curve)
+            var effectiveMix = mixAmt * (1.0f + stretch * 0.5f);
+            effectiveMix = Math.Clamp(effectiveMix, 0.0f, 1.0f);
+
+            float newR, newG, newB;
+            if (mode == MixingMode.Perceptual)
+            {
+                // Mix in LCh space for more natural color transitions
+                var carriedLCh = RgbToLCh(stroke.CarriedR, stroke.CarriedG, stroke.CarriedB);
+                var sampledLCh = RgbToLCh(sampledR, sampledG, sampledB);
+                var mixedLCh = new Vector3(
+                    carriedLCh.X + (sampledLCh.X - carriedLCh.X) * effectiveMix,
+                    carriedLCh.Y + (sampledLCh.Y - carriedLCh.Y) * effectiveMix,
+                    MixHue(carriedLCh.Z, sampledLCh.Z, effectiveMix));
+                (newR, newG, newB) = LChToRgb(mixedLCh);
+            }
+            else
+            {
+                // Standard RGB linear interpolation
+                newR = stroke.CarriedR + (sampledR - stroke.CarriedR) * effectiveMix;
+                newG = stroke.CarriedG + (sampledG - stroke.CarriedG) * effectiveMix;
+                newB = stroke.CarriedB + (sampledB - stroke.CarriedB) * effectiveMix;
+            }
+
+            // Apply paint amount and density
+            newR *= density;
+            newG *= density;
+            newB *= density;
 
             _stampColors.Add(new SKColor(
                 (byte)Math.Clamp(newR, 0, 255),
@@ -318,6 +367,128 @@ public sealed class BrushEngine : IDisposable
             stroke.CarriedG = newG + (stroke.BaseColor.Green - newG) * loadAmt;
             stroke.CarriedB = newB + (stroke.BaseColor.Blue  - newB) * loadAmt;
         }
+    }
+
+    private static (float R, float G, float B) SampleBlurred(DrawingLayer layer, int cx, int cy, float blur, ActiveStroke stroke)
+    {
+        // 3x3 gaussian-ish kernel sampling
+        float accR = 0, accG = 0, accB = 0, accW = 0;
+        for (int dy = -1; dy <= 1; dy++)
+        {
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                int x = cx + dx;
+                int y = cy + dy;
+                int lx = x - layer.OffsetX;
+                int ly = y - layer.OffsetY;
+                if ((uint)lx >= (uint)layer.Width || (uint)ly >= (uint)layer.Height) continue;
+
+                layer.Pixels.GetPixel(lx, ly, out byte b, out byte g, out byte r, out byte a);
+                if (a == 0) continue;
+
+                float w = (dx == 0 && dy == 0) ? 4.0f : 1.0f;
+                accR += r * w; accG += g * w; accB += b * w; accW += w;
+            }
+        }
+
+        if (accW > 0)
+        {
+            float centerR, centerG, centerB;
+            int clx = cx - layer.OffsetX;
+            int cly = cy - layer.OffsetY;
+            if ((uint)clx < (uint)layer.Width && (uint)cly < (uint)layer.Height)
+            {
+                layer.Pixels.GetPixel(clx, cly, out byte b, out byte g, out byte r, out byte a);
+                if (a > 0) { centerR = r; centerG = g; centerB = b; }
+                else { centerR = stroke.CarriedR; centerG = stroke.CarriedG; centerB = stroke.CarriedB; }
+            }
+            else
+            {
+                centerR = stroke.CarriedR; centerG = stroke.CarriedG; centerB = stroke.CarriedB;
+            }
+
+            float blurR = accR / accW;
+            float blurG = accG / accW;
+            float blurB = accB / accW;
+
+            return (
+                centerR + (blurR - centerR) * blur,
+                centerG + (blurG - centerG) * blur,
+                centerB + (blurB - centerB) * blur);
+        }
+
+        return (stroke.CarriedR, stroke.CarriedG, stroke.CarriedB);
+    }
+
+    // Simplified RGB <-> LCh conversion for perceptual mixing
+    private static Vector3 RgbToLCh(float r, float g, float b)
+    {
+        // RGB to XYZ (sRGB, D65)
+        float xr = r / 255f;
+        float xg = g / 255f;
+        float xb = b / 255f;
+
+        float R = xr > 0.04045f ? MathF.Pow((xr + 0.055f) / 1.055f, 2.4f) : xr / 12.92f;
+        float G = xg > 0.04045f ? MathF.Pow((xg + 0.055f) / 1.055f, 2.4f) : xg / 12.92f;
+        float B = xb > 0.04045f ? MathF.Pow((xb + 0.055f) / 1.055f, 2.4f) : xb / 12.92f;
+
+        float X = R * 0.4124564f + G * 0.3575761f + B * 0.1804375f;
+        float Y = R * 0.2126729f + G * 0.7151522f + B * 0.0721750f;
+        float Z = R * 0.0193339f + G * 0.1191920f + B * 0.9503041f;
+
+        // XYZ to LAB
+        float fx = X > 0.008856f ? MathF.Pow(X, 1f / 3f) : (7.787f * X + 16f / 116f);
+        float fy = Y > 0.008856f ? MathF.Pow(Y, 1f / 3f) : (7.787f * Y + 16f / 116f);
+        float fz = Z > 0.008856f ? MathF.Pow(Z, 1f / 3f) : (7.787f * Z + 16f / 116f);
+
+        float L = 116f * fy - 16f;
+        float A = 500f * (fx - fy);
+        float B_ = 200f * (fy - fz);
+
+        // LAB to LCh
+        float C = MathF.Sqrt(A * A + B_ * B_);
+        float H = MathF.Atan2(B_, A);
+
+        return new Vector3(L, C, H);
+    }
+
+    private static (float R, float G, float B) LChToRgb(Vector3 lch)
+    {
+        float L = lch.X;
+        float C = lch.Y;
+        float H = lch.Z;
+
+        // LCh to LAB
+        float A = C * MathF.Cos(H);
+        float B_ = C * MathF.Sin(H);
+
+        // LAB to XYZ
+        float fy = (L + 16f) / 116f;
+        float fx = A / 500f + fy;
+        float fz = fy - B_ / 200f;
+
+        float X = (fx > 0.206897f) ? fx * fx * fx : (fx - 16f / 116f) / 7.787f;
+        float Y = (fy > 0.206897f) ? fy * fy * fy : (fy - 16f / 116f) / 7.787f;
+        float Z = (fz > 0.206897f) ? fz * fz * fz : (fz - 16f / 116f) / 7.787f;
+
+        // XYZ to RGB
+        float R = X *  3.2404542f + Y * -1.5371385f + Z * -0.4985314f;
+        float G = X * -0.9692660f + Y *  1.8760108f + Z *  0.0415560f;
+        float B = X *  0.0556434f + Y * -0.2040259f + Z *  1.0572252f;
+
+        float r = R > 0.0031308f ? (1.055f * MathF.Pow(R, 1f / 2.4f) - 0.055f) : (12.92f * R);
+        float g = G > 0.0031308f ? (1.055f * MathF.Pow(G, 1f / 2.4f) - 0.055f) : (12.92f * G);
+        float b = B > 0.0031308f ? (1.055f * MathF.Pow(B, 1f / 2.4f) - 0.055f) : (12.92f * B);
+
+        return (r * 255f, g * 255f, b * 255f);
+    }
+
+    private static float MixHue(float h1, float h2, float t)
+    {
+        float diff = h2 - h1;
+        if (diff > MathF.PI) diff -= MathF.Tau;
+        else if (diff < -MathF.PI) diff += MathF.Tau;
+        return h1 + diff * t;
     }
 
     private static PixelRegion StampBounds(StampSample stamp)

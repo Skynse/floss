@@ -91,7 +91,7 @@ public sealed class LassoInputProcess : IInputProcess
             c.EndFigure(false);
         }
         var t = Math.Max(0.5, 1.0 / zoom);
-        dc.DrawGeometry(null, new Pen(Avalonia.Media.Brushes.White, t), geo);
+        dc.DrawGeometry(null, new Pen(Avalonia.Media.Brushes.Black, t), geo);
     }
 
     private CanvasInputSample ApplyStabilization(CanvasInputSample raw)

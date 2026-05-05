@@ -18,7 +18,8 @@ public sealed class DirectDrawOutput : IOutputProcess
     // Incremental stroke state
     private int _lastProcessedIndex = -1;
     private System.Collections.Generic.Dictionary<(int, int), byte[]?>? _beforeTiles;
-    private PixelRegion _dirtyRegion;
+    private PixelRegion _dirtyRegion;        // per-preview dirty (reset after notify)
+    private PixelRegion _totalDirtyRegion;   // accumulated across entire stroke (for undo)
     private DrawingLayer? _currentLayer;
     private bool _strokeActive;
 
@@ -46,6 +47,7 @@ public sealed class DirectDrawOutput : IOutputProcess
             _lastProcessedIndex = -1;
             _beforeTiles = new System.Collections.Generic.Dictionary<(int, int), byte[]?>();
             _dirtyRegion = PixelRegion.Empty;
+            _totalDirtyRegion = PixelRegion.Empty;
             _currentLayer = layer;
             _brushEngine.BeginStroke(brush, ToLayerSample(layer, samples[0]));
 
@@ -71,6 +73,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         {
             layer.MarkThumbnailDirty();
             _document.NotifyChanged(_dirtyRegion, ctx.ActiveLayerIndex);
+            _totalDirtyRegion = _totalDirtyRegion.Union(_dirtyRegion);
             _dirtyRegion = PixelRegion.Empty; // Reset after notifying
         }
     }
@@ -95,16 +98,11 @@ public sealed class DirectDrawOutput : IOutputProcess
 
         _brushEngine.EndStroke();
 
-        if (_beforeTiles != null && _beforeTiles.Count > 0)
+        if (_beforeTiles != null && _beforeTiles.Count > 0 && !_totalDirtyRegion.IsEmpty)
         {
-            // Compute total dirty region from all processed samples
-            var totalDirty = ComputeTotalDirty(stroke, layer);
-            if (!totalDirty.IsEmpty)
-            {
-                layer.MarkThumbnailDirty();
-                _document.CommitLayerTileMutation(ctx.ActiveLayerIndex, _beforeTiles, totalDirty);
-                _document.NotifyChanged(totalDirty, ctx.ActiveLayerIndex);
-            }
+            layer.MarkThumbnailDirty();
+            _document.CommitLayerTileMutation(ctx.ActiveLayerIndex, _beforeTiles, _totalDirtyRegion);
+            _document.NotifyChanged(_totalDirtyRegion, ctx.ActiveLayerIndex);
         }
 
         Cleanup();
@@ -147,29 +145,8 @@ public sealed class DirectDrawOutput : IOutputProcess
         _lastProcessedIndex = -1;
         _beforeTiles = null;
         _dirtyRegion = PixelRegion.Empty;
+        _totalDirtyRegion = PixelRegion.Empty;
         _currentLayer = null;
-    }
-
-    private static PixelRegion ComputeTotalDirty(StrokeInput stroke, DrawingLayer layer)
-    {
-        if (stroke.SmoothedSamples.Count == 0) return PixelRegion.Empty;
-        var samples = stroke.SmoothedSamples;
-        var minX = int.MaxValue;
-        var minY = int.MaxValue;
-        var maxX = int.MinValue;
-        var maxY = int.MinValue;
-
-        foreach (var s in samples)
-        {
-            var x = (int)s.X + layer.OffsetX;
-            var y = (int)s.Y + layer.OffsetY;
-            minX = Math.Min(minX, x);
-            minY = Math.Min(minY, y);
-            maxX = Math.Max(maxX, x);
-            maxY = Math.Max(maxY, y);
-        }
-
-        return new PixelRegion(minX, minY, maxX - minX + 1, maxY - minY + 1);
     }
 
     private static CanvasInputSample ToLayerSample(DrawingLayer layer, CanvasInputSample s)
