@@ -8,6 +8,9 @@ using Avalonia.Media.Imaging;
 using Floss.App.Brushes;
 using Floss.App.Document;
 using Floss.App.Input;
+using Floss.App.Processes;
+using Floss.App.Processes.Input;
+using Floss.App.Processes.Output;
 using Floss.App.Tools;
 
 namespace Floss.App.Canvas;
@@ -17,13 +20,12 @@ public sealed class DrawingCanvas : Control
     private const double PenPressureThreshold = 0.02;
 
     private readonly DrawingDocument _document = new();
-    private readonly CanvasTool _canvasTool;
     private readonly LayerCompositor _compositor;
     private readonly ToolContext _ctx;
     private readonly ToolController _toolController;
 
-    private readonly BrushTool _brushTool;
-    private readonly BrushTool _eraserTool;
+    private readonly CompositeTool _brushTool;
+    private readonly CompositeTool _eraserTool;
     private readonly TransformTool _transformTool = new();
 
     private BrushPreset _brush = BrushPreset.Defaults[0];
@@ -53,7 +55,6 @@ public sealed class DrawingCanvas : Control
         RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);
 
         BrushEngine = new BrushEngine();
-        _canvasTool = new CanvasTool(_document, BrushEngine);
         _compositor = new LayerCompositor();
 
         _ctx = new ToolContext(_document)
@@ -74,8 +75,8 @@ public sealed class DrawingCanvas : Control
         };
         _ctx.Selection.Resize(_document.Width, _document.Height);
 
-        _brushTool = new BrushTool(_canvasTool, isEraser: false);
-        _eraserTool = new BrushTool(_canvasTool, isEraser: true);
+        _brushTool = new CompositeTool(new BrushStrokeInputProcess(), new DirectDrawOutput(BrushEngine, _document));
+        _eraserTool = new CompositeTool(new BrushStrokeInputProcess(), new DirectDrawOutput(BrushEngine, _document));
         _toolController = new ToolController(_ctx, _brushTool);
     _toolController.BrushSettingsChanged += brush => BrushSettingsRestored?.Invoke(brush);
 
@@ -104,20 +105,20 @@ public sealed class DrawingCanvas : Control
     public event EventHandler? DirtyStateChanged;
     public event Action<BrushPreset>? BrushSettingsRestored;
 
-    public int ActiveSampleCount => _canvasTool.ActiveSampleCount;
+    public int ActiveSampleCount => _toolController.ActiveTool.HasPendingOperation ? 1 : 0;
     public int CommittedStrokeCount => _document.CommittedStrokeCount;
     public bool CanUndo => _document.CanUndo;
     public bool CanRedo => _document.CanRedo;
     public bool CanDeleteLayer => _document.CanDeleteLayer;
     public BrushPreset Brush => _brush;
     public Color PaintColor => _paintColor;
-    public bool EraserEnabled => _toolController.ActiveTool == _eraserTool;
+    public bool EraserEnabled => _brush.Kind == BrushKind.Eraser;
     public DrawingDocument Document => _document;
     public IReadOnlyList<DrawingLayer> Layers => _document.Layers;
     public int ActiveLayerIndex => _document.ActiveLayerIndex;
     public ITool ActiveTool => _toolController.ActiveTool;
-    public BrushTool BrushTool => _brushTool;
-    public BrushTool EraserTool => _eraserTool;
+    public ITool BrushTool => _brushTool;
+    public ITool EraserTool => _eraserTool;
     public TransformTool TransformTool => _transformTool;
     public bool HasSelection => _ctx.Selection.HasSelection;
     public SelectionMask Selection => _ctx.Selection;
@@ -145,8 +146,6 @@ public sealed class DrawingCanvas : Control
     {
         _brush = preset with { Color = _paintColor };
         _ctx.Brush = _brush;
-        if (preset.Kind == BrushKind.Eraser)
-            SetActiveTool(_eraserTool);
         InvalidateVisual();
     }
 
@@ -617,7 +616,7 @@ public sealed class DrawingCanvas : Control
         && IsPaintTool(_toolController.ActiveTool)
         && !_document.CanPaintActiveLayer;
 
-    private static bool IsPaintTool(ITool? tool) => tool is Tools.BrushTool or Tools.FillTool or Tools.GradientTool or Tools.ShapeTool or Tools.PolylineTool or Tools.LassoFillTool;
+    private static bool IsPaintTool(ITool? tool) => tool is CompositeTool ct && ct.Output.IsPaintOutput;
 
     public override void Render(DrawingContext context)
     {
@@ -648,7 +647,7 @@ public sealed class DrawingCanvas : Control
             var mode = App.Config.BrushCursorMode;
             var pos = _isCursorPreviewLocked ? _lockedPointerPos : _pointerPos;
             var t = Math.Max(0.5, 1.5 / CanvasZoom);
-            bool isBrushLike = _toolController.ActiveTool is BrushTool;
+            bool isBrushLike = _toolController.ActiveTool is CompositeTool ct && ct.Input.HasBrushCursor;
             if (_forceBrushOutlineCursor || (isBrushLike && mode is BrushCursorMode.Outline or BrushCursorMode.DotAndOutline))
             {
                 var r = _brush.Size * 0.5;
@@ -663,7 +662,7 @@ public sealed class DrawingCanvas : Control
                 context.DrawEllipse(CursorInnerBrush, null, pos, Math.Max(0.5 / CanvasZoom, r * 0.45), Math.Max(0.5 / CanvasZoom, r * 0.45));
             }
 
-            if (_toolController.ActiveTool is EyedropperTool || _toolController.AlternateTool is EyedropperTool
+            if (_toolController.AlternateTool is CompositeTool altCt && altCt.Output is EyedropperOutput
                 || _ctx.ActivePreset?.OutputProcess == Floss.App.OutputProcessType.Eyedropper)
             {
                 var swatchR = 10.0 / CanvasZoom;
@@ -687,9 +686,13 @@ public sealed class DrawingCanvas : Control
         Focus();
         var sample = MakeSample(point, CanvasInputPhase.Down);
 
-        // Auto-switch to eraser when pen eraser tip is used with a brush-family tool.
-        if (sample.Source == CanvasInputSource.Eraser && _toolController.ActiveTool is BrushTool { IsEraser: false })
-            SetActiveTool(_eraserTool);
+        // Auto-switch to eraser when pen eraser tip is used with a paint tool.
+        if (sample.Source == CanvasInputSource.Eraser && _brush.Kind != BrushKind.Eraser)
+        {
+            _brush = _brush with { Kind = BrushKind.Eraser };
+            _ctx.Brush = _brush;
+            InvalidateVisual();
+        }
 
         _activePointerId = point.Pointer.Id;
         _toolController.Dispatch(new ToolInputEvent(ToolInputEventKind.Down, sample));

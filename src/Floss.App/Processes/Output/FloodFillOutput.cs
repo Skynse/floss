@@ -9,6 +9,7 @@ namespace Floss.App.Processes.Output;
 // Flood-fills connected pixels starting from a click point.
 public sealed class FloodFillOutput : IOutputProcess
 {
+    public bool IsPaintOutput => true;
     public bool Antialiasing { get; set; } = false;
     public double Tolerance { get; set; } = 0.05;
 

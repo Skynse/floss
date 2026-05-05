@@ -6,6 +6,8 @@ using Avalonia.Input;
 using Avalonia.Media;
 using Floss.App.Canvas;
 using Floss.App.Document;
+using Floss.App.Processes.Input;
+using Floss.App.Processes.Output;
 using Floss.App.Input;
 using Floss.App.Processes;
 using Floss.App.Tools;
@@ -344,13 +346,13 @@ public partial class MainWindow
         { _canvas.ClearSelectionContent(); e.Handled = true; }
         else if (EffectiveAltInvocation().Matches(key, mods))
         {
-            if (_canvas.ActiveTool != _eyedropperTool)
-                _canvas.SetAlternateTool(_eyedropperTool);
+            if (_canvas.AlternateTool == null)
+                _canvas.SetAlternateTool(new CompositeTool(new ClickInputProcess(), new EyedropperOutput()));
             e.Handled = true;
         }
         else if (key == Key.Escape)
         { _canvas.CancelActiveTool(); e.Handled = true; }
-        else if ((key == Key.Return || key == Key.Enter) && _canvas.ActiveTool is SelectTool or PolylineTool or TransformTool or CompositeTool { CanCommitFromClick: true })
+        else if ((key == Key.Return || key == Key.Enter) && _canvas.ActiveTool is TransformTool or CompositeTool { CanCommitFromClick: true })
         { _canvas.CommitActiveTool(); e.Handled = true; }
         else if (sc.ColorCycle.Matches(key, mods)) { CycleColor(); e.Handled = true; }
         else if (sc.ColorDefault.Matches(key, mods)) { SetColor(Color.Parse("#111111")); e.Handled = true; }

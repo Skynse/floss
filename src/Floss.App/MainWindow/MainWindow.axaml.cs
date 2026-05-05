@@ -188,17 +188,6 @@ public partial class MainWindow : Window
 
     // ── Tool factory (new process-based architecture) ─────────────────────────
     private ToolFactory? _toolFactory;
-
-    // ── Legacy tool instances (retained for property panel during migration) ──
-    private readonly SelectTool _selectTool = new();
-    private readonly MagicWandTool _magicWandTool = new();
-    private readonly FillTool _fillTool = new();
-    private readonly LassoFillTool _lassoFillTool = new();
-    private readonly EyedropperTool _eyedropperTool = new();
-    private readonly MoveTool _moveTool = new();
-    private readonly GradientTool _gradientTool = new();
-    private readonly ShapeTool _shapeTool = new();
-    private readonly PolylineTool _polylineTool = new();
     private readonly List<Button> _toolButtons = [];
     private readonly List<(ToolGroup Group, Button Button)> _toolGroupButtons = [];
     private ToolGroup? _activeToolGroup;
@@ -994,107 +983,21 @@ public partial class MainWindow : Window
 
     private string ToolDisplayName(ITool tool)
     {
-        var baseName = _activeToolGroup?.Name ?? tool switch
+        return _activeToolGroup?.Name ?? tool switch
         {
-            BrushTool bt => bt.IsEraser ? "Eraser" : "Brush",
-            MoveTool => "Move",
-            SelectTool => "Select",
+            CompositeTool ct => ct.Output.IsPaintOutput ? "Brush" : "Tool",
             TransformTool => "Transform",
-            MagicWandTool => "Magic Wand",
-            FillTool => "Fill",
-            EyedropperTool => "Eyedropper",
-            GradientTool => "Gradient",
-            ShapeTool => "Shape",
-            PolylineTool => "Polyline",
             _ => "Tool"
         };
-        return tool switch
-        {
-            SelectTool => $"{baseName}: {_selectTool.Mode}",
-            GradientTool => $"{baseName}: {_gradientTool.GradientType}",
-            ShapeTool => $"{baseName}: {_shapeTool.Kind}",
-            PolylineTool => $"{baseName}: {(_polylineTool.ClosePath ? "Closed" : "Open")}",
-            _ => baseName
-        };
-    }
-
-    private void CycleSelectMode()
-    {
-        _selectTool.Mode = _selectTool.Mode switch
-        {
-            SelectMode.Rect => SelectMode.Lasso,
-            SelectMode.Lasso => SelectMode.PolylineLasso,
-            _ => SelectMode.Rect
-        };
-        _footerStatusText.Text = ToolDisplayName(_selectTool);
-        RefreshToolProperties();
-    }
-
-    private void CycleGradientMode()
-    {
-        _gradientTool.GradientType = _gradientTool.GradientType == GradientType.Linear
-            ? GradientType.Radial
-            : GradientType.Linear;
-        _footerStatusText.Text = ToolDisplayName(_gradientTool);
-        RefreshToolProperties();
-    }
-
-    private void CycleShapeMode()
-    {
-        _shapeTool.Kind = _shapeTool.Kind switch
-        {
-            ShapeKind.Rectangle => ShapeKind.Ellipse,
-            ShapeKind.Ellipse => ShapeKind.Line,
-            _ => ShapeKind.Rectangle
-        };
-        _footerStatusText.Text = ToolDisplayName(_shapeTool);
-        RefreshToolProperties();
-    }
-
-    private void TogglePolylineClosePath()
-    {
-        _polylineTool.ClosePath = !_polylineTool.ClosePath;
-        _footerStatusText.Text = ToolDisplayName(_polylineTool);
-        RefreshToolProperties();
     }
 
     internal void ActivatePreset(ToolGroup group, ToolPreset preset)
     {
         // Snapshot ALL tool settings into the preset we're leaving
         CaptureActiveBrushToPreset();
-        CaptureActiveToolStateToPreset();
 
         group.LastActivePresetId = preset.Id;
         _activeToolGroup = group;
-
-        // Apply legacy tool state for tools not yet migrated to processes
-        if (preset.InputProcess == default || preset.OutputProcess == default)
-        {
-            switch (preset.Engine)
-            {
-                case ToolPresetEngine.Select:
-                    _selectTool.Mode = preset.SelectMode;
-                    break;
-                case ToolPresetEngine.MagicWand:
-                    _magicWandTool.Tolerance = preset.Tolerance;
-                    break;
-                case ToolPresetEngine.Fill:
-                    _fillTool.Tolerance = preset.Tolerance;
-                    break;
-                case ToolPresetEngine.Gradient:
-                    _gradientTool.GradientType = preset.GradientType;
-                    break;
-                case ToolPresetEngine.Shape:
-                    _shapeTool.Kind = preset.ShapeKind;
-                    _shapeTool.DrawMode = preset.ShapeDrawMode;
-                    _shapeTool.StrokeWidth = preset.ShapeStrokeWidth;
-                    break;
-                case ToolPresetEngine.Polyline:
-                    _polylineTool.ClosePath = preset.PolylineClosePath;
-                    _polylineTool.StrokeWidth = preset.PolylineStrokeWidth;
-                    break;
-            }
-        }
 
         // For brush-based engines, load the referenced brush asset first
         // and overlay the tool-preset scalar values (size, opacity etc.).
@@ -1190,37 +1093,6 @@ public partial class MainWindow : Window
         if (active == null || _activePreset == null) return;
         if (active.Engine is not (ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge)) return;
         active.CaptureFromBrushPreset(_activePreset);
-    }
-
-    private void CaptureActiveToolStateToPreset()
-    {
-        if (_activeToolGroup == null) return;
-        var active = _activeToolGroup.ActivePreset;
-        if (active == null) return;
-        switch (active.Engine)
-        {
-            case ToolPresetEngine.Select:
-                active.SelectMode = _selectTool.Mode;
-                break;
-            case ToolPresetEngine.MagicWand:
-                active.Tolerance = _magicWandTool.Tolerance;
-                break;
-            case ToolPresetEngine.Fill:
-                active.Tolerance = _fillTool.Tolerance;
-                break;
-            case ToolPresetEngine.Gradient:
-                active.GradientType = _gradientTool.GradientType;
-                break;
-            case ToolPresetEngine.Shape:
-                active.ShapeKind = _shapeTool.Kind;
-                active.ShapeDrawMode = _shapeTool.DrawMode;
-                active.ShapeStrokeWidth = _shapeTool.StrokeWidth;
-                break;
-            case ToolPresetEngine.Polyline:
-                active.PolylineClosePath = _polylineTool.ClosePath;
-                active.PolylineStrokeWidth = _polylineTool.StrokeWidth;
-                break;
-        }
     }
 
     internal ITool ToolForPreset(ToolPreset preset)

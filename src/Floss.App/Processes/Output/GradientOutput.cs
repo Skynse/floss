@@ -10,6 +10,7 @@ namespace Floss.App.Processes.Output;
 // Applies a linear or radial gradient between two drag points.
 public sealed class GradientOutput : IOutputProcess
 {
+    public bool IsPaintOutput => true;
     public bool Antialiasing { get; set; } = true;
     public GradientType GradientType { get; set; } = GradientType.Linear;
 

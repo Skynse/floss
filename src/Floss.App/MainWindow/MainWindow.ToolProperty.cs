@@ -7,6 +7,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Floss.App.Processes;
 using Floss.App.Tools;
 
 namespace Floss.App;
@@ -126,78 +127,7 @@ public partial class MainWindow
         return props;
     }
 
-    private IReadOnlyList<ToolPropertyDescriptor> CurrentLegacyToolProperties()
-    {
-        var tool = _canvas.ActiveTool;
-        if (tool is BrushTool)
-        {
-            return
-            [
-                SliderProp("brush.size", "Brush Size", true, _sizeSlider, "px"),
-                SliderProp("brush.opacity", "Opacity", true, _opacitySlider, "%"),
-                SliderProp("brush.flow", "Flow", false, _flowSlider, "%"),
-                SliderProp("brush.hardness", "Anti-aliasing", true, _hardnessSlider, "%"),
-                SliderProp("brush.spacing", "Spacing", false, _spacingSlider, "%"),
-                SliderProp("brush.smoothing", "Stabilization", true, _smoothingSlider, "%"),
-                SliderProp("brush.grain", "Grain", false, _grainSlider, "%")
-            ];
-        }
-
-        if (tool is SelectTool)
-        {
-            return
-            [
-                EnumProp("select.mode", "Selection Mode", true, () => _selectTool.Mode, v => _selectTool.Mode = v),
-                EnumProp("select.op", "Operation", true, () => _selectTool.Op, v => _selectTool.Op = v)
-            ];
-        }
-
-        if (tool is MagicWandTool)
-        {
-            return
-            [
-                SliderProp("wand.tolerance", "Tolerance", true, () => _magicWandTool.Tolerance, v => _magicWandTool.Tolerance = v, 0, 1, "%"),
-                EnumProp("wand.op", "Operation", true, () => _magicWandTool.Op, v => _magicWandTool.Op = v)
-            ];
-        }
-
-        if (tool is FillTool)
-        {
-            return
-            [
-                SliderProp("fill.tolerance", "Tolerance", true, () => _fillTool.Tolerance, v => _fillTool.Tolerance = v, 0, 1, "%")
-            ];
-        }
-
-        if (tool is GradientTool)
-        {
-            return
-            [
-                EnumProp("gradient.type", "Gradient Type", true, () => _gradientTool.GradientType, v => _gradientTool.GradientType = v)
-            ];
-        }
-
-        if (tool is ShapeTool)
-        {
-            return
-            [
-                EnumProp("shape.kind", "Shape", true, () => _shapeTool.Kind, v => _shapeTool.Kind = v),
-                EnumProp("shape.drawMode", "Draw Mode", true, () => _shapeTool.DrawMode, v => _shapeTool.DrawMode = v),
-                SliderProp("shape.strokeWidth", "Stroke Width", true, () => _shapeTool.StrokeWidth, v => _shapeTool.StrokeWidth = (float)v, 1, 200, "px")
-            ];
-        }
-
-        if (tool is PolylineTool)
-        {
-            return
-            [
-                SliderProp("polyline.strokeWidth", "Stroke Width", true, () => _polylineTool.StrokeWidth, v => _polylineTool.StrokeWidth = (float)v, 1, 200, "px"),
-                BoolProp("polyline.closePath", "Close Path", true, () => _polylineTool.ClosePath, v => _polylineTool.ClosePath = v)
-            ];
-        }
-
-        return [];
-    }
+    private static IReadOnlyList<ToolPropertyDescriptor> CurrentLegacyToolProperties() => [];
 
     private ToolPropertyDescriptor SliderProp(string id, string label, bool visible, Slider source, string fmt)
         => SliderProp(id, label, visible, () => source.Value, v => source.Value = v, source.Minimum, source.Maximum, fmt);

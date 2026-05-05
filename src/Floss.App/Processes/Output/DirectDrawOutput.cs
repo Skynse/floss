@@ -10,6 +10,7 @@ namespace Floss.App.Processes.Output;
 // Supports incremental application for real-time preview during drag.
 public sealed class DirectDrawOutput : IOutputProcess
 {
+    public bool IsPaintOutput => true;
     private readonly BrushEngine _brushEngine;
     private readonly DrawingDocument _document;
 
@@ -97,7 +98,6 @@ public sealed class DirectDrawOutput : IOutputProcess
 
         if (_beforeTiles != null && _beforeTiles.Count > 0)
         {
-            // Compute dirty region from all captured tile bounds, translated to document space
             var tileDirty = ComputeTileDirtyRegion(_beforeTiles).Translate(layer.OffsetX, layer.OffsetY);
             if (!tileDirty.IsEmpty)
             {
@@ -107,6 +107,7 @@ public sealed class DirectDrawOutput : IOutputProcess
             }
         }
 
+        _document.CommitStroke();
         Cleanup();
     }
 

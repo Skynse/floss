@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Avalonia.Media;
 using Floss.App.Brushes;
 using Floss.App.Input;
+using Floss.App.Processes;
 
 namespace Floss.App.Tools;
 
@@ -79,8 +80,7 @@ public sealed class ToolController
 
     private static ToolPresetEngine EngineForTool(ITool tool) => tool switch
     {
-        BrushTool bt when bt.IsEraser => ToolPresetEngine.Eraser,
-        BrushTool => ToolPresetEngine.Brush,
+        CompositeTool => ToolPresetEngine.Brush,
         _ => ToolPresetEngine.Brush
     };
 

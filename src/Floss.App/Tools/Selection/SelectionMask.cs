@@ -147,16 +147,14 @@ public sealed class SelectionMask
         int tolInt = (int)(tolerance * 255 * 4);
 
         var next = CreateBaseMask(op);
-        var visited = new bool[pixels.Width * pixels.Height];
+        var visited = new HashSet<(int, int)>();
         var queue = new Queue<(int x, int y)>();
         queue.Enqueue((srcX, srcY));
+        visited.Add((srcX, srcY));
 
         while (queue.Count > 0)
         {
             var (cx, cy) = queue.Dequeue();
-            int idx = cy * pixels.Width + cx;
-            if (visited[idx]) continue;
-            visited[idx] = true;
 
             pixels.GetPixel(cx, cy, out byte b, out byte g, out byte r, out byte a);
             if (Math.Abs(b - refB) + Math.Abs(g - refG) + Math.Abs(r - refR) + Math.Abs(a - refA) > tolInt) continue;
@@ -166,8 +164,10 @@ public sealed class SelectionMask
             if ((uint)docX < (uint)_docW && (uint)docY < (uint)_docH)
                 Apply(next, docX, docY, op, true);
 
-            queue.Enqueue((cx + 1, cy)); queue.Enqueue((cx - 1, cy));
-            queue.Enqueue((cx, cy + 1)); queue.Enqueue((cx, cy - 1));
+            if (visited.Add((cx + 1, cy))) queue.Enqueue((cx + 1, cy));
+            if (visited.Add((cx - 1, cy))) queue.Enqueue((cx - 1, cy));
+            if (visited.Add((cx, cy + 1))) queue.Enqueue((cx, cy + 1));
+            if (visited.Add((cx, cy - 1))) queue.Enqueue((cx, cy - 1));
         }
 
         CommitMask(next);

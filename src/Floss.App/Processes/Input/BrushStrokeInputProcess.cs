@@ -8,6 +8,7 @@ namespace Floss.App.Processes.Input;
 // Captures freehand stroke points with optional stabilization/smoothing.
 public sealed class BrushStrokeInputProcess : IInputProcess
 {
+    public bool HasBrushCursor => true;
     private readonly List<CanvasInputSample> _raw = [];
     private readonly List<CanvasInputSample> _smoothed = [];
     private bool _active;

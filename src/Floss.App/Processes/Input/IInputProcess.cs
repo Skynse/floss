@@ -25,4 +25,7 @@ public interface IInputProcess
 
     // Render real-time preview overlay.
     void RenderOverlay(DrawingContext dc, double zoom);
+
+    // True for brush-family inputs that should show a brush radius cursor outline.
+    bool HasBrushCursor => false;
 }

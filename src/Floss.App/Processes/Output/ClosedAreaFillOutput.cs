@@ -10,6 +10,7 @@ namespace Floss.App.Processes.Output;
 // Supports antialiased fill when Antialiasing is true.
 public sealed class ClosedAreaFillOutput : IOutputProcess
 {
+    public bool IsPaintOutput => true;
     public bool Antialiasing { get; set; } = true;
 
     public void Preview(ToolContext ctx, IProcessedInput input) { }

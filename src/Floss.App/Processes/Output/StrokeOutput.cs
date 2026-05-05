@@ -12,6 +12,7 @@ namespace Floss.App.Processes.Output;
 // Strokes a polygon or path onto the active layer.
 public sealed class StrokeOutput : IOutputProcess
 {
+    public bool IsPaintOutput => true;
     public bool Antialiasing { get; set; } = true;
     public float StrokeWidth { get; set; } = 4;
     public bool ClosePath { get; set; }
