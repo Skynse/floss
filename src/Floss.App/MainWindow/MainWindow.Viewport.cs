@@ -364,7 +364,7 @@ public partial class MainWindow
         else if (sc.MirrorVertical.Matches(key, mods)) { _canvasFlip.ScaleY = -_canvasFlip.ScaleY; _canvas.FlipY = (int)_canvasFlip.ScaleY; _rulerOverlay?.InvalidateVisual(); _checkerboardOverlay?.InvalidateVisual(); ClampCanvasPan(); UpdateStatus(); e.Handled = true; }
         else if (sc.DeleteSelection.Matches(key, mods)) { _canvas.ClearSelectionContent(); e.Handled = true; }
         else if (sc.OpenSettings.Matches(key, mods)) { OpenSettings(); e.Handled = true; }
-        else if (sc.OpenBrushEditor.Matches(key, mods)) { OpenBrushEditor(); e.Handled = true; }
+        else if (sc.OpenBrushEditor.Matches(key, mods)) { OpenToolProperties(); e.Handled = true; }
         else if (sc.BrushSizeDecrease.Matches(key, mods))
         {
             _sizeSlider.Value = Math.Max(_sizeSlider.Minimum, _sizeSlider.Value - sc.BrushSizeStep);

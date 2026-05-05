@@ -78,6 +78,9 @@ public static class FlossFileFormat
             layer.IsOpen = info.IsOpen;
             layer.IsClipping = info.IsClipping;
             layer.IndentLevel = Math.Max(0, info.IndentLevel);
+            if (info.LayerColor is { } lc)
+                layer.LayerColor = Avalonia.Media.Color.FromArgb(255, (byte)lc.R, (byte)lc.G, (byte)lc.B);
+            layer.ExpressionColor = info.ExpressionColor;
 
             if (!layer.IsGroup && !string.IsNullOrWhiteSpace(info.PixelPath))
                 LoadLayerPixels(archive, layer, info.PixelPath);
@@ -124,8 +127,10 @@ public static class FlossFileFormat
                 IsOpen = layer.IsOpen,
                 IsClipping = layer.IsClipping,
                 IndentLevel = layer.IndentLevel,
-                ParentIndex = layer.Parent != null && layerIndexes.TryGetValue(layer.Parent, out var parentIndex) ? parentIndex : null,
-                PixelPath = layer.IsGroup ? null : $"layers/layer{i}.bgra"
+                ParentIndex = layer.Parent != null && layerIndexes.TryGetValue(layer.Parent, out var pIdx) ? pIdx : null,
+                PixelPath = !layer.IsGroup ? $"layer_{i:D3}.raw" : null,
+                LayerColor = layer.LayerColor is { } lc ? new SerializableColor(lc.R, lc.G, lc.B) : null,
+                ExpressionColor = layer.ExpressionColor
             });
         }
 
@@ -233,5 +238,9 @@ public static class FlossFileFormat
         [JsonPropertyName("indentLevel")] public int IndentLevel { get; set; }
         [JsonPropertyName("parentIndex")] public int? ParentIndex { get; set; }
         [JsonPropertyName("pixelPath")] public string? PixelPath { get; set; }
+        [JsonPropertyName("layerColor")] public SerializableColor? LayerColor { get; set; }
+        [JsonPropertyName("expressionColor")] public ExpressionColorMode ExpressionColor { get; set; } = ExpressionColorMode.Color;
     }
+
+    public sealed record SerializableColor(byte R, byte G, byte B);
 }

@@ -415,6 +415,16 @@ public sealed class DrawingDocument
         NotifyLayerMetadataChanged(dirtyRegion, ActiveLayerIndex);
     }
 
+    public void SetActiveLayerColor(Avalonia.Media.Color? color)
+    {
+        if (ActiveLayer.LayerColor == color) return;
+        var old = ActiveLayer.LayerColor;
+        var dirtyRegion = LayerDirtyRegion(ActiveLayerIndex);
+        PushHistoryState(new LayerPropertyHistoryState<Avalonia.Media.Color?>(ActiveLayerIndex, old, color, (layer, value) => layer.LayerColor = value, true, dirtyRegion));
+        ActiveLayer.LayerColor = color;
+        NotifyLayerMetadataChanged(dirtyRegion, ActiveLayerIndex);
+    }
+
     public void SetActiveLayerName(string name)
     {
         if (string.IsNullOrWhiteSpace(name) || ActiveLayer.Name == name) return;
@@ -422,6 +432,19 @@ public sealed class DrawingDocument
         PushHistoryState(new LayerPropertyHistoryState<string>(ActiveLayerIndex, oldName, name, (layer, value) => layer.Name = value, false, PixelRegion.Empty));
         ActiveLayer.Name = name;
         NotifyLayerMetadataChanged(null, ActiveLayerIndex);
+    }
+
+    public void SetExpressionColor(int layerIndex, ExpressionColorMode mode)
+    {
+        if (layerIndex < 0 || layerIndex >= _layers.Count) return;
+        var layer = _layers[layerIndex];
+        var old = layer.ExpressionColor;
+        if (old == mode) return;
+
+        var dirtyRegion = LayerDirtyRegion(layerIndex);
+        PushHistoryState(new LayerPropertyHistoryState<ExpressionColorMode>(layerIndex, old, mode, (l, v) => l.ExpressionColor = v, true, dirtyRegion));
+        layer.ExpressionColor = mode;
+        NotifyLayerMetadataChanged(dirtyRegion, layerIndex);
     }
 
     public void CommitLayerOffsetMutation(int layerIndex, int oldOffsetX, int oldOffsetY, int newOffsetX, int newOffsetY)

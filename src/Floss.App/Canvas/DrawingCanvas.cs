@@ -604,6 +604,7 @@ public sealed class DrawingCanvas : Control
     public void SetActiveLayerOpacity(double opacity) => _document.SetActiveLayerOpacity(opacity);
     public void SetActiveLayerBlendMode(string blendMode) => _document.SetActiveLayerBlendMode(blendMode);
     public void SetActiveLayerName(string name) => _document.SetActiveLayerName(name);
+    public void SetActiveLayerColor(Avalonia.Media.Color? color) => _document.SetActiveLayerColor(color);
 
     public void CopyLayer(int index)
     {

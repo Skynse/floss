@@ -24,6 +24,8 @@ public sealed class DrawingLayer : IDisposable
     public bool IsLocked { get; set; }
     public double Opacity { get; set; } = 1.0;
     public string BlendMode { get; set; } = "Normal";
+    public Avalonia.Media.Color? LayerColor { get; set; }
+    public ExpressionColorMode ExpressionColor { get; set; } = ExpressionColorMode.Color;
     public int OffsetX { get; set; }
     public int OffsetY { get; set; }
     public bool IsGroup { get; set; }

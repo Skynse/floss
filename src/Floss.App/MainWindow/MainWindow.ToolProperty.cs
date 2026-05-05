@@ -58,35 +58,72 @@ public partial class MainWindow
         if (preset == null) return [];
 
         var props = new List<ToolPropertyDescriptor>();
+        var output = preset.OutputProcess;
 
-        // Input process properties
+        // ── Common paint properties (opacity, blend mode) for all paint tools ──
+        bool isPaint = output is OutputProcessType.DirectDraw
+            or OutputProcessType.ClosedAreaFill
+            or OutputProcessType.FloodFill
+            or OutputProcessType.Gradient
+            or OutputProcessType.Stroke;
+
+        if (isPaint || output == OutputProcessType.DirectDraw)
+        {
+            props.Add(SliderProp("paint.opacity", "Opacity", true, _opacitySlider, "%"));
+            props.Add(EnumProp("paint.blendMode", "Blend", false,
+                () => _canvas.Brush.BlendMode, v => UpdateCurrentBrush(p => p with { BlendMode = v })));
+        }
+
+        // ── Brush-specific (DirectDraw) ──
+        if (output == OutputProcessType.DirectDraw)
+        {
+            props.AddRange([
+                SliderProp("brush.size", "Brush Size", true, _sizeSlider, "px"),
+                SliderProp("brush.flow", "Flow", false, _flowSlider, "%"),
+                SliderProp("brush.hardness", "Anti-aliasing", true, _hardnessSlider, "%"),
+                SliderProp("brush.spacing", "Spacing", false, _spacingSlider, "%"),
+                SliderProp("brush.smoothing", "Smoothing", true, _smoothingSlider, "%"),
+                SliderProp("brush.grain", "Grain", false, _grainSlider, "%")
+            ]);
+        }
+
+        // ── Input process properties ──
         if (preset.InputProcess == InputProcessType.BrushStroke ||
             preset.InputProcess == InputProcessType.Lasso)
         {
-            props.Add(SliderProp("input.stabilization", "Stabilization", true,
-                () => preset.Stabilization, v => preset.Stabilization = v, 0, 1, "%"));
+            if (output != OutputProcessType.DirectDraw) // brush already shows smoothing above
+                props.Add(SliderProp("input.stabilization", "Stabilization", true,
+                    () => preset.Stabilization, v => preset.Stabilization = v, 0, 1, "%"));
         }
 
-        // Output process properties
-        switch (preset.OutputProcess)
+        if (preset.InputProcess == InputProcessType.Lasso ||
+            output is OutputProcessType.ClosedAreaFill or OutputProcessType.SelectionArea)
         {
-            case OutputProcessType.DirectDraw:
+            props.Add(BoolProp("input.antialiasing", "Antialiasing", true,
+                () => preset.Antialiasing, v => preset.Antialiasing = v));
+        }
+
+        // ── Output-specific properties ──
+        switch (output)
+        {
+            case OutputProcessType.FloodFill:
                 props.AddRange([
-                    SliderProp("brush.size", "Brush Size", true, _sizeSlider, "px"),
-                    SliderProp("brush.opacity", "Opacity", true, _opacitySlider, "%"),
-                    SliderProp("brush.flow", "Flow", false, _flowSlider, "%"),
-                    SliderProp("brush.hardness", "Anti-aliasing", true, _hardnessSlider, "%"),
-                    SliderProp("brush.spacing", "Spacing", false, _spacingSlider, "%"),
-                    SliderProp("brush.smoothing", "Smoothing", true, _smoothingSlider, "%"),
-                    SliderProp("brush.grain", "Grain", false, _grainSlider, "%"),
-                    EnumProp("brush.blendMode", "Blend", false,
-                        () => _canvas.Brush.BlendMode, v => UpdateCurrentBrush(p => p with { BlendMode = v }))
+                    SliderProp("fill.tolerance", "Tolerance", true,
+                        () => preset.Tolerance, v => preset.Tolerance = v, 0, 1, "%"),
+                    SliderProp("fill.areaScaling", "Area Scaling", false,
+                        () => preset.AreaScaling, v => preset.AreaScaling = v, -20, 20, "px"),
+                    BoolProp("fill.contiguous", "Contiguous", false,
+                        () => preset.ContiguousFill, v => preset.ContiguousFill = v)
                 ]);
                 break;
 
             case OutputProcessType.ClosedAreaFill:
-                props.Add(BoolProp("output.antialiasing", "Antialiasing", true,
-                    () => preset.Antialiasing, v => preset.Antialiasing = v));
+                props.AddRange([
+                    SliderProp("fill.tolerance", "Tolerance", false,
+                        () => preset.Tolerance, v => preset.Tolerance = v, 0, 1, "%"),
+                    SliderProp("fill.areaScaling", "Area Scaling", false,
+                        () => preset.AreaScaling, v => preset.AreaScaling = v, -20, 20, "px")
+                ]);
                 break;
 
             case OutputProcessType.SelectionArea:
@@ -94,13 +131,8 @@ public partial class MainWindow
                     EnumProp("select.mode", "Selection Mode", true,
                         () => preset.SelectMode, v => preset.SelectMode = v),
                     EnumProp("select.op", "Operation", true,
-                        () => SelectOp.Replace, _ => { })  // TODO: add SelectOp to preset
+                        () => preset.SelectOp, v => preset.SelectOp = v)
                 ]);
-                break;
-
-            case OutputProcessType.FloodFill:
-                props.Add(SliderProp("fill.tolerance", "Tolerance", true,
-                    () => preset.Tolerance, v => preset.Tolerance = v, 0, 1, "%"));
                 break;
 
             case OutputProcessType.Gradient:
@@ -116,12 +148,26 @@ public partial class MainWindow
                         () => preset.PolylineClosePath, v => preset.PolylineClosePath = v)
                 ]);
                 break;
-        }
 
-        // Legacy fallback for tools not yet migrated
-        if (preset.InputProcess == default || preset.OutputProcess == default)
-        {
-            return CurrentLegacyToolProperties();
+            case OutputProcessType.MagicWand:
+                props.AddRange([
+                    SliderProp("wand.tolerance", "Tolerance", true,
+                        () => preset.Tolerance, v => preset.Tolerance = v, 0, 1, "%"),
+                    EnumProp("wand.op", "Operation", true,
+                        () => preset.SelectOp, v => preset.SelectOp = v),
+                    BoolProp("wand.contiguous", "Contiguous", false,
+                        () => preset.ContiguousFill, v => preset.ContiguousFill = v)
+                ]);
+                break;
+
+            case OutputProcessType.Eyedropper:
+                // Eyedropper is a passive tool — no configurable properties.
+                // Still show a label so the panel isn't empty.
+                break;
+
+            case OutputProcessType.MoveLayer:
+                // Move layer has no adjustable properties.
+                break;
         }
 
         return props;

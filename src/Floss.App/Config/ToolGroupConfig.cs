@@ -162,9 +162,12 @@ public sealed class ToolPreset
 
     // Select
     public SelectMode SelectMode { get; set; } = SelectMode.Rect;
+    public SelectOp SelectOp { get; set; } = SelectOp.Replace;
 
     // MagicWand / Fill
     public double Tolerance { get; set; } = 0.1;
+    public double AreaScaling { get; set; }
+    public bool ContiguousFill { get; set; } = true;
 
     // Gradient
     public GradientType GradientType { get; set; } = GradientType.Linear;

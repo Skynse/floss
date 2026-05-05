@@ -86,6 +86,7 @@ public partial class MainWindow
         _colorWell.Background = new SolidColorBrush(color);
         _canvas.SetPaintColor(color);
         if (syncPicker) SyncPickerFromColor(color);
+        RefreshColorSliders();
     }
 
     private void CycleColor()

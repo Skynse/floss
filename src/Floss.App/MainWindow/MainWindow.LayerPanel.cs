@@ -114,11 +114,31 @@ public partial class MainWindow
             _canvas.SetActiveLayerOpacity(_layerOpacitySlider.Value);
         };
 
-        // Blend + Opacity row
-        var blendOpRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,6,*") };
+        // Layer Color tint button
+        _layerColorBtn = new Button
+        {
+            Width = 24, Height = 24,
+            Margin = new Thickness(2, 0),
+            Background = Avalonia.Media.Brushes.Transparent,
+            BorderBrush = new SolidColorBrush(Color.Parse("#3a4050")),
+            BorderThickness = new Thickness(1)
+        };
+        ToolTip.SetTip(_layerColorBtn, "Layer Color");
+        _layerColorBtn.Click += (_, _) =>
+        {
+            if (_syncingLayerUi) return;
+            var current = _canvas.Document.ActiveLayer.LayerColor;
+            var next = current.HasValue ? (Avalonia.Media.Color?)null : _canvas.PaintColor;
+            _canvas.SetActiveLayerColor(next);
+        };
+
+        // Blend + Opacity + LayerColor row
+        var blendOpRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,28,6,*") };
         Grid.SetColumn(_blendModeComboBox, 0);
-        Grid.SetColumn(_layerOpacitySlider, 2);
+        Grid.SetColumn(_layerColorBtn, 1);
+        Grid.SetColumn(_layerOpacitySlider, 3);
         blendOpRow.Children.Add(_blendModeComboBox);
+        blendOpRow.Children.Add(_layerColorBtn);
         blendOpRow.Children.Add(_layerOpacitySlider);
 
         // Action buttons
@@ -230,8 +250,12 @@ public partial class MainWindow
             _syncingLayerUi = true;
             _layerOpacitySlider.Value = active.Opacity;
             _blendModeComboBox.SelectedItem = active.BlendMode;
+            _layerColorBtn.Background = active.LayerColor is { } lc
+                ? new SolidColorBrush(new Color(255, lc.R, lc.G, lc.B))
+                : Avalonia.Media.Brushes.Transparent;
             _layerNameBox.Text = active.Name;
             _syncingLayerUi = false;
+            RefreshLayerProperties();
         }
     }
 

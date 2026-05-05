@@ -33,7 +33,7 @@ public partial class MainWindow : Window
         var importAbrBtn = SmBtn("ABR", "Import .abr brush pack");
         _saveBrushButton = SmBtn("⊙", "Save brush");
         var duplicateBrushBtn = SmBtn("⎘", "Duplicate brush");
-        var editBrushBtn = SmBtn("✎", "Edit brush dynamics");
+        var editBrushBtn = SmBtn("✎", "Tool properties");
         importPngBtn.Width = 44;
         importAbrBtn.Width = 44;
         _saveBrushButton.Width = 30;
@@ -43,7 +43,7 @@ public partial class MainWindow : Window
         importAbrBtn.Click += async (_, _) => await ImportAbrAsync();
         _saveBrushButton.Click += (_, _) => SaveActiveBrush();
         duplicateBrushBtn.Click += (_, _) => DuplicateActiveBrush();
-        editBrushBtn.Click += (_, _) => OpenBrushEditor();
+        editBrushBtn.Click += (_, _) => OpenToolProperties();
 
         var presetScroll = new ScrollViewer
         {
@@ -868,7 +868,8 @@ private void DeletePreset(ToolGroup group, ToolPreset preset)
 
     private void UpdateCurrentBrush(Func<BrushPreset, BrushPreset> update)
     {
-        if (_syncingBrushUi || _syncingToolPropertyPanel || _activePreset == null) return;
+        if (_syncingBrushUi || _syncingToolPropertyPanel) return;
+        _activePreset ??= _canvas.Brush;
         var updated = update(_activePreset);
         _activePreset = updated;
         if (_activeBrushAsset != null)
@@ -880,38 +881,57 @@ private void DeletePreset(ToolGroup group, ToolPreset preset)
         ApplyBrushSettings(updated, syncSliders: false);
     }
 
-    private void OpenBrushEditor()
+    private void OpenToolProperties()
     {
-        if (_activePreset == null) return;
-        if (_brushEditorWindow != null)
+        var toolPreset = _activeToolGroup?.ActivePreset;
+        if (toolPreset == null) return;
+
+        var brushPreset = _activePreset ?? _canvas.Brush;
+
+        if (_toolPropsWindow != null)
         {
-            _brushEditorWindow.SyncFromPreset(_activePreset);
-            _brushEditorWindow.Activate();
+            _toolPropsWindow.SyncFromToolPreset(toolPreset);
+            if (brushPreset != null)
+                _toolPropsWindow.SyncFromPreset(brushPreset);
+            _toolPropsWindow.Activate();
             return;
         }
 
-        _brushEditorWindow = new BrushEditorWindow(_activePreset, preset =>
+        _toolPropsWindow = new ToolPropertiesWindow(toolPreset, brushPreset, (tp, bp) =>
         {
-            if (_syncingBrushUi || preset == null) return;
-            _activePreset = preset;
-            if (_activeBrushAsset != null)
+            if (_syncingBrushUi) return;
+
+            // Apply brush changes for DirectDraw tools
+            if (bp != null && toolPreset.OutputProcess == OutputProcessType.DirectDraw)
             {
-                _activeBrushAsset.Preset = preset;
-                _activeBrushAsset.Tip = BrushTipData.FromTip(preset.Tip);
-                _dirtyBrushAssetIds.Add(_activeBrushAsset.Id);
+                _activePreset = bp;
+                if (_activeBrushAsset != null)
+                {
+                    _activeBrushAsset.Preset = bp;
+                    _activeBrushAsset.Tip = BrushTipData.FromTip(bp.Tip);
+                    _dirtyBrushAssetIds.Add(_activeBrushAsset.Id);
+                }
+                _suppressBrushSettingsRestored = true;
+                try
+                {
+                    ApplyBrushSettings(bp, syncSliders: true);
+                }
+                finally
+                {
+                    _suppressBrushSettingsRestored = false;
+                }
             }
-            _suppressBrushSettingsRestored = true;
-            try
-            {
-                ApplyBrushSettings(preset, syncSliders: true);
-            }
-            finally
-            {
-                _suppressBrushSettingsRestored = false;
-            }
+
+            // Apply paint settings (opacity/blend) for all paint tools
+            if (tp.BrushOpacity.HasValue)
+                UpdateCurrentBrush(p => p with { Opacity = tp.BrushOpacity.Value });
+            if (tp.BrushBlendMode.HasValue)
+                UpdateCurrentBrush(p => p with { BlendMode = tp.BrushBlendMode.Value });
+
+            RefreshToolProperties();
         });
-        _brushEditorWindow.Closed += (_, _) => _brushEditorWindow = null;
-        _brushEditorWindow.Show(this);
+        _toolPropsWindow.Closed += (_, _) => _toolPropsWindow = null;
+        _toolPropsWindow.Show(this);
     }
 
     private void SaveActiveBrush()

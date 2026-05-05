@@ -151,6 +151,7 @@ public partial class MainWindow : Window
     private Slider _grainSlider = null!;
     private Slider _flowSlider = null!;
     private Slider _layerOpacitySlider = null!;
+    private Button _layerColorBtn = null!;
     private TextBlock _activeBrushLabel = null!;
     private ComboBox _blendModeComboBox = null!;
     private TextBox _layerNameBox = null!;
@@ -168,7 +169,7 @@ public partial class MainWindow : Window
     private BrushStrokePreview _strokePreview = null!;
 
     // ── State ─────────────────────────────────────────────────────────────────
-    private BrushEditorWindow? _brushEditorWindow;
+    private ToolPropertiesWindow? _toolPropsWindow;
     private double _zoom = 1.0;
     private double _rotation;
     private int _swatchIndex;
@@ -665,6 +666,7 @@ public partial class MainWindow : Window
         var leftStack = new StackPanel { HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
         leftStack.Children.Add(PanelSection("Brush", BuildBrushSection()));
         leftStack.Children.Add(PanelSection("Tool Property", BuildToolPropertySection()));
+        leftStack.Children.Add(PanelSection("Layer Properties", BuildLayerPropertiesSection()));
         leftStack.Children.Add(PanelSection("Layers", BuildLayersSection()));
 
         var leftScroll = new ScrollViewer
@@ -677,6 +679,8 @@ public partial class MainWindow : Window
 
         var rightStack = new StackPanel { HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
         rightStack.Children.Add(PanelSection("Color", BuildColorSection()));
+        rightStack.Children.Add(PanelSection("Color Slider", BuildColorSlidersSection()));
+        rightStack.Children.Add(PanelSection("Brush Size", BuildBrushSizePalette()));
 
         var rightScroll = new ScrollViewer
         {

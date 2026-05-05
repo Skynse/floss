@@ -11,11 +11,13 @@ using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using Floss.App.Brushes;
+using Floss.App.Processes;
+using Floss.App.Tools;
 using SkiaSharp;
 
 namespace Floss.App;
 
-public sealed class BrushEditorWindow : Window
+public sealed class ToolPropertiesWindow : Window
 {
     private const string Bg0 = "#0d0f14";
     private const string Bg1 = "#13151a";
@@ -28,17 +30,17 @@ public sealed class BrushEditorWindow : Window
     private const string Accent = "#3d6fd8";
     private const string AccentSoft = "#22355f";
 
-    // ── Categories ────────────────────────────────────────────────────────────
-    private static readonly string[] Categories =
-        ["Brush Size", "Ink", "Anti-aliasing", "Brush Tip", "Stroke", "Texture"];
-
+    // ── Categories (dynamic based on tool type) ───────────────────────────────
+    private readonly string[] _categories;
+    private readonly bool _isBrushTool;
     private int _activeCategory;
     private readonly Button[] _catButtons;
     private readonly Border _contentHost = new();
 
     // ── State ─────────────────────────────────────────────────────────────────
-    private BrushPreset _preset;
-    private readonly Action<BrushPreset> _onChange;
+    private readonly ToolPreset _toolPreset;
+    private BrushPreset _brushPreset;
+    private readonly Action<ToolPreset, BrushPreset?> _onChange;
     private readonly BrushStrokePreview _preview = new() { Height = 64 };
     private bool _syncing;
 
@@ -47,7 +49,7 @@ public sealed class BrushEditorWindow : Window
     private StackPanel _stampPanel = null!;
 
     // ── Sliders ───────────────────────────────────────────────────────────────
-    private readonly Slider _sizeSlider = MkSlider(0.5, 300, 8, "Brush size in pixels");
+    private readonly Slider _sizeSlider = MkSlider(0.5, 1000, 8, "Brush size in pixels");
     private readonly Slider _opacitySlider = MkSlider(0.01, 1, 1.0, "Maximum opacity per stamp");
     private readonly Slider _flowSlider = MkSlider(0.01, 1, 1.0, "Paint buildup per dab");
     private readonly Slider _colorMixSlider = MkSlider(0, 1, 0.0, "Canvas color pickup per dab (0=pure brush, 1=full mix)");
@@ -79,13 +81,16 @@ public sealed class BrushEditorWindow : Window
     private ScrollViewer _aaPanel = null!;
     private ScrollViewer _strokePanel = null!;
     private ScrollViewer _texturePanel = null!;
+    private ScrollViewer[]? _genericPanels;
 
     // ── Constructor ───────────────────────────────────────────────────────────
 
-    public BrushEditorWindow(BrushPreset preset, Action<BrushPreset> onChange)
+    public ToolPropertiesWindow(ToolPreset toolPreset, BrushPreset? brushPreset, Action<ToolPreset, BrushPreset?> onChange)
     {
-        _preset = preset;
+        _toolPreset = toolPreset;
+        _brushPreset = brushPreset ?? new BrushPreset(toolPreset.Name, BrushKind.Ink, 8, 1.0, 0.9, 0.1, Colors.White, 0);
         _onChange = onChange;
+        _isBrushTool = toolPreset.OutputProcess == OutputProcessType.DirectDraw;
 
         Width = 420;
         Height = 560;
@@ -93,25 +98,56 @@ public sealed class BrushEditorWindow : Window
         MinWidth = 360;
         MinHeight = 420;
         Background = new SolidColorBrush(Color.Parse(Bg1));
-        Title = $"Edit Brush — {preset.Name}";
+        Title = $"Tool Properties — {toolPreset.Name}";
         ShowInTaskbar = false;
 
-        _catButtons = Categories.Select((_, i) => MakeCatBtn(i)).ToArray();
+        // Build dynamic categories based on tool type
+        _categories = BuildCategories();
+        _catButtons = _categories.Select((_, i) => MakeCatBtn(i)).ToArray();
         _stampPanel = new StackPanel { Spacing = 4 };
 
         // Build slider-containing panels exactly once so sliders are never
         // re-parented when the user switches categories.
-        _brushSizePanel = WrapContent(BuildBrushSizeContent());
-        _inkPanel = WrapContent(BuildInkContent());
-        _aaPanel = WrapContent(BuildAntiAliasingContent());
-        _strokePanel = WrapContent(BuildStrokeContent());
-        _texturePanel = WrapContent(BuildTextureContent());
+        if (_isBrushTool)
+        {
+            _brushSizePanel = WrapContent(BuildBrushSizeContent());
+            _inkPanel = WrapContent(BuildInkContent());
+            _aaPanel = WrapContent(BuildAntiAliasingContent());
+            _strokePanel = WrapContent(BuildStrokeContent());
+            _texturePanel = WrapContent(BuildTextureContent());
+        }
+        else
+        {
+            // For non-brush tools, build generic category panels
+            _genericPanels = new ScrollViewer[_categories.Length];
+            for (int i = 0; i < _categories.Length; i++)
+                _genericPanels[i] = WrapContent(BuildGenericCategoryContent(i));
+        }
 
         Content = BuildShell();
         HighlightActiveCategory();
         SelectCategory(0);
-        SyncFromPreset(preset);
+        if (_isBrushTool)
+            SyncFromPreset(_brushPreset);
         WireSliderEvents();
+    }
+
+    private string[] BuildCategories()
+    {
+        if (_isBrushTool)
+            return ["Brush Size", "Ink", "Anti-aliasing", "Brush Tip", "Stroke", "Texture"];
+
+        return _toolPreset.OutputProcess switch
+        {
+            OutputProcessType.FloodFill => ["Fill Settings", "Paint Settings"],
+            OutputProcessType.ClosedAreaFill => ["Lasso Fill Settings", "Paint Settings", "Lasso Input"],
+            OutputProcessType.SelectionArea => ["Selection Settings"],
+            OutputProcessType.Gradient => ["Gradient Settings", "Paint Settings"],
+            OutputProcessType.Stroke => ["Stroke Settings", "Paint Settings"],
+            OutputProcessType.MagicWand => ["Magic Wand Settings"],
+            OutputProcessType.Eyedropper or OutputProcessType.MoveLayer => ["Tool Info"],
+            _ => ["Properties"]
+        };
     }
 
     // ── Shell ─────────────────────────────────────────────────────────────────
@@ -155,7 +191,7 @@ public sealed class BrushEditorWindow : Window
     {
         var btn = new Button
         {
-            Content = Categories[index],
+            Content = _categories[index],
             Height = 24,
             Padding = new Thickness(8, 0),
             FontSize = 10,
@@ -205,6 +241,12 @@ public sealed class BrushEditorWindow : Window
         _rotationDynPopup = null;
         _angleDynPopup?.Close();
         _angleDynPopup = null;
+
+        if (!_isBrushTool && _genericPanels != null)
+        {
+            _contentHost.Child = _genericPanels[index];
+            return;
+        }
 
         // BrushTip is rebuilt fresh (preset-dependent, no shared sliders).
         // All others are pre-built cached panels to avoid re-parenting sliders.
@@ -266,7 +308,7 @@ public sealed class BrushEditorWindow : Window
 
     private Control BuildBrushTipContent()
     {
-        var mainTip = _stampLayers.Count > 0 ? _stampLayers[0].Tip : _preset.Tip;
+        var mainTip = _stampLayers.Count > 0 ? _stampLayers[0].Tip : _brushPreset.Tip;
         var isProc = mainTip is ProceduralBrushTip;
         var procTip = mainTip as ProceduralBrushTip ?? new ProceduralBrushTip();
 
@@ -293,12 +335,12 @@ public sealed class BrushEditorWindow : Window
         // "Off" cell — only shown when tip is image-based (shape clip is optional then)
         if (!isProc)
         {
-            var offActive = _preset.Shape == null;
+            var offActive = _brushPreset.Shape == null;
             var offBtn = MkShapeCell("Off", null, offActive, () => Commit(p => p with { Shape = null }));
             shapeGrid.Children.Add(offBtn);
         }
 
-        BrushTipShape? activeShape = isProc ? procTip.Shape : _preset.Shape?.Shape;
+        BrushTipShape? activeShape = isProc ? procTip.Shape : _brushPreset.Shape?.Shape;
 
         foreach (var (shape, label) in gridShapes)
         {
@@ -329,14 +371,16 @@ public sealed class BrushEditorWindow : Window
         var previewImg = new Image
         {
             Source = previewBmp,
-            Width = 48, Height = 48,
+            Width = 48,
+            Height = 48,
             Stretch = Stretch.Uniform,
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center
         };
         var previewBtn = new Button
         {
-            Width = 54, Height = 54,
+            Width = 54,
+            Height = 54,
             Padding = new Thickness(2),
             Background = new SolidColorBrush(Color.Parse(Bg2)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
@@ -358,7 +402,7 @@ public sealed class BrushEditorWindow : Window
             var clearBtn = SmBtn("Clear");
             clearBtn.Click += (_, _) =>
             {
-                var shape = _preset.Shape?.Shape ?? BrushTipShape.Circle;
+                var shape = _brushPreset.Shape?.Shape ?? BrushTipShape.Circle;
                 CommitMainTip(new ProceduralBrushTip(shape));
                 Commit(p => p with { Shape = null });
             };
@@ -388,7 +432,8 @@ public sealed class BrushEditorWindow : Window
             var img = new Image { Source = thumb, Width = 36, Height = 36, Stretch = Stretch.Uniform };
             var lbl = new TextBlock
             {
-                Text = label, FontSize = 8,
+                Text = label,
+                FontSize = 8,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted))
             };
@@ -400,7 +445,8 @@ public sealed class BrushEditorWindow : Window
         }
         var btn = new Button
         {
-            Width = 54, Height = 58,
+            Width = 54,
+            Height = 58,
             Margin = new Thickness(2),
             Padding = new Thickness(2),
             Background = new SolidColorBrush(Color.Parse(active ? AccentSoft : Bg2)),
@@ -531,6 +577,251 @@ public sealed class BrushEditorWindow : Window
                 _stampPanel
             }
         };
+    }
+
+    // ── Generic category content for non-brush tools ─────────────────────────
+
+    private Control BuildGenericCategoryContent(int categoryIndex)
+    {
+        var panel = new StackPanel { Spacing = 6 };
+        var output = _toolPreset.OutputProcess;
+        var isPaint = output is OutputProcessType.DirectDraw
+            or OutputProcessType.ClosedAreaFill
+            or OutputProcessType.FloodFill
+            or OutputProcessType.Gradient
+            or OutputProcessType.Stroke;
+
+        var cat = _categories[categoryIndex];
+
+        if (cat == "Paint Settings")
+        {
+            panel.Children.Add(BuildGenericSliderRow("Opacity", 0.01, 1.0,
+                _toolPreset.BrushOpacity ?? 1.0,
+                v => CommitTool(p => p.BrushOpacity = v), "%", mult: 100, toolPropId: "paint.opacity"));
+            panel.Children.Add(BuildGenericComboRow<SkiaSharp.SKBlendMode>("Blend Mode",
+                _toolPreset.BrushBlendMode ?? SkiaSharp.SKBlendMode.SrcOver,
+                v => CommitTool(p => p.BrushBlendMode = v), toolPropId: "paint.blendMode"));
+            return panel;
+        }
+
+        switch (output)
+        {
+            case OutputProcessType.FloodFill when cat == "Fill Settings":
+                panel.Children.Add(BuildGenericSliderRow("Tolerance", 0, 1.0,
+                    _toolPreset.Tolerance, v => CommitTool(p => p.Tolerance = v), toolPropId: "fill.tolerance"));
+                panel.Children.Add(BuildGenericSliderRow("Area Scaling", -20, 20,
+                    _toolPreset.AreaScaling, v => CommitTool(p => p.AreaScaling = v), "px", step: 1, toolPropId: "fill.areaScaling"));
+                panel.Children.Add(BuildGenericToggleRow("Contiguous Fill",
+                    _toolPreset.ContiguousFill, v => CommitTool(p => p.ContiguousFill = v), toolPropId: "fill.contiguous"));
+                break;
+
+            case OutputProcessType.ClosedAreaFill when cat == "Lasso Fill Settings":
+                panel.Children.Add(BuildGenericSliderRow("Tolerance", 0, 1.0,
+                    _toolPreset.Tolerance, v => CommitTool(p => p.Tolerance = v), toolPropId: "lasso.tolerance"));
+                panel.Children.Add(BuildGenericSliderRow("Area Scaling", -20, 20,
+                    _toolPreset.AreaScaling, v => CommitTool(p => p.AreaScaling = v), "px", step: 1, toolPropId: "lasso.areaScaling"));
+                break;
+
+            case OutputProcessType.ClosedAreaFill when cat == "Lasso Input":
+                panel.Children.Add(BuildGenericToggleRow("Antialiasing",
+                    _toolPreset.Antialiasing, v => CommitTool(p => p.Antialiasing = v), toolPropId: "input.antialiasing"));
+                panel.Children.Add(BuildGenericSliderRow("Stabilization", 0, 1.0,
+                    _toolPreset.Stabilization, v => CommitTool(p => p.Stabilization = v), toolPropId: "input.stabilization"));
+                break;
+
+            case OutputProcessType.SelectionArea when cat == "Selection Settings":
+                panel.Children.Add(BuildGenericComboRow<SelectMode>("Selection Mode",
+                    _toolPreset.SelectMode, v => CommitTool(p => p.SelectMode = v), toolPropId: "select.mode"));
+                panel.Children.Add(BuildGenericComboRow<SelectOp>("Operation",
+                    _toolPreset.SelectOp, v => CommitTool(p => p.SelectOp = v), toolPropId: "select.op"));
+                break;
+
+            case OutputProcessType.Gradient when cat == "Gradient Settings":
+                panel.Children.Add(BuildGenericComboRow<GradientType>("Gradient Type",
+                    _toolPreset.GradientType, v => CommitTool(p => p.GradientType = v), toolPropId: "gradient.type"));
+                break;
+
+            case OutputProcessType.Stroke when cat == "Stroke Settings":
+                panel.Children.Add(BuildGenericSliderRow("Stroke Width", 1, 200,
+                    _toolPreset.PolylineStrokeWidth, v => CommitTool(p => p.PolylineStrokeWidth = (float)v), "px", step: 0.5, toolPropId: "stroke.width"));
+                panel.Children.Add(BuildGenericToggleRow("Close Path",
+                    _toolPreset.PolylineClosePath, v => CommitTool(p => p.PolylineClosePath = v), toolPropId: "stroke.closePath"));
+                break;
+
+            case OutputProcessType.MagicWand when cat == "Magic Wand Settings":
+                panel.Children.Add(BuildGenericSliderRow("Tolerance", 0, 1.0,
+                    _toolPreset.Tolerance, v => CommitTool(p => p.Tolerance = v), toolPropId: "wand.tolerance"));
+                panel.Children.Add(BuildGenericComboRow<SelectOp>("Operation",
+                    _toolPreset.SelectOp, v => CommitTool(p => p.SelectOp = v), toolPropId: "wand.op"));
+                panel.Children.Add(BuildGenericToggleRow("Contiguous",
+                    _toolPreset.ContiguousFill, v => CommitTool(p => p.ContiguousFill = v), toolPropId: "wand.contiguous"));
+                break;
+
+            case OutputProcessType.Eyedropper or OutputProcessType.MoveLayer when cat == "Tool Info":
+                panel.Children.Add(new TextBlock
+                {
+                    Text = "This tool has no adjustable properties.",
+                    FontSize = 11,
+                    Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+                    Margin = new Thickness(0, 12, 0, 0)
+                });
+                break;
+        }
+
+        return panel;
+    }
+
+    private void CommitTool(Action<ToolPreset> update)
+    {
+        update(_toolPreset);
+        _onChange(_toolPreset, _isBrushTool ? _brushPreset : null);
+    }
+
+    // ── Generic widget builders ───────────────────────────────────────────────
+
+    private static Control BuildGenericSliderRow(string label, double min, double max, double value,
+        Action<double> setter, string fmt = "%", double mult = 1.0, double step = 0.01, string? toolPropId = null)
+    {
+        var slider = new Slider
+        {
+            Minimum = min,
+            Maximum = max,
+            Value = value,
+            TickFrequency = step,
+            IsSnapToTickEnabled = true,
+            Height = 28,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+
+        var valueLabel = new TextBlock
+        {
+            FontSize = 10,
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+            VerticalAlignment = VerticalAlignment.Center,
+            Width = 40,
+            TextAlignment = TextAlignment.Right,
+            FontFamily = new FontFamily("Consolas, Courier New, monospace")
+        };
+
+        void UpdateLabel() => valueLabel.Text = mult == 1.0
+            ? $"{slider.Value:F2}"
+            : $"{slider.Value * mult:F0}{fmt}";
+        UpdateLabel();
+
+        slider.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == Slider.ValueProperty) UpdateLabel();
+        };
+
+        slider.AddHandler(Slider.PointerReleasedEvent, (_, _) => setter(slider.Value), handledEventsToo: true);
+        slider.LostFocus += (_, _) => setter(slider.Value);
+
+        var lbl = new TextBlock
+        {
+            Text = label,
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            Width = 72,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 2) };
+        DockPanel.SetDock(lbl, Dock.Left);
+        DockPanel.SetDock(valueLabel, Dock.Right);
+        row.Children.Add(lbl);
+        row.Children.Add(valueLabel);
+        row.Children.Add(slider);
+
+        if (toolPropId != null)
+            return AddEyeButton(row, toolPropId);
+        return row;
+    }
+
+    private static Control BuildGenericComboRow<T>(string label, T value, Action<T> setter, string? toolPropId = null)
+        where T : struct, Enum
+    {
+        var combo = new ComboBox
+        {
+            ItemsSource = Enum.GetValues<T>(),
+            SelectedItem = value,
+            FontSize = 11,
+            MinHeight = 28,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        combo.SelectionChanged += (_, _) =>
+        {
+            if (combo.SelectedItem is T v) setter(v);
+        };
+
+        var lbl = new TextBlock
+        {
+            Text = label,
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            Width = 72,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 2) };
+        DockPanel.SetDock(lbl, Dock.Left);
+        row.Children.Add(lbl);
+        row.Children.Add(combo);
+
+        if (toolPropId != null)
+            return AddEyeButton(row, toolPropId);
+        return row;
+    }
+
+    private static Control BuildGenericToggleRow(string label, bool value, Action<bool> setter, string? toolPropId = null)
+    {
+        var check = new CheckBox
+        {
+            IsChecked = value,
+            Content = label,
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary))
+        };
+        check.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == ToggleButton.IsCheckedProperty)
+                setter(check.IsChecked == true);
+        };
+
+        if (toolPropId != null)
+            return AddEyeButton(check, toolPropId);
+        return check;
+    }
+
+    private static Control AddEyeButton(Control content, string toolPropId)
+    {
+        var eyeBtn = new Button
+        {
+            Content = "◉",
+            Width = 20,
+            Height = 20,
+            Padding = new Thickness(0),
+            FontSize = 10,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+            BorderThickness = new Thickness(0)
+        };
+
+        bool visible = App.Config.ToolPropertyDockerVisibility.TryGetValue(toolPropId, out var v) ? v : false;
+        eyeBtn.Foreground = new SolidColorBrush(Color.Parse(visible ? Accent : TextMuted));
+
+        eyeBtn.Click += (_, _) =>
+        {
+            var newVisible = !App.Config.ToolPropertyDockerVisibility.TryGetValue(toolPropId, out var cur) || !cur;
+            App.Config.ToolPropertyDockerVisibility[toolPropId] = newVisible;
+            App.Config.Save();
+            eyeBtn.Foreground = new SolidColorBrush(Color.Parse(newVisible ? Accent : TextMuted));
+        };
+
+        var row = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(eyeBtn, Dock.Right);
+        row.Children.Add(eyeBtn);
+        row.Children.Add(content);
+        return row;
     }
 
     // ── Row builders ──────────────────────────────────────────────────────────
@@ -699,7 +990,7 @@ public sealed class BrushEditorWindow : Window
     private void OpenSizeDynamics()
     {
         if (_sizeDynPopup != null) { _sizeDynPopup.Activate(); return; }
-        _sizeDynPopup = new DynamicsPopupWindow("Brush Size", _preset.SizeDynamics, dyn =>
+        _sizeDynPopup = new DynamicsPopupWindow("Brush Size", _brushPreset.SizeDynamics, dyn =>
         {
             Commit(p => p with { SizeDynamics = dyn });
         });
@@ -711,7 +1002,7 @@ public sealed class BrushEditorWindow : Window
     private void OpenOpacityDynamics()
     {
         if (_opacDynPopup != null) { _opacDynPopup.Activate(); return; }
-        _opacDynPopup = new DynamicsPopupWindow("Opacity", _preset.OpacityDynamics, dyn =>
+        _opacDynPopup = new DynamicsPopupWindow("Opacity", _brushPreset.OpacityDynamics, dyn =>
         {
             Commit(p => p with { OpacityDynamics = dyn });
         });
@@ -723,7 +1014,7 @@ public sealed class BrushEditorWindow : Window
     private void OpenFlowDynamics()
     {
         if (_flowDynPopup != null) { _flowDynPopup.Activate(); return; }
-        _flowDynPopup = new DynamicsPopupWindow("Flow", BrushDynamics.ToParameterDynamics(_preset.Dynamics.Flow), dyn =>
+        _flowDynPopup = new DynamicsPopupWindow("Flow", BrushDynamics.ToParameterDynamics(_brushPreset.Dynamics.Flow), dyn =>
         {
             Commit(p => p with { Dynamics = WithDynamics(p.Dynamics, d => d.Flow = BrushDynamics.ToCurveOption(dyn)) });
         });
@@ -735,7 +1026,7 @@ public sealed class BrushEditorWindow : Window
     private void OpenHardnessDynamics()
     {
         if (_hardnessDynPopup != null) { _hardnessDynPopup.Activate(); return; }
-        _hardnessDynPopup = new DynamicsPopupWindow("Hardness", BrushDynamics.ToParameterDynamics(_preset.Dynamics.Hardness), dyn =>
+        _hardnessDynPopup = new DynamicsPopupWindow("Hardness", BrushDynamics.ToParameterDynamics(_brushPreset.Dynamics.Hardness), dyn =>
         {
             Commit(p => p with { Dynamics = WithDynamics(p.Dynamics, d => d.Hardness = BrushDynamics.ToCurveOption(dyn)) });
         });
@@ -755,8 +1046,8 @@ public sealed class BrushEditorWindow : Window
         }
 
         _angleDynPopup = new AngleDynamicsPopupWindow(
-            _preset.BaseAngleSource,
-            _preset.AngleJitter,
+            _brushPreset.BaseAngleSource,
+            _brushPreset.AngleJitter,
             source => Commit(p => p with { BaseAngleSource = source }),
             jitter => Commit(p => p with { AngleJitter = jitter })
         );
@@ -769,7 +1060,7 @@ public sealed class BrushEditorWindow : Window
     private void OpenSpacingDynamics()
     {
         if (_spacingDynPopup != null) { _spacingDynPopup.Activate(); return; }
-        _spacingDynPopup = new DynamicsPopupWindow("Spacing", BrushDynamics.ToParameterDynamics(_preset.Dynamics.Spacing), dyn =>
+        _spacingDynPopup = new DynamicsPopupWindow("Spacing", BrushDynamics.ToParameterDynamics(_brushPreset.Dynamics.Spacing), dyn =>
         {
             Commit(p => p with { Dynamics = WithDynamics(p.Dynamics, d => d.Spacing = BrushDynamics.ToCurveOption(dyn)) });
         });
@@ -781,7 +1072,7 @@ public sealed class BrushEditorWindow : Window
     private void OpenScatterDynamics()
     {
         if (_scatterDynPopup != null) { _scatterDynPopup.Activate(); return; }
-        _scatterDynPopup = new DynamicsPopupWindow("Scatter", BrushDynamics.ToParameterDynamics(_preset.Dynamics.Scatter), dyn =>
+        _scatterDynPopup = new DynamicsPopupWindow("Scatter", BrushDynamics.ToParameterDynamics(_brushPreset.Dynamics.Scatter), dyn =>
         {
             Commit(p => p with { Dynamics = WithDynamics(p.Dynamics, d => d.Scatter = BrushDynamics.ToCurveOption(dyn)) });
         });
@@ -793,7 +1084,7 @@ public sealed class BrushEditorWindow : Window
     private void OpenRotationDynamics()
     {
         if (_rotationDynPopup != null) { _rotationDynPopup.Activate(); return; }
-        _rotationDynPopup = new DynamicsPopupWindow("Rotation", BrushDynamics.ToParameterDynamics(_preset.Dynamics.Rotation), dyn =>
+        _rotationDynPopup = new DynamicsPopupWindow("Rotation", BrushDynamics.ToParameterDynamics(_brushPreset.Dynamics.Rotation), dyn =>
         {
             Commit(p => p with { Dynamics = WithDynamics(p.Dynamics, d => d.Rotation = BrushDynamics.ToCurveOption(dyn)) });
         });
@@ -954,7 +1245,7 @@ public sealed class BrushEditorWindow : Window
         WireSlider(_smoothingSlider, v => Commit(p => p with { Smoothing = v }));
         WireSlider(_grainSlider, v => Commit(p => p with { Grain = v }));
         WireSlider(_angleSlider, v => Commit(p => p with { Angle = v }));
-        WireSlider(_colorMixSlider,  v => Commit(p => p with { ColorMix  = v }));
+        WireSlider(_colorMixSlider, v => Commit(p => p with { ColorMix = v }));
         WireSlider(_colorLoadSlider, v => Commit(p => p with { ColorLoad = v }));
         WireSlider(_colorStretchSlider, v => Commit(p => p with { ColorStretch = v }));
         WireSlider(_blurAmountSlider, v => Commit(p => p with { BlurAmount = v }));
@@ -966,10 +1257,10 @@ public sealed class BrushEditorWindow : Window
     private void Commit(Func<BrushPreset, BrushPreset> update)
     {
         if (_syncing) return;
-        _preset = update(_preset);
-        _preview.Brush = _preset;
+        _brushPreset = update(_brushPreset);
+        _preview.Brush = _brushPreset;
         _preview.InvalidateBitmap();
-        Avalonia.Threading.Dispatcher.UIThread.Post(() => _onChange(_preset), Avalonia.Threading.DispatcherPriority.Background);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => _onChange(_toolPreset, _isBrushTool ? _brushPreset : null), Avalonia.Threading.DispatcherPriority.Background);
     }
 
     private void CommitMainTip(IBrushTip tip)
@@ -998,7 +1289,7 @@ public sealed class BrushEditorWindow : Window
     public void SyncFromPreset(BrushPreset preset)
     {
         _syncing = true;
-        _preset = preset;
+        _brushPreset = preset;
 
         _sizeSlider.Value = Math.Clamp(preset.Size, _sizeSlider.Minimum, _sizeSlider.Maximum);
         _opacitySlider.Value = Math.Clamp(preset.Opacity, _opacitySlider.Minimum, _opacitySlider.Maximum);
@@ -1008,7 +1299,7 @@ public sealed class BrushEditorWindow : Window
         _smoothingSlider.Value = Math.Clamp(preset.Smoothing, _smoothingSlider.Minimum, _smoothingSlider.Maximum);
         _grainSlider.Value = Math.Clamp(preset.Grain, _grainSlider.Minimum, _grainSlider.Maximum);
         _angleSlider.Value = Math.Clamp(preset.Angle, _angleSlider.Minimum, _angleSlider.Maximum);
-        _colorMixSlider.Value  = Math.Clamp(preset.ColorMix,  _colorMixSlider.Minimum,  _colorMixSlider.Maximum);
+        _colorMixSlider.Value = Math.Clamp(preset.ColorMix, _colorMixSlider.Minimum, _colorMixSlider.Maximum);
         _colorLoadSlider.Value = Math.Clamp(preset.ColorLoad, _colorLoadSlider.Minimum, _colorLoadSlider.Maximum);
         _colorStretchSlider.Value = Math.Clamp(preset.ColorStretch, _colorStretchSlider.Minimum, _colorStretchSlider.Maximum);
         _blurAmountSlider.Value = Math.Clamp(preset.BlurAmount, _blurAmountSlider.Minimum, _blurAmountSlider.Maximum);
@@ -1046,6 +1337,22 @@ public sealed class BrushEditorWindow : Window
         _preview.Brush = preset;
         _preview.InvalidateBitmap();
         Title = $"Edit Brush — {preset.Name}";
+    }
+
+    public void SyncFromToolPreset(ToolPreset preset)
+    {
+        _syncing = true;
+        // For non-brush tools, rebuild the generic panels with updated values
+        if (!_isBrushTool && _genericPanels != null)
+        {
+            for (int i = 0; i < _categories.Length; i++)
+                _genericPanels[i] = WrapContent(BuildGenericCategoryContent(i));
+            // Refresh current category view
+            if (_activeCategory < _genericPanels.Length)
+                _contentHost.Child = _genericPanels[_activeCategory];
+        }
+        Title = $"Tool Properties — {preset.Name}";
+        _syncing = false;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -1132,7 +1439,7 @@ public sealed class BrushEditorWindow : Window
                 SKBlendMode.HardLight, SKBlendMode.SoftLight, SKBlendMode.Difference, SKBlendMode.Exclusion,
                 SKBlendMode.DstOut, SKBlendMode.Clear
             },
-            SelectedItem = _preset.BlendMode,
+            SelectedItem = _brushPreset.BlendMode,
             FontSize = 11,
             MinHeight = 28,
             HorizontalAlignment = HorizontalAlignment.Stretch
@@ -1165,7 +1472,7 @@ public sealed class BrushEditorWindow : Window
         _mixingModeCombo = new ComboBox
         {
             ItemsSource = new[] { MixingMode.Standard, MixingMode.Perceptual },
-            SelectedItem = _preset.MixingMode,
+            SelectedItem = _brushPreset.MixingMode,
             FontSize = 11,
             MinHeight = 28,
             HorizontalAlignment = HorizontalAlignment.Stretch
@@ -1199,7 +1506,7 @@ public sealed class BrushEditorWindow : Window
         _aaLevelCombo = new ComboBox
         {
             ItemsSource = levels,
-            SelectedIndex = HardnessToLevel(_preset.Hardness),
+            SelectedIndex = HardnessToLevel(_brushPreset.Hardness),
             FontSize = 11,
             MinHeight = 28,
             HorizontalAlignment = HorizontalAlignment.Stretch
@@ -1228,9 +1535,9 @@ public sealed class BrushEditorWindow : Window
     private static int HardnessToLevel(double hardness) => hardness switch
     {
         >= 0.95 => 0, // Pixel Art
-        >= 0.6  => 1, // Low
-        >= 0.3  => 2, // Medium
-        _       => 3, // High
+        >= 0.6 => 1, // Low
+        >= 0.3 => 2, // Medium
+        _ => 3, // High
     };
 
     private static double LevelToHardness(int level) => level switch

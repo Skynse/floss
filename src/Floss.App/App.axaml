@@ -163,9 +163,9 @@
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <ControlTemplate>
-                    <Grid MinHeight="22" VerticalAlignment="Center">
+                    <Grid MinHeight="24" VerticalAlignment="Center">
                         <!-- track trough -->
-                        <Border VerticalAlignment="Center" Height="8" CornerRadius="4"
+                        <Border VerticalAlignment="Center" Height="10" CornerRadius="5"
                                 Background="#161820" IsHitTestVisible="False"/>
                         <Track Name="PART_Track" Orientation="Horizontal"
                                Minimum="{TemplateBinding Minimum}"
@@ -175,19 +175,22 @@
                                 <RepeatButton Name="PART_DecreaseButton" Focusable="False" Cursor="Hand">
                                     <RepeatButton.Template>
                                         <ControlTemplate>
-                                            <Border Name="Fill" Height="8" VerticalAlignment="Center"
-                                                    CornerRadius="4,0,0,4" Background="#3a6fd8"/>
+                                            <Border Name="Fill" Height="10" VerticalAlignment="Center"
+                                                    CornerRadius="5,0,0,5" Background="#3a6fd8"/>
                                         </ControlTemplate>
                                     </RepeatButton.Template>
                                 </RepeatButton>
                             </Track.DecreaseButton>
                             <Track.Thumb>
-                                <Thumb Cursor="Hand" Width="3">
+                                <Thumb Cursor="Hand" Width="16" Height="16">
                                     <Thumb.Template>
                                         <ControlTemplate>
-                                            <Border Name="Edge" Width="3" Height="14"
-                                                    VerticalAlignment="Center"
-                                                    CornerRadius="2" Background="#6a94ec"/>
+                                            <Grid Width="16" Height="16">
+                                                <Ellipse Width="14" Height="14"
+                                                         Fill="#6a94ec"
+                                                         Stroke="#13151a"
+                                                         StrokeThickness="2"/>
+                                            </Grid>
                                         </ControlTemplate>
                                     </Thumb.Template>
                                 </Thumb>
@@ -196,7 +199,8 @@
                                 <RepeatButton Name="PART_IncreaseButton" Focusable="False" Cursor="Hand">
                                     <RepeatButton.Template>
                                         <ControlTemplate>
-                                            <Border Height="8" VerticalAlignment="Center"
+
+                                            <Border Height="10" VerticalAlignment="Center"
                                                     Background="Transparent"/>
                                         </ControlTemplate>
                                     </RepeatButton.Template>
@@ -213,8 +217,11 @@
         <Style Selector="Slider:horizontal:pressed /template/ RepeatButton#PART_DecreaseButton /template/ Border#Fill">
             <Setter Property="Background" Value="#5a90f5"/>
         </Style>
-        <Style Selector="Slider:horizontal:pointerover /template/ Thumb /template/ Border#Edge">
-            <Setter Property="Background" Value="#90b4f8"/>
+        <Style Selector="Slider:horizontal:pointerover /template/ Thumb /template/ Ellipse">
+            <Setter Property="Fill" Value="#90b4f8"/>
+        </Style>
+        <Style Selector="Slider:horizontal:pressed /template/ Thumb /template/ Ellipse">
+            <Setter Property="Fill" Value="#a8c4fa"/>
         </Style>
 
         <!-- ── ScrollBar: keep it minimal ────────────────────────────────── -->

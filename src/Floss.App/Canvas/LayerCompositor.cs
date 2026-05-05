@@ -653,6 +653,16 @@ public sealed class LayerCompositor
         if (!layer.Pixels.HasContentTiles(sourceRegion)) return;
 
         var blendMode = layer.BlendMode;
+        var layerColor = layer.LayerColor;
+        var hasLayerColor = layerColor.HasValue;
+        var expressionColor = layer.ExpressionColor;
+        byte lcR = 255, lcG = 255, lcB = 255;
+        if (layerColor is { } lc)
+        {
+            lcR = lc.R;
+            lcG = lc.G;
+            lcB = lc.B;
+        }
         const int ts = TiledPixelBuffer.TileSize;
 
         var firstTileX = FloorDiv(sourceRegion.X, ts);
@@ -696,11 +706,16 @@ public sealed class LayerCompositor
                             var docX = srcX + offsetX;
                             var dstPtr = dstRow + (docX - originX) * 4;
 
+                            // Apply layer color tint to source pixels
+                            byte srcB = hasLayerColor ? (byte)(tile[tileOffset + 0] * lcB / 255) : tile[tileOffset + 0];
+                            byte srcG = hasLayerColor ? (byte)(tile[tileOffset + 1] * lcG / 255) : tile[tileOffset + 1];
+                            byte srcR = hasLayerColor ? (byte)(tile[tileOffset + 2] * lcR / 255) : tile[tileOffset + 2];
+
                             if (srcA == 255)
                             {
-                                dstPtr[0] = tile[tileOffset + 0];
-                                dstPtr[1] = tile[tileOffset + 1];
-                                dstPtr[2] = tile[tileOffset + 2];
+                                dstPtr[0] = srcB;
+                                dstPtr[1] = srcG;
+                                dstPtr[2] = srcR;
                                 dstPtr[3] = 255;
                                 continue;
                             }
@@ -712,14 +727,15 @@ public sealed class LayerCompositor
                             if (outA == 0) continue;
 
                             uint halfOutA = outA >> 1;
-                            dstPtr[0] = (byte)((tile[tileOffset + 0] * srcA + dstPtr[0] * dstCont + halfOutA) / outA);
-                            dstPtr[1] = (byte)((tile[tileOffset + 1] * srcA + dstPtr[1] * dstCont + halfOutA) / outA);
-                            dstPtr[2] = (byte)((tile[tileOffset + 2] * srcA + dstPtr[2] * dstCont + halfOutA) / outA);
+                            dstPtr[0] = (byte)((srcB * srcA + dstPtr[0] * dstCont + halfOutA) / outA);
+                            dstPtr[1] = (byte)((srcG * srcA + dstPtr[1] * dstCont + halfOutA) / outA);
+                            dstPtr[2] = (byte)((srcR * srcA + dstPtr[2] * dstCont + halfOutA) / outA);
                             dstPtr[3] = (byte)outA;
                         }
                     }
                 }
             }
+            ApplyExpressionColor(dst, dstStride, docLeft, docTop, docRight, docBottom, originX, originY, expressionColor);
             return;
         }
 
@@ -753,9 +769,10 @@ public sealed class LayerCompositor
                         var docX = srcX + offsetX;
                         var dstIdx = (docX - originX) * 4;
 
-                        var srcB = tile[tileOffset + 0] / 255.0;
-                        var srcG = tile[tileOffset + 1] / 255.0;
-                        var srcR = tile[tileOffset + 2] / 255.0;
+                        // Apply layer color tint to source pixels
+                        var srcB = (hasLayerColor ? tile[tileOffset + 0] * lcB / 255.0 : tile[tileOffset + 0]) / 255.0;
+                        var srcG = (hasLayerColor ? tile[tileOffset + 1] * lcG / 255.0 : tile[tileOffset + 1]) / 255.0;
+                        var srcR = (hasLayerColor ? tile[tileOffset + 2] * lcR / 255.0 : tile[tileOffset + 2]) / 255.0;
                         var dstB = dstRow[dstIdx + 0] / 255.0;
                         var dstG = dstRow[dstIdx + 1] / 255.0;
                         var dstR = dstRow[dstIdx + 2] / 255.0;
@@ -765,6 +782,47 @@ public sealed class LayerCompositor
                         BlendPixel(dstRow + dstIdx, srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendR, blendG, blendB);
                     }
                 }
+            }
+        }
+
+        ApplyExpressionColor(dst, dstStride, docLeft, docTop, docRight, docBottom, originX, originY, expressionColor);
+    }
+
+    private static unsafe void ApplyExpressionColor(
+        byte* dst, int dstStride,
+        int left, int top, int right, int bottom,
+        int originX, int originY,
+        ExpressionColorMode mode)
+    {
+        if (mode == ExpressionColorMode.Color) return;
+
+        for (int y = top; y < bottom; y++)
+        {
+            var row = dst + (y - originY) * dstStride;
+            for (int x = left; x < right; x++)
+            {
+                var p = row + (x - originX) * 4;
+                var b = p[0];
+                var g = p[1];
+                var r = p[2];
+                var a = p[3];
+                if (a == 0) continue;
+
+                byte gray;
+                if (mode == ExpressionColorMode.Gray)
+                {
+                    // Standard luminance
+                    gray = (byte)((r * 299 + g * 587 + b * 114) / 1000);
+                }
+                else // Monochrome
+                {
+                    var lum = (r * 299 + g * 587 + b * 114) / 1000;
+                    gray = lum >= 128 ? (byte)255 : (byte)0;
+                }
+
+                p[0] = gray;
+                p[1] = gray;
+                p[2] = gray;
             }
         }
     }
