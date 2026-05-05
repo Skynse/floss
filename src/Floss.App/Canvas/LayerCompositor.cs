@@ -394,10 +394,10 @@ public sealed class LayerCompositor
         var baseW = baseLayer.Width;
         var baseH = baseLayer.Height;
 
-        var docLeft = Math.Max(Math.Max(clip.X, offsetX), 0);
-        var docTop = Math.Max(Math.Max(clip.Y, offsetY), 0);
-        var docRight = Math.Min(Math.Min(clip.Right, offsetX + layer.Width), width + originX);
-        var docBottom = Math.Min(Math.Min(clip.Bottom, offsetY + layer.Height), height + originY);
+        var docLeft = Math.Max(Math.Max(clip.X, offsetX + layer.MinX), 0);
+        var docTop = Math.Max(Math.Max(clip.Y, offsetY + layer.MinY), 0);
+        var docRight = Math.Min(Math.Min(clip.Right, offsetX + layer.MaxX), width + originX);
+        var docBottom = Math.Min(Math.Min(clip.Bottom, offsetY + layer.MaxY), height + originY);
 
         if (docLeft >= docRight || docTop >= docBottom) return;
 
@@ -642,10 +642,10 @@ public sealed class LayerCompositor
         var offsetX = layer.OffsetX;
         var offsetY = layer.OffsetY;
 
-        var docLeft = Math.Max(Math.Max(clip.X, offsetX), 0);
-        var docTop = Math.Max(Math.Max(clip.Y, offsetY), 0);
-        var docRight = Math.Min(Math.Min(clip.Right, offsetX + layer.Width), width + originX);
-        var docBottom = Math.Min(Math.Min(clip.Bottom, offsetY + layer.Height), height + originY);
+        var docLeft = Math.Max(Math.Max(clip.X, offsetX + layer.MinX), 0);
+        var docTop = Math.Max(Math.Max(clip.Y, offsetY + layer.MinY), 0);
+        var docRight = Math.Min(Math.Min(clip.Right, offsetX + layer.MaxX), width + originX);
+        var docBottom = Math.Min(Math.Min(clip.Bottom, offsetY + layer.MaxY), height + originY);
 
         if (docLeft >= docRight || docTop >= docBottom) return;
 

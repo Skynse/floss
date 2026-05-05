@@ -331,8 +331,7 @@ public sealed class DrawingCanvas : Control
         var b = bounds.Value;
 
         var layerBounds = new PixelRegion(
-            b.Left - layer.OffsetX, b.Top - layer.OffsetY, b.Width, b.Height)
-            .ClipTo(layer.Width, layer.Height);
+            b.Left - layer.OffsetX, b.Top - layer.OffsetY, b.Width, b.Height);
         if (layerBounds.IsEmpty) return;
 
         var beforeTiles = layer.Pixels.CaptureTiles(layerBounds);
@@ -340,12 +339,10 @@ public sealed class DrawingCanvas : Control
         for (int docY = b.Top; docY < b.Bottom; docY++)
         {
             int layY = docY - layer.OffsetY;
-            if ((uint)layY >= (uint)layer.Height) continue;
             for (int docX = b.Left; docX < b.Right; docX++)
             {
                 if (!_ctx.Selection.IsSelected(docX, docY)) continue;
                 int layX = docX - layer.OffsetX;
-                if ((uint)layX >= (uint)layer.Width) continue;
                 layer.Pixels.SetPixel(layX, layY, 0, 0, 0, 0);
             }
         }
@@ -821,7 +818,6 @@ public sealed class DrawingCanvas : Control
             if (!layer.IsVisible || layer.IsGroup) continue;
             int lx = x - layer.OffsetX;
             int ly = y - layer.OffsetY;
-            if ((uint)lx >= (uint)layer.Width || (uint)ly >= (uint)layer.Height) continue;
 
             layer.Pixels.GetPixel(lx, ly, out byte b, out byte g, out byte r, out byte a);
             if (a == 0) continue;

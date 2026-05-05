@@ -189,7 +189,7 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
                 cb.X - layer.OffsetX,
                 cb.Y - layer.OffsetY,
                 cb.Width,
-                cb.Height).ClipTo(layer.Width, layer.Height);
+                cb.Height);
             if (layerBounds.IsEmpty) continue;
 
             // Determine clipping base alpha (layer below's content at each pixel)
@@ -206,11 +206,9 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
                         for (var docY = cb.Y; docY < cb.Bottom; docY++)
                         {
                             var clY = docY - clipLayer.OffsetY;
-                            if ((uint)clY >= (uint)clipLayer.Height) continue;
                             for (var docX = cb.X; docX < cb.Right; docX++)
                             {
                                 var clX = docX - clipLayer.OffsetX;
-                                if ((uint)clX >= (uint)clipLayer.Width) continue;
                                 clipLayer.Pixels.GetPixel(clX, clY, out _, out _, out _, out var ca);
                                 var idx = (docY - cb.Y) * cb.Width + (docX - cb.X);
                                 clipAlpha[idx] = ca;
@@ -228,14 +226,12 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
             for (var docY = cb.Y; docY < cb.Bottom; docY++)
             {
                 var layY = docY - layer.OffsetY;
-                if ((uint)layY >= (uint)layer.Height) continue;
 
                 for (var docX = cb.X; docX < cb.Right; docX++)
                 {
                     if (usingSelection && !ctx.Selection.IsSelected(docX, docY)) continue;
 
                     var layX = docX - layer.OffsetX;
-                    if ((uint)layX >= (uint)layer.Width) continue;
 
                     layer.Pixels.GetPixel(layX, layY, out var pxB, out var pxG, out var pxR, out var pxA);
                     if (pxA == 0) continue;
@@ -349,7 +345,6 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
             for (var relY = 0; relY < data.SrcH; relY++)
             {
                 var layY = data.SrcY + relY - layer.OffsetY;
-                if ((uint)layY >= (uint)layer.Height) continue;
 
                 for (var relX = 0; relX < data.SrcW; relX++)
                 {
@@ -357,7 +352,6 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
                     if (data.FloatPixels[fi + 3] == 0) continue;
 
                     var layX = data.SrcX + relX - layer.OffsetX;
-                    if ((uint)layX >= (uint)layer.Width) continue;
 
                     layer.Pixels.SetPixel(layX, layY,
                         data.FloatPixels[fi],
@@ -391,7 +385,7 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
                 dest.X - layer.OffsetX,
                 dest.Y - layer.OffsetY,
                 dest.Width,
-                dest.Height).ClipTo(layer.Width, layer.Height);
+                dest.Height);
             if (destLayerRegion.IsEmpty) continue;
 
             // Capture destination tiles for undo
@@ -456,7 +450,7 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
             dest.X - layer.OffsetX,
             dest.Y - layer.OffsetY,
             dest.Width,
-            dest.Height).ClipTo(layer.Width, layer.Height);
+                dest.Height);
         if (clipped.IsEmpty) return;
 
         var flat = layer.Pixels.Capture(clipped);

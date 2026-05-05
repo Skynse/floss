@@ -391,7 +391,6 @@ public sealed class BrushEngine : IDisposable
                 int y = cy + dy;
                 int lx = x - layer.OffsetX;
                 int ly = y - layer.OffsetY;
-                if ((uint)lx >= (uint)layer.Width || (uint)ly >= (uint)layer.Height) continue;
 
                 layer.Pixels.GetPixel(lx, ly, out byte b, out byte g, out byte r, out byte a);
                 if (a == 0) continue;
@@ -406,16 +405,9 @@ public sealed class BrushEngine : IDisposable
             float centerR, centerG, centerB;
             int clx = cx - layer.OffsetX;
             int cly = cy - layer.OffsetY;
-            if ((uint)clx < (uint)layer.Width && (uint)cly < (uint)layer.Height)
-            {
-                layer.Pixels.GetPixel(clx, cly, out byte b, out byte g, out byte r, out byte a);
-                if (a > 0) { centerR = r; centerG = g; centerB = b; }
-                else { centerR = stroke.CarriedR; centerG = stroke.CarriedG; centerB = stroke.CarriedB; }
-            }
-            else
-            {
-                centerR = stroke.CarriedR; centerG = stroke.CarriedG; centerB = stroke.CarriedB;
-            }
+            layer.Pixels.GetPixel(clx, cly, out byte b, out byte g, out byte r, out byte a);
+            if (a > 0) { centerR = r; centerG = g; centerB = b; }
+            else { centerR = stroke.CarriedR; centerG = stroke.CarriedG; centerB = stroke.CarriedB; }
 
             float blurR = accR / accW;
             float blurG = accG / accW;

@@ -32,8 +32,6 @@ public sealed class FillToolOperation : IToolOperation
         int lx = docX - layer.OffsetX;
         int ly = docY - layer.OffsetY;
 
-        if ((uint)lx >= (uint)layer.Width || (uint)ly >= (uint)layer.Height) return;
-
         layer.Pixels.GetPixel(lx, ly, out byte refB, out byte refG, out byte refR, out byte refA);
         int tolInt = (int)(_context.Document.Width > 0 ? _tolerance * 255 * 4 : 0);
 
@@ -53,7 +51,6 @@ public sealed class FillToolOperation : IToolOperation
         while (queue.Count > 0)
         {
             var (cx, cy) = queue.Dequeue();
-            if ((uint)cx >= (uint)layer.Width || (uint)cy >= (uint)layer.Height) continue;
             int idx = cy * layer.Width + cx;
             if (visited[idx]) continue;
             visited[idx] = true;
@@ -115,7 +112,6 @@ public sealed class ColorSampleOperation : IToolOperation
         if (layer == null || layer.IsGroup) return;
         int x = docX - layer.OffsetX;
         int y = docY - layer.OffsetY;
-        if ((uint)x >= (uint)layer.Width || (uint)y >= (uint)layer.Height) return;
         layer.Pixels.GetPixel(x, y, out byte b, out byte g, out byte r, out byte a);
         if (a == 0) return;
         _context.OnColorSampled(Color.FromArgb(a, r, g, b));

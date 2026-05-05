@@ -36,6 +36,10 @@ public sealed class DrawingLayer : IDisposable
     public TiledPixelBuffer Pixels { get; internal set; }
     public int Width => Pixels.Width;
     public int Height => Pixels.Height;
+    public int MinX => Pixels.MinX;
+    public int MinY => Pixels.MinY;
+    public int MaxX => Pixels.MaxX;
+    public int MaxY => Pixels.MaxY;
     public PixelRegion DocumentContentBounds
         => IsGroup
             ? Children.Aggregate(PixelRegion.Empty, (bounds, child) => bounds.Union(child.DocumentContentBounds))
@@ -170,42 +174,4 @@ public sealed class DrawingLayer : IDisposable
         MarkThumbnailDirty();
     }
 
-    /// <summary>
-    /// Expands the layer's pixel buffer so that the given local-coordinate bounds fit.
-    /// Adjusts OffsetX/OffsetY so the layer's position in document space is preserved.
-    /// </summary>
-    public bool ExpandToAccommodate(int minX, int minY, int maxX, int maxY)
-    {
-        var needLeft   = minX < 0;
-        var needTop    = minY < 0;
-        var needRight  = maxX > Width;
-        var needBottom = maxY > Height;
-
-        if (!needLeft && !needTop && !needRight && !needBottom) return false;
-
-        var expandLeft   = needLeft   ? -minX : 0;
-        var expandTop    = needTop    ? -minY : 0;
-        var expandRight  = needRight  ? maxX - Width : 0;
-        var expandBottom = needBottom ? maxY - Height : 0;
-
-        var newWidth  = Width  + expandLeft + expandRight;
-        var newHeight = Height + expandTop  + expandBottom;
-
-        var oldPixels = CapturePixels();
-        var oldWidth  = Width;
-        var oldHeight = Height;
-
-        Pixels = new TiledPixelBuffer(newWidth, newHeight);
-        OffsetX -= expandLeft;
-        OffsetY -= expandTop;
-
-        if (oldPixels.Length > 0)
-        {
-            var region = new PixelRegion(expandLeft, expandTop, oldWidth, oldHeight);
-            Pixels.CopyFromBgra(region, oldPixels, oldWidth * 4);
-        }
-
-        MarkThumbnailDirty();
-        return true;
-    }
 }

@@ -48,7 +48,6 @@ public sealed class FloodFillOutput : IOutputProcess
 
             int lx = x - layer.OffsetX;
             int ly = y - layer.OffsetY;
-            if ((uint)lx >= (uint)layer.Width || (uint)ly >= (uint)layer.Height) continue;
 
             layer.Pixels.GetPixel(lx, ly, out byte cb, out byte cg, out byte cr, out byte ca);
             var pixelColor = new SKColor(cr, cg, cb, ca);

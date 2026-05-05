@@ -139,10 +139,6 @@ public sealed class FreehandStrokeOperation : IToolOperation
         var region = _brushEngine.EstimateDabRegion(layer, _brush, localSample);
         if (region.IsEmpty) return;
 
-        if (layer.ExpandToAccommodate(region.X, region.Y, region.Right, region.Bottom))
-        {
-            _beforeTiles.Clear();
-        }
         CaptureBeforeTiles(layer, region);
         var dirty = _brushEngine.RasterizeDab(layer, _brush, localSample, velocity);
         if (dirty.IsEmpty) return;
@@ -169,10 +165,6 @@ public sealed class FreehandStrokeOperation : IToolOperation
         var region = _brushEngine.EstimateSegmentRegion(layer, _brush, from, to);
         if (region.IsEmpty) return;
 
-        if (layer.ExpandToAccommodate(region.X, region.Y, region.Right, region.Bottom))
-        {
-            _beforeTiles.Clear();
-        }
         CaptureBeforeTiles(layer, region);
         var dirty = final
             ? _brushEngine.RasterizeFinalSegment(layer, _brush, from, to)
@@ -193,8 +185,7 @@ public sealed class FreehandStrokeOperation : IToolOperation
 
     private void RestoreUnselectedPixels(DrawingLayer layer, PixelRegion dirty)
     {
-        var clipped = dirty.ClipTo(layer.Width, layer.Height);
-        if (clipped.IsEmpty) return;
+        if (dirty.IsEmpty) return;
 
         bool hasSelection = _selection.HasSelection;
         bool alphaLocked = layer.IsAlphaLocked;
@@ -202,10 +193,10 @@ public sealed class FreehandStrokeOperation : IToolOperation
 
         const int ts = TiledPixelBuffer.TileSize;
 
-        int firstTileX = clipped.X / ts;
-        int firstTileY = clipped.Y / ts;
-        int lastTileX = (clipped.Right - 1) / ts;
-        int lastTileY = (clipped.Bottom - 1) / ts;
+        int firstTileX = dirty.X / ts;
+        int firstTileY = dirty.Y / ts;
+        int lastTileX = (dirty.Right - 1) / ts;
+        int lastTileY = (dirty.Bottom - 1) / ts;
 
         for (int ty = firstTileY; ty <= lastTileY; ty++)
         {
@@ -218,10 +209,10 @@ public sealed class FreehandStrokeOperation : IToolOperation
                 if (alphaLocked && beforeTile != null && IsTileAllZero(beforeTile))
                     continue;
 
-                int pxMin = Math.Max(clipped.X, tx * ts);
-                int pxMax = Math.Min(clipped.Right, tx * ts + ts);
-                int pyMin = Math.Max(clipped.Y, ty * ts);
-                int pyMax = Math.Min(clipped.Bottom, ty * ts + ts);
+                int pxMin = Math.Max(dirty.X, tx * ts);
+                int pxMax = Math.Min(dirty.Right, tx * ts + ts);
+                int pyMin = Math.Max(dirty.Y, ty * ts);
+                int pyMax = Math.Min(dirty.Bottom, ty * ts + ts);
 
                 for (int py = pyMin; py < pyMax; py++)
                 {

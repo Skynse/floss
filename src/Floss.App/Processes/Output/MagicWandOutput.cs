@@ -25,8 +25,6 @@ public sealed class MagicWandOutput : IOutputProcess
         var cx = (int)click.Point.X - layer.OffsetX;
         var cy = (int)click.Point.Y - layer.OffsetY;
 
-        if ((uint)cx >= (uint)layer.Width || (uint)cy >= (uint)layer.Height) return;
-
         layer.Pixels.GetPixel(cx, cy, out byte refB, out byte refG, out byte refR, out byte refA);
 
         // Create a mask-based selection (single flood fill in SetFromFloodFill).

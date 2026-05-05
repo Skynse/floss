@@ -70,7 +70,6 @@ public sealed class ClosedAreaFillOutput : IOutputProcess
 
                         int lx = docX - layer.OffsetX;
                         int ly = docY - layer.OffsetY;
-                        if ((uint)lx >= (uint)layer.Width || (uint)ly >= (uint)layer.Height) continue;
 
                         var skColor = bitmap.GetPixel(docX - x1, docY - y1);
                         if (skColor.Alpha == 0) continue;
@@ -124,7 +123,6 @@ public sealed class ClosedAreaFillOutput : IOutputProcess
 
                     int lx = docX - layer.OffsetX;
                     int ly = docY - layer.OffsetY;
-                    if ((uint)lx >= (uint)layer.Width || (uint)ly >= (uint)layer.Height) continue;
 
                     if (layer.IsAlphaLocked)
                     {

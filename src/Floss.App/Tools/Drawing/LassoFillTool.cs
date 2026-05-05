@@ -103,7 +103,6 @@ public sealed class LassoFillTool : ITool
 
                 int lx = docX - layer.OffsetX;
                 int ly = docY - layer.OffsetY;
-                if ((uint)lx >= (uint)layer.Width || (uint)ly >= (uint)layer.Height) continue;
 
                 if (layer.IsAlphaLocked)
                 {

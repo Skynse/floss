@@ -53,7 +53,7 @@ public sealed class SelectionMoveOperation : IToolOperation, IToolOperationOverl
 
         var layerBounds = new PixelRegion(
             b.Left - layer.OffsetX, b.Top - layer.OffsetY, _floatW, _floatH)
-            .ClipTo(layer.Width, layer.Height);
+            ;
 
         _beforeTiles = layer.Pixels.CaptureTiles(layerBounds);
 
@@ -61,12 +61,10 @@ public sealed class SelectionMoveOperation : IToolOperation, IToolOperationOverl
         for (int docY = b.Top; docY < b.Bottom; docY++)
         {
             int layY = docY - layer.OffsetY;
-            if ((uint)layY >= (uint)layer.Height) continue;
             for (int docX = b.Left; docX < b.Right; docX++)
             {
                 if (!ctx.Selection.IsSelected(docX, docY)) continue;
                 int layX = docX - layer.OffsetX;
-                if ((uint)layX >= (uint)layer.Width) continue;
 
                 layer.Pixels.GetPixel(layX, layY, out byte px_b, out byte px_g, out byte px_r, out byte px_a);
                 if (px_a == 0) continue;
@@ -115,13 +113,11 @@ public sealed class SelectionMoveOperation : IToolOperation, IToolOperationOverl
                 {
                     int docY = _floatOriginY + relY;
                     int layY = docY - layer.OffsetY;
-                    if ((uint)layY >= (uint)layer.Height) continue;
                     for (int relX = 0; relX < _floatW; relX++)
                     {
                         int docX = _floatOriginX + relX;
                         if (!_context.Selection.IsSelected(docX, docY)) continue;
                         int layX = docX - layer.OffsetX;
-                        if ((uint)layX >= (uint)layer.Width) continue;
                         int fi = (relY * _floatW + relX) * 4;
                         layer.Pixels.SetPixel(layX, layY,
                             _floatPixels[fi], _floatPixels[fi + 1], _floatPixels[fi + 2], _floatPixels[fi + 3]);
@@ -171,14 +167,12 @@ public sealed class SelectionMoveOperation : IToolOperation, IToolOperationOverl
         {
             int docY = _floatOriginY + _dy + relY;
             int layY = docY - layer.OffsetY;
-            if ((uint)layY >= (uint)layer.Height) continue;
             for (int relX = 0; relX < _floatW; relX++)
             {
                 int fi = (relY * _floatW + relX) * 4;
                 if (_floatPixels[fi + 3] == 0) continue;
                 int docX = _floatOriginX + _dx + relX;
                 int layX = docX - layer.OffsetX;
-                if ((uint)layX >= (uint)layer.Width) continue;
 
                 if (layer.IsAlphaLocked)
                 {
@@ -212,7 +206,7 @@ public sealed class SelectionMoveOperation : IToolOperation, IToolOperationOverl
 
         // Capture tiles in the destination region for history (before tiles were captured from source on creation).
         var destLayerRegion = new PixelRegion(minX - layer.OffsetX, minY - layer.OffsetY,
-            maxX - minX + 1, maxY - minY + 1).ClipTo(layer.Width, layer.Height);
+            maxX - minX + 1, maxY - minY + 1);
         var destTiles = layer.Pixels.CaptureTiles(destLayerRegion);
 
         // Merge before+dest tiles and commit. The before tiles already have the original state

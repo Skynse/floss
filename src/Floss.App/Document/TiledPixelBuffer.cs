@@ -13,30 +13,37 @@ public sealed class TiledPixelBuffer
 
     public TiledPixelBuffer(int width, int height)
     {
-        Width = Math.Max(1, width);
-        Height = Math.Max(1, height);
+        MinX = 0;
+        MinY = 0;
+        MaxX = Math.Max(1, width);
+        MaxY = Math.Max(1, height);
     }
 
-    public int Width { get; private set; }
-    public int Height { get; private set; }
+    public int Width => Math.Max(1, MaxX - MinX);
+    public int Height => Math.Max(1, MaxY - MinY);
+    public int MinX { get; private set; }
+    public int MinY { get; private set; }
+    public int MaxX { get; private set; }
+    public int MaxY { get; private set; }
 
     public void Resize(int width, int height)
     {
-        Width = Math.Max(1, width);
-        Height = Math.Max(1, height);
+        MinX = 0;
+        MinY = 0;
+        MaxX = Math.Max(1, width);
+        MaxY = Math.Max(1, height);
         _tiles.Clear();
     }
 
-    // Automatically grow the buffer when a write lands beyond the current extent.
-    // Only extends right/bottom; left/top extension requires offset adjustment
-    // which is handled at the layer level.
-    public void EnsureCapacity(int right, int bottom)
+    private void ExtendBounds(int left, int top, int right, int bottom)
     {
-        if (right > Width) Width = right;
-        if (bottom > Height) Height = bottom;
+        if (left < MinX) MinX = left;
+        if (top < MinY) MinY = top;
+        if (right > MaxX) MaxX = right;
+        if (bottom > MaxY) MaxY = bottom;
     }
 
-    public PixelRegion Bounds => new(0, 0, Width, Height);
+    public PixelRegion Bounds => new(MinX, MinY, Width, Height);
 
     public PixelRegion ContentTileBounds
     {
@@ -71,7 +78,7 @@ public sealed class TiledPixelBuffer
                 }
             }
 
-            return new PixelRegion(minX, minY, maxX - minX, maxY - minY).ClipTo(Width, Height);
+            return new PixelRegion(minX, minY, maxX - minX, maxY - minY);
         }
     }
 
@@ -82,10 +89,9 @@ public sealed class TiledPixelBuffer
 
     public void Clear(PixelRegion region)
     {
-        var clipped = region.ClipTo(Width, Height);
-        if (clipped.IsEmpty) return;
+        if (region.IsEmpty) return;
 
-        ForEachTile(clipped, (tileX, tileY, tile, tileRegion) =>
+        ForEachTile(region, (tileX, tileY, tile, tileRegion) =>
         {
             for (var y = tileRegion.Y; y < tileRegion.Bottom; y++)
             {
@@ -94,23 +100,22 @@ public sealed class TiledPixelBuffer
             }
         }, create: false);
 
-        PruneTransparentTiles(clipped);
+        PruneTransparentTiles(region);
     }
 
     public byte[] Capture(PixelRegion region)
     {
-        var clipped = region.ClipTo(Width, Height);
-        if (clipped.IsEmpty) return [];
+        if (region.IsEmpty) return [];
 
-        var bytes = new byte[clipped.Width * clipped.Height * BytesPerPixel];
-        ForEachTile(clipped, (tileX, tileY, tile, tileRegion) =>
+        var bytes = new byte[region.Width * region.Height * BytesPerPixel];
+        ForEachTile(region, (tileX, tileY, tile, tileRegion) =>
         {
             for (var y = tileRegion.Y; y < tileRegion.Bottom; y++)
             {
                 var srcOffset = (y - tileY * TileSize) * TileSize * BytesPerPixel
                               + (tileRegion.X - tileX * TileSize) * BytesPerPixel;
-                var dstOffset = (y - clipped.Y) * clipped.Width * BytesPerPixel
-                              + (tileRegion.X - clipped.X) * BytesPerPixel;
+                var dstOffset = (y - region.Y) * region.Width * BytesPerPixel
+                              + (tileRegion.X - region.X) * BytesPerPixel;
                 Buffer.BlockCopy(tile, srcOffset, bytes, dstOffset, tileRegion.Width * BytesPerPixel);
             }
         }, create: false);
@@ -127,13 +132,12 @@ public sealed class TiledPixelBuffer
 
     public void CaptureTiles(PixelRegion region, Dictionary<(int X, int Y), byte[]?> target)
     {
-        var clipped = region.ClipTo(Width, Height);
-        if (clipped.IsEmpty) return;
+        if (region.IsEmpty) return;
 
-        var firstTileX = FloorDiv(clipped.X, TileSize);
-        var firstTileY = FloorDiv(clipped.Y, TileSize);
-        var lastTileX = FloorDiv(clipped.Right - 1, TileSize);
-        var lastTileY = FloorDiv(clipped.Bottom - 1, TileSize);
+        var firstTileX = FloorDiv(region.X, TileSize);
+        var firstTileY = FloorDiv(region.Y, TileSize);
+        var lastTileX = FloorDiv(region.Right - 1, TileSize);
+        var lastTileY = FloorDiv(region.Bottom - 1, TileSize);
 
         for (var ty = firstTileY; ty <= lastTileY; ty++)
         {
@@ -157,22 +161,21 @@ public sealed class TiledPixelBuffer
 
     public void Restore(PixelRegion region, byte[] bytes)
     {
-        var clipped = region.ClipTo(Width, Height);
-        if (clipped.IsEmpty || bytes.Length == 0) return;
+        if (region.IsEmpty || bytes.Length == 0) return;
 
-        ForEachTile(clipped, (tileX, tileY, tile, tileRegion) =>
+        ForEachTile(region, (tileX, tileY, tile, tileRegion) =>
         {
             for (var y = tileRegion.Y; y < tileRegion.Bottom; y++)
             {
-                var srcOffset = (y - clipped.Y) * clipped.Width * BytesPerPixel
-                              + (tileRegion.X - clipped.X) * BytesPerPixel;
+                var srcOffset = (y - region.Y) * region.Width * BytesPerPixel
+                              + (tileRegion.X - region.X) * BytesPerPixel;
                 var dstOffset = (y - tileY * TileSize) * TileSize * BytesPerPixel
                               + (tileRegion.X - tileX * TileSize) * BytesPerPixel;
                 Buffer.BlockCopy(bytes, srcOffset, tile, dstOffset, tileRegion.Width * BytesPerPixel);
             }
         }, create: true);
 
-        PruneTransparentTiles(clipped);
+        PruneTransparentTiles(region);
     }
 
     public void RestoreTile(int tileX, int tileY, byte[]? bytes)
@@ -189,6 +192,7 @@ public sealed class TiledPixelBuffer
         {
             tile = new byte[bytes.Length];
             _tiles[key] = tile;
+            ExtendBounds(tileX * TileSize, tileY * TileSize, (tileX + 1) * TileSize, (tileY + 1) * TileSize);
         }
         Buffer.BlockCopy(bytes, 0, tile, 0, bytes.Length);
     }
@@ -246,10 +250,6 @@ public sealed class TiledPixelBuffer
     {
         if (region.IsEmpty) return;
 
-        // Auto-extend buffer when rendering outside current bounds (right/bottom only).
-        if (region.Right > Width) Width = region.Right;
-        if (region.Bottom > Height) Height = region.Bottom;
-
         ForEachTile(region, (tileX, tileY, tile, tileRegion) =>
         {
             fixed (byte* tilePtr = tile)
@@ -272,15 +272,6 @@ public sealed class TiledPixelBuffer
 
     public void ReadPixel(int x, int y, byte[] dst, int dstOffset)
     {
-        if ((uint)x >= Width || (uint)y >= Height)
-        {
-            dst[dstOffset + 0] = 0;
-            dst[dstOffset + 1] = 0;
-            dst[dstOffset + 2] = 0;
-            dst[dstOffset + 3] = 0;
-            return;
-        }
-
         var tileKey = ToTileKey(x, y);
         if (!_tiles.TryGetValue(tileKey, out var tile))
         {
@@ -300,9 +291,6 @@ public sealed class TiledPixelBuffer
 
     public void WritePixel(int x, int y, byte[] src, int srcOffset)
     {
-        if (x < 0 || y < 0) return;
-        if (x >= Width || y >= Height) EnsureCapacity(x + 1, y + 1);
-
         var tile = GetOrCreateTile(x, y);
         var offset = OffsetInTile(x, y);
         tile[offset + 0] = src[srcOffset + 0];
@@ -313,9 +301,6 @@ public sealed class TiledPixelBuffer
 
     public void SetPixel(int x, int y, byte b, byte g, byte r, byte a)
     {
-        if (x < 0 || y < 0) return;
-        if (x >= Width || y >= Height) EnsureCapacity(x + 1, y + 1);
-
         var tile = GetOrCreateTile(x, y);
         var offset = OffsetInTile(x, y);
         tile[offset + 0] = b;
@@ -326,7 +311,7 @@ public sealed class TiledPixelBuffer
 
     public void GetPixel(int x, int y, out byte b, out byte g, out byte r, out byte a)
     {
-        if ((uint)x >= Width || (uint)y >= Height || !_tiles.TryGetValue(ToTileKey(x, y), out var tile))
+        if (!_tiles.TryGetValue(ToTileKey(x, y), out var tile))
         {
             b = g = r = a = 0;
             return;
@@ -341,11 +326,10 @@ public sealed class TiledPixelBuffer
 
     public bool HasNonTransparentPixels(PixelRegion region)
     {
-        var clipped = region.ClipTo(Width, Height);
-        if (clipped.IsEmpty) return false;
+        if (region.IsEmpty) return false;
 
         var found = false;
-        ForEachTile(clipped, (tileX, tileY, tile, tileRegion) =>
+        ForEachTile(region, (tileX, tileY, tile, tileRegion) =>
         {
             if (found) return;
 
@@ -382,12 +366,10 @@ public sealed class TiledPixelBuffer
             for (var y = 0; y < TileSize; y++)
             {
                 var py = tileBaseY + y;
-                if ((uint)py >= (uint)Height) continue;
 
                 for (var x = 0; x < TileSize; x++)
                 {
                     var px = tileBaseX + x;
-                    if ((uint)px >= (uint)Width) continue;
 
                     var offset = (y * TileSize + x) * BytesPerPixel + 3;
                     if (tile[offset] == 0) continue;
@@ -406,13 +388,12 @@ public sealed class TiledPixelBuffer
 
     public bool HasContentTiles(PixelRegion region)
     {
-        var clipped = region.ClipTo(Width, Height);
-        if (clipped.IsEmpty || _tiles.Count == 0) return false;
+        if (region.IsEmpty || _tiles.Count == 0) return false;
 
-        var firstTileX = FloorDiv(clipped.X, TileSize);
-        var firstTileY = FloorDiv(clipped.Y, TileSize);
-        var lastTileX = FloorDiv(clipped.Right - 1, TileSize);
-        var lastTileY = FloorDiv(clipped.Bottom - 1, TileSize);
+        var firstTileX = FloorDiv(region.X, TileSize);
+        var firstTileY = FloorDiv(region.Y, TileSize);
+        var lastTileX = FloorDiv(region.Right - 1, TileSize);
+        var lastTileY = FloorDiv(region.Bottom - 1, TileSize);
 
         for (var ty = firstTileY; ty <= lastTileY; ty++)
         {
@@ -458,6 +439,7 @@ public sealed class TiledPixelBuffer
         {
             tile = new byte[TileSize * TileSize * BytesPerPixel];
             _tiles.Add(key, tile);
+            ExtendBounds(key.X * TileSize, key.Y * TileSize, key.X * TileSize + TileSize, key.Y * TileSize + TileSize);
         }
 
         return tile;
@@ -480,6 +462,7 @@ public sealed class TiledPixelBuffer
                     if (!create) continue;
                     tile = new byte[TileSize * TileSize * BytesPerPixel];
                     _tiles.Add(key, tile);
+                    ExtendBounds(tx * TileSize, ty * TileSize, (tx + 1) * TileSize, (ty + 1) * TileSize);
                 }
 
                 var tileRegion = new PixelRegion(tx * TileSize, ty * TileSize, TileSize, TileSize).Intersect(region);

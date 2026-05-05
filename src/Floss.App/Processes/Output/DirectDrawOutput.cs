@@ -116,10 +116,6 @@ public sealed class DirectDrawOutput : IOutputProcess
         var region = _brushEngine.EstimateDabRegion(layer, brush, localSample);
         if (region.IsEmpty) return;
 
-        if (layer.ExpandToAccommodate(region.X, region.Y, region.Right, region.Bottom))
-        {
-            _beforeTiles?.Clear();
-        }
         CaptureBeforeTiles(layer, region);
         var dirty = _brushEngine.RasterizeDab(layer, brush, localSample, velocity);
         if (!dirty.IsEmpty)
@@ -134,10 +130,6 @@ public sealed class DirectDrawOutput : IOutputProcess
         var region = _brushEngine.EstimateSegmentRegion(layer, brush, from, to);
         if (region.IsEmpty) return;
 
-        if (layer.ExpandToAccommodate(region.X, region.Y, region.Right, region.Bottom))
-        {
-            _beforeTiles?.Clear();
-        }
         CaptureBeforeTiles(layer, region);
         var dirty = _brushEngine.RasterizeSegment(layer, brush, from, to);
         if (!dirty.IsEmpty)
@@ -185,18 +177,17 @@ public sealed class DirectDrawOutput : IOutputProcess
     {
         if (_beforeTiles == null) return;
 
-        var clipped = dirty.ClipTo(layer.Width, layer.Height);
-        if (clipped.IsEmpty) return;
+        if (dirty.IsEmpty) return;
 
         bool hasSelection = selection.HasSelection;
         bool alphaLocked = layer.IsAlphaLocked;
         if (!hasSelection && !alphaLocked) return;
 
         const int ts = TiledPixelBuffer.TileSize;
-        int firstTileX = clipped.X / ts;
-        int firstTileY = clipped.Y / ts;
-        int lastTileX = (clipped.Right - 1) / ts;
-        int lastTileY = (clipped.Bottom - 1) / ts;
+        int firstTileX = dirty.X / ts;
+        int firstTileY = dirty.Y / ts;
+        int lastTileX = (dirty.Right - 1) / ts;
+        int lastTileY = (dirty.Bottom - 1) / ts;
 
         for (int ty = firstTileY; ty <= lastTileY; ty++)
         {
@@ -206,10 +197,10 @@ public sealed class DirectDrawOutput : IOutputProcess
                 if (alphaLocked && beforeTile != null && IsTileAllZero(beforeTile))
                     continue;
 
-                int pxMin = Math.Max(clipped.X, tx * ts);
-                int pxMax = Math.Min(clipped.Right, tx * ts + ts);
-                int pyMin = Math.Max(clipped.Y, ty * ts);
-                int pyMax = Math.Min(clipped.Bottom, ty * ts + ts);
+                int pxMin = Math.Max(dirty.X, tx * ts);
+                int pxMax = Math.Min(dirty.Right, tx * ts + ts);
+                int pyMin = Math.Max(dirty.Y, ty * ts);
+                int pyMax = Math.Min(dirty.Bottom, ty * ts + ts);
 
                 for (int py = pyMin; py < pyMax; py++)
                 {

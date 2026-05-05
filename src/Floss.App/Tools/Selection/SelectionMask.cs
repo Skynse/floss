@@ -141,7 +141,6 @@ public sealed class SelectionMask
         double tolerance,
         SelectOp op = SelectOp.Replace)
     {
-        if ((uint)srcX >= (uint)pixels.Width || (uint)srcY >= (uint)pixels.Height) return;
         EnsureMaskExists();
 
         pixels.GetPixel(srcX, srcY, out byte refB, out byte refG, out byte refR, out byte refA);
@@ -155,7 +154,6 @@ public sealed class SelectionMask
         while (queue.Count > 0)
         {
             var (cx, cy) = queue.Dequeue();
-            if ((uint)cx >= (uint)pixels.Width || (uint)cy >= (uint)pixels.Height) continue;
             int idx = cy * pixels.Width + cx;
             if (visited[idx]) continue;
             visited[idx] = true;
