@@ -862,8 +862,7 @@ private void DeletePreset(ToolGroup group, ToolPreset preset)
         _canvas.SetBrush(applied);
         _strokePreview.Brush = applied;
         UpdateStatus();
-        if (syncSliders)
-            RefreshToolProperties();
+        RefreshToolProperties();
     }
 
     private void UpdateCurrentBrush(Func<BrushPreset, BrushPreset> update)

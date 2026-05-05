@@ -112,6 +112,9 @@ public partial class MainWindow
             newDoc.InsertLayerNear(paperLayer, newDoc.Layers[0], LayerDropPlacement.Below);
         }
 
+        // The transparent drawing layer should be active, not the locked paper.
+        newDoc.SelectLayer(newDoc.Layers.Count > 1 ? 1 : 0);
+
         // 4. Swap it in and reset session state
         _canvas.Document.ReplaceWith(newDoc);
         _currentFilePath = null;
@@ -124,6 +127,12 @@ public partial class MainWindow
         UpdateStatus(); // This will trigger your title bar update
 
         _footerStatusText.Text = $"Created '{result.FileName}'";
+    }
+
+    private void AddBackgroundLayer()
+    {
+        _canvas.AddBackgroundLayer();
+        BuildLayerList();
     }
     private async System.Threading.Tasks.Task OpenDocumentAsync()
     {

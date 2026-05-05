@@ -476,7 +476,9 @@ public partial class MainWindow : Window
                 MenuAction("_Delete Layer", () => _canvas.DeleteLayer()),
                 new Separator(),
                 MenuAction("Move Layer _Up", () => _canvas.MoveActiveLayer(1)),
-                MenuAction("Move Layer _Down", () => _canvas.MoveActiveLayer(-1))
+                MenuAction("Move Layer _Down", () => _canvas.MoveActiveLayer(-1)),
+                new Separator(),
+                MenuAction("Add _Background", AddBackgroundLayer),
             }
         };
 
@@ -855,6 +857,7 @@ public partial class MainWindow : Window
     {
         "px" => $"{v:0}px",
         "%" => $"{v * 100:0}%",
+        "°" => $"{v:0}°",
         "f1" => $"{v:0.0}",
         "f2" => $"{v:0.00}",
         _ => v >= 10 ? $"{v:0}" : $"{v:0.0}"

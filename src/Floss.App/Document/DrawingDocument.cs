@@ -288,6 +288,66 @@ public sealed class DrawingDocument
         NotifyLayersChanged();
     }
 
+    public void AddBackgroundLayer()
+    {
+        BeginDocumentMutation();
+        var bg = new DrawingLayer("Background", Width, Height);
+        bg.IsLocked = true;
+
+        var pixelCount = Width * Height;
+        var pixels = new byte[pixelCount * 4];
+        for (var i = 0; i < pixelCount; i++)
+        {
+            var off = i * 4;
+            pixels[off] = 255;     // B
+            pixels[off + 1] = 255; // G
+            pixels[off + 2] = 255; // R
+            pixels[off + 3] = 255; // A
+        }
+        bg.RestorePixels(pixels);
+
+        // Insert at the very bottom
+        var bottom = _layers[^1];
+        InsertLayerNear(bg, bottom, LayerDropPlacement.Below);
+        RebuildFlatLayerOrder();
+        NotifyLayersChanged();
+    }
+
+    public void GroupSelectedLayers(IReadOnlyList<int> indices)
+    {
+        if (indices.Count < 1) return;
+        var sorted = indices.OrderBy(i => i).ToList();
+        if (sorted.Any(i => i < 0 || i >= _layers.Count)) return;
+
+        BeginDocumentMutation();
+
+        // Create the group layer above the topmost selected layer
+        var topIndex = sorted[^1];
+        var topLayer = _layers[topIndex];
+        var group = new DrawingLayer($"Folder {_layers.Count(l => l.IsGroup) + 1}", Width, Height)
+        {
+            IsGroup = true,
+            IsOpen = true
+        };
+        InsertLayerNear(group, topLayer, LayerDropPlacement.Above);
+        RebuildFlatLayerOrder();
+
+        // Move each selected layer into the group, bottom-to-top so indices stay stable
+        foreach (var idx in sorted)
+        {
+            var layer = _layers[idx];
+            if (layer == group || layer.IsGroup) continue;
+            var currentIndex = _layers.IndexOf(layer);
+            var groupIndex = _layers.IndexOf(group);
+            if (currentIndex >= 0 && groupIndex >= 0)
+                MoveLayer(currentIndex, groupIndex, LayerDropPlacement.Into);
+        }
+
+        RebuildFlatLayerOrder();
+        ActiveLayerIndex = _layers.IndexOf(group);
+        NotifyLayersChanged();
+    }
+
     public void PasteLayer(DrawingLayer clipboard, int targetIndex)
     {
         if (targetIndex < 0 || targetIndex >= _layers.Count) return;

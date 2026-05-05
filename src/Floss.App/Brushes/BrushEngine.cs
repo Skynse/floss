@@ -232,7 +232,9 @@ public sealed class BrushEngine : IDisposable
         var scatter = dyn.Scatter.IsEnabled ? dyn.EvalScatter(sp) : 0f;
         var rotDeg = dyn.EvalRotationDeg(sp);
         var size = Math.Max(0.5f, (float)brush.Size * sizeMul);
-        var opacity = (float)Math.Clamp(brush.Opacity * brush.Flow * opacMul * flowMul * brush.AmountOfPaint, 0, 1);
+        // Opacity is independent of AmountOfPaint. AmountOfPaint controls how much
+        // brush color is deposited, not the visibility of the stamp.
+        var opacity = (float)Math.Clamp(brush.Opacity * brush.Flow * opacMul * flowMul, 0, 1);
         var trajectoryDeg = sp.DrawingAngle * (180f / MathF.PI);
         float directionContrib = brush.BaseAngleSource switch
         {
@@ -277,7 +279,11 @@ public sealed class BrushEngine : IDisposable
             if (stamp.Opacity <= 0 || stamp.Size <= 0) continue;
 
             if (_stampColors.Count > i)
-                stroke.UpdateColor(_stampColors[i]);
+            {
+                var color = _stampColors[i];
+                if (color.Alpha == 0) continue;
+                stroke.UpdateColor(color);
+            }
 
             stroke.UpdateOpacity(stamp.Opacity);
             stroke.UpdateMatrix(stamp);
@@ -285,7 +291,8 @@ public sealed class BrushEngine : IDisposable
 
             canvas.Save();
             canvas.Concat(in stroke.Matrix);
-            canvas.DrawBitmap(mask, 0, 0, stroke.Paint);
+            using var image = SKImage.FromBitmap(mask);
+            canvas.DrawImage(image, 0f, 0f, new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None), stroke.Paint);
             canvas.Restore();
 
             stroke.ReleaseMask(mask);
@@ -296,93 +303,109 @@ public sealed class BrushEngine : IDisposable
     {
         _stampColors.Clear();
         var mixAmt = (float)brush.ColorMix;
-        var loadAmt = (float)brush.ColorLoad;
-        var stretch = (float)brush.ColorStretch;
         var blur = (float)brush.BlurAmount;
-        var density = (float)brush.DensityOfPaint;
-        var mode = brush.MixingMode;
+        var loadAmt = (float)brush.ColorLoad;
+        var paintAmt = (float)brush.AmountOfPaint;
+        var stretch = (float)brush.ColorStretch;
+
+        // Mode-specific behaviour:
+        // Blend  — pure canvas blur, no brush colour injected at all.
+        // Smudge — running colour: drags what it sampled, never reloads fresh paint.
+        // Smear  — wet paint: samples canvas AND reloads brush colour per dab.
+        float effectiveMixAmt;
+        float effectiveReload;
+        switch (brush.SmudgeMode)
+        {
+            case SmudgeMode.Blend:
+                effectiveMixAmt = 1.0f;
+                effectiveReload = 0f;
+                break;
+            case SmudgeMode.Smudge:
+                effectiveMixAmt = mixAmt;
+                effectiveReload = 0f;
+                break;
+            default: // Smear
+                effectiveMixAmt = mixAmt;
+                effectiveReload = loadAmt * paintAmt;
+                break;
+        }
+
+        var effectiveMix = Math.Clamp(effectiveMixAmt * (1.0f + stretch * 0.5f), 0f, 1f);
 
         for (var i = 0; i < _stamps.Count; i++)
         {
             var stamp = _stamps[i];
-            float sampledR, sampledG, sampledB;
+            float sampledR = 0, sampledG = 0, sampledB = 0, sampledA = 0;
+            bool hasSample = false;
 
             if (blur > 0.001f)
             {
-                // Sample with blur (3x3 kernel weighted by blur amount)
-                (sampledR, sampledG, sampledB) = SampleBlurred(layer, (int)stamp.X, (int)stamp.Y, blur, stroke);
+                (sampledR, sampledG, sampledB, sampledA) = SampleBlurred(layer, (int)stamp.X, (int)stamp.Y, blur, stroke);
+                hasSample = sampledA >= 1f;
             }
             else
             {
                 layer.Pixels.GetPixel((int)stamp.X, (int)stamp.Y, out var b, out var g, out var r, out var a);
                 if (a > 0)
                 {
-                    sampledR = r; sampledG = g; sampledB = b;
-                }
-                else if (stroke.CarriedR >= 0)
-                {
-                    sampledR = stroke.CarriedR;
-                    sampledG = stroke.CarriedG;
-                    sampledB = stroke.CarriedB;
-                }
-                else
-                {
-                    sampledR = stroke.BaseColor.Red;
-                    sampledG = stroke.BaseColor.Green;
-                    sampledB = stroke.BaseColor.Blue;
+                    sampledR = r; sampledG = g; sampledB = b; sampledA = a;
+                    hasSample = true;
                 }
             }
 
-            // Initialize carried color from first canvas sample for smudge mode
-            if (stroke.CarriedR < 0)
+            if (hasSample)
             {
-                // Blend between canvas sample and brush color based on density
-                // density=0: pure canvas (smudge), density=1: pure brush
-                stroke.CarriedR = sampledR + (stroke.BaseColor.Red - sampledR) * density;
-                stroke.CarriedG = sampledG + (stroke.BaseColor.Green - sampledG) * density;
-                stroke.CarriedB = sampledB + (stroke.BaseColor.Blue - sampledB) * density;
+                var sp = stroke.SmudgeColor;
+                var e = effectiveMix;
+                stroke.SmudgeColor = new SKColor(
+                    (byte)Math.Clamp(sp.Red * (1f - e) + sampledR * e, 0, 255),
+                    (byte)Math.Clamp(sp.Green * (1f - e) + sampledG * e, 0, 255),
+                    (byte)Math.Clamp(sp.Blue * (1f - e) + sampledB * e, 0, 255),
+                    (byte)Math.Clamp(sp.Alpha * (1f - e) + sampledA * e, 0, 255));
             }
 
-            // Apply color stretch (non-linear mixing curve)
-            var effectiveMix = mixAmt * (1.0f + stretch * 0.5f);
-            effectiveMix = Math.Clamp(effectiveMix, 0.0f, 1.0f);
-
-            float mixedR, mixedG, mixedB;
-            if (mode == MixingMode.Perceptual)
+            var sc = stroke.SmudgeColor;
+            var bc = stroke.BaseColor;
+            SKColor dab;
+            if (effectiveMixAmt <= 0f)
             {
-                // Mix in LCh space for more natural color transitions
-                var carriedLCh = RgbToLCh(stroke.CarriedR, stroke.CarriedG, stroke.CarriedB);
-                var sampledLCh = RgbToLCh(sampledR, sampledG, sampledB);
-                var mixedLCh = new Vector3(
-                    carriedLCh.X + (sampledLCh.X - carriedLCh.X) * effectiveMix,
-                    carriedLCh.Y + (sampledLCh.Y - carriedLCh.Y) * effectiveMix,
-                    MixHue(carriedLCh.Z, sampledLCh.Z, effectiveMix));
-                (mixedR, mixedG, mixedB) = LChToRgb(mixedLCh);
+                dab = bc;
+            }
+            else if (effectiveMixAmt >= 1f)
+            {
+                dab = sc;
             }
             else
             {
-                // Standard RGB linear interpolation
-                mixedR = stroke.CarriedR + (sampledR - stroke.CarriedR) * effectiveMix;
-                mixedG = stroke.CarriedG + (sampledG - stroke.CarriedG) * effectiveMix;
-                mixedB = stroke.CarriedB + (sampledB - stroke.CarriedB) * effectiveMix;
+                float a1 = 1.0f - effectiveMixAmt;
+                dab = new SKColor(
+                    (byte)Math.Clamp(sc.Red * effectiveMixAmt + bc.Red * a1, 0, 255),
+                    (byte)Math.Clamp(sc.Green * effectiveMixAmt + bc.Green * a1, 0, 255),
+                    (byte)Math.Clamp(sc.Blue * effectiveMixAmt + bc.Blue * a1, 0, 255),
+                    (byte)Math.Clamp(sc.Alpha * effectiveMixAmt + bc.Alpha * a1, 0, 255));
             }
 
-            _stampColors.Add(new SKColor(
-                (byte)Math.Clamp(mixedR, 0, 255),
-                (byte)Math.Clamp(mixedG, 0, 255),
-                (byte)Math.Clamp(mixedB, 0, 255)));
+            _stampColors.Add(dab);
 
-            // Reload toward base brush color
-            stroke.CarriedR = mixedR + (stroke.BaseColor.Red   - mixedR) * loadAmt;
-            stroke.CarriedG = mixedG + (stroke.BaseColor.Green - mixedG) * loadAmt;
-            stroke.CarriedB = mixedB + (stroke.BaseColor.Blue  - mixedB) * loadAmt;
+            if (effectiveReload > 0f)
+            {
+                float r1 = 1.0f - effectiveReload;
+                sc = stroke.SmudgeColor;
+                stroke.SmudgeColor = new SKColor(
+                    (byte)Math.Clamp(sc.Red * r1 + bc.Red * effectiveReload, 0, 255),
+                    (byte)Math.Clamp(sc.Green * r1 + bc.Green * effectiveReload, 0, 255),
+                    (byte)Math.Clamp(sc.Blue * r1 + bc.Blue * effectiveReload, 0, 255),
+                    (byte)Math.Clamp(sc.Alpha * r1 + bc.Alpha * effectiveReload, 0, 255));
+            }
         }
     }
 
-    private static (float R, float G, float B) SampleBlurred(DrawingLayer layer, int cx, int cy, float blur, ActiveStroke stroke)
+    private static (float R, float G, float B, float A) SampleBlurred(DrawingLayer layer, int cx, int cy, float blur, ActiveStroke stroke)
     {
-        // 3x3 gaussian-ish kernel sampling
-        float accR = 0, accG = 0, accB = 0, accW = 0;
+        float accR = 0, accG = 0, accB = 0, accA = 0;
+        float colorWeightSum = 0;   // accumulate alpha-weighted spatial mass for RGB
+        float spatialWeightSum = 0; // accumulate spatial mass for alpha
+
         for (int dy = -1; dy <= 1; dy++)
         {
             for (int dx = -1; dx <= 1; dx++)
@@ -393,33 +416,70 @@ public sealed class BrushEngine : IDisposable
                 int ly = y - layer.OffsetY;
 
                 layer.Pixels.GetPixel(lx, ly, out byte b, out byte g, out byte r, out byte a);
-                if (a == 0) continue;
 
                 float w = (dx == 0 && dy == 0) ? 4.0f : 1.0f;
-                accR += r * w; accG += g * w; accB += b * w; accW += w;
+
+                // Alpha is averaged over the full kernel (transparent
+                // pixels must contribute to avoid alpha-boundary inflation).
+                spatialWeightSum += w;
+                accA += a * w;
+
+                // RGB is accumulated with alpha pre-multiplication so that
+                // transparent pixels do not leak their hidden colour data.
+                if (a > 0)
+                {
+                    float alphaWeight = (a / 255f) * w;
+                    accR += r * alphaWeight;
+                    accG += g * alphaWeight;
+                    accB += b * alphaWeight;
+                    colorWeightSum += alphaWeight;
+                }
             }
         }
 
-        if (accW > 0)
+        float blurR = 0, blurG = 0, blurB = 0, blurA = 0;
+
+        if (spatialWeightSum > 0)
+            blurA = accA / spatialWeightSum;
+
+        int clx = cx - layer.OffsetX;
+        int cly = cy - layer.OffsetY;
+        layer.Pixels.GetPixel(clx, cly, out byte cb, out byte cg, out byte cr, out byte ca);
+
+        float centerR, centerG, centerB;
+        if (ca > 0)
         {
-            float centerR, centerG, centerB;
-            int clx = cx - layer.OffsetX;
-            int cly = cy - layer.OffsetY;
-            layer.Pixels.GetPixel(clx, cly, out byte b, out byte g, out byte r, out byte a);
-            if (a > 0) { centerR = r; centerG = g; centerB = b; }
-            else { centerR = stroke.CarriedR; centerG = stroke.CarriedG; centerB = stroke.CarriedB; }
-
-            float blurR = accR / accW;
-            float blurG = accG / accW;
-            float blurB = accB / accW;
-
-            return (
-                centerR + (blurR - centerR) * blur,
-                centerG + (blurG - centerG) * blur,
-                centerB + (blurB - centerB) * blur);
+            centerR = cr; centerG = cg; centerB = cb;
+        }
+        else
+        {
+            centerR = stroke.SmudgeColor.Alpha > 0 ? stroke.SmudgeColor.Red : stroke.BaseColor.Red;
+            centerG = stroke.SmudgeColor.Alpha > 0 ? stroke.SmudgeColor.Green : stroke.BaseColor.Green;
+            centerB = stroke.SmudgeColor.Alpha > 0 ? stroke.SmudgeColor.Blue : stroke.BaseColor.Blue;
         }
 
-        return (stroke.CarriedR, stroke.CarriedG, stroke.CarriedB);
+        if (colorWeightSum > 0)
+        {
+            blurR = accR / colorWeightSum;
+            blurG = accG / colorWeightSum;
+            blurB = accB / colorWeightSum;
+        }
+        else
+        {
+            // No opaque neighbours — keep the centre colour to avoid
+            // darkening the edge toward black when blurring alpha.
+            blurR = centerR;
+            blurG = centerG;
+            blurB = centerB;
+        }
+
+        // Interpolate both colour and alpha by the blur strength so they
+        // soften in lock-step.
+        return (
+            centerR + (blurR - centerR) * blur,
+            centerG + (blurG - centerG) * blur,
+            centerB + (blurB - centerB) * blur,
+            ca + (blurA - ca) * blur);
     }
 
     // Simplified RGB <-> LCh conversion for perceptual mixing
@@ -578,18 +638,13 @@ public sealed class BrushEngine : IDisposable
             Mask = brush.Tip.GenerateMask(BaseMaskSize, (float)brush.Hardness);
             _baseColor = ToSkColor(brush.Color);
             _currentColor = _baseColor;
-            // Carried color tracks the mixed ink across dabs (color mixing feature)
-            // For smudge (DensityOfPaint ≈ 0), initialize from canvas later
-            if (brush.DensityOfPaint < 0.999)
-            {
-                CarriedR = CarriedG = CarriedB = -1; // uninitialized marker
-            }
-            else
-            {
-                CarriedR = _baseColor.Red;
-                CarriedG = _baseColor.Green;
-                CarriedB = _baseColor.Blue;
-            }
+            // Initial smudge colour: DensityOfPaint determines how much brush
+            // colour the stroke starts with.  0 = empty (canvas-only smudge),
+            // 1 = fully loaded with brush colour.
+            var initDensity = (float)brush.DensityOfPaint;
+            SmudgeColor = new SKColor(
+                _baseColor.Red, _baseColor.Green, _baseColor.Blue,
+                (byte)(_baseColor.Alpha * initDensity));
             Paint = new SKPaint
             {
                 IsAntialias = true,
@@ -605,8 +660,8 @@ public sealed class BrushEngine : IDisposable
         public SKBitmap Mask { get; }
         public SKPaint Paint { get; }
         public SKMatrix Matrix;
-        // Carried ink color (mutable, evolves with color mixing across dabs)
-        public float CarriedR, CarriedG, CarriedB;
+        // Smudge colour sampled from canvas (mutable, evolves across dabs)
+        public SKColor SmudgeColor;
         public SKColor BaseColor => _baseColor;
 
         public bool Matches(BrushPreset brush)
@@ -623,7 +678,8 @@ public sealed class BrushEngine : IDisposable
 
         public void UpdateOpacity(float opacity)
         {
-            var alpha = (byte)Math.Clamp((int)(opacity * 255), 0, 255);
+            var colorAlphaRatio = _currentColor.Alpha / 255f;
+            var alpha = (byte)Math.Clamp((int)(opacity * 255 * colorAlphaRatio), 0, 255);
             Paint.Color = _brush.BlendMode == SKBlendMode.DstOut
                 ? new SKColor(255, 255, 255, alpha)
                 : new SKColor(_currentColor.Red, _currentColor.Green, _currentColor.Blue, alpha);

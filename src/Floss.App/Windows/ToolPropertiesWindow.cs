@@ -290,6 +290,7 @@ public sealed class ToolPropertiesWindow : Window
             DynSliderRow("Flow",    _flowSlider,    "%", () => OpenFlowDynamics(), "brush.flow"),
             BuildBlendModeRow(),
             SectionHeader("COLOR MIXING"),
+            BuildSmudgeModeRow(),
             PlainSliderRow("Mix",  _colorMixSlider,  "%", "brush.colorMix"),
             PlainSliderRow("Load", _colorLoadSlider, "%", "brush.colorLoad"),
             PlainSliderRow("Stretch", _colorStretchSlider, "%", "brush.colorStretch"),
@@ -1308,6 +1309,7 @@ public sealed class ToolPropertiesWindow : Window
         _tipDensitySlider.Value = Math.Clamp(preset.TipDensity, _tipDensitySlider.Minimum, _tipDensitySlider.Maximum);
         if (_blendModeCombo != null) _blendModeCombo.SelectedItem = preset.BlendMode;
         if (_mixingModeCombo != null) _mixingModeCombo.SelectedItem = preset.MixingMode;
+        UpdateSmudgeModeButtons(preset.SmudgeMode);
         if (_aaLevelCombo != null) _aaLevelCombo.SelectedIndex = HardnessToLevel(preset.Hardness);
 
         _stampLayers.Clear();
@@ -1466,6 +1468,7 @@ public sealed class ToolPropertiesWindow : Window
 
     // ── Mixing mode row ───────────────────────────────────────────────────────
     private ComboBox? _mixingModeCombo;
+    private Button? _blendBtn, _smearBtn, _smudgeBtn;
 
     private Control BuildMixingModeRow()
     {
@@ -1495,6 +1498,45 @@ public sealed class ToolPropertiesWindow : Window
         row.Children.Add(lbl);
         row.Children.Add(_mixingModeCombo);
         return row;
+    }
+
+    private Control BuildSmudgeModeRow()
+    {
+        _blendBtn  = MkToggleBtn("Blend",  _brushPreset.SmudgeMode == SmudgeMode.Blend,  () => SetSmudgeMode(SmudgeMode.Blend));
+        _smearBtn  = MkToggleBtn("Smear",  _brushPreset.SmudgeMode == SmudgeMode.Smear,  () => SetSmudgeMode(SmudgeMode.Smear));
+        _smudgeBtn = MkToggleBtn("Smudge", _brushPreset.SmudgeMode == SmudgeMode.Smudge, () => SetSmudgeMode(SmudgeMode.Smudge));
+        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        panel.Children.Add(_blendBtn);
+        panel.Children.Add(_smearBtn);
+        panel.Children.Add(_smudgeBtn);
+        return new DockPanel { LastChildFill = true, Margin = new Thickness(0, 2, 0, 2),
+            Children = {
+                new TextBlock { Text = "Mode", FontSize = 11, Foreground = new SolidColorBrush(Color.Parse(TextSecondary)), Width = 72, VerticalAlignment = VerticalAlignment.Center },
+                panel
+            }
+        };
+    }
+
+    private void SetSmudgeMode(SmudgeMode mode)
+    {
+        if (_syncing) return;
+        Commit(p => p with { SmudgeMode = mode });
+        UpdateSmudgeModeButtons(mode);
+    }
+
+    private void UpdateSmudgeModeButtons(SmudgeMode mode)
+    {
+        StylizeToggle(_blendBtn,  mode == SmudgeMode.Blend);
+        StylizeToggle(_smearBtn,  mode == SmudgeMode.Smear);
+        StylizeToggle(_smudgeBtn, mode == SmudgeMode.Smudge);
+    }
+
+    private static void StylizeToggle(Button? btn, bool active)
+    {
+        if (btn == null) return;
+        btn.Background = new SolidColorBrush(Color.Parse(active ? AccentSoft : Bg2));
+        btn.BorderBrush = new SolidColorBrush(Color.Parse(active ? Accent : Stroke));
+        btn.Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted));
     }
 
     // ── Antialiasing level row ────────────────────────────────────────────────

@@ -69,7 +69,10 @@ public partial class MainWindow
 
         if (isPaint || output == OutputProcessType.DirectDraw)
         {
-            props.Add(SliderProp("paint.opacity", "Opacity", true, _opacitySlider, "%"));
+            // Use brush.opacity for DirectDraw so the ID matches ToolPropertiesWindow's eye button.
+            // Other paint tools use paint.opacity (no ToolPropertiesWindow eye button).
+            var opacityId = output == OutputProcessType.DirectDraw ? "brush.opacity" : "paint.opacity";
+            props.Add(SliderProp(opacityId, "Opacity", true, _opacitySlider, "%"));
             props.Add(EnumProp("paint.blendMode", "Blend", false,
                 () => _canvas.Brush.BlendMode, v => UpdateCurrentBrush(p => p with { BlendMode = v })));
         }
@@ -83,7 +86,23 @@ public partial class MainWindow
                 SliderProp("brush.hardness", "Anti-aliasing", true, _hardnessSlider, "%"),
                 SliderProp("brush.spacing", "Spacing", false, _spacingSlider, "%"),
                 SliderProp("brush.smoothing", "Smoothing", true, _smoothingSlider, "%"),
-                SliderProp("brush.grain", "Grain", false, _grainSlider, "%")
+                SliderProp("brush.grain", "Grain", false, _grainSlider, "%"),
+                SliderProp("brush.colorMix", "Color Mix", false,
+                    () => _activePreset?.ColorMix ?? 0, v => UpdateCurrentBrush(p => p with { ColorMix = v }), 0, 1, "%"),
+                SliderProp("brush.colorLoad", "Color Load", false,
+                    () => _activePreset?.ColorLoad ?? 1, v => UpdateCurrentBrush(p => p with { ColorLoad = v }), 0, 1, "%"),
+                SliderProp("brush.colorStretch", "Stretch", false,
+                    () => _activePreset?.ColorStretch ?? 0.5, v => UpdateCurrentBrush(p => p with { ColorStretch = v }), 0, 1, "%"),
+                SliderProp("brush.blurAmount", "Blur Mix", false,
+                    () => _activePreset?.BlurAmount ?? 0, v => UpdateCurrentBrush(p => p with { BlurAmount = v }), 0, 1, "%"),
+                SliderProp("brush.amountOfPaint", "Amount", false,
+                    () => _activePreset?.AmountOfPaint ?? 1, v => UpdateCurrentBrush(p => p with { AmountOfPaint = v }), 0, 1, "%"),
+                SliderProp("brush.densityOfPaint", "Density", false,
+                    () => _activePreset?.DensityOfPaint ?? 1, v => UpdateCurrentBrush(p => p with { DensityOfPaint = v }), 0, 1, "%"),
+                SliderProp("brush.angle", "Angle", false,
+                    () => _activePreset?.Angle ?? 0, v => UpdateCurrentBrush(p => p with { Angle = v }), 0, 360, "°"),
+                SliderProp("brush.tipDensity", "Tip Density", false,
+                    () => _activePreset?.TipDensity ?? 1, v => UpdateCurrentBrush(p => p with { TipDensity = v }), 0, 1, "%"),
             ]);
         }
 
@@ -314,6 +333,7 @@ public partial class MainWindow
     }
 
     private bool _syncingToolPropertyPanel;
+    private List<ToolPropertyDescriptor>? _builtToolPropertyDescriptors;
 
     private void RefreshToolProperties()
     {
@@ -330,6 +350,7 @@ public partial class MainWindow
 
         if (needsRebuild)
         {
+            _builtToolPropertyDescriptors = props;
             _toolPropertyPanel.Children.Clear();
             foreach (var prop in props)
             {
@@ -339,10 +360,12 @@ public partial class MainWindow
         }
         else
         {
+            // Use the cached descriptors — they hold the slider instances created during BuildControl().
+            // Fresh descriptors from CurrentToolProperties() have slider == null so RefreshValue is a no-op.
             _syncingToolPropertyPanel = true;
             try
             {
-                foreach (var prop in props)
+                foreach (var prop in _builtToolPropertyDescriptors ?? props)
                     prop.RefreshValue?.Invoke();
             }
             finally

@@ -586,6 +586,8 @@ public sealed class DrawingCanvas : Control
     public void Redo() => _document.Redo();
     public void AddLayer() => _document.AddLayer();
     public void AddGroupLayer() => _document.AddGroupLayer();
+    public void AddBackgroundLayer() => _document.AddBackgroundLayer();
+    public void GroupSelectedLayers(IReadOnlyList<int> indices) => _document.GroupSelectedLayers(indices);
     public void DuplicateLayer() => _document.DuplicateActiveLayer();
     public void DeleteLayer()
     {

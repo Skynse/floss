@@ -114,6 +114,58 @@ public sealed class BrushLibrary
                 Grain = 0.03,
                 Tip = new ProceduralBrushTip(BrushTipShape.Circle)
             });
+
+        yield return BrushAsset.FromPreset(
+            new BrushPreset("Smudge", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 100)
+            {
+                SizeDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
+                OpacityDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
+                Flow = 0.58,
+                ColorMix = 0.65,
+                ColorLoad = 1.0,
+                ColorStretch = 0.79,
+                BlurAmount = 0.81,
+                MixingMode = MixingMode.Perceptual,
+                AmountOfPaint = 0.74,
+                DensityOfPaint = 1.0,
+                SmudgeMode = SmudgeMode.Smudge,
+                Smoothing = 0.45,
+                Tip = new ProceduralBrushTip(BrushTipShape.Circle)
+            });
+
+        yield return BrushAsset.FromPreset(
+            new BrushPreset("Blend", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 100)
+            {
+                SizeDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
+                OpacityDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
+                Flow = 0.58,
+                ColorMix = 0.65,
+                ColorLoad = 1.0,
+                ColorStretch = 0.2,
+                BlurAmount = 0.81,
+                AmountOfPaint = 0.0,
+                DensityOfPaint = 0.0,
+                SmudgeMode = SmudgeMode.Blend,
+                Smoothing = 0.45,
+                Tip = new ProceduralBrushTip(BrushTipShape.Circle)
+            });
+
+        yield return BrushAsset.FromPreset(
+            new BrushPreset("Smear", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 100)
+            {
+                SizeDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
+                OpacityDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
+                Flow = 0.58,
+                ColorMix = 0.65,
+                ColorLoad = 1.0,
+                ColorStretch = 0.6,
+                BlurAmount = 0.0,
+                AmountOfPaint = 0.5,
+                DensityOfPaint = 1.0,
+                SmudgeMode = SmudgeMode.Smear,
+                Smoothing = 0.45,
+                Tip = new ProceduralBrushTip(BrushTipShape.Circle)
+            });
     }
 
     private static string FileNameFor(string name)

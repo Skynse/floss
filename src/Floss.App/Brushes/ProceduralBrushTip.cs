@@ -51,7 +51,7 @@ public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circl
         canvas.Clear(SKColors.Transparent);
         var cx = size * 0.5f;
         var cy = size * 0.5f;
-        var maxR = size * 0.5f - 1;
+        var maxR = size * 0.5f - 0.5f;
         using var paint = new SKPaint { IsAntialias = true, Color = SKColors.White, Style = SKPaintStyle.Fill };
 
         if (Shape == BrushTipShape.SoftRound)

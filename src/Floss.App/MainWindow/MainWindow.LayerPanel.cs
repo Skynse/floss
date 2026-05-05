@@ -469,6 +469,9 @@ public partial class MainWindow
         var pasteItem = Item("_Paste", () => _canvas.PasteLayer(index));
         pasteItem.IsEnabled = _canvas.CanPasteLayer;
 
+        var multiSelected = _selectedLayerIndices.Count > 1;
+        var hasSelection = _selectedLayerIndices.Count >= 1;
+
         var items = new List<MenuItem>
         {
             Item("_New Layer Above", () => _canvas.AddLayer()),
@@ -484,6 +487,19 @@ public partial class MainWindow
             Item(layer.IsClipping ? "Disable Clipping Mask" : "Enable Clipping Mask", () => _canvas.ToggleLayerClipping(index))
         };
 
+        // "Create folder and insert layers" — works with any selection (1+ layers)
+        if (hasSelection)
+        {
+            items.Insert(2, Item("Create Folder and Insert Layers", () =>
+            {
+                var sorted = _selectedLayerIndices.OrderBy(i => i).ToList();
+                _canvas.GroupSelectedLayers(sorted);
+                _selectedLayerIndices.Clear();
+                _selectedLayerIndices.Add(_canvas.ActiveLayerIndex);
+                BuildLayerList();
+            }));
+        }
+
         if (layer.IsGroup)
         {
             items.Insert(4, Item(layer.IsOpen ? "Collapse Folder" : "Expand Folder", () => _canvas.ToggleLayerOpen(index)));
@@ -491,8 +507,7 @@ public partial class MainWindow
         }
         else
         {
-            var multiSelected = _selectedLayerIndices.Count > 1;
-            items.Insert(4, Item(
+            items.Insert(multiSelected ? 5 : 4, Item(
                 multiSelected ? $"Merge {_selectedLayerIndices.Count} Selected Layers" : "Merge Down",
                 () =>
                 {
@@ -595,15 +610,35 @@ public partial class MainWindow
     {
         if (sender is not Border row || row.Tag is not int index) return;
         var point = e.GetCurrentPoint(row);
-        if (!point.Properties.IsLeftButtonPressed) return;
+        if (!point.Properties.IsLeftButtonPressed && !point.Properties.IsRightButtonPressed) return;
         if (IsLayerRowInteractiveSource(e.Source)) return;
-        SelectLayerWithModifiers(index, e.KeyModifiers);
+
+        // Right-click on an already-selected layer keeps the multi-selection intact
+        // so the context menu can operate on all selected layers.
+        var isRightClick = point.Properties.IsRightButtonPressed;
+        var alreadySelected = _selectedLayerIndices.Contains(index);
+        if (isRightClick && alreadySelected)
+        {
+            // Just ensure this layer is the active one for the context menu,
+            // but don't clear the multi-selection.
+            _canvas.SelectLayer(index);
+        }
+        else
+        {
+            SelectLayerWithModifiers(index, e.KeyModifiers);
+        }
+
         if (e.ClickCount > 1) return;
         _layerDragSourceIndex = index;
 
+        // Include all selected layers in the drag payload so multi-select works
+        var draggedIndices = _selectedLayerIndices.Contains(index)
+            ? _selectedLayerIndices.OrderBy(i => i).ToList()
+            : new List<int> { index };
+
         var data = new DataTransfer();
         var item = new DataTransferItem();
-        item.SetText(index.ToString(CultureInfo.InvariantCulture));
+        item.SetText(string.Join(",", draggedIndices));
         data.Add(item);
         await DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
         _layerDragSourceIndex = -1;
@@ -736,9 +771,11 @@ public partial class MainWindow
             return;
         }
 
-        var sourceIndex = GetDraggedLayerIndex(e.DataTransfer);
+        var sourceIndices = GetDraggedLayerIndices(e.DataTransfer);
         var placement = GetLayerDropPlacement(row, targetIndex, e.GetPosition(row));
-        e.DragEffects = sourceIndex >= 0 && _canvas.CanMoveLayer(sourceIndex, targetIndex, placement)
+
+        // Allow if every selected layer can move to the target
+        e.DragEffects = sourceIndices.Count > 0 && sourceIndices.All(si => _canvas.CanMoveLayer(si, targetIndex, placement))
             ? DragDropEffects.Move
             : DragDropEffects.None;
         e.Handled = true;
@@ -747,17 +784,38 @@ public partial class MainWindow
     private void LayerRowDrop(object? sender, DragEventArgs e)
     {
         if (sender is not Border row || row.Tag is not int targetIndex) return;
-        var sourceIndex = GetDraggedLayerIndex(e.DataTransfer);
+        var sourceIndices = GetDraggedLayerIndices(e.DataTransfer);
         var placement = GetLayerDropPlacement(row, targetIndex, e.GetPosition(row));
-        if (sourceIndex >= 0)
-            _canvas.MoveLayer(sourceIndex, targetIndex, placement);
+        if (sourceIndices.Count == 0) return;
+
+        // Move all selected layers to the target position.
+        // We re-resolve layer indices after each move since the flat list shifts.
+        var layersToMove = sourceIndices.Select(si => _canvas.Layers[si]).ToList();
+        var targetLayer = _canvas.Layers[targetIndex];
+        foreach (var layer in layersToMove)
+        {
+            var currentSource = -1;
+            var currentTarget = -1;
+            for (var i = 0; i < _canvas.Layers.Count; i++)
+            {
+                if (_canvas.Layers[i] == layer) currentSource = i;
+                if (_canvas.Layers[i] == targetLayer) currentTarget = i;
+            }
+            if (currentSource < 0 || currentTarget < 0 || currentSource == currentTarget) continue;
+            _canvas.MoveLayer(currentSource, currentTarget, placement);
+        }
         e.Handled = true;
     }
 
-    private int GetDraggedLayerIndex(IDataTransfer data)
+    private List<int> GetDraggedLayerIndices(IDataTransfer data)
     {
         var raw = data.TryGetText();
-        return int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var index) ? index : -1;
+        if (string.IsNullOrEmpty(raw)) return [];
+        return raw.Split(',')
+            .Select(s => int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var idx) ? idx : -1)
+            .Where(i => i >= 0)
+            .OrderBy(i => i)
+            .ToList();
     }
 
     private LayerDropPlacement GetLayerDropPlacement(Border row, int targetIndex, Point position)

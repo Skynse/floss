@@ -7,6 +7,7 @@ namespace Floss.App.Brushes;
 
 public enum BrushKind { Ink, Pencil, Marker, Airbrush, Eraser }
 public enum MixingMode { Standard, Perceptual }
+public enum SmudgeMode { Blend, Smear, Smudge }
 
 public sealed record BrushPreset(
     string Name,
@@ -28,6 +29,8 @@ public sealed record BrushPreset(
     public double ColorStretch { get; init; } = 0.5;
     // Blur intensity applied during color mixing (0 = none, 1 = full)
     public double BlurAmount { get; init; } = 0.0;
+    // Color mixing sub-mode: Blend (soft edge-shift), Smear (pick-up with brush refill), Smudge (running color)
+    public SmudgeMode SmudgeMode { get; init; } = SmudgeMode.Blend;
     // Color mixing algorithm: Standard (RGB) or Perceptual (LCh)
     public MixingMode MixingMode { get; init; } = MixingMode.Standard;
     // How much paint is deposited per dab (0 = none, 1 = full)
@@ -116,6 +119,58 @@ public sealed record BrushPreset(
                 Opacity = CurveOption.Pressure(1.0f)
             },
             Flow = 0.25, Smoothing = 0.65, Grain = 0.04
+        },
+        new("Smudge", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 100)
+        {
+            Dynamics = new BrushDynamics
+            {
+                Size    = CurveOption.Pressure(1.0f),
+                Opacity = CurveOption.Pressure(1.0f)
+            },
+            Flow = 0.58,
+            ColorMix = 1.0,
+            ColorLoad = 1.0,
+            ColorStretch = 0.79,
+            BlurAmount = 0.81,
+            MixingMode = MixingMode.Perceptual,
+            AmountOfPaint = 0.74,
+            DensityOfPaint = 1.0,
+            SmudgeMode = SmudgeMode.Smudge,
+            Smoothing = 0.45
+        },
+        new("Blend", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 100)
+        {
+            Dynamics = new BrushDynamics
+            {
+                Size    = CurveOption.Pressure(1.0f),
+                Opacity = CurveOption.Pressure(1.0f)
+            },
+            Flow = 0.58,
+            ColorMix = 0.65,
+            ColorLoad = 1.0,
+            ColorStretch = 0.2,
+            BlurAmount = 0.81,
+            AmountOfPaint = 0.0,
+            DensityOfPaint = 0.0,
+            SmudgeMode = SmudgeMode.Blend,
+            Smoothing = 0.45
+        },
+        new("Smear", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 100)
+        {
+            Dynamics = new BrushDynamics
+            {
+                Size    = CurveOption.Pressure(1.0f),
+                Opacity = CurveOption.Pressure(1.0f)
+            },
+            Flow = 0.58,
+            ColorMix = 0.65,
+            ColorLoad = 1.0,
+            ColorStretch = 0.6,
+            BlurAmount = 0.0,
+            AmountOfPaint = 0.5,
+            DensityOfPaint = 1.0,
+            SmudgeMode = SmudgeMode.Smear,
+            Smoothing = 0.45
         },
     ];
 }
