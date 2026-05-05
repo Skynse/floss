@@ -51,8 +51,9 @@ public sealed class DrawingDocument
     public int CommittedStrokeCount { get; private set; }
     public bool CanUndo => _undo.Count > 0;
     public bool CanRedo => _redo.Count > 0;
-    public bool CanDeleteLayer => _layers.Count > 1;
+    public bool CanDeleteLayer => _layers.Count > 1 && !ActiveLayer.IsLocked && !ActiveLayer.IsGroup;
     public bool CanPaintActiveLayer => !ActiveLayer.IsLocked && ActiveLayer.IsVisible && !ActiveLayer.IsGroup;
+    public bool CanModifyActiveLayer => !ActiveLayer.IsLocked && !ActiveLayer.IsGroup;
     public bool IsDirty => _currentStateId != _savedStateId;
 
     // --- Save State Management ---
@@ -230,6 +231,7 @@ public sealed class DrawingDocument
 
     public void ClearActiveLayer(bool pushHistory = true)
     {
+        if (!CanPaintActiveLayer) return;
         if (pushHistory)
         {
             var layerIndex = ActiveLayerIndex;
@@ -308,7 +310,7 @@ public sealed class DrawingDocument
 
     public void DeleteActiveLayer()
     {
-        if (_layers.Count <= 1) return;
+        if (_layers.Count <= 1 || !CanModifyActiveLayer) return;
         var removed = _layers[ActiveLayerIndex];
         var parent = removed.Parent;
         var siblings = parent?.Children ?? RootLayers();
@@ -485,7 +487,7 @@ public sealed class DrawingDocument
     {
         if (indices.Count < 2) return;
         var sorted = indices.OrderBy(i => i).ToList();
-        if (sorted.Any(i => i < 0 || i >= _layers.Count)) return;
+        if (sorted.Any(i => i < 0 || i >= _layers.Count || _layers[i].IsLocked)) return;
 
         BeginDocumentMutation();
 
@@ -523,7 +525,7 @@ public sealed class DrawingDocument
     {
         if (groupIndex < 0 || groupIndex >= _layers.Count) return;
         var group = _layers[groupIndex];
-        if (!group.IsGroup || group.Children.Count == 0) return;
+        if (!group.IsGroup || group.Children.Count == 0 || group.IsLocked) return;
 
         BeginDocumentMutation();
 

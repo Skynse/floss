@@ -277,6 +277,7 @@ public sealed class DrawingCanvas : Control
 
     public void MergeDown(IReadOnlyList<int>? selectedIndices = null)
     {
+        if (!_document.CanModifyActiveLayer) return;
         var active = _document.ActiveLayerIndex;
         if (selectedIndices is { Count: > 1 })
         {
@@ -323,7 +324,7 @@ public sealed class DrawingCanvas : Control
     {
         if (!_ctx.Selection.HasSelection) return;
         var layer = _ctx.ActiveLayer;
-        if (layer == null || layer.IsGroup || layer.IsLocked) return;
+        if (layer == null || layer.IsGroup || layer.IsLocked || !layer.IsVisible) return;
 
         var bounds = _ctx.Selection.GetMaskBounds();
         if (bounds == null) return;
@@ -576,13 +577,21 @@ public sealed class DrawingCanvas : Control
 
     public bool IsTransformActive => _toolController.ActiveTool is TransformTool tt && tt.HasPendingOperation;
 
-    public void Clear(bool pushHistory = true) => _document.ClearActiveLayer(pushHistory);
+    public void Clear(bool pushHistory = true)
+    {
+        if (!_document.CanPaintActiveLayer) return;
+        _document.ClearActiveLayer(pushHistory);
+    }
     public void Undo() => _document.Undo();
     public void Redo() => _document.Redo();
     public void AddLayer() => _document.AddLayer();
     public void AddGroupLayer() => _document.AddGroupLayer();
     public void DuplicateLayer() => _document.DuplicateActiveLayer();
-    public void DeleteLayer() => _document.DeleteActiveLayer();
+    public void DeleteLayer()
+    {
+        if (!_document.CanModifyActiveLayer) return;
+        _document.DeleteActiveLayer();
+    }
     public void SelectLayer(int index) => _document.SelectLayer(index);
     public void ToggleLayerVisibility(int index) => _document.ToggleLayerVisibility(index);
     public void ToggleLayerLock(int index) => _document.ToggleLayerLock(index);

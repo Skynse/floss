@@ -444,7 +444,7 @@ public sealed class BrushEditorWindow : Window
         try
         {
             const float hardness = 0.85f;
-            using var mask = tip.GenerateMask(size - 6, hardness);
+            var mask = tip.GenerateMask(size - 6, hardness);
             var info = new SKImageInfo(size, size, SKColorType.Bgra8888, SKAlphaType.Premul);
             using var bmp = new SKBitmap(info);
             using var canvas = new SKCanvas(bmp);
