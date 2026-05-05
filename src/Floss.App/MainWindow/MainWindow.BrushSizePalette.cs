@@ -11,7 +11,7 @@ namespace Floss.App;
 
 public partial class MainWindow
 {
-    private const double SizePaletteItemSize = 32;
+    private const double SizePaletteItemSize = 27;
     private static readonly double[] SizePaletteValues =
     [
         0.7, 1, 1.5, 2, 2.5, 3, 4,
@@ -29,7 +29,7 @@ public partial class MainWindow
 
         var grid = new Grid
         {
-            Margin = new Thickness(4, 4, 4, 4)
+            Margin = new Thickness(3)
         };
         for (int c = 0; c < columns; c++)
             grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
@@ -57,7 +57,7 @@ public partial class MainWindow
         {
             Width = SizePaletteItemSize,
             Height = SizePaletteItemSize,
-            Padding = new Thickness(2),
+            Padding = new Thickness(1),
             Background = new SolidColorBrush(Colors.Transparent),
             BorderThickness = new Thickness(0),
             HorizontalContentAlignment = HorizontalAlignment.Center,

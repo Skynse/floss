@@ -15,22 +15,22 @@ public partial class MainWindow
     {
         _colorPicker = new HsvColorPicker
         {
-            Height = 168,
-            Margin = new Thickness(12, 4, 12, 10)
+            Height = 150,
+            Margin = new Thickness(8, 3, 8, 6)
         };
         _colorPicker.HsvChanged += OnPickerHsvChanged;
 
         _hexInput = new TextBox
         {
             Width = 112,
-            Height = 26,
-            FontSize = 12,
+            Height = 22,
+            FontSize = 11,
             FontFamily = new FontFamily("Consolas, Courier New, monospace"),
             Background = new SolidColorBrush(Color.Parse(Bg0)),
             Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
             BorderBrush = new SolidColorBrush(Color.Parse("#3a4250")),
             BorderThickness = new Thickness(1),
-            Padding = new Thickness(6, 0),
+            Padding = new Thickness(5, 0),
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
             CaretBrush = new SolidColorBrush(Color.Parse(TextPrimary)),
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left
@@ -40,7 +40,7 @@ public partial class MainWindow
 
         _swatchPanel = new WrapPanel
         {
-            Margin = new Thickness(12, 2, 12, 6),
+            Margin = new Thickness(8, 1, 8, 4),
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
             ItemWidth = SwatchSize + 2,
             ItemHeight = SwatchSize + 2
@@ -51,7 +51,7 @@ public partial class MainWindow
             Children =
             {
                 _colorPicker,
-                new Border { Margin = new Thickness(12, 0, 12, 6), Child = _hexInput },
+                new Border { Margin = new Thickness(8, 0, 8, 4), Child = _hexInput },
                 _swatchPanel
             }
         };
@@ -97,7 +97,7 @@ public partial class MainWindow
 
     // ── Swatch panel ──────────────────────────────────────────────────────────
     private const int SwatchColumns = 10;
-    private const int SwatchSize = 20;
+    private const int SwatchSize = 18;
 
     private void BuildSwatches()
     {

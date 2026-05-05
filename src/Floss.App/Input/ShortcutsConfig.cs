@@ -127,6 +127,7 @@ public sealed class ShortcutsConfig
     public KeyBinding LayerMoveUp { get; set; } = new(Key.Up, KeyModifiers.Control);
     public KeyBinding LayerMoveDown { get; set; } = new(Key.Down, KeyModifiers.Control);
     public KeyBinding LayerMerge { get; set; } = new(Key.E, KeyModifiers.Control);
+    public KeyBinding LayerToggleColor { get; set; } = new(Key.B, KeyModifiers.Control);
 
     // ── Pen gestures — hold key + drag pen ───────────────────────────────────
     // Pan  : held key + any pen drag → translate canvas

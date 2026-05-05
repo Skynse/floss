@@ -24,14 +24,14 @@ public partial class MainWindow
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
 
-        var header = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 4) };
+        var header = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 2) };
         header.Children.Add(_toolPropertyTitle);
 
-        _toolPropertyPanel = new StackPanel { Spacing = 3 };
+        _toolPropertyPanel = new StackPanel { Spacing = 2 };
 
         var root = new StackPanel
         {
-            Margin = new Thickness(10, 6, 10, 10),
+            Margin = new Thickness(8, 4, 8, 6),
             Children = { header, _toolPropertyPanel }
         };
         RefreshToolProperties();
@@ -191,8 +191,14 @@ public partial class MainWindow
                 break;
 
             case OutputProcessType.Eyedropper:
-                // Eyedropper is a passive tool — no configurable properties.
-                // Still show a label so the panel isn't empty.
+                props.AddRange([
+                    EnumProp("eyedropper.sampleMode", "Sample", true,
+                        () => preset.EyedropperSampleMode, v => UpdateActiveToolPreset(p => p.EyedropperSampleMode = v)),
+                    BoolProp("eyedropper.excludeLocked", "Exclude Locked", false,
+                        () => preset.EyedropperExcludeLockedLayers, v => UpdateActiveToolPreset(p => p.EyedropperExcludeLockedLayers = v)),
+                    BoolProp("eyedropper.excludeReference", "Exclude Reference", false,
+                        () => preset.EyedropperExcludeReferenceLayers, v => UpdateActiveToolPreset(p => p.EyedropperExcludeReferenceLayers = v))
+                ]);
                 break;
 
             case OutputProcessType.MoveLayer:
@@ -204,6 +210,17 @@ public partial class MainWindow
     }
 
     private static IReadOnlyList<ToolPropertyDescriptor> CurrentLegacyToolProperties() => [];
+
+    private void UpdateActiveToolPreset(Action<ToolPreset> update)
+    {
+        var preset = _activeToolGroup?.ActivePreset;
+        if (preset == null) return;
+
+        update(preset);
+        if (preset.OutputProcess != OutputProcessType.DirectDraw)
+            _canvas.SetActiveTool(ToolForPreset(preset), preset);
+        App.ToolGroups.Save();
+    }
 
     private ToolPropertyDescriptor SliderProp(string id, string label, bool visible, Slider source, string fmt)
         => SliderProp(id, label, visible, () => source.Value, v => source.Value = v, source.Minimum, source.Maximum, fmt);
@@ -247,8 +264,8 @@ public partial class MainWindow
                 {
                     ItemsSource = Enum.GetValues<T>(),
                     SelectedItem = get(),
-                    FontSize = 11,
-                    MinHeight = 28,
+                    FontSize = 10,
+                    MinHeight = 22,
                     HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch
                 };
                 combo.SelectionChanged += (_, _) =>
@@ -274,7 +291,7 @@ public partial class MainWindow
                 {
                     IsChecked = get(),
                     Content = label,
-                    FontSize = 11,
+                    FontSize = 10,
                     Foreground = new SolidColorBrush(Color.Parse(TextSecondary))
                 };
                 check.PropertyChanged += (_, e) =>
@@ -295,10 +312,10 @@ public partial class MainWindow
     {
         var valueLabel = new TextBlock
         {
-            FontSize = 10,
+            FontSize = 9,
             Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            Width = 36,
+            Width = 32,
             TextAlignment = TextAlignment.Right,
             FontFamily = new FontFamily("Consolas, Courier New, monospace")
         };
@@ -312,9 +329,9 @@ public partial class MainWindow
         var lbl = new TextBlock
         {
             Text = label,
-            FontSize = 11,
+            FontSize = 10,
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            Width = 72,
+            Width = 66,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
         var row = new DockPanel { LastChildFill = true };
@@ -331,9 +348,9 @@ public partial class MainWindow
         var lbl = new TextBlock
         {
             Text = label,
-            FontSize = 11,
+            FontSize = 10,
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            Width = 88,
+            Width = 80,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
         var row = new DockPanel { LastChildFill = true };
@@ -399,8 +416,8 @@ public partial class MainWindow
     private Control BuildDockerPropertyRow(ToolPropertyDescriptor prop)
     {
         var row = new DockPanel { LastChildFill = true };
-        var eye = SmBtn("◉", "Shown in tool property docker");
-        eye.Width = 24;
+        var eye = SmIconBtn(Icons.Eye, "Shown in tool property docker");
+        eye.Width = 22;
         eye.Click += (_, _) =>
         {
             SetToolPropertyVisible(prop, false);

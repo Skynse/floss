@@ -68,7 +68,12 @@ public sealed class ToolFactory
                 Antialiasing = preset.Antialiasing,
                 GradientType = preset.GradientType
             },
-            OutputProcessType.Eyedropper => new EyedropperOutput(),
+            OutputProcessType.Eyedropper => new EyedropperOutput
+            {
+                SampleMode = preset.EyedropperSampleMode,
+                ExcludeLockedLayers = preset.EyedropperExcludeLockedLayers,
+                ExcludeReferenceLayers = preset.EyedropperExcludeReferenceLayers
+            },
             OutputProcessType.MoveLayer => new MoveLayerOutput(),
             OutputProcessType.MagicWand => new MagicWandOutput
             {

@@ -16,7 +16,7 @@ public static class PsdExporter
         var writer = new PsdBinaryWriter(stream);
         var width = document.Width;
         var height = document.Height;
-        var layers = document.Layers.Reverse().ToList();
+        var layers = BuildPsdLayerStack(document.Layers, width, height);
 
         WriteHeader(writer, width, height);
 
@@ -65,7 +65,29 @@ public static class PsdExporter
         w.WriteUInt16(1);          // HeightUnit
     }
 
-    private static void WriteLayerAndMaskInfo(PsdBinaryWriter w, List<DrawingLayer> layers, int width, int height)
+    private static List<ExportLayer> BuildPsdLayerStack(IReadOnlyList<DrawingLayer> layers, int width, int height)
+    {
+        var result = new List<ExportLayer>();
+        foreach (var root in layers.Where(layer => layer.Parent == null))
+            AppendPsdLayer(result, root, width, height);
+        return result;
+    }
+
+    private static void AppendPsdLayer(List<ExportLayer> result, DrawingLayer layer, int width, int height)
+    {
+        if (layer.IsGroup)
+        {
+            result.Add(ExportLayer.GroupDivider(layer, ExportBounds(layer, width, height)));
+            foreach (var child in layer.Children)
+                AppendPsdLayer(result, child, width, height);
+            result.Add(ExportLayer.GroupHeader(layer, ExportBounds(layer, width, height)));
+            return;
+        }
+
+        result.Add(ExportLayer.PaintLayer(layer, ExportBounds(layer, width, height)));
+    }
+
+    private static void WriteLayerAndMaskInfo(PsdBinaryWriter w, List<ExportLayer> layers, int width, int height)
     {
         var layerInfoStream = new MemoryStream();
         var layerW = new PsdBinaryWriter(layerInfoStream);
@@ -89,15 +111,25 @@ public static class PsdExporter
         w.WriteUInt32(0); // Global layer mask info: empty
     }
 
-    private static long[] WriteLayerRecord(PsdBinaryWriter w, DrawingLayer layer)
+    private static PixelRegion ExportBounds(DrawingLayer layer, int documentWidth, int documentHeight)
     {
-        var layerWidth = layer.Width;
-        var layerHeight = layer.Height;
+        var layerBounds = new PixelRegion(
+            layer.OffsetX + layer.MinX,
+            layer.OffsetY + layer.MinY,
+            layer.Width,
+            layer.Height);
+        return layerBounds.ClipTo(documentWidth, documentHeight);
+    }
 
-        w.WriteInt32(layer.OffsetY);
-        w.WriteInt32(layer.OffsetX);
-        w.WriteInt32(layer.OffsetY + layerHeight);
-        w.WriteInt32(layer.OffsetX + layerWidth);
+    private static long[] WriteLayerRecord(PsdBinaryWriter w, ExportLayer exportLayer)
+    {
+        var layer = exportLayer.Layer;
+        var bounds = exportLayer.Bounds;
+
+        w.WriteInt32(bounds.Y);
+        w.WriteInt32(bounds.X);
+        w.WriteInt32(bounds.Bottom);
+        w.WriteInt32(bounds.Right);
 
         w.WriteUInt16(4); // 4 channels
 
@@ -116,15 +148,20 @@ public static class PsdExporter
         w.WriteByte((byte)(layer.IsVisible ? 0 : 2)); // flags: bit 1 = hidden
         w.WriteByte(0); // filler
 
-        // Extra data: just the layer name
+        // Extra data: layer mask data length, layer blending ranges length, then the layer name.
+        // The length prefixes are mandatory even when the sections are empty.
         var extra = new MemoryStream();
         var extraW = new PsdBinaryWriter(extra);
+        extraW.WriteUInt32(0); // Layer mask / adjustment data length
+        extraW.WriteUInt32(0); // Layer blending ranges length
         var nameBytes = Encoding.ASCII.GetBytes(layer.Name);
         var nameLen = Math.Min(nameBytes.Length, 255);
         extraW.WriteByte((byte)nameLen);
         extraW.WriteBytes(nameBytes.AsSpan(0, nameLen).ToArray());
         var padded = (1 + nameLen + 3) & ~3;
         extraW.WriteZeros(padded - (1 + nameLen));
+        if (exportLayer.SectionType is { } sectionType)
+            WriteSectionDivider(extraW, sectionType, BlendModeKey(layer.BlendMode));
 
         w.WriteUInt32((uint)extra.Length);
         w.WriteStream(extra);
@@ -132,14 +169,14 @@ public static class PsdExporter
         return positions;
     }
 
-    private static void WriteLayerChannels(PsdBinaryWriter w, DrawingLayer layer, long[] lengthPositions)
+    private static void WriteLayerChannels(PsdBinaryWriter w, ExportLayer exportLayer, long[] lengthPositions)
     {
-        var width = layer.Width;
-        var height = layer.Height;
+        var width = Math.Max(0, exportLayer.Bounds.Width);
+        var height = Math.Max(0, exportLayer.Bounds.Height);
 
         for (int ch = -1; ch < 3; ch++)
         {
-            var data = CompressChannelRle(layer, width, height, ch);
+            var data = CompressChannelRle(exportLayer, width, height, ch);
 
             var savedPos = w.Position;
             w.Position = lengthPositions[ch + 1];
@@ -150,8 +187,10 @@ public static class PsdExporter
         }
     }
 
-    private static byte[] CompressChannelRle(DrawingLayer layer, int width, int height, int channel)
+    private static byte[] CompressChannelRle(ExportLayer exportLayer, int width, int height, int channel)
     {
+        var layer = exportLayer.Layer;
+        var bounds = exportLayer.Bounds;
         var result = new MemoryStream();
         var w = new PsdBinaryWriter(result);
 
@@ -169,7 +208,9 @@ public static class PsdExporter
             var values = new byte[width];
             for (int x = 0; x < width; x++)
             {
-                layer.Pixels.GetPixel(x, y, out var b, out var g, out var r, out var a);
+                var localX = bounds.X + x - layer.OffsetX;
+                var localY = bounds.Y + y - layer.OffsetY;
+                layer.Pixels.GetPixel(localX, localY, out var b, out var g, out var r, out var a);
                 values[x] = channel == -1
                     ? a
                     : channel switch
@@ -228,16 +269,12 @@ public static class PsdExporter
         }
     }
 
-    private static unsafe void WriteCompositeImageData(PsdBinaryWriter w, DrawingDocument document, int width, int height)
+    private static void WriteCompositeImageData(PsdBinaryWriter w, DrawingDocument document, int width, int height)
     {
         var compositor = new LayerCompositor();
-        compositor.Composite(document.Layers, width, height);
+        var pixels = compositor.CompositeToBgra(document.Layers, width, height);
 
         w.WriteUInt16(0); // Raw (uncompressed)
-
-        using var frame = compositor.Bitmap.Lock();
-        var pixels = (byte*)frame.Address;
-        var stride = frame.RowBytes;
 
         // PSD composite: R, G, B, A channels planar. Header declares four channels.
         int[] channelBytes = [2, 1, 0, 3]; // BGRA → R, G, B, A
@@ -245,11 +282,21 @@ public static class PsdExporter
         {
             for (int y = 0; y < height; y++)
             {
-                var row = pixels + y * stride;
+                var rowOffset = y * width * 4;
                 for (int x = 0; x < width; x++)
-                    w.WriteByte(row[x * 4 + ch]);
+                    w.WriteByte(pixels[rowOffset + x * 4 + ch]);
             }
         }
+    }
+
+    private static void WriteSectionDivider(PsdBinaryWriter w, int sectionType, string blendMode)
+    {
+        w.WriteAscii("8BIM");
+        w.WriteAscii("lsct");
+        w.WriteUInt32(12);
+        w.WriteUInt32((uint)sectionType);
+        w.WriteAscii("8BIM");
+        w.WriteAscii(blendMode);
     }
 
     private static string BlendModeKey(string blendMode) => blendMode switch
@@ -284,6 +331,13 @@ public static class PsdExporter
         "PassThrough" => "pass",
         _ => "norm"
     };
+
+    private sealed record ExportLayer(DrawingLayer Layer, PixelRegion Bounds, int? SectionType)
+    {
+        public static ExportLayer PaintLayer(DrawingLayer layer, PixelRegion bounds) => new(layer, bounds, null);
+        public static ExportLayer GroupDivider(DrawingLayer layer, PixelRegion bounds) => new(layer, bounds, 3);
+        public static ExportLayer GroupHeader(DrawingLayer layer, PixelRegion bounds) => new(layer, bounds, layer.IsOpen ? 1 : 2);
+    }
 }
 
 public class PsdBinaryWriter

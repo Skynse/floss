@@ -77,6 +77,7 @@ public static class FlossFileFormat
             layer.OffsetY = info.OffsetY;
             layer.IsOpen = info.IsOpen;
             layer.IsClipping = info.IsClipping;
+            layer.IsReference = info.IsReference;
             layer.IndentLevel = Math.Max(0, info.IndentLevel);
             if (info.LayerColor is { } lc)
                 layer.LayerColor = Avalonia.Media.Color.FromArgb(255, (byte)lc.R, (byte)lc.G, (byte)lc.B);
@@ -126,9 +127,10 @@ public static class FlossFileFormat
                 Height = layer.Height,
                 IsOpen = layer.IsOpen,
                 IsClipping = layer.IsClipping,
+                IsReference = layer.IsReference,
                 IndentLevel = layer.IndentLevel,
                 ParentIndex = layer.Parent != null && layerIndexes.TryGetValue(layer.Parent, out var pIdx) ? pIdx : null,
-                PixelPath = !layer.IsGroup ? $"layer_{i:D3}.raw" : null,
+                PixelPath = !layer.IsGroup ? $"layers/layer{i}.bgra" : null,
                 LayerColor = layer.LayerColor is { } lc ? new SerializableColor(lc.R, lc.G, lc.B) : null,
                 ExpressionColor = layer.ExpressionColor
             });
@@ -235,6 +237,7 @@ public static class FlossFileFormat
         [JsonPropertyName("height")] public int Height { get; set; }
         [JsonPropertyName("isOpen")] public bool IsOpen { get; set; } = true;
         [JsonPropertyName("isClipping")] public bool IsClipping { get; set; }
+        [JsonPropertyName("isReference")] public bool IsReference { get; set; }
         [JsonPropertyName("indentLevel")] public int IndentLevel { get; set; }
         [JsonPropertyName("parentIndex")] public int? ParentIndex { get; set; }
         [JsonPropertyName("pixelPath")] public string? PixelPath { get; set; }

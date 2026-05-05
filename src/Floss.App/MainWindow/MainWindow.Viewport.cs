@@ -208,8 +208,8 @@ public partial class MainWindow
                 else
                 {
                     col.Width = _rootColumnWidths[i];
-                    col.MinWidth = i == 1 ? 320 : (i == 3 ? 200 : 0);
-                    col.MaxWidth = i == 3 ? 700 : double.PositiveInfinity;
+                    col.MinWidth = i == 1 ? 320 : (i == 3 ? 500 : 0);
+                    col.MaxWidth = i == 3 ? 900 : double.PositiveInfinity;
                 }
             }
         }
@@ -315,6 +315,7 @@ public partial class MainWindow
         else if (sc.LayerMoveUp.Matches(key, mods)) { _canvas.MoveActiveLayer(1); e.Handled = true; }
         else if (sc.LayerMoveDown.Matches(key, mods)) { _canvas.MoveActiveLayer(-1); e.Handled = true; }
         else if (sc.LayerMerge.Matches(key, mods)) { _canvas.MergeDown(_selectedLayerIndices.Count > 1 ? _selectedLayerIndices.OrderBy(x => x).ToList() : null); e.Handled = true; }
+        else if (sc.LayerToggleColor.Matches(key, mods)) { ToggleActiveLayerColor(); e.Handled = true; }
         else if (sc.ZoomReset.Matches(key, mods)) { ResetView(); e.Handled = true; }
         else if (sc.ZoomFit.Matches(key, mods)) { SyncCanvasFrameToDocument(fitToViewport: true); e.Handled = true; }
         else if (sc.ZoomIn.Matches(key, mods) || sc.ZoomInAlt.Matches(key, mods))
@@ -347,7 +348,7 @@ public partial class MainWindow
         else if (EffectiveAltInvocation().Matches(key, mods))
         {
             if (_canvas.AlternateTool == null)
-                _canvas.SetAlternateTool(new CompositeTool(new ClickInputProcess(), new EyedropperOutput()));
+                _canvas.SetAlternateTool(CreateAlternateEyedropperTool());
             e.Handled = true;
         }
         else if (key == Key.Escape)
@@ -457,7 +458,8 @@ public partial class MainWindow
         }
 
         var altInvocation = EffectiveAltInvocation();
-        if (altInvocation.Key != Key.None && e.Key == altInvocation.Key)
+        if ((altInvocation.Key != Key.None && e.Key == altInvocation.Key) ||
+            (altInvocation.IsModifierOnly && (mods & altInvocation.Modifiers) != altInvocation.Modifiers))
         {
             _canvas.SetAlternateTool(null);
             e.Handled = true;
@@ -488,6 +490,45 @@ public partial class MainWindow
             GestureMode.BrushSize => CursorNone,
             _ => CursorArrow
         };
+    }
+
+    private void ResetTransientInputState()
+    {
+        if (_activeGesture != GestureMode.None || _canvas.AlternateTool != null || _altToolBeforeGesture != null)
+        {
+            _activeGesture = GestureMode.None;
+            _gestureKey = Key.None;
+            _gestureModifiers = KeyModifiers.None;
+            _isPanning = false;
+            _canvas.PaintInputSuspended = false;
+            _canvas.UnlockCursorPreview();
+            _canvas.SetAlternateTool(null);
+            _altToolBeforeGesture = null;
+            Cursor = Cursor.Default;
+        }
+    }
+
+    private ITool CreateAlternateEyedropperTool()
+    {
+        var preset = CurrentEyedropperPreset();
+        var output = new EyedropperOutput();
+        if (preset != null)
+        {
+            output.SampleMode = preset.EyedropperSampleMode;
+            output.ExcludeLockedLayers = preset.EyedropperExcludeLockedLayers;
+            output.ExcludeReferenceLayers = preset.EyedropperExcludeReferenceLayers;
+        }
+        return new CompositeTool(new ClickInputProcess(), output);
+    }
+
+    private ToolPreset? CurrentEyedropperPreset()
+    {
+        if (_activeToolGroup?.ActivePreset?.OutputProcess == OutputProcessType.Eyedropper)
+            return _activeToolGroup.ActivePreset;
+
+        return App.ToolGroups.Groups
+            .SelectMany(g => g.Presets)
+            .FirstOrDefault(p => p.OutputProcess == OutputProcessType.Eyedropper || p.Engine == ToolPresetEngine.Eyedropper);
     }
 
     private Floss.App.Input.KeyBinding EffectiveAltInvocation()

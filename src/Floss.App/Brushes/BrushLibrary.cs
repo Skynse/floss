@@ -159,9 +159,9 @@ public sealed class BrushLibrary
                 ColorMix = 0.65,
                 ColorLoad = 1.0,
                 ColorStretch = 0.6,
-                BlurAmount = 0.0,
-                AmountOfPaint = 0.5,
-                DensityOfPaint = 1.0,
+                BlurAmount = 0.5,
+                AmountOfPaint = 0.0,
+                DensityOfPaint = 0.2,
                 SmudgeMode = SmudgeMode.Smear,
                 Smoothing = 0.45,
                 Tip = new ProceduralBrushTip(BrushTipShape.Circle)

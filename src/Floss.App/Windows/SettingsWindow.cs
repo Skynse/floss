@@ -256,6 +256,7 @@ public sealed class SettingsWindow : Window
             ("Move up",                 () => sc.LayerMoveUp,            v => sc.LayerMoveUp = v),
             ("Move down",               () => sc.LayerMoveDown,          v => sc.LayerMoveDown = v),
             ("Merge / Flatten",         () => sc.LayerMerge,             v => sc.LayerMerge = v),
+            ("Toggle layer color",       () => sc.LayerToggleColor,       v => sc.LayerToggleColor = v),
             ("Open settings",           () => sc.OpenSettings,           v => sc.OpenSettings = v),
             ("Open brush editor",       () => sc.OpenBrushEditor,        v => sc.OpenBrushEditor = v),
             ("Toggle canvas only",      () => sc.ToggleCanvasOnly,       v => sc.ToggleCanvasOnly = v),
@@ -328,6 +329,7 @@ public sealed class SettingsWindow : Window
         content.Children.Add(BindingRow("Move up", sc.LayerMoveUp, v => sc.LayerMoveUp = v));
         content.Children.Add(BindingRow("Move down", sc.LayerMoveDown, v => sc.LayerMoveDown = v));
         content.Children.Add(BindingRow("Merge / Flatten", sc.LayerMerge, v => sc.LayerMerge = v));
+        content.Children.Add(BindingRow("Toggle layer color", sc.LayerToggleColor, v => sc.LayerToggleColor = v));
 
         content.Children.Add(GroupHeader("Misc"));
         content.Children.Add(BindingRow("Open settings", sc.OpenSettings, v => sc.OpenSettings = v));

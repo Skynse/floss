@@ -92,7 +92,8 @@ public sealed class DrawingDocument
                 IsVisible = layer.IsVisible, IsLocked = layer.IsLocked, Opacity = layer.Opacity,
                 BlendMode = layer.BlendMode, OffsetX = layer.OffsetX, OffsetY = layer.OffsetY,
                 IsGroup = layer.IsGroup, IsOpen = layer.IsOpen, IsClipping = layer.IsClipping,
-                IndentLevel = layer.IndentLevel, IsAlphaLocked = layer.IsAlphaLocked
+                IndentLevel = layer.IndentLevel, IsAlphaLocked = layer.IsAlphaLocked,
+                IsReference = layer.IsReference
             };
             if (!layer.IsGroup)
             {
@@ -436,6 +437,17 @@ public sealed class DrawingDocument
         NotifyLayerMetadataChanged(null, index);
     }
 
+    public void ToggleLayerReference(int index)
+    {
+        if (index < 0 || index >= _layers.Count) return;
+        var oldValue = _layers[index].IsReference;
+        var newValue = !oldValue;
+        var dirtyRegion = LayerDirtyRegion(index);
+        PushHistoryState(new LayerPropertyHistoryState<bool>(index, oldValue, newValue, (layer, value) => layer.IsReference = value, false, dirtyRegion));
+        _layers[index].IsReference = newValue;
+        NotifyLayerMetadataChanged(null, index);
+    }
+
     public void ToggleLayerClipping(int index)
     {
         if (index < 0 || index >= _layers.Count) return;
@@ -763,6 +775,7 @@ public sealed class DrawingDocument
             IsVisible = source.IsVisible,
             IsLocked = source.IsLocked,
             IsAlphaLocked = source.IsAlphaLocked,
+            IsReference = source.IsReference,
             Opacity = source.Opacity,
             BlendMode = source.BlendMode,
             OffsetX = source.OffsetX,
@@ -784,11 +797,11 @@ public sealed class DrawingDocument
         return a.AsSpan().SequenceEqual(b);
     }
 
-    private LayerSnapshot CaptureLayerSnapshot(DrawingLayer layer) => new(layer.Name, layer.IsVisible, layer.IsLocked, layer.Opacity, layer.BlendMode, layer.OffsetX, layer.OffsetY, layer.IsGroup, layer.IsOpen, layer.IsClipping, layer.IndentLevel, layer.Parent is null ? -1 : _layers.IndexOf(layer.Parent), layer.Width, layer.Height, layer.CaptureTiles());
+    private LayerSnapshot CaptureLayerSnapshot(DrawingLayer layer) => new(layer.Name, layer.IsVisible, layer.IsLocked, layer.IsAlphaLocked, layer.IsReference, layer.Opacity, layer.BlendMode, layer.OffsetX, layer.OffsetY, layer.IsGroup, layer.IsOpen, layer.IsClipping, layer.IndentLevel, layer.Parent is null ? -1 : _layers.IndexOf(layer.Parent), layer.Width, layer.Height, layer.CaptureTiles());
 
     private DrawingLayer CreateLayerFromSnapshot(LayerSnapshot snap)
     {
-        var layer = new DrawingLayer(snap.Name, snap.BitmapWidth, snap.BitmapHeight) { IsVisible = snap.IsVisible, IsLocked = snap.IsLocked, Opacity = snap.Opacity, BlendMode = snap.BlendMode, OffsetX = snap.OffsetX, OffsetY = snap.OffsetY, IsGroup = snap.IsGroup, IsOpen = snap.IsOpen, IsClipping = snap.IsClipping, IndentLevel = snap.IndentLevel };
+        var layer = new DrawingLayer(snap.Name, snap.BitmapWidth, snap.BitmapHeight) { IsVisible = snap.IsVisible, IsLocked = snap.IsLocked, IsAlphaLocked = snap.IsAlphaLocked, IsReference = snap.IsReference, Opacity = snap.Opacity, BlendMode = snap.BlendMode, OffsetX = snap.OffsetX, OffsetY = snap.OffsetY, IsGroup = snap.IsGroup, IsOpen = snap.IsOpen, IsClipping = snap.IsClipping, IndentLevel = snap.IndentLevel };
         layer.RestoreTiles(snap.Tiles);
         return layer;
     }
@@ -816,7 +829,7 @@ public sealed class DrawingDocument
 
     // --- Records and State Classes ---
     private sealed record DocumentSnapshot(int Width, int Height, int ActiveLayerIndex, LayerSnapshot[] Layers);
-    private sealed record LayerSnapshot(string Name, bool IsVisible, bool IsLocked, double Opacity, string BlendMode, int OffsetX, int OffsetY, bool IsGroup, bool IsOpen, bool IsClipping, int IndentLevel, int ParentIndex, int BitmapWidth, int BitmapHeight, Dictionary<(int X, int Y), byte[]> Tiles);
+    private sealed record LayerSnapshot(string Name, bool IsVisible, bool IsLocked, bool IsAlphaLocked, bool IsReference, double Opacity, string BlendMode, int OffsetX, int OffsetY, bool IsGroup, bool IsOpen, bool IsClipping, int IndentLevel, int ParentIndex, int BitmapWidth, int BitmapHeight, Dictionary<(int X, int Y), byte[]> Tiles);
 
     private interface IHistoryState { IHistoryState CaptureRedo(DrawingDocument document); void Restore(DrawingDocument document); }
 

@@ -151,7 +151,6 @@ public partial class MainWindow : Window
     private Slider _grainSlider = null!;
     private Slider _flowSlider = null!;
     private Slider _layerOpacitySlider = null!;
-    private Button _layerColorBtn = null!;
     private TextBlock _activeBrushLabel = null!;
     private ComboBox _blendModeComboBox = null!;
     private TextBox _layerNameBox = null!;
@@ -255,6 +254,8 @@ public partial class MainWindow : Window
         BuildLayerList();
         UpdateStatus();
         Closing += (_, _) => SaveToConfig();
+        Deactivated += (_, _) => ResetTransientInputState();
+        LostFocus += (_, _) => ResetTransientInputState();
         Loaded += async (_, _) => await NewDocumentAsync();
         _canvas.DirtyStateChanged += (_, _) =>
         {
@@ -341,7 +342,7 @@ public partial class MainWindow : Window
         root.ColumnDefinitions.Add(new ColumnDefinition(48, GridUnitType.Pixel));
         root.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 320 });
         root.ColumnDefinitions.Add(new ColumnDefinition(5, GridUnitType.Pixel));
-        root.ColumnDefinitions.Add(new ColumnDefinition(320, GridUnitType.Pixel) { MinWidth = 200, MaxWidth = 700 });
+        root.ColumnDefinitions.Add(new ColumnDefinition(520, GridUnitType.Pixel) { MinWidth = 500, MaxWidth = 900 });
         _rootGrid = root;
         _rootColumnWidths = [.. root.ColumnDefinitions.Select(c => c.Width)];
 
@@ -665,32 +666,47 @@ public partial class MainWindow : Window
     // ── Right panel ───────────────────────────────────────────────────────────
     private Border BuildRightPanel()
     {
-        var leftStack = new StackPanel { HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
-        leftStack.Children.Add(PanelSection("Brush", BuildBrushSection()));
-        leftStack.Children.Add(PanelSection("Tool Property", BuildToolPropertySection()));
-        leftStack.Children.Add(PanelSection("Layer Properties", BuildLayerPropertiesSection()));
-        leftStack.Children.Add(PanelSection("Layers", BuildLayersSection()));
+        var leftDock = new Grid { ClipToBounds = true };
+        leftDock.RowDefinitions.Add(new RowDefinition(new GridLength(1.7, GridUnitType.Star)) { MinHeight = 220 });
+        leftDock.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        leftDock.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        leftDock.RowDefinitions.Add(new RowDefinition(new GridLength(1, GridUnitType.Star)) { MinHeight = 160 });
 
-        var leftScroll = new ScrollViewer
+        var brush = PanelSection("Brush", BuildBrushSection());
+        var toolProperties = PanelSection("Tool Property", BuildToolPropertySection());
+        var layerProperties = PanelSection("Layer Properties", BuildLayerPropertiesSection());
+        var layers = PanelSection("Layers", BuildLayersSection());
+
+        Grid.SetRow(brush, 0);
+        Grid.SetRow(toolProperties, 1);
+        Grid.SetRow(layerProperties, 2);
+        Grid.SetRow(layers, 3);
+        leftDock.Children.Add(brush);
+        leftDock.Children.Add(toolProperties);
+        leftDock.Children.Add(layerProperties);
+        leftDock.Children.Add(layers);
+
+        var rightDock = new Grid { ClipToBounds = true };
+        rightDock.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        rightDock.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        rightDock.RowDefinitions.Add(new RowDefinition(new GridLength(1, GridUnitType.Star)) { MinHeight = 160 });
+
+        var color = PanelSection("Color", BuildColorSection());
+        var colorSliders = PanelSection("Color Slider", BuildColorSlidersSection());
+        var brushSize = PanelSection("Brush Size", new ScrollViewer
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             ClipToBounds = true,
-            Content = leftStack
-        };
+            Content = BuildBrushSizePalette()
+        });
 
-        var rightStack = new StackPanel { HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
-        rightStack.Children.Add(PanelSection("Color", BuildColorSection()));
-        rightStack.Children.Add(PanelSection("Color Slider", BuildColorSlidersSection()));
-        rightStack.Children.Add(PanelSection("Brush Size", BuildBrushSizePalette()));
-
-        var rightScroll = new ScrollViewer
-        {
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            ClipToBounds = true,
-            Content = rightStack
-        };
+        Grid.SetRow(color, 0);
+        Grid.SetRow(colorSliders, 1);
+        Grid.SetRow(brushSize, 2);
+        rightDock.Children.Add(color);
+        rightDock.Children.Add(colorSliders);
+        rightDock.Children.Add(brushSize);
 
         var splitter = new GridSplitter
         {
@@ -705,12 +721,12 @@ public partial class MainWindow : Window
         grid.ColumnDefinitions.Add(new ColumnDefinition(5, GridUnitType.Pixel));
         grid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
 
-        Grid.SetColumn(leftScroll, 0);
+        Grid.SetColumn(leftDock, 0);
         Grid.SetColumn(splitter, 1);
-        Grid.SetColumn(rightScroll, 2);
-        grid.Children.Add(leftScroll);
+        Grid.SetColumn(rightDock, 2);
+        grid.Children.Add(leftDock);
         grid.Children.Add(splitter);
-        grid.Children.Add(rightScroll);
+        grid.Children.Add(rightDock);
 
         return new Border
         {
@@ -733,7 +749,7 @@ public partial class MainWindow : Window
             FontSize = 8,
             Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 5, 0)
+            Margin = new Thickness(0, 0, 4, 0)
         };
         var titleText = new TextBlock
         {
@@ -750,7 +766,7 @@ public partial class MainWindow : Window
         };
         var header = new Border
         {
-            Padding = new Thickness(10, 6, 10, 5),
+            Padding = new Thickness(8, 4, 8, 3),
             Cursor = new Cursor(StandardCursorType.Hand),
             Child = headerRow
         };
@@ -764,7 +780,13 @@ public partial class MainWindow : Window
             arrow.Text = nowCollapsed ? "▸" : "▾";
         };
 
-        var outer = new StackPanel { Spacing = 0 };
+        content.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch;
+        var outer = new Grid
+        {
+            RowDefinitions = new RowDefinitions("Auto,*")
+        };
+        Grid.SetRow(header, 0);
+        Grid.SetRow(content, 1);
         outer.Children.Add(header);
         outer.Children.Add(content);
         return new Border
@@ -789,8 +811,8 @@ public partial class MainWindow : Window
         var btn = new Button
         {
             Content = glyph,
-            Width = 28,
-            Height = 26,
+            Width = 24,
+            Height = 22,
             Padding = new Thickness(0),
             FontSize = 11,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
@@ -804,6 +826,13 @@ public partial class MainWindow : Window
         return btn;
     }
 
+    private static Button SmIconBtn(string icon, string tip)
+    {
+        var btn = SmBtn("", tip);
+        btn.Content = Icons.Make(icon, 13, new SolidColorBrush(Color.Parse(TextSecondary)));
+        return btn;
+    }
+
     private static Slider MkSlider(double min, double max, double value, string tip)
     {
         var s = new Slider
@@ -811,8 +840,8 @@ public partial class MainWindow : Window
             Minimum = min,
             Maximum = max,
             Value = value,
-            Height = 28,
-            MinHeight = 24,
+            Height = 22,
+            MinHeight = 20,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
         ToolTip.SetTip(s, tip);

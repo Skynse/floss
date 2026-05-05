@@ -102,7 +102,7 @@ public partial class MainWindow
 
         var addBtn = new Button
         {
-            Content = "+",
+            Content = Icons.Make(Icons.Plus, 16, new SolidColorBrush(Color.Parse(TextSecondary))),
             Width = 36,
             Height = 28,
             FontSize = 16,

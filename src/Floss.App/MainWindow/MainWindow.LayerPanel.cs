@@ -46,10 +46,6 @@ public partial class MainWindow
     // Icon Colors
     private static readonly IBrush IconOff = new SolidColorBrush(Color.Parse("#404550"));
     private static readonly IBrush IconVisOn = new SolidColorBrush(Color.Parse("#6a9fd8"));
-    private static readonly IBrush IconLockOn = new SolidColorBrush(Color.Parse("#c89050"));
-    private static readonly IBrush IconAlphaOn = new SolidColorBrush(Color.Parse("#6ab8c8"));
-    private static readonly IBrush IconClipOn = new SolidColorBrush(Color.Parse("#a87ad8"));
-
     private static readonly IBrush GroupIconFg = new SolidColorBrush(Color.Parse("#6a7a96"));
     private static readonly IBrush IconStandard = new SolidColorBrush(Color.Parse("#30343d"));
 
@@ -69,13 +65,13 @@ public partial class MainWindow
         {
             PlaceholderText = "Layer name",
             FontSize = 11,
-            Height = 26,
+            Height = 22,
             Background = new SolidColorBrush(Color.Parse(Bg0)),
             Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
             CaretBrush = new SolidColorBrush(Color.Parse(TextPrimary)),
             BorderBrush = new SolidColorBrush(Color.Parse("#3a4250")),
             BorderThickness = new Thickness(1),
-            Padding = new Thickness(6, 0),
+            Padding = new Thickness(5, 0),
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
 
@@ -95,7 +91,7 @@ public partial class MainWindow
             ItemsSource = BlendModes,
             SelectedItem = "Normal",
             FontSize = 11,
-            Padding = new Thickness(6, 0),
+            Padding = new Thickness(5, 0),
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
@@ -114,40 +110,20 @@ public partial class MainWindow
             _canvas.SetActiveLayerOpacity(_layerOpacitySlider.Value);
         };
 
-        // Layer Color tint button
-        _layerColorBtn = new Button
-        {
-            Width = 24, Height = 24,
-            Margin = new Thickness(2, 0),
-            Background = Avalonia.Media.Brushes.Transparent,
-            BorderBrush = new SolidColorBrush(Color.Parse("#3a4050")),
-            BorderThickness = new Thickness(1)
-        };
-        ToolTip.SetTip(_layerColorBtn, "Layer Color");
-        _layerColorBtn.Click += (_, _) =>
-        {
-            if (_syncingLayerUi) return;
-            var current = _canvas.Document.ActiveLayer.LayerColor;
-            var next = current.HasValue ? (Avalonia.Media.Color?)null : _canvas.PaintColor;
-            _canvas.SetActiveLayerColor(next);
-        };
-
-        // Blend + Opacity + LayerColor row
-        var blendOpRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,28,6,*") };
+        // Blend + Opacity row
+        var blendOpRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,4,*") };
         Grid.SetColumn(_blendModeComboBox, 0);
-        Grid.SetColumn(_layerColorBtn, 1);
-        Grid.SetColumn(_layerOpacitySlider, 3);
+        Grid.SetColumn(_layerOpacitySlider, 2);
         blendOpRow.Children.Add(_blendModeComboBox);
-        blendOpRow.Children.Add(_layerColorBtn);
         blendOpRow.Children.Add(_layerOpacitySlider);
 
         // Action buttons
-        var addBtn = SmBtn("+", "Add layer  (Ctrl+Shift+N)");
-        var folderBtn = SmBtn("▣", "Add layer folder");
-        var dupBtn = SmBtn("⎘", "Duplicate  (Ctrl+J)");
-        _deleteLayerButton = SmBtn("✕", "Delete  (Ctrl+Delete)");
-        _moveLayerUpButton = SmBtn("↑", "Move up  (Ctrl+Up)");
-        _moveLayerDownButton = SmBtn("↓", "Move down  (Ctrl+Down)");
+        var addBtn = SmIconBtn(Icons.LayerPlus, "Add layer  (Ctrl+Shift+N)");
+        var folderBtn = SmIconBtn(Icons.FolderOpenOutline, "Add layer folder");
+        var dupBtn = SmIconBtn(Icons.ContentCopy, "Duplicate  (Ctrl+J)");
+        _deleteLayerButton = SmIconBtn(Icons.DeleteOutline, "Delete  (Ctrl+Delete)");
+        _moveLayerUpButton = SmIconBtn(Icons.ArrowUp, "Move up  (Ctrl+Up)");
+        _moveLayerDownButton = SmIconBtn(Icons.ArrowDown, "Move down  (Ctrl+Down)");
 
         addBtn.Click += (_, _) => _canvas.AddLayer();
         folderBtn.Click += (_, _) => _canvas.AddGroupLayer();
@@ -204,7 +180,7 @@ public partial class MainWindow
         // 2. Constrained Grid for Virtualization
         var mainGrid = new Grid
         {
-            Margin = new Thickness(8, 4, 8, 8),
+            Margin = new Thickness(6, 3, 6, 6),
 
             RowDefinitions = new RowDefinitions("Auto, Auto, Auto, *")
         };
@@ -214,8 +190,8 @@ public partial class MainWindow
         Grid.SetRow(ctrlRow, 2);
         Grid.SetRow(_layerListBox, 3);
 
-        blendOpRow.Margin = new Thickness(0, 4, 0, 0);
-        ctrlRow.Margin = new Thickness(0, 4, 0, 4);
+        blendOpRow.Margin = new Thickness(0, 3, 0, 0);
+        ctrlRow.Margin = new Thickness(0, 3, 0, 3);
 
         mainGrid.Children.Add(_layerNameBox);
         mainGrid.Children.Add(blendOpRow);
@@ -250,9 +226,6 @@ public partial class MainWindow
             _syncingLayerUi = true;
             _layerOpacitySlider.Value = active.Opacity;
             _blendModeComboBox.SelectedItem = active.BlendMode;
-            _layerColorBtn.Background = active.LayerColor is { } lc
-                ? new SolidColorBrush(new Color(255, lc.R, lc.G, lc.B))
-                : Avalonia.Media.Brushes.Transparent;
             _layerNameBox.Text = active.Name;
             _syncingLayerUi = false;
             RefreshLayerProperties();
@@ -316,8 +289,8 @@ public partial class MainWindow
             BorderBrush = isActive ? RowBorderActive : isSelected ? RowBorderSelected : RowBorderDefault,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(3, 2),
-            Margin = new Thickness(layer.IndentLevel * 12, 0, 0, 0),
+            Padding = new Thickness(2, 1),
+            Margin = new Thickness(layer.IndentLevel * 10, 0, 0, 0),
             Tag = i,
             ContextMenu = BuildLayerContextMenu(i, layer)
         };
@@ -329,8 +302,8 @@ public partial class MainWindow
         row.AddHandler(DragDrop.DragOverEvent, LayerRowDragOver);
         row.AddHandler(DragDrop.DropEvent, LayerRowDrop);
 
-        // cols: disclosure | vis | thumb | lock | alphalock | clip | name | blend | opacity
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("16,16,30,16,16,16,*,26,28") };
+        // cols: disclosure | visibility | thumbnail | name/status
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("12,16,28,*") };
 
         var disclosureBtn = LayerDisclosureBtn(layer, i);
 
@@ -350,100 +323,72 @@ public partial class MainWindow
             }
         };
 
-        var lockBtn = LayerIconBtn(
-            layer.IsLocked ? Icons.LockOutline : Icons.LockOpenOutline,
-            "Toggle lock",
-            layer.IsLocked ? IconLockOn : IconOff, i);
-        lockBtn.Click += (_, _) => _canvas.ToggleLayerLock((int)lockBtn.Tag!);
-
-        var alphaLockBtn = LayerIconBtn(
-            Icons.AlphaLock,
-            "Toggle alpha lock",
-            layer.IsAlphaLocked ? IconAlphaOn : IconOff, i);
-        alphaLockBtn.Click += (_, _) => _canvas.ToggleLayerAlphaLock((int)alphaLockBtn.Tag!);
-
-        var clipBtn = LayerIconBtn(
-            Icons.ClipToBelow,
-            "Toggle clipping mask",
-            layer.IsClipping ? IconClipOn : IconOff, i);
-        clipBtn.Click += (_, _) => _canvas.ToggleLayerClipping((int)clipBtn.Tag!);
-
         var nameText = new TextBlock
         {
             Text = layer.Name,
             Foreground = fgBrush,
-            Padding = new Thickness(2, 0),
             FontSize = 11,
-
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            //TextTrimming = TextTrimming.CharacterEllipsis,
+            TextTrimming = TextTrimming.CharacterEllipsis,
             IsHitTestVisible = false
+        };
+        var statusText = new TextBlock
+        {
+            Text = LayerStatusText(layer),
+            Foreground = dimBrush,
+            FontSize = 9,
+            FontFamily = MonospaceFont,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            IsHitTestVisible = false
+        };
+        var nameStack = new StackPanel
+        {
+            Spacing = 0,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Children = { nameText, statusText }
         };
         var nameHost = new ContentControl
         {
-            Content = nameText,
+            Content = nameStack,
             Tag = i,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
             ClipToBounds = true
         };
 
-        var blendText = new TextBlock
-        {
-            Text = BlendAbbr(layer.BlendMode),
-            Foreground = dimBrush,
-            FontSize = 9,
-            FontFamily = MonospaceFont,
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
-            Margin = new Thickness(0, 0, 2, 0),
-            IsHitTestVisible = false
-        };
-
-        var opacityText = new TextBlock
-        {
-            Text = $"{Math.Round(layer.Opacity * 100):0}%",
-            Foreground = dimBrush,
-            FontSize = 9,
-            FontFamily = MonospaceFont,
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
-            Margin = new Thickness(0, 0, 2, 0),
-            IsHitTestVisible = false
-        };
-
         Grid.SetColumn(disclosureBtn, 0);
         Grid.SetColumn(visBtn, 1);
         Grid.SetColumn(preview, 2);
-        Grid.SetColumn(lockBtn, 3);
-        Grid.SetColumn(alphaLockBtn, 4);
-        Grid.SetColumn(clipBtn, 5);
-        Grid.SetColumn(nameHost, 6);
-        Grid.SetColumn(blendText, 7);
-        Grid.SetColumn(opacityText, 8);
+        Grid.SetColumn(nameHost, 3);
         grid.Children.Add(disclosureBtn);
         grid.Children.Add(visBtn);
         grid.Children.Add(preview);
-        grid.Children.Add(lockBtn);
-        grid.Children.Add(alphaLockBtn);
-        grid.Children.Add(clipBtn);
         grid.Children.Add(nameHost);
-        grid.Children.Add(blendText);
-        grid.Children.Add(opacityText);
         row.Child = grid;
-        return (row, new LayerRowRefs(row, disclosureBtn, visBtn, lockBtn, alphaLockBtn, clipBtn, nameHost, blendText, opacityText, previewImage));
+        return (row, new LayerRowRefs(row, disclosureBtn, visBtn, nameHost, previewImage));
+    }
+
+    private static string LayerStatusText(DrawingLayer layer)
+    {
+        var flags = new List<string>(4);
+        if (layer.IsLocked) flags.Add("Lock");
+        if (layer.IsAlphaLocked) flags.Add("Alpha");
+        if (layer.IsReference) flags.Add("Ref");
+        if (layer.IsClipping) flags.Add("Clip");
+        var suffix = flags.Count == 0 ? "" : "  " + string.Join(" ", flags);
+        return $"{Math.Round(layer.Opacity * 100):0}%  {layer.BlendMode}{suffix}";
     }
 
     private Button LayerDisclosureBtn(DrawingLayer layer, int index)
     {
         var btn = new Button
         {
-            Content = layer.IsGroup ? (layer.IsOpen ? "▾" : "▸") : "",
+            Content = layer.IsGroup ? Icons.Make(layer.IsOpen ? Icons.ArrowDown : Icons.ChevronRight, 10, layer.IsGroup ? GroupIconFg : IconStandard) : null,
             Background = Avalonia.Media.Brushes.Transparent,
             BorderBrush = Avalonia.Media.Brushes.Transparent,
             Foreground = layer.IsGroup ? GroupIconFg : IconStandard,
             Padding = new Thickness(0),
-            FontSize = 10,
             Tag = index,
             IsHitTestVisible = layer.IsGroup
         };
@@ -484,6 +429,7 @@ public partial class MainWindow
             Item(layer.IsVisible ? "Hide Layer" : "Show Layer", () => _canvas.ToggleLayerVisibility(index)),
             Item(layer.IsLocked ? "Unlock Layer" : "Lock Layer", () => _canvas.ToggleLayerLock(index)),
             Item(layer.IsAlphaLocked ? "Disable Alpha Lock" : "Enable Alpha Lock", () => _canvas.ToggleLayerAlphaLock(index)),
+            Item(layer.IsReference ? "Disable Reference Layer" : "Enable Reference Layer", () => _canvas.ToggleLayerReference(index)),
             Item(layer.IsClipping ? "Disable Clipping Mask" : "Enable Clipping Mask", () => _canvas.ToggleLayerClipping(index))
         };
 
@@ -613,20 +559,23 @@ public partial class MainWindow
         if (!point.Properties.IsLeftButtonPressed && !point.Properties.IsRightButtonPressed) return;
         if (IsLayerRowInteractiveSource(e.Source)) return;
 
-        // Right-click on an already-selected layer keeps the multi-selection intact
-        // so the context menu can operate on all selected layers.
         var isRightClick = point.Properties.IsRightButtonPressed;
         var alreadySelected = _selectedLayerIndices.Contains(index);
-        if (isRightClick && alreadySelected)
+        if (isRightClick)
         {
-            // Just ensure this layer is the active one for the context menu,
-            // but don't clear the multi-selection.
+            // Right-click: update selection without clearing it, then let the
+            // context menu open. Do NOT start a drag.
+            if (!alreadySelected)
+            {
+                _selectedLayerIndices.Add(index);
+                BuildLayerList();
+            }
             _canvas.SelectLayer(index);
+            e.Handled = true;
+            return;
         }
-        else
-        {
-            SelectLayerWithModifiers(index, e.KeyModifiers);
-        }
+
+        SelectLayerWithModifiers(index, e.KeyModifiers);
 
         if (e.ClickCount > 1) return;
         _layerDragSourceIndex = index;
@@ -860,33 +809,37 @@ public partial class MainWindow
         SetLayerIconBtnIcon(refs.VisibilityButton,
             layer.IsVisible ? Icons.Eye : Icons.EyeOff,
             layer.IsVisible ? IconVisOn : IconOff);
-        SetLayerIconBtnIcon(refs.LockButton,
-            layer.IsLocked ? Icons.LockOutline : Icons.LockOpenOutline,
-            layer.IsLocked ? IconLockOn : IconOff);
-        SetLayerIconBtnIcon(refs.AlphaLockButton,
-            Icons.AlphaLock,
-            layer.IsAlphaLocked ? IconAlphaOn : IconOff);
-        SetLayerIconBtnIcon(refs.ClipButton,
-            Icons.ClipToBelow,
-            layer.IsClipping ? IconClipOn : IconOff);
 
-        refs.DisclosureButton.Content = layer.IsGroup ? (layer.IsOpen ? "▾" : "▸") : "";
+        refs.DisclosureButton.Content = layer.IsGroup ? Icons.Make(layer.IsOpen ? Icons.ArrowDown : Icons.ChevronRight, 10, GroupIconFg) : null;
         refs.DisclosureButton.IsHitTestVisible = layer.IsGroup;
         if (_renamingLayerIndex != index)
         {
-            refs.NameHost.Content = new TextBlock
+            refs.NameHost.Content = new StackPanel
             {
-                Text = layer.Name,
-                Foreground = fgBrush,
-                Padding = new Thickness(4, 1),
-                FontSize = 11,
-                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+                Spacing = 0,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = layer.Name,
+                        Foreground = fgBrush,
+                        FontSize = 11,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+                    },
+                    new TextBlock
+                    {
+                        Text = LayerStatusText(layer),
+                        Foreground = dimBrush,
+                        FontSize = 9,
+                        FontFamily = MonospaceFont,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+                    }
+                }
             };
         }
-        refs.BlendText.Text = BlendAbbr(layer.BlendMode);
-        refs.BlendText.Foreground = dimBrush;
-        refs.OpacityText.Text = $"{Math.Round(layer.Opacity * 100):0}%";
-        refs.OpacityText.Foreground = dimBrush;
 
         if (isActive && !_syncingLayerUi)
         {
@@ -902,9 +855,9 @@ public partial class MainWindow
     {
         var frame = new Border
         {
-            Width = 26,
-            Height = 26,
-            Margin = new Thickness(2, 0, 2, 0),
+            Width = 22,
+            Height = 22,
+            Margin = new Thickness(1, 0, 1, 0),
             Background = PreviewFrameBg,
             BorderBrush = PreviewFrameBorder,
             BorderThickness = new Thickness(1),
@@ -914,14 +867,7 @@ public partial class MainWindow
 
         if (layer.IsGroup)
         {
-            frame.Child = new TextBlock
-            {
-                Text = layer.IsOpen ? "▾" : "▸",
-                Foreground = GroupIconFg,
-                FontSize = 11,
-                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
-            };
+            frame.Child = Icons.Make(layer.IsOpen ? Icons.ArrowDown : Icons.ChevronRight, 12, GroupIconFg);
             return (frame, null);
         }
 
@@ -941,11 +887,6 @@ public partial class MainWindow
         Border Row,
         Button DisclosureButton,
         Button VisibilityButton,
-        Button LockButton,
-        Button AlphaLockButton,
-        Button ClipButton,
         ContentControl NameHost,
-        TextBlock BlendText,
-        TextBlock OpacityText,
         Image? PreviewImage);
 }

@@ -27,11 +27,11 @@ public partial class MainWindow
 
     private StackPanel BuildColorSlidersSection()
     {
-        _colorSlidersPanel = new StackPanel { Spacing = 6, Margin = new Thickness(10, 6, 10, 10) };
+        _colorSlidersPanel = new StackPanel { Spacing = 4, Margin = new Thickness(8, 4, 8, 6) };
 
         _colorSpaceTabs = new TabControl
         {
-            FontSize = 11,
+            FontSize = 10,
             Padding = new Thickness(0),
             Margin = new Thickness(0, 0, 0, 4)
         };
@@ -59,7 +59,7 @@ public partial class MainWindow
         // Color Preview
         _colorPreview = new Border
         {
-            Height = 28,
+            Height = 24,
             BorderThickness = new Thickness(1),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             CornerRadius = new CornerRadius(2),
@@ -87,7 +87,7 @@ public partial class MainWindow
         {
             Minimum = min,
             Maximum = max,
-            Height = 24,
+            Height = 20,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
     }

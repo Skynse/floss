@@ -12,6 +12,7 @@ public partial class MainWindow
 {
     private StackPanel _layerPropertiesPanel = null!;
     private CheckBox _layerColorCheck = null!;
+    private CheckBox _referenceLayerCheck = null!;
     private Button _layerColorSquare = null!;
     private ComboBox _expressionColorCombo = null!;
 
@@ -21,10 +22,10 @@ public partial class MainWindow
 
     private StackPanel BuildLayerPropertiesSection()
     {
-        _layerPropertiesPanel = new StackPanel { Spacing = 6, Margin = new Thickness(10, 6, 10, 10) };
+        _layerPropertiesPanel = new StackPanel { Spacing = 4, Margin = new Thickness(8, 4, 8, 6) };
 
         // ── Layer Color ──
-        var layerColorRow = new DockPanel { LastChildFill = false, Margin = new Thickness(0, 0, 0, 4) };
+        var layerColorRow = new DockPanel { LastChildFill = false, Margin = new Thickness(0, 0, 0, 2) };
 
         _layerColorCheck = new CheckBox
         {
@@ -44,8 +45,8 @@ public partial class MainWindow
 
         _layerColorSquare = new Button
         {
-            Width = 32,
-            Height = 18,
+            Width = 24,
+            Height = 16,
             Padding = new Thickness(0),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(2),
@@ -58,6 +59,24 @@ public partial class MainWindow
         layerColorRow.Children.Add(_layerColorCheck);
         layerColorRow.Children.Add(_layerColorSquare);
 
+        _referenceLayerCheck = new CheckBox
+        {
+            Content = "Reference layer",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        _referenceLayerCheck.PropertyChanged += (_, e) =>
+        {
+            if (_syncingToolPropertyPanel || e.Property != ToggleButton.IsCheckedProperty) return;
+            var canvas = _canvas;
+            if (canvas == null) return;
+            var doc = canvas.Document;
+            if (doc.ActiveLayerIndex < 0) return;
+            if (doc.ActiveLayer.IsReference != (_referenceLayerCheck.IsChecked == true))
+                canvas.ToggleLayerReference(doc.ActiveLayerIndex);
+        };
+
         // ── Expression Color ──
         var exprRow = new DockPanel { LastChildFill = true };
         var exprLabel = new TextBlock
@@ -65,7 +84,7 @@ public partial class MainWindow
             Text = "Expression color",
             FontSize = 11,
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            Width = 88,
+            Width = 80,
             VerticalAlignment = VerticalAlignment.Center
         };
         _expressionColorCombo = new ComboBox
@@ -73,7 +92,7 @@ public partial class MainWindow
             ItemsSource = Enum.GetValues<ExpressionColorMode>(),
             SelectedItem = ExpressionColorMode.Color,
             FontSize = 11,
-            MinHeight = 28,
+            MinHeight = 22,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
         _expressionColorCombo.SelectionChanged += (_, _) =>
@@ -86,6 +105,7 @@ public partial class MainWindow
         exprRow.Children.Add(_expressionColorCombo);
 
         _layerPropertiesPanel.Children.Add(layerColorRow);
+        _layerPropertiesPanel.Children.Add(_referenceLayerCheck);
         _layerPropertiesPanel.Children.Add(exprRow);
 
         RefreshLayerProperties();
@@ -117,6 +137,7 @@ public partial class MainWindow
             }
 
             _expressionColorCombo.SelectedItem = layer.ExpressionColor;
+            _referenceLayerCheck.IsChecked = layer.IsReference;
         }
         finally
         {
@@ -147,6 +168,14 @@ public partial class MainWindow
         }
 
         RefreshLayerProperties();
+    }
+
+    private void ToggleActiveLayerColor()
+    {
+        var layer = _canvas?.Document?.ActiveLayer;
+        if (layer == null) return;
+
+        UpdateLayerColorState(!layer.LayerColor.HasValue);
     }
 
     private void SetExpressionColor(ExpressionColorMode mode)

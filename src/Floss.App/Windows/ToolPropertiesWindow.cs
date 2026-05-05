@@ -146,7 +146,8 @@ public sealed class ToolPropertiesWindow : Window
             OutputProcessType.Stroke => ["Stroke Settings", "Paint Settings"],
             OutputProcessType.MagicWand => ["Magic Wand Settings"],
             OutputProcessType.Liquify => ["Liquify Settings"],
-            OutputProcessType.Eyedropper or OutputProcessType.MoveLayer => ["Tool Info"],
+            OutputProcessType.Eyedropper => ["Eyedropper Settings"],
+            OutputProcessType.MoveLayer => ["Tool Info"],
             _ => ["Properties"]
         };
     }
@@ -668,7 +669,16 @@ public sealed class ToolPropertiesWindow : Window
                     _toolPreset.LiquifyMode, v => CommitTool(p => p.LiquifyMode = v), toolPropId: "liquify.mode"));
                 break;
 
-            case OutputProcessType.Eyedropper or OutputProcessType.MoveLayer when cat == "Tool Info":
+            case OutputProcessType.Eyedropper when cat == "Eyedropper Settings":
+                panel.Children.Add(BuildGenericComboRow<EyedropperSampleMode>("Sample",
+                    _toolPreset.EyedropperSampleMode, v => CommitTool(p => p.EyedropperSampleMode = v), toolPropId: "eyedropper.sampleMode"));
+                panel.Children.Add(BuildGenericToggleRow("Exclude locked layers",
+                    _toolPreset.EyedropperExcludeLockedLayers, v => CommitTool(p => p.EyedropperExcludeLockedLayers = v), toolPropId: "eyedropper.excludeLocked"));
+                panel.Children.Add(BuildGenericToggleRow("Exclude reference layers",
+                    _toolPreset.EyedropperExcludeReferenceLayers, v => CommitTool(p => p.EyedropperExcludeReferenceLayers = v), toolPropId: "eyedropper.excludeReference"));
+                break;
+
+            case OutputProcessType.MoveLayer when cat == "Tool Info":
                 panel.Children.Add(new TextBlock
                 {
                     Text = "This tool has no adjustable properties.",

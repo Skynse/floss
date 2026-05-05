@@ -53,6 +53,12 @@ public enum LiquifyMode
     TwirlCCW,
 }
 
+public enum EyedropperSampleMode
+{
+    Image,
+    CurrentLayer
+}
+
 // Legacy enum for backward compat during migration.
 public enum ToolPresetEngine
 {
@@ -198,6 +204,11 @@ public sealed class ToolPreset
     public LiquifyMode LiquifyMode { get; set; } = LiquifyMode.Push;
     public double LiquifySize { get; set; } = 80;
     public double LiquifyStrength { get; set; } = 0.3;
+
+    // Eyedropper
+    public EyedropperSampleMode EyedropperSampleMode { get; set; } = EyedropperSampleMode.Image;
+    public bool EyedropperExcludeLockedLayers { get; set; }
+    public bool EyedropperExcludeReferenceLayers { get; set; }
 
     // ── Legacy migration ──────────────────────────────────────────────────────
     // Converts old Engine field to new InputProcess+OutputProcess.

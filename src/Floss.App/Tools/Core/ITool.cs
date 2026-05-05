@@ -8,6 +8,14 @@ using System.Collections.Generic;
 
 namespace Floss.App.Tools;
 
+public readonly record struct EyedropperSampleOptions(
+    EyedropperSampleMode Mode,
+    bool ExcludeLockedLayers,
+    bool ExcludeReferenceLayers)
+{
+    public static EyedropperSampleOptions Default => new(EyedropperSampleMode.Image, false, false);
+}
+
 // Central interface every tool implements.
 public interface ITool
 {
@@ -43,7 +51,7 @@ public sealed class ToolContext
     public SelectionMask Selection { get; } = new();
     public Action InvalidateRender { get; init; } = () => { };
     public Action<Color> OnColorSampled { get; init; } = _ => { };
-    public Func<int, int, Color?> SampleDocumentColor { get; init; } = (_, _) => null;
+    public Func<int, int, EyedropperSampleOptions, Color?> SampleDocumentColor { get; init; } = (_, _, _) => null;
     public ToolPreset? ActivePreset { get; set; }
     public DrawingLayer? ActiveLayer =>
         Document.ActiveLayerIndex >= 0 && Document.ActiveLayerIndex < Document.Layers.Count

@@ -598,6 +598,7 @@ public sealed class DrawingCanvas : Control
     public void ToggleLayerVisibility(int index) => _document.ToggleLayerVisibility(index);
     public void ToggleLayerLock(int index) => _document.ToggleLayerLock(index);
     public void ToggleLayerAlphaLock(int index) => _document.ToggleLayerAlphaLock(index);
+    public void ToggleLayerReference(int index) => _document.ToggleLayerReference(index);
     public void ToggleLayerClipping(int index) => _document.ToggleLayerClipping(index);
     public void ToggleLayerOpen(int index) => _document.ToggleLayerOpen(index);
     public bool CanMoveLayer(int sourceIndex, int targetIndex, LayerDropPlacement placement) => _document.CanMoveLayer(sourceIndex, targetIndex, placement);
@@ -820,9 +821,18 @@ public sealed class DrawingCanvas : Control
             _document.Width, _document.Height,
             phase);
 
-    private Color? SampleDocumentColor(int x, int y)
+    private Color? SampleDocumentColor(int x, int y, EyedropperSampleOptions options)
     {
         if ((uint)x >= (uint)_document.Width || (uint)y >= (uint)_document.Height) return null;
+
+        if (options.Mode == EyedropperSampleMode.CurrentLayer)
+        {
+            var layer = _document.ActiveLayerIndex >= 0 && _document.ActiveLayerIndex < _document.Layers.Count
+                ? _document.Layers[_document.ActiveLayerIndex]
+                : null;
+            if (layer == null || ShouldSkipSampleLayer(layer, options)) return null;
+            return SampleSingleLayer(layer, x, y, applyOpacity: false);
+        }
 
         // Composite sample from all visible layers (bottom to top).
         double accR = 0, accG = 0, accB = 0, accA = 0;
@@ -830,30 +840,59 @@ public sealed class DrawingCanvas : Control
 
         foreach (var layer in _document.Layers)
         {
-            if (!layer.IsVisible || layer.IsGroup) continue;
-            int lx = x - layer.OffsetX;
-            int ly = y - layer.OffsetY;
-
-            layer.Pixels.GetPixel(lx, ly, out byte b, out byte g, out byte r, out byte a);
-            if (a == 0) continue;
+            if (ShouldSkipSampleLayer(layer, options)) continue;
+            var color = SampleSingleLayer(layer, x, y, applyOpacity: true);
+            if (color == null) continue;
             any = true;
 
-            double srcA = a / 255.0 * layer.Opacity;
+            double srcA = color.Value.A / 255.0;
             if (srcA <= 0) continue;
 
             double dstA = accA;
             double outA = srcA + dstA * (1 - srcA);
             if (outA > 0)
             {
-                accR = (r * srcA + accR * dstA * (1 - srcA)) / outA;
-                accG = (g * srcA + accG * dstA * (1 - srcA)) / outA;
-                accB = (b * srcA + accB * dstA * (1 - srcA)) / outA;
+                accR = (color.Value.R * srcA + accR * dstA * (1 - srcA)) / outA;
+                accG = (color.Value.G * srcA + accG * dstA * (1 - srcA)) / outA;
+                accB = (color.Value.B * srcA + accB * dstA * (1 - srcA)) / outA;
                 accA = outA;
             }
         }
 
         if (!any) return null;
         return Color.FromArgb((byte)Math.Clamp(accA * 255, 0, 255), (byte)Math.Clamp(accR, 0, 255), (byte)Math.Clamp(accG, 0, 255), (byte)Math.Clamp(accB, 0, 255));
+    }
+
+    private static Color? SampleSingleLayer(DrawingLayer layer, int x, int y, bool applyOpacity)
+    {
+        int lx = x - layer.OffsetX;
+        int ly = y - layer.OffsetY;
+        layer.Pixels.GetPixel(lx, ly, out byte b, out byte g, out byte r, out byte a);
+        if (a == 0) return null;
+        var alpha = applyOpacity ? (byte)Math.Clamp(a * layer.Opacity, 0, 255) : a;
+        return Color.FromArgb(alpha, r, g, b);
+    }
+
+    private static bool ShouldSkipSampleLayer(DrawingLayer layer, EyedropperSampleOptions options)
+    {
+        if (!layer.IsVisible || layer.IsGroup) return true;
+        if (options.ExcludeLockedLayers && IsLockedInTree(layer)) return true;
+        if (options.ExcludeReferenceLayers && IsReferenceInTree(layer)) return true;
+        return false;
+    }
+
+    private static bool IsLockedInTree(DrawingLayer layer)
+    {
+        for (var current = layer; current != null; current = current.Parent)
+            if (current.IsLocked) return true;
+        return false;
+    }
+
+    private static bool IsReferenceInTree(DrawingLayer layer)
+    {
+        for (var current = layer; current != null; current = current.Parent)
+            if (current.IsReference) return true;
+        return false;
     }
 
     private static bool IsPaintInput(PointerPoint point)

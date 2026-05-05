@@ -25,20 +25,17 @@ public partial class MainWindow : Window
             Orientation = Avalonia.Layout.Orientation.Horizontal,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch
         };
-        _presetPanel = new StackPanel { Spacing = 2, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
+        _presetPanel = new StackPanel { Spacing = 1, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
 
-        _strokePreview = new BrushStrokePreview { Height = 64 };
+        _strokePreview = new BrushStrokePreview { Height = 48 };
 
         var importPngBtn = SmBtn("PNG", "Import brush tip PNG");
         var importAbrBtn = SmBtn("ABR", "Import .abr brush pack");
-        _saveBrushButton = SmBtn("⊙", "Save brush");
-        var duplicateBrushBtn = SmBtn("⎘", "Duplicate brush");
-        var editBrushBtn = SmBtn("✎", "Tool properties");
-        importPngBtn.Width = 44;
-        importAbrBtn.Width = 44;
-        _saveBrushButton.Width = 30;
-        duplicateBrushBtn.Width = 30;
-        editBrushBtn.Width = 30;
+        _saveBrushButton = SmIconBtn(Icons.ContentSaveOutline, "Save brush");
+        var duplicateBrushBtn = SmIconBtn(Icons.ContentCopy, "Duplicate brush");
+        var editBrushBtn = SmIconBtn(Icons.TuneVertical, "Tool properties");
+        importPngBtn.Width = 38;
+        importAbrBtn.Width = 38;
         importPngBtn.Click += async (_, _) => await ImportBrushTipPngAsync();
         importAbrBtn.Click += async (_, _) => await ImportAbrAsync();
         _saveBrushButton.Click += (_, _) => SaveActiveBrush();
@@ -49,7 +46,7 @@ public partial class MainWindow : Window
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            MaxHeight = 320,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
             Content = _presetPanel
         };
 
@@ -78,23 +75,31 @@ public partial class MainWindow : Window
         foreach (var b in new[] { importPngBtn, importAbrBtn, _saveBrushButton, duplicateBrushBtn, editBrushBtn })
             b.Margin = new Thickness(0, 0, 3, 3);
 
-        return new StackPanel
+        var root = new Grid
         {
-            Spacing = 0,
-            Margin = new Thickness(10, 4, 10, 8),
-            Children =
-            {
-                _strokePreview,
-                new Border { Height = 4 },
-                _activeBrushLabel,
-                new Border { Height = 4 },
-                _brushCategoryPanel,
-                new Border { Height = 4 },
-                presetScroll,
-                new Border { Height = 2 },
-                brushToolRow,
-            }
+            Margin = new Thickness(8, 3, 8, 6),
         };
+        root.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        root.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        root.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        root.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        root.RowDefinitions.Add(new RowDefinition(new GridLength(1, GridUnitType.Star)));
+        root.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+
+        Grid.SetRow(_strokePreview, 0);
+        Grid.SetRow(_activeBrushLabel, 1);
+        Grid.SetRow(_brushCategoryPanel, 2);
+        Grid.SetRow(presetScroll, 4);
+        Grid.SetRow(brushToolRow, 5);
+        _activeBrushLabel.Margin = new Thickness(0, 4, 0, 3);
+        _brushCategoryPanel.Margin = new Thickness(0, 0, 0, 3);
+        presetScroll.Margin = new Thickness(0, 0, 0, 1);
+        root.Children.Add(_strokePreview);
+        root.Children.Add(_activeBrushLabel);
+        root.Children.Add(_brushCategoryPanel);
+        root.Children.Add(presetScroll);
+        root.Children.Add(brushToolRow);
+        return root;
     }
 
     private static readonly DataFormat<string> CategoryDragFormat = DataFormat.CreateInProcessFormat<string>("x-floss-category");
@@ -117,8 +122,8 @@ public partial class MainWindow : Window
             {
                 Content = catName,
                 HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-                Padding = new Thickness(8, 4),
-                Height = 26,
+                Padding = new Thickness(6, 2),
+                Height = 22,
                 Background = new SolidColorBrush(selected ? Color.Parse(AccentSoft) : Color.Parse(Bg2)),
                 Foreground = new SolidColorBrush(selected ? Color.Parse(TextPrimary) : Color.Parse(TextSecondary)),
                 BorderBrush = new SolidColorBrush(selected ? Color.Parse(Accent) : Color.Parse(Stroke)),
@@ -126,7 +131,7 @@ public partial class MainWindow : Window
                 CornerRadius = new CornerRadius(4),
                 FontSize = 10,
                 Tag = catName,
-                Margin = new Thickness(0, 0, 3, 3)
+                Margin = new Thickness(0, 0, 2, 2)
             };
             btn.Click += (_, _) =>
             {
@@ -141,10 +146,10 @@ public partial class MainWindow : Window
 
         var newCatBtn = new Button
         {
-            Content = "+",
+            Content = Icons.Make(Icons.Plus, 12, new SolidColorBrush(Color.Parse(TextSecondary))),
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            Padding = new Thickness(8, 4),
-            Height = 26,
+            Padding = new Thickness(6, 2),
+            Height = 22,
             Background = new SolidColorBrush(Color.Parse(Bg2)),
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
@@ -211,12 +216,12 @@ public partial class MainWindow : Window
             FontWeight = FontWeight.SemiBold,
             Foreground = new SolidColorBrush(Colors.White),
             TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxWidth = 160,
+            MaxWidth = 150,
         };
         var namePill = new Border
         {
             Background = new SolidColorBrush(Color.FromArgb(160, 15, 13, 18)),
-            Padding = new Thickness(7, 2),
+            Padding = new Thickness(6, 1),
             CornerRadius = new CornerRadius(3),
             Child = nameText,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
@@ -229,7 +234,7 @@ public partial class MainWindow : Window
 
         var row = new Button
         {
-            Height = 48,
+            Height = 38,
             Padding = new Thickness(0),
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
@@ -237,7 +242,7 @@ public partial class MainWindow : Window
             Background = new SolidColorBrush(Color.Parse(Bg2)),
             BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke)),
             BorderThickness = new Thickness(isActive ? 2 : 1),
-            CornerRadius = new CornerRadius(4),
+            CornerRadius = new CornerRadius(3),
             Content = panel,
             Tag = preset.Id,
         };
@@ -260,7 +265,7 @@ private Button BuildSimplePresetRow(ToolGroup group, ToolPreset preset, bool isA
         };
         var row = new Button
         {
-            Height = 32,
+            Height = 26,
             Padding = new Thickness(0),
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
@@ -268,7 +273,7 @@ private Button BuildSimplePresetRow(ToolGroup group, ToolPreset preset, bool isA
             Background = new SolidColorBrush(Color.Parse(isActive ? AccentSoft : Bg2)),
             BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke)),
             BorderThickness = new Thickness(isActive ? 2 : 1),
-            CornerRadius = new CornerRadius(4),
+            CornerRadius = new CornerRadius(3),
             Content = nameText,
             Tag = preset.Id,
         };
@@ -926,6 +931,9 @@ private void DeletePreset(ToolGroup group, ToolPreset preset)
                 UpdateCurrentBrush(p => p with { Opacity = tp.BrushOpacity.Value });
             if (tp.BrushBlendMode.HasValue)
                 UpdateCurrentBrush(p => p with { BlendMode = tp.BrushBlendMode.Value });
+
+            if (_activeToolGroup?.ActivePreset == tp && tp.OutputProcess != OutputProcessType.DirectDraw)
+                _canvas.SetActiveTool(ToolForPreset(tp), tp);
 
             RefreshToolProperties();
         });
