@@ -294,22 +294,36 @@ public sealed class ToolGroupConfig
 
     public List<ToolGroup> Groups { get; set; } = Defaults();
 
+    [JsonIgnore]
+    private PresetStore? Store { get; set; }
+
     // ── Persistence ───────────────────────────────────────────────────────────
 
     public static ToolGroupConfig Load()
     {
         try
         {
-            var path = AppPaths.ToolGroupConfigPath;
-            if (File.Exists(path))
+            var store = PresetStore.OpenDefault();
+            var groups = store.LoadToolGroups();
+            var cfg = new ToolGroupConfig { Store = store };
+            if (groups.Count > 0)
             {
-                var cfg = JsonSerializer.Deserialize<ToolGroupConfig>(File.ReadAllText(path), JsonOpts) ?? new();
+                cfg.Groups = groups.ToList();
                 cfg.EnsureDefaultPresets();
                 return cfg;
             }
+
+            cfg.Groups = Defaults();
+            cfg.EnsureDefaultPresets();
+            cfg.Save();
+            return cfg;
         }
-        catch { }
-        return new();
+        catch
+        {
+            var cfg = new ToolGroupConfig();
+            cfg.EnsureDefaultPresets();
+            return cfg;
+        }
     }
 
     private void EnsureDefaultPresets()
@@ -325,12 +339,14 @@ public sealed class ToolGroupConfig
                 defaultPreset.MigrateFromLegacy();
                 group.Presets.Add(defaultPreset);
             }
+
+            EnsureFallbackCategory(group);
         }
     }
 
     public void Save()
     {
-        try { File.WriteAllText(AppPaths.ToolGroupConfigPath, JsonSerializer.Serialize(this, JsonOpts)); }
+        try { (Store ??= PresetStore.OpenDefault()).SaveToolGroups(Groups); }
         catch { }
     }
 
@@ -366,6 +382,7 @@ public sealed class ToolGroupConfig
                     BrushBlendMode = SkiaSharp.SKBlendMode.DstOut
                 };
                 eraserGroup.Presets.Add(preset);
+                AddToCategory(eraserGroup, preset.Id, BrushCategoryName(asset));
             }
             else
             {
@@ -377,19 +394,69 @@ public sealed class ToolGroupConfig
                     BrushId = asset.Id
                 };
                 brushGroup.Presets.Add(preset);
+                AddToCategory(brushGroup, preset.Id, BrushCategoryName(asset));
+            }
+        }
+
+        foreach (var asset in assets)
+        {
+            foreach (var group in Groups)
+            {
+                var preset = group.Presets.FirstOrDefault(p => p.BrushId == asset.Id);
+                if (preset == null) continue;
+                if (group.Categories.Any(c => c.PresetIds.Contains(preset.Id))) continue;
+                AddToCategory(group, preset.Id, BrushCategoryName(asset));
             }
         }
     }
 
+    private static string BrushCategoryName(BrushAsset asset)
+        => asset.Preset.Kind switch
+        {
+            Brushes.BrushKind.Marker => "Markers",
+            Brushes.BrushKind.Airbrush => "Airbrush",
+            Brushes.BrushKind.Pencil => "Pencils",
+            Brushes.BrushKind.Eraser => "Erasers",
+            _ => "Pens"
+        };
 
-
-    private static void EnsureInCategory(ToolGroup group, string presetId, string categoryName)
+    private static void AddToCategory(ToolGroup group, string presetId, string categoryName)
     {
-        foreach (var c in group.Categories) c.PresetIds.Remove(presetId);
         var cat = group.Categories.FirstOrDefault(c => c.Name == categoryName);
-        if (cat == null) { cat = new ToolCategory { Name = categoryName }; group.Categories.Add(cat); }
-        if (!cat.PresetIds.Contains(presetId)) cat.PresetIds.Add(presetId);
+        if (cat == null)
+        {
+            cat = new ToolCategory { Name = categoryName };
+            group.Categories.Add(cat);
+        }
+        if (!cat.PresetIds.Contains(presetId))
+            cat.PresetIds.Add(presetId);
     }
+
+    private static void EnsureFallbackCategory(ToolGroup group)
+    {
+        var uncategorized = group.Presets
+            .Where(preset => !group.Categories.Any(category => category.PresetIds.Contains(preset.Id)))
+            .Select(preset => preset.Id)
+            .ToList();
+        if (uncategorized.Count == 0) return;
+
+        var categoryName = DefaultCategoryName(group);
+        var category = group.Categories.FirstOrDefault(c => c.Name == categoryName);
+        if (category == null)
+        {
+            category = new ToolCategory { Name = categoryName };
+            group.Categories.Insert(0, category);
+        }
+
+        foreach (var presetId in uncategorized)
+        {
+            if (!category.PresetIds.Contains(presetId))
+                category.PresetIds.Add(presetId);
+        }
+    }
+
+    private static string DefaultCategoryName(ToolGroup group)
+        => group.Name;
 
     // ── Default icon for a group ──────────────────────────────────────────────
 
@@ -397,18 +464,18 @@ public sealed class ToolGroupConfig
 
     // ── Factory defaults ──────────────────────────────────────────────────────
 
-    private static List<ToolGroup> Defaults() =>
+    internal static List<ToolGroup> Defaults() =>
     [
-        new() { Name = "Brush",  DefaultEngine = ToolPresetEngine.Brush,  Shortcut = new(Key.B),
-            Presets = [new() { Name = "Brush",  Engine = ToolPresetEngine.Brush, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw }] },
-        new() { Name = "Eraser", DefaultEngine = ToolPresetEngine.Eraser, Shortcut = new(Key.E),
-            Presets = [new() { Name = "Eraser", InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw, BrushBlendMode = SkiaSharp.SKBlendMode.DstOut }] },
-        new()
+        WithDefaultCategory(new() { Name = "Brush",  DefaultEngine = ToolPresetEngine.Brush,  Shortcut = new(Key.B),
+            Presets = [new() { Name = "Brush",  Engine = ToolPresetEngine.Brush, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw }] }),
+        WithDefaultCategory(new() { Name = "Eraser", DefaultEngine = ToolPresetEngine.Eraser, Shortcut = new(Key.E),
+            Presets = [new() { Name = "Eraser", InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw, BrushBlendMode = SkiaSharp.SKBlendMode.DstOut }] }),
+        WithDefaultCategory(new()
         {
             Name = "Smudge", DefaultEngine = ToolPresetEngine.Smudge, Shortcut = new(Key.U),
             Presets = [new() { Name = "Smudge", Engine = ToolPresetEngine.Smudge, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw, BrushColorMix = 0.8, BrushColorLoad = 0.0, BrushDensityOfPaint = 0.0 }]
-        },
-        new()
+        }),
+        WithDefaultCategory(new()
         {
             Name = "Select", DefaultEngine = ToolPresetEngine.Select, Shortcut = new(Key.S),
             Presets =
@@ -417,33 +484,33 @@ public sealed class ToolGroupConfig
                 new() { Name = "Lasso",     Engine = ToolPresetEngine.Select, InputProcess = InputProcessType.Lasso, OutputProcess = OutputProcessType.SelectionArea, SelectMode = SelectMode.Lasso, Stabilization = 0.3 },
                 new() { Name = "Polygon",   Engine = ToolPresetEngine.Select, InputProcess = InputProcessType.Polyline, OutputProcess = OutputProcessType.SelectionArea, SelectMode = SelectMode.PolylineLasso },
             ]
-        },
-        new()
+        }),
+        WithDefaultCategory(new()
         {
             Name = "Magic Wand", DefaultEngine = ToolPresetEngine.MagicWand, Shortcut = new(Key.W),
             Presets = [new() { Name = "Magic Wand", Engine = ToolPresetEngine.MagicWand, InputProcess = InputProcessType.Click, OutputProcess = OutputProcessType.MagicWand }]
-        },
-        new()
+        }),
+        WithDefaultCategory(new()
         {
             Name = "Fill", DefaultEngine = ToolPresetEngine.Fill, Shortcut = new(Key.G),
             Presets = [new() { Name = "Fill", Engine = ToolPresetEngine.Fill, InputProcess = InputProcessType.Click, OutputProcess = OutputProcessType.FloodFill }]
-        },
-        new()
+        }),
+        WithDefaultCategory(new()
         {
             Name = "Lasso Fill", DefaultEngine = ToolPresetEngine.LassoFill, Shortcut = new(Key.L),
             Presets = [new() { Name = "Lasso Fill", Engine = ToolPresetEngine.LassoFill, InputProcess = InputProcessType.Lasso, OutputProcess = OutputProcessType.ClosedAreaFill, Stabilization = 0.3, Antialiasing = true }]
-        },
-        new()
+        }),
+        WithDefaultCategory(new()
         {
             Name = "Move", DefaultEngine = ToolPresetEngine.Move, Shortcut = new(Key.V),
             Presets = [new() { Name = "Move", Engine = ToolPresetEngine.Move, InputProcess = InputProcessType.Drag, OutputProcess = OutputProcessType.MoveLayer }]
-        },
-        new()
+        }),
+        WithDefaultCategory(new()
         {
             Name = "Eyedropper", DefaultEngine = ToolPresetEngine.Eyedropper, Shortcut = new(Key.I),
             Presets = [new() { Name = "Eyedropper", Engine = ToolPresetEngine.Eyedropper, InputProcess = InputProcessType.Click, OutputProcess = OutputProcessType.Eyedropper }]
-        },
-        new()
+        }),
+        WithDefaultCategory(new()
         {
             Name = "Gradient", DefaultEngine = ToolPresetEngine.Gradient,
             Presets =
@@ -451,8 +518,8 @@ public sealed class ToolGroupConfig
                 new() { Name = "Linear", Engine = ToolPresetEngine.Gradient, InputProcess = InputProcessType.Drag, OutputProcess = OutputProcessType.Gradient, GradientType = GradientType.Linear },
                 new() { Name = "Radial", Engine = ToolPresetEngine.Gradient, InputProcess = InputProcessType.Drag, OutputProcess = OutputProcessType.Gradient, GradientType = GradientType.Radial },
             ]
-        },
-        new()
+        }),
+        WithDefaultCategory(new()
         {
             Name = "Shape", DefaultEngine = ToolPresetEngine.Shape,
             Presets =
@@ -461,8 +528,8 @@ public sealed class ToolGroupConfig
                 new() { Name = "Ellipse",   Engine = ToolPresetEngine.Shape, InputProcess = InputProcessType.Rect, OutputProcess = OutputProcessType.Stroke, ShapeKind = ShapeKind.Ellipse },
                 new() { Name = "Line",      Engine = ToolPresetEngine.Shape, InputProcess = InputProcessType.Rect, OutputProcess = OutputProcessType.Stroke, ShapeKind = ShapeKind.Line, ShapeDrawMode = ShapeDrawMode.Stroke },
             ]
-        },
-        new()
+        }),
+        WithDefaultCategory(new()
         {
             Name = "Polyline", DefaultEngine = ToolPresetEngine.Polyline,
             Presets =
@@ -470,8 +537,8 @@ public sealed class ToolGroupConfig
                 new() { Name = "Open",   Engine = ToolPresetEngine.Polyline, InputProcess = InputProcessType.Polyline, OutputProcess = OutputProcessType.Stroke, PolylineClosePath = false },
                 new() { Name = "Closed", Engine = ToolPresetEngine.Polyline, InputProcess = InputProcessType.Polyline, OutputProcess = OutputProcessType.Stroke, PolylineClosePath = true },
             ]
-        },
-        new()
+        }),
+        WithDefaultCategory(new()
         {
             Name = "Liquify", DefaultEngine = ToolPresetEngine.Liquify,
             Presets =
@@ -484,6 +551,12 @@ public sealed class ToolGroupConfig
                 new() { Name = "Twirl CW",  Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.Liquify, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.TwirlCW,   LiquifySize = 80,  LiquifyStrength = 0.5 },
                 new() { Name = "Twirl CCW", Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.Liquify, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.TwirlCCW,  LiquifySize = 80,  LiquifyStrength = 0.5 },
             ]
-        },
+        }),
     ];
+
+    private static ToolGroup WithDefaultCategory(ToolGroup group)
+    {
+        EnsureFallbackCategory(group);
+        return group;
+    }
 }

@@ -111,6 +111,28 @@ public partial class MainWindow : Window
         var group = _activeToolGroup;
         if (group == null) return;
 
+        var allSelected = _selectedCategory == null;
+        var allBtn = new Button
+        {
+            Content = "All",
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            Padding = new Thickness(6, 2),
+            Height = 22,
+            Background = new SolidColorBrush(allSelected ? Color.Parse(AccentSoft) : Color.Parse(Bg2)),
+            Foreground = new SolidColorBrush(allSelected ? Color.Parse(TextPrimary) : Color.Parse(TextSecondary)),
+            BorderBrush = new SolidColorBrush(allSelected ? Color.Parse(Accent) : Color.Parse(Stroke)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            FontSize = 10,
+            Margin = new Thickness(0, 0, 2, 2)
+        };
+        allBtn.Click += (_, _) =>
+        {
+            _selectedCategory = null;
+            RefreshGroupPresets();
+        };
+        _brushCategoryPanel.Children.Add(allBtn);
+
         foreach (var cat in group.Categories)
         {
             var selected = cat.Name == _selectedCategory;
@@ -340,6 +362,9 @@ public partial class MainWindow : Window
         var duplicateItem = new MenuItem { Header = "Duplicate" };
         duplicateItem.Click += (_, _) => DuplicatePreset(group, preset);
 
+        var exportItem = new MenuItem { Header = "Export Sub Tool…" };
+        exportItem.Click += async (_, _) => await ExportSubToolAsync(group, preset);
+
         var deleteItem = new MenuItem { Header = "Delete" };
         deleteItem.Click += (_, _) => DeletePreset(group, preset);
 
@@ -347,6 +372,7 @@ public partial class MainWindow : Window
         menu.Items.Add(renameItem);
         menu.Items.Add(setAltInvocationItem);
         menu.Items.Add(duplicateItem);
+        menu.Items.Add(exportItem);
         menu.Items.Add(new Separator());
         menu.Items.Add(deleteItem);
 
@@ -362,6 +388,29 @@ public partial class MainWindow : Window
         }
 
         return menu;
+    }
+
+    private async Task ExportSubToolAsync(ToolGroup group, ToolPreset preset)
+    {
+        CaptureActiveBrushToPreset();
+
+        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = "Export Sub Tool",
+            FileTypeChoices = [FlossSubToolFileType],
+            SuggestedFileName = SafePresetFileName(preset.Name, PresetPackageFormat.SubToolExtension)
+        });
+        if (file == null) return;
+
+        try
+        {
+            PresetPackageFormat.ExportSubTool(file.Path.LocalPath, group, preset, _brushAssets);
+            _footerStatusText.Text = $"Exported sub tool {Path.GetFileName(file.Path.LocalPath)}";
+        }
+        catch (Exception ex)
+        {
+            _footerStatusText.Text = $"Sub tool export error: {ex.Message}";
+        }
     }
 
     private void RestorePresetDefault(ToolGroup group, ToolPreset preset)
@@ -907,13 +956,40 @@ public partial class MainWindow : Window
         var renameItem = new MenuItem { Header = "Rename" };
         renameItem.Click += (_, _) => RenameCategoryPrompt(group, cat);
 
+        var exportItem = new MenuItem { Header = "Export Tool Group…" };
+        exportItem.Click += async (_, _) => await ExportSubToolGroupAsync(group, cat);
+
         var deleteItem = new MenuItem { Header = "Delete Category and Brushes" };
         deleteItem.Click += (_, _) => DeleteCategory(group, cat);
 
         menu.Items.Add(renameItem);
+        menu.Items.Add(exportItem);
         menu.Items.Add(new Separator());
         menu.Items.Add(deleteItem);
         return menu;
+    }
+
+    private async Task ExportSubToolGroupAsync(ToolGroup group, ToolCategory cat)
+    {
+        CaptureActiveBrushToPreset();
+
+        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = "Export Tool Group",
+            FileTypeChoices = [FlossSubToolGroupFileType],
+            SuggestedFileName = SafePresetFileName(cat.Name, PresetPackageFormat.SubToolGroupExtension)
+        });
+        if (file == null) return;
+
+        try
+        {
+            PresetPackageFormat.ExportSubToolGroup(file.Path.LocalPath, group, cat, _brushAssets);
+            _footerStatusText.Text = $"Exported tool group {Path.GetFileName(file.Path.LocalPath)}";
+        }
+        catch (Exception ex)
+        {
+            _footerStatusText.Text = $"Tool group export error: {ex.Message}";
+        }
     }
 
     private void DeleteCategory(ToolGroup group, ToolCategory cat)

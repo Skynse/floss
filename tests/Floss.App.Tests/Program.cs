@@ -8,10 +8,12 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Avalonia.Input;
 using Avalonia.Media;
+using Floss.App;
 using Floss.App.Brushes;
 using Floss.App.Document;
 using Floss.App.Input;
 using Floss.App.Psd;
+using Microsoft.Data.Sqlite;
 using SkiaSharp;
 using AppKeyBinding = Floss.App.Input.KeyBinding;
 
@@ -55,6 +57,12 @@ internal static class Program
         ("Image brush tips preserve source aspect ratio", BrushTests.ImageBrushTip_PreservesAspectRatio),
         ("ABR preset mapping keeps usable brush dynamics", BrushTests.AbrPresetMapping_KeepsDynamics),
         ("ABR mask cleanup inverts dark-on-light stamps", BrushTests.AbrMaskCleanup_InvertsDarkOnLightMasks),
+        ("Preset store round-trips tool groups", PresetStoreTests.ToolGroups_RoundTrip),
+        ("Default tool groups have categories", PresetStoreTests.ToolGroups_DefaultsHaveCategories),
+        ("Tool group sync categorizes brush assets", PresetStoreTests.ToolGroups_SyncCategorizesBrushAssets),
+        ("Preset store round-trips brush assets", PresetStoreTests.BrushAssets_RoundTrip),
+        ("Preset packages export sub tools with brush assets", PresetStoreTests.Packages_ExportSubTool),
+        ("Preset packages export sub tool groups with brush assets", PresetStoreTests.Packages_ExportSubToolGroup),
 
         ("DrawingDocument starts with one paintable layer", DrawingDocumentTests.Constructor_SetsInitialLayerState),
         ("DrawingDocument adds, selects, duplicates, and deletes layers", DrawingDocumentTests.LayerManagement_WorksForCommonMutations),
@@ -124,6 +132,345 @@ internal static class AssertEx
         var right = actual.ToArray();
         if (!left.SequenceEqual(right))
             throw new InvalidOperationException(message ?? $"Expected [{string.Join(", ", left)}], got [{string.Join(", ", right)}].");
+    }
+}
+
+internal static class PresetStoreTests
+{
+    public static void ToolGroups_RoundTrip()
+    {
+        var path = TempDatabasePath();
+        try
+        {
+            var store = PresetStore.Open(path);
+            var brushPreset = new ToolPreset
+            {
+                Id = "brush-preset",
+                Name = "Portable Ink",
+                Engine = ToolPresetEngine.Brush,
+                InputProcess = InputProcessType.BrushStroke,
+                OutputProcess = OutputProcessType.DirectDraw,
+                BrushId = "brush-asset",
+                AlternateInvocation = new AppKeyBinding(Key.I, KeyModifiers.Alt),
+                BrushSize = 31,
+                BrushOpacity = 0.72,
+                BrushFlow = 0.44,
+                PresetIcon = Icons.BrushOutline
+            };
+            var fillPreset = new ToolPreset
+            {
+                Id = "fill-preset",
+                Name = "Reference Fill",
+                Engine = ToolPresetEngine.Fill,
+                InputProcess = InputProcessType.Click,
+                OutputProcess = OutputProcessType.FloodFill,
+                FillReference = FillReferenceMode.ReferenceLayers,
+                ContiguousFill = false,
+                Tolerance = 0.22
+            };
+
+            store.SaveToolGroups(
+            [
+                new ToolGroup
+                {
+                    Id = "group-brush",
+                    Name = "Brush",
+                    DefaultEngine = ToolPresetEngine.Brush,
+                    Shortcut = new AppKeyBinding(Key.B, KeyModifiers.Control),
+                    LastActivePresetId = fillPreset.Id,
+                    Presets = [brushPreset, fillPreset],
+                    Categories = [new ToolCategory { Name = "Ink", PresetIds = [fillPreset.Id, brushPreset.Id] }]
+                }
+            ]);
+
+            var groups = store.LoadToolGroups();
+            AssertEx.Equal(1, groups.Count);
+            AssertEx.Equal("Brush", groups[0].Name);
+            AssertEx.Equal("Ctrl+B", groups[0].Shortcut.ToString());
+            AssertEx.Equal(fillPreset.Id, groups[0].LastActivePresetId);
+            AssertEx.Equal("Portable Ink", groups[0].Presets[0].Name);
+            AssertEx.Equal(OutputProcessType.DirectDraw, groups[0].Presets[0].OutputProcess);
+            AssertEx.Equal("brush-asset", groups[0].Presets[0].BrushId);
+            AssertEx.Near(31, groups[0].Presets[0].BrushSize!.Value);
+            AssertEx.Equal(FillReferenceMode.ReferenceLayers, groups[0].Presets[1].FillReference);
+            AssertEx.False(groups[0].Presets[1].ContiguousFill);
+            AssertEx.SequenceEqual([fillPreset.Id, brushPreset.Id], groups[0].Categories[0].PresetIds);
+        }
+        finally
+        {
+            TryDeleteDatabase(path);
+        }
+    }
+
+    public static void BrushAssets_RoundTrip()
+    {
+        var path = TempDatabasePath();
+        try
+        {
+            var store = PresetStore.Open(path);
+            var tip = new BrushTipData
+            {
+                Kind = BrushTipStorageKind.EmbeddedPng,
+                PngBytes = TestPngBytes()
+            };
+            var preset = new BrushPreset("Loaded ABR Stamp", BrushKind.Marker, 77, 0.63, 0.38, 0.17, Color.Parse("#123456"), 24)
+            {
+                Dynamics = new BrushDynamics
+                {
+                    Size = CurveOption.PressureSpeed(1.4f, 0.25f),
+                    Opacity = CurveOption.Pressure(0.8f),
+                    Rotation = CurveOption.Pressure(0.3f)
+                },
+                Flow = 0.42,
+                ColorMix = 0.51,
+                ColorLoad = 0.62,
+                ColorStretch = 0.73,
+                BlurAmount = 0.21,
+                SmudgeMode = SmudgeMode.Smear,
+                MixingMode = MixingMode.Perceptual,
+                AmountOfPaint = 0.84,
+                DensityOfPaint = 0.95,
+                TipDensity = 0.66,
+                Grain = 0.37,
+                Smoothing = 0.48,
+                BlendMode = SKBlendMode.Multiply,
+                BaseAngleSource = BrushDynamics.AngleSource.DirectionOfLine,
+                AngleJitter = 0.19f,
+                Tip = tip.CreateTip(),
+                Shape = new ProceduralBrushTip(BrushTipShape.Ellipse, 0.5f)
+            };
+            var asset = new BrushAsset
+            {
+                Id = "abr-stamp",
+                Preset = preset,
+                Tip = tip,
+                ShapeData = new BrushTipData { Kind = BrushTipStorageKind.Procedural, Shape = BrushTipShape.Ellipse, AspectRatio = 0.5f }
+            };
+
+            store.SaveBrushAsset(asset);
+            using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path }.ToString()))
+            {
+                connection.Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = """
+                    SELECT length(a.asset_json), instr(a.asset_json, 'pngBytes'), count(r.resource_id), sum(length(r.data))
+                    FROM brush_assets a
+                    LEFT JOIN brush_resources r ON r.asset_id = a.id
+                    WHERE a.id = 'abr-stamp'
+                    GROUP BY a.id
+                    """;
+                using var reader = command.ExecuteReader();
+                AssertEx.True(reader.Read());
+                AssertEx.True(reader.GetInt32(0) > 0, "Brush asset JSON should still store preset parameters.");
+                AssertEx.Equal(0, reader.GetInt32(1), "Brush asset JSON should not contain PNG byte payload fields.");
+                AssertEx.Equal(1, reader.GetInt32(2), "Embedded brush tips should be stored as resource BLOBs.");
+                AssertEx.Equal(tip.PngBytes.Length, reader.GetInt32(3));
+            }
+
+            var loaded = store.LoadBrushAssets().Single();
+            AssertEx.Equal("abr-stamp", loaded.Id);
+            AssertEx.Equal("", loaded.FilePath);
+            AssertEx.Equal(BrushTipStorageKind.EmbeddedPng, loaded.Tip.Kind);
+            AssertEx.Equal(tip.PngBytes.Length, loaded.Tip.PngBytes.Length);
+            AssertEx.Equal(BrushTipShape.Ellipse, loaded.ShapeData!.Shape);
+            AssertEx.Near(77, loaded.Preset.Size);
+            AssertEx.Near(0.42, loaded.Preset.Flow);
+            AssertEx.Near(0.73, loaded.Preset.ColorStretch);
+            AssertEx.Equal(SmudgeMode.Smear, loaded.Preset.SmudgeMode);
+            AssertEx.Equal(MixingMode.Perceptual, loaded.Preset.MixingMode);
+            AssertEx.Equal(SKBlendMode.Multiply, loaded.Preset.BlendMode);
+            AssertEx.Equal(BrushDynamics.AngleSource.DirectionOfLine, loaded.Preset.BaseAngleSource);
+            AssertEx.Near(0.19, loaded.Preset.AngleJitter);
+            AssertEx.True(loaded.Preset.Tip is ImageBrushTip);
+            AssertEx.True(loaded.Preset.Shape is { Shape: BrushTipShape.Ellipse, AspectRatio: 0.5f });
+            AssertEx.True(loaded.Preset.Dynamics.Size.IsEnabled);
+            AssertEx.True(loaded.Preset.Dynamics.Rotation.IsEnabled);
+        }
+        finally
+        {
+            TryDeleteDatabase(path);
+        }
+    }
+
+    public static void ToolGroups_SyncCategorizesBrushAssets()
+    {
+        var config = new ToolGroupConfig
+        {
+            Groups =
+            [
+                new ToolGroup { Id = "brush", Name = "Brush", DefaultEngine = ToolPresetEngine.Brush },
+                new ToolGroup { Id = "eraser", Name = "Eraser", DefaultEngine = ToolPresetEngine.Eraser }
+            ]
+        };
+        var pen = BrushAsset.FromPreset(new BrushPreset("Technical Pen", BrushKind.Ink, 8, 1, 0.9, 0.1, Color.Parse("#000000"), 0));
+        var marker = BrushAsset.FromPreset(new BrushPreset("Marker", BrushKind.Marker, 32, 1, 0.5, 0.1, Color.Parse("#000000"), 0));
+        var eraser = BrushAsset.FromPreset(new BrushPreset("Eraser", BrushKind.Eraser, 32, 1, 0.5, 0.1, Color.Parse("#000000"), 0));
+
+        config.SyncWithAssets([pen, marker, eraser]);
+
+        var brushGroup = config.Groups[0];
+        var eraserGroup = config.Groups[1];
+        AssertEx.True(brushGroup.Categories.Any(c => c.Name == "Pens" && c.PresetIds.Count == 1));
+        AssertEx.True(brushGroup.Categories.Any(c => c.Name == "Markers" && c.PresetIds.Count == 1));
+        AssertEx.True(eraserGroup.Categories.Any(c => c.Name == "Erasers" && c.PresetIds.Count == 1));
+
+        var uncategorized = brushGroup.Presets.First(p => p.BrushId == pen.Id);
+        brushGroup.Categories.Clear();
+        config.SyncWithAssets([pen]);
+        AssertEx.True(brushGroup.Categories.Any(c => c.Name == "Pens" && c.PresetIds.Contains(uncategorized.Id)));
+    }
+
+    public static void ToolGroups_DefaultsHaveCategories()
+    {
+        var config = new ToolGroupConfig();
+        foreach (var group in config.Groups)
+        {
+            AssertEx.True(group.Categories.Count > 0, $"{group.Name} should have a default category.");
+            foreach (var preset in group.Presets)
+            {
+                AssertEx.True(group.Categories.Any(c => c.PresetIds.Contains(preset.Id)),
+                    $"{group.Name}/{preset.Name} should appear in a category.");
+            }
+        }
+
+        var fill = config.Groups.First(g => g.Name == "Fill");
+        AssertEx.True(fill.Categories.Any(c => c.Name == "Fill" && c.PresetIds.Count == fill.Presets.Count));
+
+        var select = config.Groups.First(g => g.Name == "Select");
+        AssertEx.True(select.Categories.Any(c => c.Name == "Select" && c.PresetIds.Count == select.Presets.Count));
+    }
+
+    public static void Packages_ExportSubTool()
+    {
+        var path = TempPackagePath(PresetPackageFormat.SubToolExtension);
+        try
+        {
+            var asset = TestBrushAsset("asset-one", "Package Brush");
+            var preset = new ToolPreset
+            {
+                Id = "preset-one",
+                Name = "Package Brush",
+                Engine = ToolPresetEngine.Brush,
+                InputProcess = InputProcessType.BrushStroke,
+                OutputProcess = OutputProcessType.DirectDraw,
+                BrushId = asset.Id,
+                BrushSize = 42
+            };
+            var group = new ToolGroup
+            {
+                Id = "group-one",
+                Name = "Brush",
+                DefaultEngine = ToolPresetEngine.Brush,
+                LastActivePresetId = preset.Id,
+                Presets = [preset, new ToolPreset { Id = "other", Name = "Other", InputProcess = InputProcessType.Click, OutputProcess = OutputProcessType.FloodFill }],
+                Categories = [new ToolCategory { Name = "Favorites", PresetIds = [preset.Id, "other"] }]
+            };
+
+            PresetPackageFormat.ExportSubTool(path, group, preset, [asset]);
+            AssertEx.True(new FileInfo(path).Length > 4096, "Package data must be written into the exported file, not only a WAL sidecar.");
+            AssertEx.False(File.Exists(path + "-wal"), "Exported sub-tool package must be a single portable file.");
+            AssertEx.False(File.Exists(path + "-shm"), "Exported sub-tool package must be a single portable file.");
+
+            var store = PresetStore.Open(path);
+            var groups = store.LoadToolGroups();
+            var assets = store.LoadBrushAssets();
+            AssertEx.Equal(1, groups.Count);
+            AssertEx.Equal(1, groups[0].Presets.Count);
+            AssertEx.Equal("preset-one", groups[0].Presets[0].Id);
+            AssertEx.Equal("asset-one", groups[0].Presets[0].BrushId);
+            AssertEx.Equal(1, groups[0].Categories.Count);
+            AssertEx.SequenceEqual([preset.Id], groups[0].Categories[0].PresetIds);
+            AssertEx.Equal(1, assets.Count);
+            AssertEx.Equal("asset-one", assets[0].Id);
+        }
+        finally
+        {
+            TryDeleteDatabase(path);
+        }
+    }
+
+    public static void Packages_ExportSubToolGroup()
+    {
+        var path = TempPackagePath(PresetPackageFormat.SubToolGroupExtension);
+        try
+        {
+            var assetOne = TestBrushAsset("asset-one", "Brush One");
+            var assetTwo = TestBrushAsset("asset-two", "Brush Two");
+            var group = new ToolGroup
+            {
+                Id = "group-one",
+                Name = "Brushes",
+                DefaultEngine = ToolPresetEngine.Brush,
+                Presets =
+                [
+                    new ToolPreset { Id = "preset-one", Name = "One", InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw, BrushId = assetOne.Id },
+                    new ToolPreset { Id = "preset-two", Name = "Two", InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw, BrushId = assetTwo.Id },
+                    new ToolPreset { Id = "fill", Name = "Fill", InputProcess = InputProcessType.Click, OutputProcess = OutputProcessType.FloodFill }
+                ],
+                Categories = [new ToolCategory { Name = "All", PresetIds = ["preset-one", "preset-two", "fill"] }]
+            };
+
+            PresetPackageFormat.ExportSubToolGroup(path, group, group.Categories[0], [assetOne, assetTwo]);
+            AssertEx.True(new FileInfo(path).Length > 4096, "Package data must be written into the exported file, not only a WAL sidecar.");
+            AssertEx.False(File.Exists(path + "-wal"), "Exported sub-tool group package must be a single portable file.");
+            AssertEx.False(File.Exists(path + "-shm"), "Exported sub-tool group package must be a single portable file.");
+
+            var store = PresetStore.Open(path);
+            var groups = store.LoadToolGroups();
+            var assets = store.LoadBrushAssets();
+            AssertEx.Equal(1, groups.Count);
+            AssertEx.Equal(3, groups[0].Presets.Count);
+            AssertEx.SequenceEqual(["preset-one", "preset-two", "fill"], groups[0].Categories[0].PresetIds);
+            AssertEx.SequenceEqual(["asset-one", "asset-two"], assets.Select(a => a.Id));
+        }
+        finally
+        {
+            TryDeleteDatabase(path);
+        }
+    }
+
+    private static string TempDatabasePath()
+        => Path.Combine(Path.GetTempPath(), $"floss-presets-{Guid.NewGuid():N}.flbr");
+
+    private static string TempPackagePath(string extension)
+        => Path.Combine(Path.GetTempPath(), $"floss-package-{Guid.NewGuid():N}{extension}");
+
+    private static BrushAsset TestBrushAsset(string id, string name)
+    {
+        var tip = new BrushTipData
+        {
+            Kind = BrushTipStorageKind.EmbeddedPng,
+            PngBytes = TestPngBytes()
+        };
+        return new BrushAsset
+        {
+            Id = id,
+            Preset = new BrushPreset(name, BrushKind.Ink, 24, 1, 0.8, 0.1, Color.Parse("#000000"), 0)
+            {
+                Tip = tip.CreateTip()
+            },
+            Tip = tip
+        };
+    }
+
+    private static void TryDeleteDatabase(string path)
+    {
+        foreach (var candidate in new[] { path, path + "-wal", path + "-shm" })
+        {
+            try { if (File.Exists(candidate)) File.Delete(candidate); }
+            catch { }
+        }
+    }
+
+    private static byte[] TestPngBytes()
+    {
+        using var bitmap = new SKBitmap(new SKImageInfo(3, 2, SKColorType.Bgra8888, SKAlphaType.Premul));
+        bitmap.Erase(SKColors.Transparent);
+        bitmap.SetPixel(1, 0, SKColors.White);
+        bitmap.SetPixel(1, 1, SKColors.White);
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        return data.ToArray();
     }
 }
 

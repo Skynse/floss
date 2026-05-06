@@ -31,6 +31,9 @@ public static class AppPaths
     public static string ToolGroupConfigPath { get; } =
         Path.Combine(AppDirectory, "tool-groups.json");
 
+    public static string PresetsDatabasePath { get; } =
+        Path.Combine(AppDirectory, "presets.flbr");
+
     public static void EnsureDirectories()
     {
         Directory.CreateDirectory(AppDirectory);

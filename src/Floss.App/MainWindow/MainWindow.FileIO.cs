@@ -60,6 +60,16 @@ public partial class MainWindow
         Patterns = ["*.png", "*.jpg", "*.jpeg", "*.jpe", "*.webp", "*.bmp", "*.dib", "*.gif", "*.tif", "*.tiff", "*.ico", "*.wbmp"]
     };
 
+    private static readonly FilePickerFileType FlossSubToolFileType = new("Floss Sub Tool")
+    {
+        Patterns = ["*.flbr"]
+    };
+
+    private static readonly FilePickerFileType FlossSubToolGroupFileType = new("Floss Sub Tool Group")
+    {
+        Patterns = ["*.flbrg"]
+    };
+
     private async System.Threading.Tasks.Task NewDocumentAsync()
     {
         // 1. Check for unsaved changes FIRST
@@ -377,5 +387,19 @@ public partial class MainWindow
             ? "untitled"
             : Path.GetFileNameWithoutExtension(_currentFilePath);
         return baseName + extension;
+    }
+
+    private static string SafePresetFileName(string name, string extension)
+    {
+        var invalid = Path.GetInvalidFileNameChars().ToHashSet();
+        var safe = new string(name
+            .Select(c => invalid.Contains(c) || char.IsControl(c) ? '-' : c)
+            .ToArray())
+            .Trim(' ', '.', '-');
+
+        if (string.IsNullOrWhiteSpace(safe))
+            safe = "sub-tool";
+
+        return safe + extension;
     }
 }

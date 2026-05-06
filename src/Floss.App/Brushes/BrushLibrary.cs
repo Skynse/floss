@@ -1,41 +1,28 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using Avalonia.Media;
+using Floss.App;
 
 namespace Floss.App.Brushes;
 
 public sealed class BrushLibrary
 {
-    private readonly string _directory;
+    private readonly PresetStore _store;
 
     public BrushLibrary(string directory)
     {
-        _directory = directory;
-        Directory.CreateDirectory(_directory);
+        _store = PresetStore.OpenDefault();
         SeedDefaults();
     }
 
     public IReadOnlyList<BrushAsset> Load()
     {
-        var assets = new List<BrushAsset>();
-        foreach (var path in Directory.EnumerateFiles(_directory, "*" + BrushFileFormat.Extension).OrderBy(Path.GetFileName))
-        {
-            try
-            {
-                assets.Add(BrushFileFormat.Load(path));
-            }
-            catch
-            {
-                // Keep one bad brush file from breaking the whole brush panel.
-            }
-        }
-
+        var assets = _store.LoadBrushAssets();
         if (assets.Count == 0)
         {
             SeedDefaults(force: true);
-            return Load();
+            assets = _store.LoadBrushAssets();
         }
 
         return assets;
@@ -43,32 +30,26 @@ public sealed class BrushLibrary
 
     public void Save(BrushAsset asset)
     {
-        var path = string.IsNullOrWhiteSpace(asset.FilePath)
-            ? Path.Combine(_directory, FileNameFor(asset.Preset.Name))
-            : asset.FilePath;
-
-        BrushFileFormat.Save(path, asset);
-        asset.FilePath = path;
+        asset.FilePath = "";
+        _store.SaveBrushAsset(asset);
     }
 
     public void Delete(BrushAsset asset)
     {
-        if (!string.IsNullOrEmpty(asset.FilePath))
-            try { File.Delete(asset.FilePath); } catch { }
+        _store.DeleteBrushAsset(asset.Id);
     }
 
     private void SeedDefaults(bool force = false)
     {
+        if (!force && _store.LoadBrushAssets().Count > 0) return;
         foreach (var asset in DefaultAssets())
         {
-            var path = Path.Combine(_directory, FileNameFor(asset.Preset.Name));
-            if (!force && File.Exists(path)) continue;
-            asset.FilePath = path;
-            BrushFileFormat.Save(path, asset);
+            asset.FilePath = "";
+            _store.SaveBrushAsset(asset);
         }
     }
 
-    private static IEnumerable<BrushAsset> DefaultAssets()
+    internal static IEnumerable<BrushAsset> DefaultAssets()
     {
         yield return BrushAsset.FromPreset(
             new BrushPreset("Technical Pen", BrushKind.Ink, 8, 1.0, 0.96, 0.09, Color.Parse("#000000"), 100)
@@ -174,10 +155,4 @@ public sealed class BrushLibrary
             });
     }
 
-    private static string FileNameFor(string name)
-    {
-        var safe = new string(name.Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray()).Trim('-').ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(safe)) safe = "brush";
-        return safe + BrushFileFormat.Extension;
-    }
 }
