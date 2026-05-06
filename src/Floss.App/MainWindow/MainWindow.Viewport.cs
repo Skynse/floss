@@ -67,7 +67,8 @@ public partial class MainWindow
         _gestureStartPoint = _lastPanPoint;
         if (_activeGesture == GestureMode.BrushSize)
         {
-            _canvas.LockCursorPreview(e.GetPosition(_canvas), forceBrushOutline: true);
+            _brushSizeGestureStartCanvasPoint = e.GetPosition(_canvas);
+            _canvas.LockCursorPreview(_brushSizeGestureStartCanvasPoint, forceBrushOutline: true);
         }
         e.Pointer.Capture(_workspaceViewport);
         e.Handled = true;
@@ -82,6 +83,24 @@ public partial class MainWindow
         if (IsResizeDragging)
         {
             UpdateResizeDrag(pt);
+            e.Handled = true;
+            return;
+        }
+
+        if (_activeGesture == GestureMode.BrushSize)
+        {
+            var canvasPoint = e.GetPosition(_canvas);
+            var dx = canvasPoint.X - _brushSizeGestureStartCanvasPoint.X;
+            var dy = canvasPoint.Y - _brushSizeGestureStartCanvasPoint.Y;
+            var radiusDistance = Math.Sqrt(dx * dx + dy * dy);
+            _sizeSlider.Value = BrushSizeAdjustment.FromRadiusDistance(
+                radiusDistance,
+                _sizeSlider.Minimum,
+                _sizeSlider.Maximum);
+            _lastPanPoint = pt;
+            _canvas.LockCursorPreview(
+                _brushSizeGestureStartCanvasPoint,
+                forceBrushOutline: true);
             e.Handled = true;
             return;
         }
@@ -109,11 +128,6 @@ public partial class MainWindow
             case GestureMode.Rotate:
                 SetRotation(_rotation + d.X * sc.GestureRotateSensitivity);
                 break;
-            case GestureMode.BrushSize:
-                _sizeSlider.Value = Math.Clamp(
-                    _sizeSlider.Value + d.X * sc.GestureSizeSensitivity,
-                    _sizeSlider.Minimum, _sizeSlider.Maximum);
-                break;
         }
         e.Handled = true;
     }
@@ -126,6 +140,18 @@ public partial class MainWindow
         _canvas.UnlockCursorPreview();
         e.Pointer.Capture(null);
         e.Handled = true;
+    }
+
+    private void NudgeBrushSize(int direction, bool large)
+    {
+        var sc = App.Shortcuts;
+        var configuredStep = large ? sc.BrushSizeStepLarge : sc.BrushSizeStep;
+        _sizeSlider.Value = BrushSizeAdjustment.Nudge(
+            _sizeSlider.Value,
+            direction,
+            configuredStep,
+            _sizeSlider.Minimum,
+            _sizeSlider.Maximum);
     }
 
     // pan_new = (cursor - vpCenter) * (1 - ratio) + pan_old * ratio
@@ -389,22 +415,22 @@ public partial class MainWindow
         else if (sc.OpenBrushEditor.Matches(key, mods)) { OpenToolProperties(); e.Handled = true; }
         else if (sc.BrushSizeDecrease.Matches(key, mods))
         {
-            _sizeSlider.Value = Math.Max(_sizeSlider.Minimum, _sizeSlider.Value - sc.BrushSizeStep);
+            NudgeBrushSize(-1, large: false);
             e.Handled = true;
         }
         else if (sc.BrushSizeIncrease.Matches(key, mods))
         {
-            _sizeSlider.Value = Math.Min(_sizeSlider.Maximum, _sizeSlider.Value + sc.BrushSizeStep);
+            NudgeBrushSize(1, large: false);
             e.Handled = true;
         }
         else if (sc.BrushSizeDecreaseLarge.Matches(key, mods))
         {
-            _sizeSlider.Value = Math.Max(_sizeSlider.Minimum, _sizeSlider.Value - sc.BrushSizeStepLarge);
+            NudgeBrushSize(-1, large: true);
             e.Handled = true;
         }
         else if (sc.BrushSizeIncreaseLarge.Matches(key, mods))
         {
-            _sizeSlider.Value = Math.Min(_sizeSlider.Maximum, _sizeSlider.Value + sc.BrushSizeStepLarge);
+            NudgeBrushSize(1, large: true);
             e.Handled = true;
         }
         else if (sc.BrushOpacityDecrease.Matches(key, mods))

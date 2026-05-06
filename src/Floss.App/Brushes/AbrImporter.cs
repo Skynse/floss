@@ -118,12 +118,6 @@ public static class AbrImporter
             ? ParseDescBrushParams(descData)
             : [];
 
-        System.Console.Error.WriteLine($"[ABR] Parsed {allParams.Count} brush params from desc");
-        foreach (var pp in allParams)
-        {
-            System.Console.Error.WriteLine($"  Params: name='{pp.Name}' type={pp.BrushType} guid={pp.SampledDataGuid ?? "null"} size={(pp.HasDiameter ? pp.Diameter.ToString("F0") : "def")} spac={(pp.HasSpacing ? pp.Spacing.ToString("F1") : "def")} hard={(pp.HasHardness ? pp.Hardness.ToString("F0") : "def")}");
-        }
-
         // Build GUID → params lookup for sampled brushes
         var guidToParams = new Dictionary<string, AbrBrushParams>(
             StringComparer.OrdinalIgnoreCase);
@@ -136,10 +130,6 @@ public static class AbrImporter
             else
                 unnamedParams.Enqueue(p);
         }
-
-        System.Console.Error.WriteLine($"[ABR] GUID map has {guidToParams.Count} entries, unnamed queue has {unnamedParams.Count}");
-        foreach (var kv in guidToParams)
-            System.Console.Error.WriteLine($"  GUID map: {kv.Key} -> {kv.Value.Name}");
 
         ScanV10Samp(sampData, guidToParams, unnamedParams, results, ref errors);
     }
@@ -165,6 +155,8 @@ public static class AbrImporter
         public VrParams RoundnessDyn= new();
         public VrParams FlowDyn     = new(); // prVr = flow/opacity-jitter in PS
         public VrParams OpacityDyn  = new(); // opVr
+        public VrParams ScatterDyn  = new();
+        public VrParams SpacingDyn  = new();
         public VrParams WetDyn      = new(); // wtVr = wet-edges dynamics
         public VrParams MixDyn      = new(); // mxVr = mix/airbrush
 
@@ -214,56 +206,43 @@ public static class AbrImporter
     {
         var results = new List<AbrBrushParams>();
         var current = new AbrBrushParams();
+        var context = AbrDescContext.None;
         var pos = 0;
         int L = desc.Length;
 
-        var markerHits = new System.Collections.Generic.Dictionary<string, int>();
-        var nmCount = 0;
-        var skipNames = new System.Collections.Generic.List<string>();
-
         while (pos < L - 4)
         {
-            var advanced = false;
-
             if (MatchesAt(desc, pos, "UntF"u8) && pos + 18 <= L)
             {
-                markerHits["UntF"] = markerHits.GetValueOrDefault("UntF", 0) + 1;
                 var key = ReadKeyNameBackward(desc, pos);
-                var unit = Encoding.ASCII.GetString(desc, pos + 4, 4).TrimEnd('\0', ' ');
                 var val = ReadBigEndianDouble(desc, pos + 8);
-                SetParam(ref current, key, val);
-                pos += 18; advanced = true;
+                SetParam(ref current, key, val, context);
+                pos += 18;
             }
             else if (MatchesAt(desc, pos, "doub"u8) && pos + 12 <= L)
             {
-                markerHits["doub"] = markerHits.GetValueOrDefault("doub", 0) + 1;
                 var key = ReadKeyNameBackward(desc, pos);
                 var val = ReadBigEndianDouble(desc, pos + 4);
-                SetParam(ref current, key, val);
-                pos += 12; advanced = true;
+                SetParam(ref current, key, val, context);
+                pos += 12;
             }
             else if (MatchesAt(desc, pos, "long"u8) && pos + 8 <= L)
             {
-                markerHits["long"] = markerHits.GetValueOrDefault("long", 0) + 1;
                 var key = ReadKeyNameBackward(desc, pos);
                 var val = (long)((uint)desc[pos+4] << 24 | (uint)desc[pos+5] << 16 |
                                  (uint)desc[pos+6] << 8  | desc[pos+7]);
-                SetParam(ref current, key, val);
-                pos += 8; advanced = true;
+                SetParam(ref current, key, val, context);
+                pos += 8;
             }
             else if (MatchesAt(desc, pos, "bool"u8) && pos + 5 <= L)
             {
-                markerHits["bool"] = markerHits.GetValueOrDefault("bool", 0) + 1;
                 var key = ReadKeyNameBackward(desc, pos);
-                SetParam(ref current, key, desc[pos + 4] != 0);
-                pos += 5; advanced = true;
+                SetParam(ref current, key, desc[pos + 4] != 0, context);
+                pos += 5;
             }
             else if (MatchesAt(desc, pos, "TEXT"u8) && pos + 8 <= L)
             {
-                markerHits["TEXT"] = markerHits.GetValueOrDefault("TEXT", 0) + 1;
                 var key = ReadKeyNameBackward(desc, pos);
-                if (markerHits["TEXT"] <= 20 || key == "Nm")
-                    System.Console.Error.WriteLine("  TEXT marker at " + pos + " key='" + key + "'");
                 var charCount = (int)((uint)desc[pos+4] << 24 | (uint)desc[pos+5] << 16 |
                                       (uint)desc[pos+6] << 8  | desc[pos+7]);
                 if (charCount > 0 && charCount <= 512 && pos + 8 + charCount * 2 <= L)
@@ -271,57 +250,48 @@ public static class AbrImporter
                     string val;
                     try { val = Encoding.BigEndianUnicode.GetString(desc, pos + 8, charCount * 2).TrimEnd('\0'); }
                     catch { val = Encoding.ASCII.GetString(desc, pos + 8, charCount * 2).TrimEnd('\0'); }
-                    SetParam(ref current, key, val);
 
-                    // "Nm" TEXT entries mark the start of a NEW brush preset
                     if (key is "Nm")
                     {
-                        nmCount++;
-                        if (!val.StartsWith("Sampled ", StringComparison.OrdinalIgnoreCase))
+                        if (!val.StartsWith("Sampled ", StringComparison.OrdinalIgnoreCase) &&
+                            !val.StartsWith("SampledT", StringComparison.OrdinalIgnoreCase))
                         {
                             if (!IsAllDefaults(ref current))
                                 results.Add(current);
-                            current = new AbrBrushParams { Name = val };
-                        }
-                        else
-                        {
-                            skipNames.Add(val);
+                            current = new AbrBrushParams();
+                            context = AbrDescContext.None;
+                            SetParam(ref current, key, val, context);
                         }
                     }
+                    else
+                    {
+                        SetParam(ref current, key, val, context);
+                    }
                 }
-                pos += 8 + charCount * 2; advanced = true;
+                pos += 8 + charCount * 2;
             }
             else if (MatchesAt(desc, pos, "enum"u8) && pos + 12 <= L)
             {
                 var key = ReadKeyNameBackward(desc, pos);
                 var enumType = Encoding.ASCII.GetString(desc, pos + 4, 4).TrimEnd('\0', ' ');
                 var enumVal  = Encoding.ASCII.GetString(desc, pos + 8, 4).TrimEnd('\0', ' ');
-                SetParam(ref current, key, $"{enumType}.{enumVal}");
+                SetParam(ref current, key, $"{enumType}.{enumVal}", context);
                 pos += 12;
                 while (pos < L && desc[pos] == 0) pos++;
-                advanced = true;
             }
             else if (MatchesAt(desc, pos, "Objc"u8))
             {
-                // Read class name after Objc — skip internal struct prefix
+                var objcKey = ReadKeyNameBackward(desc, pos);
                 pos += 4;
-                // Skip past any prefix fields (4+4 bytes common) and look for class name
-                // The class name is typically a length-prefixed Pascal string
-                while (pos < L && desc[pos] == 0) pos++;
-                var cnPos = pos;
-                // Try: after 8 bytes of prefix, then class name
-                if (cnPos + 8 < L && desc[cnPos + 0] == 0 && desc[cnPos + 4] == 0)
-                    cnPos += 8; // skip two I32 fields
-                if (cnPos < L && desc[cnPos] < 64) // looks like a length byte
-                    cnPos++;
-                var cn = ReadObjcClassName(desc, ref cnPos);
-                pos = cnPos;
+                if (pos + 9 <= L && desc[pos+0] == 0 && desc[pos+4] == 0 && desc[pos+8] < 64)
+                    pos += 9;
+                else
+                    while (pos < L && desc[pos] == 0) pos++;
+                var cn = ReadObjcClassName(desc, ref pos);
 
-                // Track brush type
-                if (cn is "computedBrush" or "sampledBrush")
+                if (objcKey is "Brsh" && cn is "computedBrush" or "sampledBrush")
                     current.BrushType = cn;
-
-                advanced = true;
+                context = ContextForObject(objcKey, cn);
             }
             else
             {
@@ -333,18 +303,38 @@ public static class AbrImporter
         if (!IsAllDefaults(ref current))
             results.Add(current);
 
-        System.Console.Error.WriteLine("[ABR desc scan] markers hit: UntF=" +
-            markerHits.GetValueOrDefault("UntF", 0) + " bool=" +
-            markerHits.GetValueOrDefault("bool", 0) + " long=" +
-            markerHits.GetValueOrDefault("long", 0) + " TEXT=" +
-            markerHits.GetValueOrDefault("TEXT", 0) + " enum=" +
-            markerHits.GetValueOrDefault("enum", 0) + " Objc=" +
-            markerHits.GetValueOrDefault("Objc", 0) + " doub=" +
-            markerHits.GetValueOrDefault("doub", 0));
-        System.Console.Error.WriteLine("[ABR desc scan] Nm TEXT count=" + nmCount +
-            ", skipped=" + skipNames.Count + " (" + string.Join(',', skipNames.Take(10)) + ")");
-
         return results;
+    }
+
+    private enum AbrDescContext
+    {
+        None,
+        SizeDynamics,
+        AngleDynamics,
+        RoundnessDynamics,
+        OpacityDynamics,
+        FlowDynamics,
+        ScatterDynamics,
+        SpacingDynamics,
+        ColorDynamics,
+        WetDynamics,
+        MixDynamics
+    }
+
+    private static AbrDescContext ContextForObject(string key, string className)
+    {
+        var text = $"{key} {className}".ToLowerInvariant();
+        if (text.Contains("size") || text.Contains("szvr") || text.Contains("diameter")) return AbrDescContext.SizeDynamics;
+        if (text.Contains("angle") || text.Contains("angl")) return AbrDescContext.AngleDynamics;
+        if (text.Contains("round") || text.Contains("rnd")) return AbrDescContext.RoundnessDynamics;
+        if (text.Contains("opacity") || text.Contains("opvr") || text.Contains("opct")) return AbrDescContext.OpacityDynamics;
+        if (text.Contains("flow") || text.Contains("prvr")) return AbrDescContext.FlowDynamics;
+        if (text.Contains("scatter") || text.Contains("sct")) return AbrDescContext.ScatterDynamics;
+        if (text.Contains("spacing") || text.Contains("spcn")) return AbrDescContext.SpacingDynamics;
+        if (text.Contains("color")) return AbrDescContext.ColorDynamics;
+        if (text.Contains("wet") || text.Contains("wtvr")) return AbrDescContext.WetDynamics;
+        if (text.Contains("mix") || text.Contains("mxvr")) return AbrDescContext.MixDynamics;
+        return AbrDescContext.None;
     }
 
     private static bool IsAllDefaults(ref AbrBrushParams p)
@@ -355,7 +345,7 @@ public static class AbrImporter
     }
 
     // Set a parsed value on the current brush params based on the key name.
-    private static void SetParam(ref AbrBrushParams p, string key, object val)
+    private static void SetParam(ref AbrBrushParams p, string key, object val, AbrDescContext context)
     {
         switch (key)
         {
@@ -393,16 +383,58 @@ public static class AbrImporter
 
             // Dynamics control values (flat in the desc, not nested)
             case "bVTy":
-                // bVTy belongs to the most recently encountered dynamics group
-                // (We can't determine which without context, so store on all)
+                ApplyVrParam(ref p, context, vr => { vr.ControlType = (int)Numeric(val); return vr; });
                 break;
             case "jitter":
-                // Same — context-dependent
+                if (context == AbrDescContext.ScatterDynamics)
+                    p.ScatterDist = Numeric(val);
+                ApplyVrParam(ref p, context, vr => { vr.Jitter = Numeric(val); return vr; });
                 break;
             case "Mnm":
+            case "minimum":
+                ApplyVrParam(ref p, context, vr => { vr.Minimum = Numeric(val); return vr; });
                 break;
         }
     }
+
+    private static void ApplyVrParam(ref AbrBrushParams p, AbrDescContext context, Func<VrParams, VrParams> update)
+    {
+        var vr = context switch
+        {
+            AbrDescContext.SizeDynamics => p.SizeDyn,
+            AbrDescContext.AngleDynamics => p.AngleDyn,
+            AbrDescContext.RoundnessDynamics => p.RoundnessDyn,
+            AbrDescContext.OpacityDynamics => p.OpacityDyn,
+            AbrDescContext.FlowDynamics => p.FlowDyn,
+            AbrDescContext.ScatterDynamics => p.ScatterDyn,
+            AbrDescContext.SpacingDynamics => p.SpacingDyn,
+            AbrDescContext.WetDynamics => p.WetDyn,
+            AbrDescContext.MixDynamics => p.MixDyn,
+            _ => default
+        };
+        vr = update(vr);
+        switch (context)
+        {
+            case AbrDescContext.SizeDynamics: p.SizeDyn = vr; break;
+            case AbrDescContext.AngleDynamics: p.AngleDyn = vr; break;
+            case AbrDescContext.RoundnessDynamics: p.RoundnessDyn = vr; break;
+            case AbrDescContext.OpacityDynamics: p.OpacityDyn = vr; break;
+            case AbrDescContext.FlowDynamics: p.FlowDyn = vr; break;
+            case AbrDescContext.ScatterDynamics: p.ScatterDyn = vr; break;
+            case AbrDescContext.SpacingDynamics: p.SpacingDyn = vr; break;
+            case AbrDescContext.WetDynamics: p.WetDyn = vr; break;
+            case AbrDescContext.MixDynamics: p.MixDyn = vr; break;
+        }
+    }
+
+    private static double Numeric(object val) => val switch
+    {
+        double d => d,
+        long l => l,
+        int i => i,
+        bool b => b ? 1 : 0,
+        _ => 0
+    };
 
     private static bool ConvBool(object val) =>
         val is bool b ? b : (val is long l ? l != 0 : false);
@@ -456,6 +488,7 @@ public static class AbrImporter
     {
         var pos = 0;
         var brushIndex = 0;
+        var usedGuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         while (pos + 4 <= samp.Length)
         {
@@ -465,22 +498,18 @@ public static class AbrImporter
 
             if (brushSize <= 0 || pos + brushSize > samp.Length) break;
 
-            // Extract GUID from this samp entry for matching
             var entryGuid = TryReadEntryGuid(samp, pos);
             AbrBrushParams? matchedParams = null;
 
-            if (entryGuid != null)
+            if (entryGuid != null && guidToParams.TryGetValue(entryGuid, out var mp))
             {
-                var found = guidToParams.TryGetValue(entryGuid, out matchedParams);
-                System.Console.Error.WriteLine($"  samp entry {brushIndex}: GUID={entryGuid}, matched={found}");
-                if (matchedParams != null) System.Console.Error.WriteLine($"    params: name='{matchedParams.Name}' size={(matchedParams.HasDiameter?matchedParams.Diameter.ToString("F0"):"def")}");
-            }
-            else if (unnamedParams.Count > 0)
-            {
-                matchedParams = unnamedParams.Dequeue();
+                matchedParams = mp;
+                usedGuids.Add(entryGuid);
             }
 
-            var name = matchedParams?.Name ?? $"Brush {brushIndex + 1}";
+            var name = matchedParams?.Name;
+            if (string.IsNullOrEmpty(name))
+                name = $"Brush {brushIndex + 1}";
 
             try
             {
@@ -492,6 +521,19 @@ public static class AbrImporter
 
             var aligned = brushSize + ((4 - brushSize % 4) % 4);
             pos += aligned;
+        }
+
+        // Import remaining desc presets that didn't match a samp tip.
+        // These are computed brushes (no tip image) or presets whose tip GUID
+        // wasn't found in the samp block.
+        foreach (var p in unnamedParams)
+        {
+            if (string.IsNullOrEmpty(p.Name)) continue;
+            // Only import if this preset has shape parameters (not just a bare name)
+            if (!p.HasDiameter && !p.HasHardness && !p.HasSpacing) continue;
+            var asset = MakeComputedAsset(p);
+            if (asset != null)
+                results.Add(asset);
         }
     }
 
@@ -618,9 +660,6 @@ public static class AbrImporter
             }
         }
         else return null;
-
-        for (var j = 0; j < storedPixels.Length; j++)
-            storedPixels[j] = (byte)(255 - storedPixels[j]);
 
         byte[] fullPixels;
         if (topCrop == 0 && leftCrop == 0)
@@ -836,6 +875,118 @@ public static class AbrImporter
         }
     }
 
+    private static (byte[] Pixels, int Width, int Height) CleanTipMask(byte[] pixels, int w, int h)
+    {
+        if (w <= 0 || h <= 0 || pixels.Length < w * h)
+            return (pixels, w, h);
+
+        var cleaned = pixels.ToArray();
+        var background = EstimateBorderMedian(cleaned, w, h);
+        var center = EstimateCenterAverage(cleaned, w, h);
+
+        if (background > center + 4)
+        {
+            for (var i = 0; i < cleaned.Length; i++)
+                cleaned[i] = (byte)(255 - cleaned[i]);
+            background = EstimateBorderMedian(cleaned, w, h);
+            center = EstimateCenterAverage(cleaned, w, h);
+        }
+
+        if (background > 1 && center > background + 4)
+        {
+            var max = 0;
+            for (var i = 0; i < cleaned.Length; i++)
+            {
+                var value = Math.Max(0, cleaned[i] - background);
+                cleaned[i] = (byte)value;
+                max = Math.Max(max, value);
+            }
+
+            if (max is > 0 and < 255)
+            {
+                var scale = 255.0 / max;
+                for (var i = 0; i < cleaned.Length; i++)
+                    cleaned[i] = (byte)Math.Clamp((int)Math.Round(cleaned[i] * scale), 0, 255);
+            }
+        }
+
+        return TrimMask(cleaned, w, h, threshold: 2, padding: 1);
+    }
+
+    private static byte EstimateBorderMedian(byte[] pixels, int w, int h)
+    {
+        var border = new List<byte>(Math.Max(1, w * 2 + h * 2));
+        for (var x = 0; x < w; x++)
+        {
+            border.Add(pixels[x]);
+            border.Add(pixels[(h - 1) * w + x]);
+        }
+        for (var y = 1; y < h - 1; y++)
+        {
+            border.Add(pixels[y * w]);
+            border.Add(pixels[y * w + w - 1]);
+        }
+
+        border.Sort();
+        return border[border.Count / 2];
+    }
+
+    private static double EstimateCenterAverage(byte[] pixels, int w, int h)
+    {
+        var left = w / 4;
+        var top = h / 4;
+        var right = Math.Max(left + 1, w - left);
+        var bottom = Math.Max(top + 1, h - top);
+        long sum = 0;
+        var count = 0;
+
+        for (var y = top; y < bottom; y++)
+        for (var x = left; x < right; x++)
+        {
+            sum += pixels[y * w + x];
+            count++;
+        }
+
+        return count == 0 ? 0 : sum / (double)count;
+    }
+
+    private static (byte[] Pixels, int Width, int Height) TrimMask(byte[] pixels, int w, int h, byte threshold, int padding)
+    {
+        var minX = w;
+        var minY = h;
+        var maxX = -1;
+        var maxY = -1;
+
+        for (var y = 0; y < h; y++)
+        for (var x = 0; x < w; x++)
+        {
+            if (pixels[y * w + x] <= threshold) continue;
+            minX = Math.Min(minX, x);
+            minY = Math.Min(minY, y);
+            maxX = Math.Max(maxX, x);
+            maxY = Math.Max(maxY, y);
+        }
+
+        if (maxX < minX || maxY < minY)
+            return (pixels, w, h);
+
+        minX = Math.Max(0, minX - padding);
+        minY = Math.Max(0, minY - padding);
+        maxX = Math.Min(w - 1, maxX + padding);
+        maxY = Math.Min(h - 1, maxY + padding);
+
+        var outW = maxX - minX + 1;
+        var outH = maxY - minY + 1;
+        if (outW == w && outH == h)
+            return (pixels, w, h);
+
+        var trimmed = new byte[outW * outH];
+        for (var y = 0; y < outH; y++)
+            Array.Copy(pixels, (minY + y) * w + minX, trimmed, y * outW, outW);
+
+        return (trimmed, outW, outH);
+    }
+
     // ── PNG construction ──────────────────────────────────────────────────────
 
     private static unsafe byte[] PixelsToPng(byte[] pixels, int w, int h)
@@ -868,7 +1019,8 @@ public static class AbrImporter
         AbrBrushParams? p, int spacingPct = 25)
     {
         var cleanName = string.IsNullOrWhiteSpace(name) ? "Imported Brush" : name.Trim();
-        var pngBytes = PixelsToPng(pixels, w, h);
+        var cleaned = CleanTipMask(pixels, w, h);
+        var pngBytes = PixelsToPng(cleaned.Pixels, cleaned.Width, cleaned.Height);
         SaveTipToLibrary(cleanName, pngBytes);
 
         BuildPreset(cleanName, pngBytes, p, spacingPct, out var preset, out var tipData, out var shapeData);
@@ -882,10 +1034,24 @@ public static class AbrImporter
         };
     }
 
-    // Create a BrushPreset from ABR parameters. Returns (preset, tipData, shapeData).
+    // Create a BrushAsset for a computed brush preset (no tip image).
+    private static BrushAsset? MakeComputedAsset(AbrBrushParams p)
+    {
+        var cleanName = string.IsNullOrWhiteSpace(p.Name) ? "Imported Brush" : p.Name.Trim();
+        BuildPreset(cleanName, [], p, 25, out var preset, out var tipData, out var shapeData);
+        return new BrushAsset
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Preset = preset,
+            Tip = tipData,
+            ShapeData = shapeData
+        };
+    }
+
+    // Build brush parameters from ABR data into a BrushPreset.
     private static void BuildPreset(string cleanName, byte[] pngBytes,
         AbrBrushParams? p, int spacingPct,
-        out BrushPreset preset, out BrushTipData tipData, out BrushTipData shapeData)
+        out BrushPreset preset, out BrushTipData tipData, out BrushTipData? shapeData)
     {
         // ── Size ─────────────────────────────────────────────────────────────
         var size = 40.0;
@@ -902,6 +1068,8 @@ public static class AbrImporter
         var spacing = Math.Clamp(spacingPct / 100.0, 0.02, 1.0);
         if (p?.HasSpacing == true)
             spacing = Math.Clamp(p.Spacing / 100.0, 0.01, 1.0);
+        else if (pngBytes.Length > 0)
+            spacing = 0.08; // sampled ABR tips are usually meant to overlap tightly
 
         // ── Opacity ──────────────────────────────────────────────────────────
         var opacity = 1.0;
@@ -931,16 +1099,20 @@ public static class AbrImporter
 
         tipData = new BrushTipData
         {
-            Kind = BrushTipStorageKind.EmbeddedPng,
-            PngBytes = pngBytes
+            Kind = pngBytes.Length > 0 ? BrushTipStorageKind.EmbeddedPng : BrushTipStorageKind.Procedural,
+            PngBytes = pngBytes.Length > 0 ? pngBytes : [],
+            Shape = pngBytes.Length > 0 ? BrushTipShape.Circle : (p?.HasRoundness == true ? BrushTipShape.Circle : BrushTipShape.Circle),
+            AspectRatio = p?.HasRoundness == true ? (float)(100.0 / Math.Max(p.Roundness, 1)) : 1.0f
         };
 
-        shapeData = new BrushTipData
-        {
-            Kind = BrushTipStorageKind.Procedural,
-            Shape = BrushTipShape.Circle,
-            AspectRatio = 1.0f
-        };
+        shapeData = pngBytes.Length > 0
+            ? null
+            : new BrushTipData
+            {
+                Kind = BrushTipStorageKind.Procedural,
+                Shape = BrushTipShape.Circle,
+                AspectRatio = 1.0f
+            };
 
         var circleShape = new ProceduralBrushTip(BrushTipShape.Circle);
 
@@ -948,18 +1120,23 @@ public static class AbrImporter
         var angleJitter = 0f;
         if (p?.AngleDyn.Jitter > 0)
             angleJitter = (float)Math.Clamp(p.AngleDyn.Jitter / 100.0, 0.0, 1.0);
+        else if (p?.RoundnessDyn.Jitter > 0)
+            angleJitter = (float)Math.Clamp(p.RoundnessDyn.Jitter / 300.0, 0.0, 0.25);
 
         preset = new BrushPreset(cleanName, kind, size, opacity, hardness, spacing,
             Color.Parse("#111111"), angle)
         {
             Dynamics = BuildDynamics(p),
             Tip = tipData.CreateTip(),
-            Shape = circleShape,
+            Shape = pngBytes.Length > 0 ? null : circleShape,
             Flow = flow,
             Smoothing = smoothing,
             Color = Color.Parse("#111111"),
             BaseAngleSource = DetectAngleSource(p),
-            AngleJitter = angleJitter
+            AngleJitter = angleJitter,
+            Grain = p?.UseColorDynamics == true
+                ? Math.Clamp((Math.Abs(p.HueJitter) + Math.Abs(p.SaturationJitter) + Math.Abs(p.BrightnessJitter)) / 300.0, 0.0, 1.0)
+                : 0.0
         };
     }
 
@@ -973,19 +1150,15 @@ public static class AbrImporter
         d.Opacity  = FromVrParams(p.OpacityDyn);
         d.Flow     = FromVrParams(p.FlowDyn);
         d.Hardness = CurveOption.Off();
+        d.Spacing  = FromVrParams(p.SpacingDyn);
 
-        // Scatter: map scatterDistance to Scatter dynamics
-        if (p.UseScatter && p.ScatterDist > 0)
+        if (p.UseScatter || p.ScatterDist > 0 || p.ScatterDyn.Jitter > 0)
         {
-            var scatterStrength = Math.Clamp(p.ScatterDist / 100.0, 0.0, 1.0);
-            d.Scatter = CurveOption.Off(); // keep scatter off by default
-            // We set the scatter as a base multiplier — engine reads this from dynamics
-            // The scatter jitter from ABR is an absolute distance, not a curve; skip complex mapping.
+            var scatterStrength = Math.Clamp(Math.Max(p.ScatterDist, p.ScatterDyn.Jitter) / 100.0, 0.02, 2.0);
+            d.Scatter = ConstantOption((float)scatterStrength);
         }
 
-        // Angle source: checked separately in DetectAngleSource
-        d.Rotation = CurveOption.Off();
-        d.Spacing = CurveOption.Off();
+        d.Rotation = RotationOption(p.AngleDyn);
 
         return d;
     }
@@ -993,40 +1166,81 @@ public static class AbrImporter
     // Convert a Photoshop dynamics bVTy to a CurveOption.
     private static CurveOption FromVrParams(VrParams vr)
     {
-        if (vr.ControlType == 0)
+        if (vr.ControlType == 0 && vr.Jitter <= 0)
             return CurveOption.Off();
 
-        var opt = CurveOption.Off();
-        opt.MinOutput = (float)Math.Clamp(vr.Minimum / 100.0, 0.0, 1.0);
-        opt.MaxOutput = 1f;
+        var jitter = (float)Math.Clamp(vr.Jitter / 100.0, 0.0, 2.0);
+        var opt = new CurveOption
+        {
+            IsEnabled = true,
+            MinOutput = (float)Math.Clamp(vr.Minimum / 100.0, 0.0, 1.0),
+            MaxOutput = Math.Max(1f, 1f + jitter),
+            CombineMode = jitter > 0 && vr.ControlType != 0 ? SensorCombineMode.Add : SensorCombineMode.Multiply
+        };
 
         switch (vr.ControlType)
         {
+            case 0:
+                opt.MinOutput = Math.Max(0f, 1f - jitter);
+                opt.MaxOutput = 1f + jitter;
+                opt.Sensors.Add(new SensorConfig { Type = SensorType.Random, Curve = CubicCurve.Identity() });
+                break;
+            case 1: // Fade
+                opt.Sensors.Add(new SensorConfig { Type = SensorType.Fade, Length = 120, Curve = CubicCurve.Identity() });
+                break;
             case 2: // Pen Pressure
-                opt.IsEnabled = true;
-                opt.Sensors.Clear();
                 opt.Sensors.Add(new SensorConfig
                 {
                     Type = SensorType.Pressure,
                     Curve = CubicCurve.Deserialize("0,0;1,1") ?? new CubicCurve()
                 });
                 break;
-            case 6: // Initial Direction — maps to DirectionOfLine style
-                opt.IsEnabled = true;
-                opt.Strength = 0.3f; // subdued
-                // We don't map this directly; DetectAngleSource handles direction.
+            case 3: // Pen Tilt
+                opt.Sensors.Add(new SensorConfig { Type = SensorType.TiltX, Curve = CubicCurve.Identity() });
                 break;
-            case 7: // Stroke direction
-                opt.IsEnabled = true;
-                opt.Sensors.Clear();
-                opt.Sensors.Add(new SensorConfig
-                {
-                    Type = SensorType.Pressure,
-                    Curve = CubicCurve.Deserialize("0,0;1,1") ?? new CubicCurve()
-                });
+            case 5: // Rotation / stylus wheel
+                opt.Sensors.Add(new SensorConfig { Type = SensorType.Rotation, Curve = CubicCurve.Identity() });
+                break;
+            case 6:
+            case 7:
+                opt.Sensors.Add(new SensorConfig { Type = SensorType.DrawingAngle, Curve = CubicCurve.Identity() });
                 break;
         }
 
+        if (jitter > 0 && vr.ControlType != 0)
+            opt.Sensors.Add(new SensorConfig { Type = SensorType.Random, Curve = CubicCurve.Identity() });
+
+        if (opt.Sensors.Count == 0)
+            return CurveOption.Off();
+
+        return opt;
+    }
+
+    private static CurveOption ConstantOption(float value)
+    {
+        var opt = new CurveOption { MinOutput = value, MaxOutput = value };
+        opt.Sensors.Add(new SensorConfig { Type = SensorType.Random, Curve = CubicCurve.Identity() });
+        return opt;
+    }
+
+    private static CurveOption RotationOption(VrParams vr)
+    {
+        if (vr.Jitter <= 0 && vr.ControlType is not (3 or 5))
+            return CurveOption.Off();
+
+        var opt = new CurveOption
+        {
+            MinOutput = -1f,
+            MaxOutput = 1f,
+            Strength = (float)Math.Clamp(Math.Max(vr.Jitter, 25) / 100.0, 0.0, 1.0),
+            CombineMode = SensorCombineMode.Add
+        };
+        opt.Sensors.Add(vr.ControlType switch
+        {
+            3 => new SensorConfig { Type = SensorType.TiltX, Curve = CubicCurve.Identity() },
+            5 => new SensorConfig { Type = SensorType.Rotation, Curve = CubicCurve.Identity() },
+            _ => new SensorConfig { Type = SensorType.Random, Curve = CubicCurve.Identity() }
+        });
         return opt;
     }
 
@@ -1034,6 +1248,8 @@ public static class AbrImporter
     {
         if (p == null) return BrushDynamics.AngleSource.None;
         if (p.AngleDyn.ControlType is 6 or 7) return BrushDynamics.AngleSource.DirectionOfLine;
+        if (p.AngleDyn.ControlType == 3) return BrushDynamics.AngleSource.PenTilt;
+        if (p.AngleDyn.ControlType == 5) return BrushDynamics.AngleSource.PenTwist;
         return BrushDynamics.AngleSource.None;
     }
 

@@ -3,12 +3,16 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Avalonia.Input;
 using Avalonia.Media;
 using Floss.App.Brushes;
 using Floss.App.Document;
+using Floss.App.Input;
 using Floss.App.Psd;
+using SkiaSharp;
 using AppKeyBinding = Floss.App.Input.KeyBinding;
 
 namespace Floss.App.Tests;
@@ -37,6 +41,8 @@ internal static class Program
         ("KeyBinding matches modifier-only shortcuts", KeyBindingTests.Matches_HandlesModifierOnlyBindings),
         ("KeyBinding updates modifier state on key transitions", KeyBindingTests.ModifierHelpers_UpdateModifierFlags),
         ("KeyBinding JSON converter round-trips strings", KeyBindingTests.JsonConverter_RoundTrips),
+        ("Brush size adjustment scales smoothly across sizes", BrushSizeAdjustmentTests.ScalesSmoothlyAcrossSizes),
+        ("Brush size adjustment clamps boundaries", BrushSizeAdjustmentTests.ClampsBoundaries),
 
         ("CubicCurve identity and linear evaluation", BrushTests.CubicCurve_EvaluatesIdentityAndLinearCurves),
         ("CubicCurve clamps, sorts, serializes, and clones points", BrushTests.CubicCurve_PointManagementAndSerialization),
@@ -44,6 +50,9 @@ internal static class Program
         ("CurveOption combines sensors and clones deeply", BrushTests.CurveOption_ComputesAndClones),
         ("BrushDynamics serializes and handles invalid JSON", BrushTests.BrushDynamics_SerializesAndFallsBack),
         ("BrushPreset legacy dynamics bridge preserves settings", BrushTests.BrushPreset_LegacyDynamicsBridge),
+        ("Image brush tips preserve source aspect ratio", BrushTests.ImageBrushTip_PreservesAspectRatio),
+        ("ABR preset mapping keeps usable brush dynamics", BrushTests.AbrPresetMapping_KeepsDynamics),
+        ("ABR mask cleanup inverts dark-on-light stamps", BrushTests.AbrMaskCleanup_InvertsDarkOnLightMasks),
 
         ("DrawingDocument starts with one paintable layer", DrawingDocumentTests.Constructor_SetsInitialLayerState),
         ("DrawingDocument adds, selects, duplicates, and deletes layers", DrawingDocumentTests.LayerManagement_WorksForCommonMutations),
@@ -300,6 +309,28 @@ internal static class KeyBindingTests
     }
 }
 
+internal static class BrushSizeAdjustmentTests
+{
+    public static void ScalesSmoothlyAcrossSizes()
+    {
+        AssertEx.Near(400, BrushSizeAdjustment.FromRadiusDistance(200, 1, 2000));
+        AssertEx.Near(20, BrushSizeAdjustment.FromRadiusDistance(10, 1, 2000));
+
+        var smallNudge = BrushSizeAdjustment.Nudge(10, 1, 2, 1, 2000);
+        var largeBrushNudge = BrushSizeAdjustment.Nudge(1000, 1, 2, 1, 2000);
+        AssertEx.Near(12, smallNudge);
+        AssertEx.True(largeBrushNudge - 1000 > 2, "Expected large brushes to use proportional nudge deltas.");
+    }
+
+    public static void ClampsBoundaries()
+    {
+        AssertEx.Equal(1.0, BrushSizeAdjustment.FromRadiusDistance(0, 1, 2000));
+        AssertEx.Equal(2000.0, BrushSizeAdjustment.FromRadiusDistance(2000, 1, 2000));
+        AssertEx.Equal(1.0, BrushSizeAdjustment.Nudge(1, -1, 10, 1, 2000));
+        AssertEx.Equal(2000.0, BrushSizeAdjustment.Nudge(2000, 1, 10, 1, 2000));
+    }
+}
+
 internal static class BrushTests
 {
     public static void CubicCurve_EvaluatesIdentityAndLinearCurves()
@@ -397,6 +428,113 @@ internal static class BrushTests
         AssertEx.True(preset.SizeDynamics.VelocityEnabled);
         AssertEx.True(preset.OpacityDynamics.PressureEnabled);
         AssertEx.False(preset.OpacityDynamics.VelocityEnabled);
+    }
+
+    public static unsafe void ImageBrushTip_PreservesAspectRatio()
+    {
+        using var source = new SKBitmap(new SKImageInfo(4, 2, SKColorType.Bgra8888, SKAlphaType.Premul));
+        source.Erase(SKColors.Transparent);
+        var ptr = (byte*)source.GetPixels().ToPointer();
+        for (var y = 0; y < source.Height; y++)
+        for (var x = 0; x < source.Width; x++)
+        {
+            var p = ptr + y * source.RowBytes + x * 4;
+            p[0] = 255;
+            p[1] = 255;
+            p[2] = 255;
+            p[3] = 255;
+        }
+
+        using var image = SKImage.FromBitmap(source);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        using var tip = new ImageBrushTip(data.ToArray());
+        using var mask = tip.GenerateMask(8, 1.0f);
+
+        var maskPtr = (byte*)mask.GetPixels().ToPointer();
+        AssertEx.Equal((byte)0, maskPtr[0 * mask.RowBytes + 4]);
+        AssertEx.Equal((byte)255, maskPtr[4 * mask.RowBytes + 4]);
+        AssertEx.Equal((byte)0, maskPtr[7 * mask.RowBytes + 4]);
+    }
+
+    public static void AbrPresetMapping_KeepsDynamics()
+    {
+        var importer = typeof(AbrImporter);
+        var paramType = importer.GetNestedType("AbrBrushParams", BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Missing AbrBrushParams.");
+        var vrType = importer.GetNestedType("VrParams", BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Missing VrParams.");
+        var p = Activator.CreateInstance(paramType)
+            ?? throw new InvalidOperationException("Could not create ABR params.");
+
+        SetField(p, "HasDiameter", true);
+        SetField(p, "Diameter", 32.0);
+        SetField(p, "HasSpacing", true);
+        SetField(p, "Spacing", 8.0);
+        SetField(p, "UseScatter", true);
+        SetField(p, "ScatterDist", 35.0);
+
+        SetField(p, "SizeDyn", Vr(vrType, control: 2, jitter: 25, minimum: 20));
+        SetField(p, "AngleDyn", Vr(vrType, control: 7, jitter: 50, minimum: 0));
+        SetField(p, "SpacingDyn", Vr(vrType, control: 0, jitter: 40, minimum: 0));
+
+        var build = importer.GetMethod("BuildPreset", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException("Missing BuildPreset.");
+        var args = new object?[] { "ABR", Array.Empty<byte>(), p, 25, null, null, null };
+        build.Invoke(null, args);
+
+        var preset = (BrushPreset)(args[4] ?? throw new InvalidOperationException("No preset returned."));
+        AssertEx.Equal(32.0, preset.Size);
+        AssertEx.Near(0.08, preset.Spacing);
+        AssertEx.Equal(BrushDynamics.AngleSource.DirectionOfLine, preset.BaseAngleSource);
+        AssertEx.True(preset.AngleJitter > 0.4f);
+        AssertEx.True(preset.Dynamics.Size.IsEnabled);
+        AssertEx.True(preset.Dynamics.Scatter.IsEnabled);
+        AssertEx.True(preset.Dynamics.Spacing.IsEnabled);
+        AssertEx.True(preset.Dynamics.Size.Sensors.Any(s => s.Type == SensorType.Pressure));
+        AssertEx.True(preset.Dynamics.Size.Sensors.Any(s => s.Type == SensorType.Random));
+    }
+
+    public static void AbrMaskCleanup_InvertsDarkOnLightMasks()
+    {
+        var importer = typeof(AbrImporter);
+        var clean = importer.GetMethod("CleanTipMask", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException("Missing CleanTipMask.");
+        var pixels = new byte[]
+        {
+            255, 255, 255, 255,
+            255,   0,   0, 255,
+            255,   0,   0, 255,
+            255, 255, 255, 255
+        };
+
+        var result = clean.Invoke(null, [pixels, 4, 4])
+            ?? throw new InvalidOperationException("No cleanup result.");
+        var tuple = (ITuple)result;
+
+        var cleaned = (byte[])tuple[0]!;
+        AssertEx.Equal(4, (int)tuple[1]!);
+        AssertEx.Equal(4, (int)tuple[2]!);
+        AssertEx.Equal((byte)0, cleaned[0]);
+        AssertEx.Equal((byte)255, cleaned[1 * 4 + 1]);
+        AssertEx.Equal((byte)255, cleaned[2 * 4 + 2]);
+        AssertEx.Equal((byte)0, cleaned[3 * 4 + 3]);
+    }
+
+    private static object Vr(Type vrType, int control, double jitter, double minimum)
+    {
+        var vr = Activator.CreateInstance(vrType)
+            ?? throw new InvalidOperationException("Could not create VR params.");
+        SetField(vr, "ControlType", control);
+        SetField(vr, "Jitter", jitter);
+        SetField(vr, "Minimum", minimum);
+        return vr;
+    }
+
+    private static void SetField(object target, string name, object value)
+    {
+        var field = target.GetType().GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException($"Missing field {name}.");
+        field.SetValue(target, value);
     }
 
     private static StrokePoint StrokePoint(

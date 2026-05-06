@@ -272,9 +272,10 @@ public static class BrushFileFormat
         writer.Write((int)tip.Kind);
         writer.Write((int)tip.Shape);
         writer.Write(tip.AspectRatio);
-        writer.Write(tip.PngBytes.Length);
-        if (tip.PngBytes.Length > 0)
-            writer.Write(tip.PngBytes);
+        var pngLen = tip.PngBytes?.Length ?? 0;
+        writer.Write(pngLen);
+        if (pngLen > 0)
+            writer.Write(tip.PngBytes!);
 
         if (tip.Kind == BrushTipStorageKind.Compound)
         {

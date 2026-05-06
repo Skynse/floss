@@ -26,10 +26,10 @@ public sealed class ShortcutsConfig
     /// Canvas rotation per key press in degrees.
     public double RotateKeyStep { get; set; } = 15.0;
 
-    /// Brush size change per small nudge key press (px).
+    /// Brush size nudge key speed. This is a minimum pixel delta and a proportional multiplier at large sizes.
     public double BrushSizeStep { get; set; } = 2.0;
 
-    /// Brush size change per large nudge key press (px).
+    /// Brush size large nudge key speed. This is a minimum pixel delta and a proportional multiplier at large sizes.
     public double BrushSizeStepLarge { get; set; } = 10.0;
 
     /// Brush opacity change per key press (0-1).
@@ -46,7 +46,7 @@ public sealed class ShortcutsConfig
     /// Canvas rotation per pixel of horizontal pen drag (gesture rotate, degrees/px).
     public double GestureRotateSensitivity { get; set; } = 0.40;
 
-    /// Brush size change per pixel of horizontal pen drag (gesture size, px/px).
+    /// Legacy brush-size drag speed retained for existing shortcut files. The current brush-size gesture maps radius to cursor distance.
     public double GestureSizeSensitivity { get; set; } = 0.50;
 
     // ── File ──────────────────────────────────────────────────────────────────

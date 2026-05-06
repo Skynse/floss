@@ -171,9 +171,9 @@ public sealed class SettingsWindow : Window
             v => { _sc.RotateKeyStep = v; App.Shortcuts.Save(); }, "f1"));
 
         content.Children.Add(GroupHeader("Brush Nudge Keys"));
-        content.Children.Add(RowSlider("Size step (small, px)", _sc.BrushSizeStep, 0.5, 20,
+        content.Children.Add(RowSlider("Size nudge (small)", _sc.BrushSizeStep, 0.5, 20,
             v => { _sc.BrushSizeStep = v; App.Shortcuts.Save(); }, "f1"));
-        content.Children.Add(RowSlider("Size step (large, px)", _sc.BrushSizeStepLarge, 1, 100,
+        content.Children.Add(RowSlider("Size nudge (large)", _sc.BrushSizeStepLarge, 1, 100,
             v => { _sc.BrushSizeStepLarge = v; App.Shortcuts.Save(); }, "f1"));
         content.Children.Add(RowSlider("Opacity step", _sc.BrushOpacityStep, 0.01, 0.2,
             v => { _sc.BrushOpacityStep = v; App.Shortcuts.Save(); }, "f2"));
@@ -189,8 +189,6 @@ public sealed class SettingsWindow : Window
             v => { _sc.GestureZoomSensitivity = v; App.Shortcuts.Save(); }, "f3"));
         content.Children.Add(RowSlider("Rotate (°/px)", _sc.GestureRotateSensitivity, 0.05, 2.0,
             v => { _sc.GestureRotateSensitivity = v; App.Shortcuts.Save(); }, "f2"));
-        content.Children.Add(RowSlider("Brush size (px/px)", _sc.GestureSizeSensitivity, 0.05, 3.0,
-            v => { _sc.GestureSizeSensitivity = v; App.Shortcuts.Save(); }, "f2"));
 
         return new ScrollViewer
         {

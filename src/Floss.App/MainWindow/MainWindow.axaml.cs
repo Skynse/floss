@@ -208,6 +208,7 @@ public partial class MainWindow : Window
     private bool _isPanning;
     private Point _lastPanPoint;
     private Point _gestureStartPoint;
+    private Point _brushSizeGestureStartCanvasPoint;
     private SettingsWindow? _settingsWindow;
 
     private bool _suppressBrushSettingsRestored;

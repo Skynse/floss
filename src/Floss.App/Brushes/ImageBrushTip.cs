@@ -9,7 +9,7 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
 {
     private readonly byte[] _pngBytes;
     private readonly SKBitmap _source;
-    private readonly bool _sourceHasAlpha;
+    private readonly bool _sourceHasUsefulAlpha;
     private SKBitmap? _cachedMask;
     private int _cachedSize;
     private float _cachedHardness;
@@ -23,7 +23,7 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
     {
         _pngBytes = pngBytes.ToArray();
         _source = SKBitmap.Decode(_pngBytes) ?? throw new InvalidDataException("Brush tip PNG could not be decoded.");
-        _sourceHasAlpha = DetectAlpha(_source);
+        _sourceHasUsefulAlpha = DetectUsefulAlpha(_source);
     }
 
     public byte[] GetPngBytes() => _pngBytes.ToArray();
@@ -41,7 +41,8 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
         _cachedSize = size;
         _cachedHardness = clampedHardness;
 
-        // Step 1: scale source to target size with optional blur for hardness
+        // Step 1: scale source to target size with optional blur for hardness.
+        // Preserve the source aspect ratio; sampled brush tips are often not square.
         using var scaled = new SKBitmap(new SKImageInfo(size, size, SKColorType.Bgra8888, SKAlphaType.Premul));
         using (var canvas = new SKCanvas(scaled))
         using (var paint = new SKPaint
@@ -59,7 +60,11 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
             }
 
             canvas.Clear(SKColors.Transparent);
-            canvas.DrawBitmap(_source, SKRect.Create(0, 0, size, size), paint);
+            var scale = Math.Min(size / (float)_source.Width, size / (float)_source.Height);
+            var dstW = _source.Width * scale;
+            var dstH = _source.Height * scale;
+            var dst = SKRect.Create((size - dstW) * 0.5f, (size - dstH) * 0.5f, dstW, dstH);
+            canvas.DrawBitmap(_source, dst, paint);
         }
 
         // Step 2: extract alpha into Alpha8
@@ -86,7 +91,7 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
                     var a = srcRow[x * 4 + 3];
 
                     byte alpha;
-                    if (_sourceHasAlpha)
+                    if (_sourceHasUsefulAlpha)
                     {
                         alpha = a;
                     }
@@ -110,22 +115,26 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
         _cachedMask?.Dispose();
     }
 
-    private static unsafe bool DetectAlpha(SKBitmap bitmap)
+    private static unsafe bool DetectUsefulAlpha(SKBitmap bitmap)
     {
         var ptr = (byte*)bitmap.GetPixels().ToPointer();
         var rowBytes = bitmap.RowBytes;
         var w = bitmap.Width;
         var h = bitmap.Height;
+        byte min = 255;
+        byte max = 0;
 
         for (var y = 0; y < h; y++)
         {
             var row = ptr + y * rowBytes;
             for (var x = 0; x < w; x++)
             {
-                if (row[x * 4 + 3] < 255)
-                    return true;
+                var alpha = row[x * 4 + 3];
+                min = Math.Min(min, alpha);
+                max = Math.Max(max, alpha);
             }
         }
-        return false;
+
+        return min < 250 && max - min > 4;
     }
 }
