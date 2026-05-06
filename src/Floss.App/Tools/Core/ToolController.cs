@@ -71,10 +71,10 @@ public sealed class ToolController
     public void SaveEnginePreset()
     {
         var engine = ActiveEngine;
-        if (engine is not (ToolPresetEngine.Brush or ToolPresetEngine.Eraser))
+        if (engine is not ToolPresetEngine.Brush)
             return;
         if (!_enginePresets.ContainsKey(engine))
-            _enginePresets[engine] = new ToolPreset { Engine = engine };
+            _enginePresets[engine] = new ToolPreset { InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw };
         _enginePresets[engine].CaptureFromBrushPreset(_context.Brush);
     }
 

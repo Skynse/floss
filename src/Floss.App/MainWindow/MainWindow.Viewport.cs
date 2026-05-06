@@ -648,7 +648,7 @@ public partial class MainWindow
 
         return App.ToolGroups.Groups
             .SelectMany(g => g.Presets)
-            .FirstOrDefault(p => p.OutputProcess == OutputProcessType.Eyedropper || p.Engine == ToolPresetEngine.Eyedropper);
+            .FirstOrDefault(p => p.OutputProcess == OutputProcessType.Eyedropper);
     }
 
     private Floss.App.Input.KeyBinding EffectiveAltInvocation()

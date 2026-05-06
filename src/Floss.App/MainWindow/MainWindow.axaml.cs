@@ -1081,8 +1081,7 @@ public partial class MainWindow : Window
         // Now load the brush asset and sync the tool-property panel.
         // This runs after ActivateTool so that SetActiveTool's per-engine
         // save correctly recorded the *previous* brush.
-        if (preset.Engine is ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge
-            || (preset.InputProcess == InputProcessType.BrushStroke && preset.OutputProcess == OutputProcessType.DirectDraw))
+        if (preset.InputProcess == InputProcessType.BrushStroke && preset.OutputProcess == OutputProcessType.DirectDraw)
         {
             BrushPreset? assetPreset = null;
 
@@ -1118,11 +1117,11 @@ public partial class MainWindow : Window
                 _strokePreview.Brush = overridden;
             }
 
-            // Ensure the brush Kind matches the target engine even when there's
-            // no linked brush asset (e.g. default presets with BrushId == null).
-            var targetKind = preset.Engine == ToolPresetEngine.Eraser
-                ? BrushKind.Eraser
-                : BrushKind.Ink;
+            // Ensure the brush Kind matches the preset's eraser status.
+            // An eraser preset uses DstOut blend mode (or the linked asset is BrushKind.Eraser).
+            var isEraserPreset = preset.BrushBlendMode == SkiaSharp.SKBlendMode.DstOut
+                || (assetPreset?.Kind == BrushKind.Eraser);
+            var targetKind = isEraserPreset ? BrushKind.Eraser : BrushKind.Ink;
             if ((_activePreset ?? _canvas.Brush).Kind != targetKind)
             {
                 var fixedBrush = (_activePreset ?? _canvas.Brush) with { Kind = targetKind };
@@ -1150,7 +1149,7 @@ public partial class MainWindow : Window
         if (_activeToolGroup == null) return;
         var active = _activeToolGroup.ActivePreset;
         if (active == null || _activePreset == null) return;
-        if (active.Engine is not (ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge)) return;
+        if (active.InputProcess != InputProcessType.BrushStroke || active.OutputProcess != OutputProcessType.DirectDraw) return;
         active.CaptureFromBrushPreset(_activePreset);
     }
 

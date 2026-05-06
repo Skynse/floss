@@ -10,9 +10,17 @@ public sealed class EyedropperOutput : IOutputProcess
     public bool ExcludeLockedLayers { get; set; }
     public bool ExcludeReferenceLayers { get; set; }
 
-    public void Preview(ToolContext ctx, IProcessedInput input) { }
+    public void Preview(ToolContext ctx, IProcessedInput input)
+    {
+        SampleColor(ctx, input);
+    }
 
     public void Execute(ToolContext ctx, IProcessedInput input)
+    {
+        SampleColor(ctx, input);
+    }
+
+    private void SampleColor(ToolContext ctx, IProcessedInput input)
     {
         if (input is not ClickInput click) return;
 

@@ -38,10 +38,18 @@ public sealed class LiquifyOutput : IOutputProcess
         // This prevents hundreds of overlapping kernels from compounding the distortion.
         float spacing = Math.Max(2f, radius * 0.25f);
 
+        var startIdx = Math.Max(0, _lastProcessedIndex + 1);
+
+        // If startIdx has overshot the sample list, the input was cancelled and restarted.
+        // Discard stale state so the new stroke initializes cleanly.
+        if (_strokeActive && startIdx >= samples.Count)
+            Cleanup();
+
         if (!_strokeActive)
         {
             _strokeActive = true;
             _lastProcessedIndex = -1;
+            startIdx = 0;
             _beforeTiles = new Dictionary<(int, int), byte[]?>();
             _dirtyRegion = PixelRegion.Empty;
             _currentLayer = layer;
@@ -54,7 +62,6 @@ public sealed class LiquifyOutput : IOutputProcess
         }
 
         float prevX = _lastKernelX, prevY = _lastKernelY;
-        var startIdx = Math.Max(0, _lastProcessedIndex + 1);
         for (int i = startIdx; i < samples.Count; i++)
         {
             float cx = (float)(samples[i].X - layer.OffsetX);

@@ -21,7 +21,8 @@ public enum InputProcessType
     Polyline,       // Click-to-add vertices
     Rect,           // Drag rectangle
     Click,          // Single click
-    Drag            // Drag start-to-end
+    Drag,           // Drag start-to-end
+    Liquify         // Direct raw positions, no stabilization
 }
 
 // Output process determines what the tool's input produces (CSP-style).
@@ -250,6 +251,7 @@ public sealed class ToolPreset
             ToolPresetEngine.Gradient   => (InputProcessType.Drag, OutputProcessType.Gradient),
             ToolPresetEngine.Shape      => (InputProcessType.Rect, OutputProcessType.Stroke),
             ToolPresetEngine.Polyline   => (InputProcessType.Polyline, OutputProcessType.Stroke),
+            ToolPresetEngine.Liquify    => (InputProcessType.Liquify, OutputProcessType.Liquify),
             _                           => (InputProcessType.BrushStroke, OutputProcessType.DirectDraw)
         };
     }
@@ -346,31 +348,36 @@ public sealed class ToolGroupConfig
         var brushGroup = (preferredGroup?.DefaultEngine == ToolPresetEngine.Brush ? preferredGroup : null)
                        ?? Groups.FirstOrDefault(g => g.DefaultEngine == ToolPresetEngine.Brush)
                        ?? Groups.First();
-        var eraserGroup = (preferredGroup?.DefaultEngine == ToolPresetEngine.Eraser ? preferredGroup : null)
-                       ?? Groups.FirstOrDefault(g => g.DefaultEngine == ToolPresetEngine.Eraser)
-                       ?? brushGroup;
+
+        var eraserGroup = Groups.FirstOrDefault(g => g.DefaultEngine == ToolPresetEngine.Eraser);
 
         foreach (var asset in assets)
         {
             if (allBrushIds.Contains(asset.Id)) continue;
 
-            var isEraser = asset.Preset.Kind == BrushKind.Eraser;
-            var target = isEraser ? eraserGroup : brushGroup;
-            var engine = isEraser ? ToolPresetEngine.Eraser : ToolPresetEngine.Brush;
-
-            var preset = new ToolPreset { Name = asset.Preset.Name, Engine = engine, BrushId = asset.Id };
-            target.Presets.Add(preset);
-
-            var catName = asset.Preset.Kind switch
+            if (asset.Preset.Kind == Brushes.BrushKind.Eraser && eraserGroup != null)
             {
-                BrushKind.Pencil => "Pencils",
-                BrushKind.Ink => "Pens",
-                BrushKind.Marker => "Markers",
-                BrushKind.Airbrush => "Airbrush",
-                BrushKind.Eraser => "Erasers",
-                _ => "General"
-            };
-            EnsureInCategory(target, preset.Id, catName);
+                var preset = new ToolPreset
+                {
+                    Name = asset.Preset.Name,
+                    InputProcess = InputProcessType.BrushStroke,
+                    OutputProcess = OutputProcessType.DirectDraw,
+                    BrushId = asset.Id,
+                    BrushBlendMode = SkiaSharp.SKBlendMode.DstOut
+                };
+                eraserGroup.Presets.Add(preset);
+            }
+            else
+            {
+                var preset = new ToolPreset
+                {
+                    Name = asset.Preset.Name,
+                    InputProcess = InputProcessType.BrushStroke,
+                    OutputProcess = OutputProcessType.DirectDraw,
+                    BrushId = asset.Id
+                };
+                brushGroup.Presets.Add(preset);
+            }
         }
     }
 
@@ -395,7 +402,7 @@ public sealed class ToolGroupConfig
         new() { Name = "Brush",  DefaultEngine = ToolPresetEngine.Brush,  Shortcut = new(Key.B),
             Presets = [new() { Name = "Brush",  Engine = ToolPresetEngine.Brush, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw }] },
         new() { Name = "Eraser", DefaultEngine = ToolPresetEngine.Eraser, Shortcut = new(Key.E),
-            Presets = [new() { Name = "Eraser", Engine = ToolPresetEngine.Eraser, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw, BrushBlendMode = SkiaSharp.SKBlendMode.DstOut }] },
+            Presets = [new() { Name = "Eraser", InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw, BrushBlendMode = SkiaSharp.SKBlendMode.DstOut }] },
         new()
         {
             Name = "Smudge", DefaultEngine = ToolPresetEngine.Smudge, Shortcut = new(Key.U),
@@ -469,13 +476,13 @@ public sealed class ToolGroupConfig
             Name = "Liquify", DefaultEngine = ToolPresetEngine.Liquify,
             Presets =
             [
-                new() { Name = "Push",      Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.Push,      LiquifySize = 80,  LiquifyStrength = 0.3 },
-                new() { Name = "Expand",    Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.Expand,    LiquifySize = 60,  LiquifyStrength = 0.4 },
-                new() { Name = "Pinch",     Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.Pinch,     LiquifySize = 60,  LiquifyStrength = 0.4 },
-                new() { Name = "Push Left", Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.PushLeft,  LiquifySize = 80,  LiquifyStrength = 0.3 },
-                new() { Name = "Push Right",Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.PushRight, LiquifySize = 80,  LiquifyStrength = 0.3 },
-                new() { Name = "Twirl CW",  Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.TwirlCW,   LiquifySize = 80,  LiquifyStrength = 0.5 },
-                new() { Name = "Twirl CCW", Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.TwirlCCW,  LiquifySize = 80,  LiquifyStrength = 0.5 },
+                new() { Name = "Push",      Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.Liquify, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.Push,      LiquifySize = 80,  LiquifyStrength = 0.3 },
+                new() { Name = "Expand",    Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.Liquify, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.Expand,    LiquifySize = 60,  LiquifyStrength = 0.4 },
+                new() { Name = "Pinch",     Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.Liquify, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.Pinch,     LiquifySize = 60,  LiquifyStrength = 0.4 },
+                new() { Name = "Push Left", Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.Liquify, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.PushLeft,  LiquifySize = 80,  LiquifyStrength = 0.3 },
+                new() { Name = "Push Right",Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.Liquify, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.PushRight, LiquifySize = 80,  LiquifyStrength = 0.3 },
+                new() { Name = "Twirl CW",  Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.Liquify, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.TwirlCW,   LiquifySize = 80,  LiquifyStrength = 0.5 },
+                new() { Name = "Twirl CCW", Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.Liquify, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.TwirlCCW,  LiquifySize = 80,  LiquifyStrength = 0.5 },
             ]
         },
     ];

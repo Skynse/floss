@@ -186,24 +186,27 @@ public partial class MainWindow : Window
         {
             var isActive = group.LastActivePresetId == preset.Id;
 
-            if (preset.BrushId != null)
+            if (preset.InputProcess == InputProcessType.BrushStroke && preset.OutputProcess == OutputProcessType.DirectDraw)
             {
-                var asset = _brushAssets.FirstOrDefault(a => a.Id == preset.BrushId);
-                if (asset != null)
+                BrushPreset? brushPreset = null;
+                if (preset.BrushId != null)
                 {
-                    _presetPanel.Children.Add(BuildBrushPresetRow(group, preset, asset, isActive));
-                    continue;
+                    var asset = _brushAssets.FirstOrDefault(a => a.Id == preset.BrushId);
+                    if (asset != null) brushPreset = asset.Preset;
                 }
+                brushPreset ??= _activePreset ?? _canvas.Brush;
+                _presetPanel.Children.Add(BuildBrushPresetRow(group, preset, brushPreset, isActive));
+                continue;
             }
             _presetPanel.Children.Add(BuildSimplePresetRow(group, preset, isActive));
         }
     }
 
-    private Button BuildBrushPresetRow(ToolGroup group, ToolPreset preset, BrushAsset asset, bool isActive)
+    private Button BuildBrushPresetRow(ToolGroup group, ToolPreset preset, BrushPreset brushPreset, bool isActive)
     {
         var strokePreview = new BrushStrokePreview
         {
-            Brush = asset.Preset,
+            Brush = brushPreset,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
         };
@@ -416,7 +419,7 @@ public partial class MainWindow : Window
     private void SyncActivePresetToCanvas()
     {
         var active = _activeToolGroup?.ActivePreset;
-        if (active == null || active.Engine is not (ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge)) return;
+        if (active == null || active.InputProcess != InputProcessType.BrushStroke || active.OutputProcess != OutputProcessType.DirectDraw) return;
 
         BrushPreset? basePreset = null;
         if (active.BrushId != null)
@@ -451,7 +454,9 @@ public partial class MainWindow : Window
             _strokePreview.Brush = overridden;
         }
 
-        var targetKind = active.Engine == ToolPresetEngine.Eraser ? BrushKind.Eraser : BrushKind.Ink;
+        var isEraserPreset = active.BrushBlendMode == SkiaSharp.SKBlendMode.DstOut
+            || (_brushAssets.FirstOrDefault(a => a.Id == active.BrushId)?.Preset.Kind == BrushKind.Eraser);
+        var targetKind = isEraserPreset ? BrushKind.Eraser : BrushKind.Ink;
         var current = _activePreset ?? _canvas.Brush;
         if (current.Kind != targetKind)
         {
@@ -480,10 +485,10 @@ public partial class MainWindow : Window
             CornerRadius = new CornerRadius(3)
         };
 
-        var enginePicker = new ComboBox
+        var inputPicker = new ComboBox
         {
-            ItemsSource = Enum.GetValues<ToolPresetEngine>(),
-            SelectedItem = preset.Engine,
+            ItemsSource = Enum.GetValues<InputProcessType>(),
+            SelectedItem = preset.InputProcess,
             Width = 200,
             Height = 28,
             FontSize = 11
@@ -572,8 +577,8 @@ public partial class MainWindow : Window
             {
                 new TextBlock { Text = "Name", FontSize = 10, Foreground = new SolidColorBrush(Color.Parse(TextMuted)) },
                 nameBox,
-                new TextBlock { Text = "Input Process (Engine)", FontSize = 10, Foreground = new SolidColorBrush(Color.Parse(TextMuted)) },
-                enginePicker,
+                new TextBlock { Text = "Input Process", FontSize = 10, Foreground = new SolidColorBrush(Color.Parse(TextMuted)) },
+                inputPicker,
                 new TextBlock { Text = "Output Process", FontSize = 10, Foreground = new SolidColorBrush(Color.Parse(TextMuted)) },
                 outputPicker,
                 new TextBlock { Text = "Tool Icon", FontSize = 10, Foreground = new SolidColorBrush(Color.Parse(TextMuted)) },
@@ -586,7 +591,7 @@ public partial class MainWindow : Window
         saveBtn.Click += (_, _) =>
         {
             preset.Name = nameBox.Text?.Trim() ?? preset.Name;
-            preset.Engine = (ToolPresetEngine)(enginePicker.SelectedItem ?? preset.Engine);
+            preset.InputProcess = (InputProcessType)(inputPicker.SelectedItem ?? preset.InputProcess);
             preset.OutputProcess = (OutputProcessType)(outputPicker.SelectedItem ?? preset.OutputProcess);
             preset.PresetIcon = selectedIcon;
             App.ToolGroups.Save();
@@ -664,6 +669,11 @@ public partial class MainWindow : Window
     private void DeletePreset(ToolGroup group, ToolPreset preset)
     {
         if (group.Presets.Count <= 1) return;
+        if (preset.BrushId != null)
+        {
+            var asset = _brushAssets.FirstOrDefault(a => a.Id == preset.BrushId);
+            if (asset != null) _brushLibrary.Delete(asset);
+        }
         group.Presets.Remove(preset);
         if (group.LastActivePresetId == preset.Id)
             group.LastActivePresetId = group.Presets.FirstOrDefault()?.Id;
@@ -1215,8 +1225,8 @@ public partial class MainWindow : Window
         {
             LoadBrushAssets();
 
-            // Move imported brushes from their auto-assigned type categories into a
-            // named category matching the ABR file (one category per file imported).
+            // Gather all imported presets from wherever SyncWithAssets placed them,
+            // then consolidate them into a single named category in the brush group.
             var brushGroup = App.ToolGroups.Groups.FirstOrDefault(g => g.DefaultEngine == ToolPresetEngine.Brush)
                 ?? App.ToolGroups.Groups.First();
 
@@ -1224,8 +1234,25 @@ public partial class MainWindow : Window
             {
                 foreach (var assetId in ids)
                 {
-                    var preset = brushGroup.Presets.FirstOrDefault(p => p.BrushId == assetId);
+                    // Search every group — eraser-kind assets may have landed in eraserGroup.
+                    ToolPreset? preset = null;
+                    ToolGroup? sourceGroup = null;
+                    foreach (var g in App.ToolGroups.Groups)
+                    {
+                        preset = g.Presets.FirstOrDefault(p => p.BrushId == assetId);
+                        if (preset != null) { sourceGroup = g; break; }
+                    }
                     if (preset == null) continue;
+
+                    // Pull it out of the source group if it's not already in the brush group.
+                    if (sourceGroup != brushGroup)
+                    {
+                        sourceGroup!.Presets.Remove(preset);
+                        foreach (var c in sourceGroup.Categories) c.PresetIds.Remove(preset.Id);
+                        brushGroup.Presets.Add(preset);
+                    }
+
+                    // Place in the named category.
                     foreach (var c in brushGroup.Categories) c.PresetIds.Remove(preset.Id);
                     var cat = brushGroup.Categories.FirstOrDefault(c => c.Name == catName);
                     if (cat == null) { cat = new ToolCategory { Name = catName }; brushGroup.Categories.Add(cat); }

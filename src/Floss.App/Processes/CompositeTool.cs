@@ -23,6 +23,11 @@ public sealed class CompositeTool : ITool
     public void PointerDown(ToolContext ctx, CanvasInputSample s)
     {
         Input.PointerDown(s);
+        if (Input.IsActive && Input.GetPreview() is { } preview)
+        {
+            Output.Preview(ctx, preview);
+            ctx.InvalidateRender();
+        }
     }
 
     public void PointerMove(ToolContext ctx, CanvasInputSample s)
