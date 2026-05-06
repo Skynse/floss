@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using Floss.App.Document;
 using Floss.App.Tools;
 using SkiaSharp;
@@ -12,6 +11,7 @@ public sealed class FloodFillOutput : IOutputProcess
     public bool IsPaintOutput => true;
     public bool Antialiasing { get; set; } = false;
     public double Tolerance { get; set; } = 0.05;
+    public FillReferenceMode FillReference { get; set; } = FillReferenceMode.CurrentLayer;
 
     public void Preview(ToolContext ctx, IProcessedInput input) { }
 
@@ -25,46 +25,85 @@ public sealed class FloodFillOutput : IOutputProcess
         var cx = (int)click.Point.X;
         var cy = (int)click.Point.Y;
 
-        // Sample target color
-        layer.Pixels.GetPixel(cx - layer.OffsetX, cy - layer.OffsetY,
-            out byte sb, out byte sg, out byte sr, out byte sa);
+        int docW = ctx.Document.Width;
+        int docH = ctx.Document.Height;
+        if ((uint)cx >= (uint)docW || (uint)cy >= (uint)docH) return;
 
-        var targetColor = new SKColor(sr, sg, sb, sa);
+        // Build flat reference composite when sampling from other layers.
+        // The BFS uses this for both seed color and boundary detection.
+        byte[]? refBuf = FillReference != FillReferenceMode.CurrentLayer
+            ? BuildReferenceBuffer(ctx, docW, docH)
+            : null;
+
+        // Sample seed color from reference composite or active layer.
+        SKColor targetColor;
+        if (refBuf != null)
+        {
+            int off = (cy * docW + cx) * 4;
+            targetColor = new SKColor(refBuf[off + 2], refBuf[off + 1], refBuf[off + 0], refBuf[off + 3]);
+        }
+        else
+        {
+            layer.Pixels.GetPixel(cx - layer.OffsetX, cy - layer.OffsetY,
+                out byte sb, out byte sg, out byte sr, out byte sa);
+            targetColor = new SKColor(sr, sg, sb, sa);
+        }
+
         var fillColor = ctx.PaintColor;
-        var toleranceSq = (int)(Tolerance * 255 * Tolerance * 255 * 3);
+        var toleranceSq = (int)(Tolerance * 255 * Tolerance * 255 * 4);
 
         var beforeTiles = layer.Pixels.CaptureTiles(layer.Pixels.Bounds);
-        var visited = new System.Collections.Generic.HashSet<(int, int)>();
-        var queue = new System.Collections.Generic.Queue<(int, int)>();
-        queue.Enqueue((cx, cy));
-        visited.Add((cx, cy));
+        var visited = new bool[docW * docH];
+        var queue = new System.Collections.Generic.Queue<int>(docW * docH / 4);
+        int startIdx = cy * docW + cx;
+        visited[startIdx] = true;
+        queue.Enqueue(startIdx);
 
         bool changed = false;
         int minX = int.MaxValue, minY = int.MaxValue, maxX = int.MinValue, maxY = int.MinValue;
 
         while (queue.Count > 0)
         {
-            var (x, y) = queue.Dequeue();
+            int idx = queue.Dequeue();
+            int y = idx / docW;
+            int x = idx % docW;
+
             if (!ctx.Selection.IsSelected(x, y)) continue;
 
-            int lx = x - layer.OffsetX;
-            int ly = y - layer.OffsetY;
+            // Sample from reference composite or active layer for boundary test.
+            SKColor pixelColor;
+            if (refBuf != null)
+            {
+                int off = idx * 4;
+                pixelColor = new SKColor(refBuf[off + 2], refBuf[off + 1], refBuf[off + 0], refBuf[off + 3]);
+            }
+            else
+            {
+                layer.Pixels.GetPixel(x - layer.OffsetX, y - layer.OffsetY,
+                    out byte cb, out byte cg, out byte cr, out byte ca);
+                pixelColor = new SKColor(cr, cg, cb, ca);
+            }
 
-            layer.Pixels.GetPixel(lx, ly, out byte cb, out byte cg, out byte cr, out byte ca);
-            var pixelColor = new SKColor(cr, cg, cb, ca);
             if (!ColorMatch(pixelColor, targetColor, toleranceSq)) continue;
 
-            if (layer.IsAlphaLocked && ca == 0) continue;
+            // Alpha-lock: skip transparent pixels on active layer even in reference mode.
+            if (layer.IsAlphaLocked)
+            {
+                layer.Pixels.GetPixel(x - layer.OffsetX, y - layer.OffsetY,
+                    out _, out _, out _, out byte activeA);
+                if (activeA == 0) continue;
+            }
 
-            layer.Pixels.SetPixel(lx, ly, fillColor.B, fillColor.G, fillColor.R, fillColor.A);
+            layer.Pixels.SetPixel(x - layer.OffsetX, y - layer.OffsetY,
+                fillColor.B, fillColor.G, fillColor.R, fillColor.A);
             changed = true;
             minX = Math.Min(minX, x); minY = Math.Min(minY, y);
             maxX = Math.Max(maxX, x); maxY = Math.Max(maxY, y);
 
-            EnqueueIfValid(x - 1, y);
-            EnqueueIfValid(x + 1, y);
-            EnqueueIfValid(x, y - 1);
-            EnqueueIfValid(x, y + 1);
+            if (x + 1 < docW) { int ni = idx + 1;    if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
+            if (x - 1 >= 0)   { int ni = idx - 1;    if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
+            if (y + 1 < docH) { int ni = idx + docW; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
+            if (y - 1 >= 0)   { int ni = idx - docW; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
         }
 
         if (!changed) return;
@@ -72,13 +111,18 @@ public sealed class FloodFillOutput : IOutputProcess
         var dirty = new PixelRegion(minX, minY, maxX - minX + 1, maxY - minY + 1);
         layer.MarkThumbnailDirty();
         ctx.CommitMutation(ctx.ActiveLayerIndex, beforeTiles, dirty);
+    }
 
-        void EnqueueIfValid(int x, int y)
+    private byte[] BuildReferenceBuffer(ToolContext ctx, int w, int h)
+    {
+        var buf = new byte[w * h * 4];
+        foreach (var l in ctx.Document.Layers)
         {
-            if (x < 0 || y < 0 || x >= ctx.Document.Width || y >= ctx.Document.Height) return;
-            if (!visited.Add((x, y))) return;
-            queue.Enqueue((x, y));
+            if (!l.IsVisible || l.IsGroup) continue;
+            if (FillReference == FillReferenceMode.ReferenceLayers && !l.IsReference) continue;
+            l.Pixels.BlendOnto(buf, w, h, l.Opacity);
         }
+        return buf;
     }
 
     private static bool ColorMatch(SKColor a, SKColor b, int toleranceSq)
@@ -86,6 +130,7 @@ public sealed class FloodFillOutput : IOutputProcess
         int dr = a.Red - b.Red;
         int dg = a.Green - b.Green;
         int db = a.Blue - b.Blue;
-        return dr * dr + dg * dg + db * db <= toleranceSq;
+        int da = a.Alpha - b.Alpha;
+        return dr * dr + dg * dg + db * db + da * da <= toleranceSq;
     }
 }

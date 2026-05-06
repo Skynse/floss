@@ -424,6 +424,42 @@ public sealed class TiledPixelBuffer
     public byte[]? GetTileOrNull(int tileX, int tileY)
         => _tiles.TryGetValue((tileX, tileY), out var tile) ? tile : null;
 
+    // SrcOver-blend this buffer's pixels into a pre-allocated flat BGRA array.
+    // Intended for building a cheap composite reference before a flood fill.
+    public void BlendOnto(byte[] dst, int dstWidth, int dstHeight, double opacity)
+    {
+        if (opacity <= 0) return;
+        int opInt = (int)(opacity * 255 + 0.5);
+        foreach (var ((tx, ty), tile) in _tiles)
+        {
+            int ox = tx * TileSize;
+            int oy = ty * TileSize;
+            for (int py = 0; py < TileSize; py++)
+            {
+                int docY = oy + py;
+                if ((uint)docY >= (uint)dstHeight) continue;
+                int rowBase = docY * dstWidth;
+                int srcRow = py * TileSize;
+                for (int px = 0; px < TileSize; px++)
+                {
+                    int docX = ox + px;
+                    if ((uint)docX >= (uint)dstWidth) continue;
+                    int srcOff = (srcRow + px) * BytesPerPixel;
+                    int srcA = tile[srcOff + 3] * opInt / 255;
+                    if (srcA == 0) continue;
+                    int dstOff = (rowBase + docX) * BytesPerPixel;
+                    int dstA = dst[dstOff + 3];
+                    int outA = srcA + dstA * (255 - srcA) / 255;
+                    if (outA == 0) continue;
+                    dst[dstOff + 0] = (byte)((tile[srcOff + 0] * srcA + dst[dstOff + 0] * dstA * (255 - srcA) / 255) / outA);
+                    dst[dstOff + 1] = (byte)((tile[srcOff + 1] * srcA + dst[dstOff + 1] * dstA * (255 - srcA) / 255) / outA);
+                    dst[dstOff + 2] = (byte)((tile[srcOff + 2] * srcA + dst[dstOff + 2] * dstA * (255 - srcA) / 255) / outA);
+                    dst[dstOff + 3] = (byte)outA;
+                }
+            }
+        }
+    }
+
     public Dictionary<(int X, int Y), byte[]> CaptureTiles()
     {
         var result = new Dictionary<(int X, int Y), byte[]>(_tiles.Count);

@@ -42,6 +42,13 @@ public enum OutputProcessType
     Liquify,         // Warp/distort pixels
 }
 
+public enum FillReferenceMode
+{
+    CurrentLayer,    // sample from active layer only
+    ReferenceLayers, // sample from layers marked IsReference
+    AllLayers,       // sample composite of all visible layers
+}
+
 public enum LiquifyMode
 {
     Push,
@@ -187,6 +194,7 @@ public sealed class ToolPreset
     public double Tolerance { get; set; } = 0.1;
     public double AreaScaling { get; set; }
     public bool ContiguousFill { get; set; } = true;
+    public FillReferenceMode FillReference { get; set; } = FillReferenceMode.CurrentLayer;
 
     // Gradient
     public GradientType GradientType { get; set; } = GradientType.Linear;

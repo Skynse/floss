@@ -129,6 +129,8 @@ public partial class MainWindow
                 props.AddRange([
                     SliderProp("fill.tolerance", "Tolerance", true,
                         () => preset.Tolerance, v => preset.Tolerance = v, 0, 1, "%"),
+                    EnumProp("fill.reference", "Reference", true,
+                        () => preset.FillReference, v => preset.FillReference = v),
                     SliderProp("fill.areaScaling", "Area Scaling", false,
                         () => preset.AreaScaling, v => preset.AreaScaling = v, -20, 20, "px"),
                     BoolProp("fill.contiguous", "Contiguous", false,

@@ -225,6 +225,37 @@ public partial class MainWindow
             _canvas.SetActiveLayerName(name);
     }
 
+    // ── Rect-pick: expand folders containing found layers, multi-select, scroll ─
+    private void ExpandAndScrollToLayers(IReadOnlyList<int> foundIndices)
+    {
+        if (foundIndices.Count == 0) return;
+        var layers = _canvas.Layers;
+
+        // Expand every ancestor group that contains a found layer.
+        foreach (var idx in foundIndices)
+        {
+            for (var parent = layers[idx].Parent; parent != null; parent = parent.Parent)
+            {
+                if (!parent.IsOpen)
+                    _canvas.ToggleLayerOpen(LayerIndexOf(parent));
+            }
+        }
+
+        // Select all found layers; activate the topmost one (highest index = visually on top).
+        _selectedLayerIndices.Clear();
+        foreach (var idx in foundIndices) _selectedLayerIndices.Add(idx);
+        _canvas.SelectLayer(foundIndices[0]); // foundIndices[0] is already highest index (top-down search)
+
+        BuildLayerList();
+
+        // Scroll the list to the active layer's row.
+        var scrollTarget = layers[foundIndices[0]];
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            _layerListBox.ScrollIntoView(scrollTarget);
+        }, Avalonia.Threading.DispatcherPriority.Background);
+    }
+
     // ── Layer panel ───────────────────────────────────────────────────────────
     private void BuildLayerList()
     {

@@ -61,7 +61,8 @@ public sealed class ToolFactory
             },
             OutputProcessType.FloodFill => new FloodFillOutput
             {
-                Tolerance = preset.Tolerance
+                Tolerance = preset.Tolerance,
+                FillReference = preset.FillReference
             },
             OutputProcessType.Gradient => new GradientOutput
             {

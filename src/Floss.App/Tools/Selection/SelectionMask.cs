@@ -143,31 +143,40 @@ public sealed class SelectionMask
     {
         EnsureMaskExists();
 
+        // BFS in document space — flat bool[] visited is orders of magnitude faster than
+        // HashSet<(int,int)> and also provides the bounds check that prevents infinite
+        // expansion into out-of-bounds tiles (which all return alpha=0 and match transparent fills).
+        int startDocX = srcX + offsetX;
+        int startDocY = srcY + offsetY;
+        if ((uint)startDocX >= (uint)_docW || (uint)startDocY >= (uint)_docH)
+            return;
+
         pixels.GetPixel(srcX, srcY, out byte refB, out byte refG, out byte refR, out byte refA);
         int tolInt = (int)(tolerance * 255 * 4);
 
         var next = CreateBaseMask(op);
-        var visited = new HashSet<(int, int)>();
-        var queue = new Queue<(int x, int y)>();
-        queue.Enqueue((srcX, srcY));
-        visited.Add((srcX, srcY));
+        var visited = new bool[_docW * _docH];
+        var queue = new Queue<int>(_docW * _docH / 4);
+
+        int startIdx = startDocY * _docW + startDocX;
+        visited[startIdx] = true;
+        queue.Enqueue(startIdx);
 
         while (queue.Count > 0)
         {
-            var (cx, cy) = queue.Dequeue();
+            int idx = queue.Dequeue();
+            int docY = idx / _docW;
+            int docX = idx % _docW;
 
-            pixels.GetPixel(cx, cy, out byte b, out byte g, out byte r, out byte a);
+            pixels.GetPixel(docX - offsetX, docY - offsetY, out byte b, out byte g, out byte r, out byte a);
             if (Math.Abs(b - refB) + Math.Abs(g - refG) + Math.Abs(r - refR) + Math.Abs(a - refA) > tolInt) continue;
 
-            var docX = cx + offsetX;
-            var docY = cy + offsetY;
-            if ((uint)docX < (uint)_docW && (uint)docY < (uint)_docH)
-                Apply(next, docX, docY, op, true);
+            Apply(next, docX, docY, op, true);
 
-            if (visited.Add((cx + 1, cy))) queue.Enqueue((cx + 1, cy));
-            if (visited.Add((cx - 1, cy))) queue.Enqueue((cx - 1, cy));
-            if (visited.Add((cx, cy + 1))) queue.Enqueue((cx, cy + 1));
-            if (visited.Add((cx, cy - 1))) queue.Enqueue((cx, cy - 1));
+            if (docX + 1 < _docW) { int ni = idx + 1;     if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
+            if (docX - 1 >= 0)    { int ni = idx - 1;     if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
+            if (docY + 1 < _docH) { int ni = idx + _docW; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
+            if (docY - 1 >= 0)    { int ni = idx - _docW; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
         }
 
         CommitMask(next);

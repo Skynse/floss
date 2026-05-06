@@ -961,6 +961,7 @@ public partial class MainWindow : Window
             UpdateStatus();
         };
         _canvas.LayerMetadataChanged += (_, e) => { UpdateLayerRow(e.LayerIndex); UpdateStatus(); };
+        _canvas.LayersFoundByRect += ExpandAndScrollToLayers;
         _canvas.ColorSampled += (_, c) => SetColor(c);
         _canvas.BrushSettingsRestored += brush =>
         {

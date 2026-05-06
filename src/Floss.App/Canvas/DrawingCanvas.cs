@@ -37,6 +37,11 @@ public sealed class DrawingCanvas : Control
     private bool _isCursorPreviewLocked;
     private bool _forceBrushOutlineCursor;
 
+    // Ctrl+Shift layer-pick drag state
+    private bool _isLayerPickDrag;
+    private Point _layerPickAnchor;
+    private Point _layerPickCurrent;
+
     private static readonly Cursor CursorNo = new(StandardCursorType.No);
     private static readonly Cursor CursorNone = new(StandardCursorType.None);
     private static readonly Cursor CursorDefault = new(StandardCursorType.Arrow);
@@ -100,6 +105,7 @@ public sealed class DrawingCanvas : Control
     public event EventHandler? StatsChanged;
     public event EventHandler? HistoryChanged;
     public event EventHandler? LayersChanged;
+    public event Action<IReadOnlyList<int>>? LayersFoundByRect;
     public event EventHandler<LayerMetadataChangedEventArgs>? LayerMetadataChanged;
     public event EventHandler<Color>? ColorSampled;
     public event EventHandler? DirtyStateChanged;
@@ -655,6 +661,19 @@ public sealed class DrawingCanvas : Control
         if (_toolController.ActiveTool is not Floss.App.Tools.TransformTool)
             _ctx.Selection.RenderOverlay(context, CanvasZoom);
 
+        if (_isLayerPickDrag)
+        {
+            var rx = Math.Min(_layerPickAnchor.X, _layerPickCurrent.X);
+            var ry = Math.Min(_layerPickAnchor.Y, _layerPickCurrent.Y);
+            var rw = Math.Abs(_layerPickCurrent.X - _layerPickAnchor.X);
+            var rh = Math.Abs(_layerPickCurrent.Y - _layerPickAnchor.Y);
+            var t = Math.Max(0.5, 1.0 / CanvasZoom);
+            var dash1 = new Avalonia.Media.DashStyle([4 / CanvasZoom, 4 / CanvasZoom], 0);
+            var dash2 = new Avalonia.Media.DashStyle([4 / CanvasZoom, 4 / CanvasZoom], 4 / CanvasZoom);
+            context.DrawRectangle(null, new Pen(CursorOuterBrush, t * 2, dash1), new Rect(rx, ry, rw, rh));
+            context.DrawRectangle(null, new Pen(CursorInnerBrush, t,     dash2), new Rect(rx, ry, rw, rh));
+        }
+
         if ((_isPointerOver || _isCursorPreviewLocked) && !IsPaintBlockedByLock)
         {
             var mode = App.Config.BrushCursorMode;
@@ -690,14 +709,23 @@ public sealed class DrawingCanvas : Control
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
+        var point = e.GetCurrentPoint(this);
 
-        // Ctrl+Shift+Click: pick the topmost opaque layer under the cursor (CSP-style layer pick).
-        var pt = e.GetCurrentPoint(this);
-        if (pt.Properties.IsLeftButtonPressed &&
+        // Wayland / tablet: pen proximity fires PointerPressed with IsLeftButtonPressed=true
+        // but Pressure=0.  Block these phantom events before any tool logic runs.
+        if ((point.Pointer.Type == PointerType.Pen || point.Properties.IsEraser) &&
+            point.Properties.Pressure < PenPressureThreshold)
+            return;
+
+        // Ctrl+Shift+Left: start a layer-find drag (release decides point-pick vs rect-pick).
+        if (point.Properties.IsLeftButtonPressed &&
             e.KeyModifiers.HasFlag(KeyModifiers.Control) &&
             e.KeyModifiers.HasFlag(KeyModifiers.Shift))
         {
-            TryPickLayerAtPoint((int)pt.Position.X, (int)pt.Position.Y);
+            _isLayerPickDrag = true;
+            _layerPickAnchor = point.Position;
+            _layerPickCurrent = point.Position;
+            e.Pointer.Capture(this);
             e.Handled = true;
             return;
         }
@@ -705,7 +733,6 @@ public sealed class DrawingCanvas : Control
         if (PaintInputSuspended && _toolController.AlternateTool == null) return;
         if (IsPaintBlockedByLock) return;
 
-        var point = e.GetCurrentPoint(this);
         if (!IsPaintInput(point)) return;
 
         Focus();
@@ -759,6 +786,14 @@ public sealed class DrawingCanvas : Control
         if (!_isCursorPreviewLocked)
             _pointerPos = point.Position;
 
+        if (_isLayerPickDrag)
+        {
+            _layerPickCurrent = point.Position;
+            InvalidateVisual();
+            e.Handled = true;
+            return;
+        }
+
         // Transform cursor override
         if (_toolController.ActiveTool is TransformTool tt && tt.HasPendingOperation)
         {
@@ -808,6 +843,38 @@ public sealed class DrawingCanvas : Control
     {
         base.OnPointerReleased(e);
         var point = e.GetCurrentPoint(this);
+
+        if (_isLayerPickDrag)
+        {
+            _isLayerPickDrag = false;
+            e.Pointer.Capture(null);
+            InvalidateVisual();
+
+            var dx = _layerPickCurrent.X - _layerPickAnchor.X;
+            var dy = _layerPickCurrent.Y - _layerPickAnchor.Y;
+            var dragDist = Math.Sqrt(dx * dx + dy * dy);
+
+            if (dragDist < 4)
+            {
+                // Small movement — treat as point pick.
+                TryPickLayerAtPoint((int)_layerPickAnchor.X, (int)_layerPickAnchor.Y);
+            }
+            else
+            {
+                // Rect pick — find all layers with content in the rectangle.
+                var rx = (int)Math.Min(_layerPickAnchor.X, _layerPickCurrent.X);
+                var ry = (int)Math.Min(_layerPickAnchor.Y, _layerPickCurrent.Y);
+                var rw = (int)Math.Abs(_layerPickCurrent.X - _layerPickAnchor.X) + 1;
+                var rh = (int)Math.Abs(_layerPickCurrent.Y - _layerPickAnchor.Y) + 1;
+                var found = FindLayersInRect(rx, ry, rw, rh);
+                if (found.Count > 0)
+                    LayersFoundByRect?.Invoke(found);
+            }
+
+            e.Handled = true;
+            return;
+        }
+
         if (point.Pointer.Id != _activePointerId) return;
 
         _toolController.Dispatch(new ToolInputEvent(ToolInputEventKind.Up, MakeSample(point, CanvasInputPhase.Up)));
@@ -819,6 +886,7 @@ public sealed class DrawingCanvas : Control
     protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
     {
         base.OnPointerCaptureLost(e);
+        if (_isLayerPickDrag) { _isLayerPickDrag = false; InvalidateVisual(); }
         if (_activePointerId < 0) return;
         _activePointerId = -1;
         _toolController.Cancel();
@@ -847,6 +915,21 @@ public sealed class DrawingCanvas : Control
                 return;
             }
         }
+    }
+
+    private List<int> FindLayersInRect(int x, int y, int w, int h)
+    {
+        var found = new List<int>();
+        var layers = _document.Layers;
+        for (int i = layers.Count - 1; i >= 0; i--)
+        {
+            var layer = layers[i];
+            if (!layer.IsVisible || layer.IsGroup) continue;
+            var region = new PixelRegion(x - layer.OffsetX, y - layer.OffsetY, w, h);
+            if (layer.Pixels.HasNonTransparentPixels(region))
+                found.Add(i);
+        }
+        return found;
     }
 
     private Color? SampleDocumentColor(int x, int y, EyedropperSampleOptions options)
