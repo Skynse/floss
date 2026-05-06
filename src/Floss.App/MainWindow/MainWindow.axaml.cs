@@ -406,9 +406,22 @@ public partial class MainWindow : Window
             {
                 MenuAction("_New...", async () => await NewDocumentAsync()),
                 MenuAction("_Open...", async () => await OpenDocumentAsync()),
-                MenuAction("_Save Floss", async () => await SaveDocumentAsync()),
-                MenuAction("_Save Floss As...", async () => await SaveDocumentAsAsync()),
-                MenuAction("_Export Image...", async () => await ExportImageAsync()),
+                MenuAction("_Save", async () => await SaveDocumentAsync()),
+                MenuAction("Save _As...", async () => await SaveDocumentAsAsync()),
+                new Separator(),
+                new MenuItem
+                {
+                    Header = "_Export",
+                    ItemsSource = new object[]
+                    {
+                        MenuAction(".bmp (BMP)...", async () => await ExportImageAsync(".bmp")),
+                        MenuAction(".jpg (JPEG)...", async () => await ExportImageAsync(".jpg")),
+                        MenuAction(".png (PNG)...", async () => await ExportImageAsync(".png")),
+                        MenuAction(".tif (TIFF)...", async () => await ExportImageAsync(".tif")),
+                        MenuAction(".webp (WebP)...", async () => await ExportImageAsync(".webp")),
+                        MenuAction(".psd (Photoshop Document)...", async () => await ExportPsdAsync())
+                    }
+                },
                 new Separator(),
                 MenuAction("_Reset View", ResetView),
                 new Separator(),
@@ -567,12 +580,13 @@ public partial class MainWindow : Window
         undoTb.Click += (_, _) => _canvas.Undo();
         redoTb.Click += (_, _) => _canvas.Redo();
 
-        var openTb = TbarBtn(Icons.FolderOpenOutline, "Open PSD or image  (Ctrl+O)");
+        var openTb = TbarBtn(Icons.FolderOpenOutline, "Open document  (Ctrl+O)");
         var SaveDocumentTb = TbarBtn(Icons.ContentSaveOutline, "Save document  (Ctrl+S)");
-        var saveTb = TbarBtn(Icons.ContentSaveOutline, "Save PSD");
+        var exportPsdTb = TbarBtn(Icons.ContentSaveOutline, "Export PSD");
         var exportTb = TbarBtn(Icons.ContentSaveOutline, "Export image");
         openTb.Click += async (_, _) => await OpenDocumentAsync();
         SaveDocumentTb.Click += async (_, _) => await SaveDocumentAsync();
+        exportPsdTb.Click += async (_, _) => await ExportPsdAsync();
         exportTb.Click += async (_, _) => await ExportImageAsync();
 
         var row = new StackPanel
@@ -584,7 +598,7 @@ public partial class MainWindow : Window
         };
         row.Children.Add(openTb);
         row.Children.Add(SaveDocumentTb);
-        row.Children.Add(saveTb);
+        row.Children.Add(exportPsdTb);
         row.Children.Add(exportTb);
         row.Children.Add(TbarSep());
         row.Children.Add(undoTb);

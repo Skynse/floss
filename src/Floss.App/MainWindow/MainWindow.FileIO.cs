@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using Floss.App.Canvas;
@@ -149,7 +150,6 @@ public partial class MainWindow
             var path = files[0].Path.LocalPath;
             await using var stream = await files[0].OpenReadAsync();
             var imported = await System.Threading.Tasks.Task.Run(() => LoadDocumentFromStream(stream, path));
-            _currentFilePath = path;
             ApplyOpenedDocument(imported, path);
         }
         catch (Exception ex)
@@ -190,7 +190,7 @@ public partial class MainWindow
         _canvas.Document.ReplaceWith(imported);
         _canvasFrame.IsVisible = true;
         App.Config.AddRecentFile(path);
-        if (IsFlossPath(path)) _currentFilePath = path;
+        _currentFilePath = CanSaveInPlace(path) ? path : null;
         SyncCanvasFrameToDocument(fitToViewport: true);
         BuildLayerList();
         UpdateStatus();
@@ -208,7 +208,7 @@ public partial class MainWindow
             return;
         }
 
-        // 2. If it's a native project or a PSD, silently overwrite it
+        // 2. If it's a saveable document, silently overwrite it.
         if (IsFlossPath(_currentFilePath))
         {
             await WriteFlossInternalAsync(_currentFilePath);
@@ -217,21 +217,19 @@ public partial class MainWindow
         {
             await WritePsdInternalAsync(_currentFilePath);
         }
-        // 3. If they opened a PNG or KRA, DON'T overwrite. Force Save As.
         else
         {
             await SaveDocumentAsAsync();
         }
     }
 
-    // Wire your "Save As" (Ctrl+Shift+S) to this!
     private async System.Threading.Tasks.Task SaveDocumentAsAsync()
     {
         var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
             Title = "Save Document As",
-            FileTypeChoices = [FlossFileType, PsdFileType], // Support both natively
-            SuggestedFileName = string.IsNullOrEmpty(_currentFilePath) ? "untitled.floss" : Path.GetFileNameWithoutExtension(_currentFilePath)
+            FileTypeChoices = [FlossFileType, PsdFileType],
+            SuggestedFileName = SuggestedDocumentFileName()
         });
 
         if (file == null) return;
@@ -268,13 +266,22 @@ public partial class MainWindow
     }
 
     private async System.Threading.Tasks.Task WritePsdInternalAsync(string path)
+        => await WritePsdInternalAsync(path, updateDocumentState: true);
+
+    private async System.Threading.Tasks.Task WritePsdInternalAsync(string path, bool updateDocumentState)
     {
         try
         {
             await using var stream = File.Open(path, FileMode.Create, FileAccess.Write);
             PsdExporter.Export(stream, _canvas.Document);
 
-            _currentFilePath = path; // Update universal state
+            if (!updateDocumentState)
+            {
+                _footerStatusText.Text = $"Exported PSD {Path.GetFileName(path)}";
+                return;
+            }
+
+            _currentFilePath = path;
             App.Config.AddRecentFile(path);
             _canvas.Document.MarkAsSaved(); // Clears IsDirty
             _footerStatusText.Text = $"Saved PSD {Path.GetFileName(path)}";
@@ -285,22 +292,26 @@ public partial class MainWindow
         }
     }
 
-    private async System.Threading.Tasks.Task ExportImageAsync()
+    private async System.Threading.Tasks.Task ExportPsdAsync()
+    {
+        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = "Export PSD",
+            FileTypeChoices = [PsdFileType],
+            SuggestedFileName = SuggestedExportFileName(".psd")
+        });
+        if (file == null) return;
+
+        await WritePsdInternalAsync(file.Path.LocalPath, updateDocumentState: false);
+    }
+
+    private async System.Threading.Tasks.Task ExportImageAsync(string? preferredExtension = null)
     {
         var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
             Title = "Export Image",
-            FileTypeChoices =
-            [
-                new FilePickerFileType("PNG Image") { Patterns = ["*.png"] },
-                new FilePickerFileType("JPEG Image") { Patterns = ["*.jpg", "*.jpeg"] },
-                new FilePickerFileType("WebP Image") { Patterns = ["*.webp"] },
-                new FilePickerFileType("Bitmap Image") { Patterns = ["*.bmp"] },
-                new FilePickerFileType("GIF Image") { Patterns = ["*.gif"] },
-                new FilePickerFileType("Icon") { Patterns = ["*.ico"] },
-                new FilePickerFileType("Wireless Bitmap") { Patterns = ["*.wbmp"] }
-            ],
-            SuggestedFileName = "floss-export.png"
+            FileTypeChoices = ExportImageFileTypes(preferredExtension),
+            SuggestedFileName = SuggestedExportFileName(preferredExtension ?? ".png")
         });
         if (file == null) return;
 
@@ -325,4 +336,46 @@ public partial class MainWindow
 
     private static bool IsFlossPath(string path)
         => string.Equals(Path.GetExtension(path), FlossFileFormat.Extension, StringComparison.OrdinalIgnoreCase);
+
+    private static FilePickerFileType[] ExportImageFileTypes(string? preferredExtension)
+    {
+        var all = new[]
+        {
+            new FilePickerFileType("PNG Image") { Patterns = ["*.png"] },
+            new FilePickerFileType("JPEG Image") { Patterns = ["*.jpg", "*.jpeg"] },
+            new FilePickerFileType("TIFF Image") { Patterns = ["*.tif", "*.tiff"] },
+            new FilePickerFileType("Bitmap Image") { Patterns = ["*.bmp"] },
+            new FilePickerFileType("WebP Image") { Patterns = ["*.webp"] },
+            new FilePickerFileType("GIF Image") { Patterns = ["*.gif"] },
+            new FilePickerFileType("Icon") { Patterns = ["*.ico"] },
+            new FilePickerFileType("Wireless Bitmap") { Patterns = ["*.wbmp"] }
+        };
+
+        if (string.IsNullOrWhiteSpace(preferredExtension))
+            return all;
+
+        var pattern = "*" + preferredExtension;
+        var preferred = all.FirstOrDefault(t =>
+            t.Patterns?.Any(p => string.Equals(p, pattern, StringComparison.OrdinalIgnoreCase)) == true);
+        return preferred == null ? all : [preferred, .. all.Where(t => !ReferenceEquals(t, preferred))];
+    }
+
+    private static bool CanSaveInPlace(string path)
+        => IsFlossPath(path) || IsPsdPath(path);
+
+    private string SuggestedDocumentFileName()
+    {
+        if (!string.IsNullOrWhiteSpace(_currentFilePath) && CanSaveInPlace(_currentFilePath))
+            return Path.GetFileName(_currentFilePath);
+
+        return "untitled.floss";
+    }
+
+    private string SuggestedExportFileName(string extension)
+    {
+        var baseName = string.IsNullOrWhiteSpace(_currentFilePath)
+            ? "untitled"
+            : Path.GetFileNameWithoutExtension(_currentFilePath);
+        return baseName + extension;
+    }
 }
