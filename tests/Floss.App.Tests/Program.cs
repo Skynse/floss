@@ -50,6 +50,8 @@ internal static class Program
         ("CurveOption combines sensors and clones deeply", BrushTests.CurveOption_ComputesAndClones),
         ("BrushDynamics serializes and handles invalid JSON", BrushTests.BrushDynamics_SerializesAndFallsBack),
         ("BrushPreset legacy dynamics bridge preserves settings", BrushTests.BrushPreset_LegacyDynamicsBridge),
+        ("Brush engine reuses masks during large strokes", BrushTests.BrushEngine_ReusesMasksDuringLargeStrokes),
+        ("Brush engine does not dispose tip-owned cached masks", BrushTests.BrushEngine_DoesNotDisposeTipOwnedCachedMasks),
         ("Image brush tips preserve source aspect ratio", BrushTests.ImageBrushTip_PreservesAspectRatio),
         ("ABR preset mapping keeps usable brush dynamics", BrushTests.AbrPresetMapping_KeepsDynamics),
         ("ABR mask cleanup inverts dark-on-light stamps", BrushTests.AbrMaskCleanup_InvertsDarkOnLightMasks),
@@ -429,6 +431,89 @@ internal static class BrushTests
         AssertEx.True(preset.OpacityDynamics.PressureEnabled);
         AssertEx.False(preset.OpacityDynamics.VelocityEnabled);
     }
+
+    public static void BrushEngine_ReusesMasksDuringLargeStrokes()
+    {
+        using var engine = new BrushEngine();
+        var tip = new CountingBrushTip();
+        var brush = new BrushPreset("Big", BrushKind.Ink, 160, 1, 0.7, 0.04, Colors.Black, 0)
+        {
+            Tip = tip,
+            Shape = null
+        };
+        var layer = new DrawingLayer("Layer", 1200, 320);
+        var from = Sample(40, 160, 0);
+        var to = Sample(1050, 160, 16_000);
+
+        engine.BeginStroke(brush, from);
+        var dirty = engine.RasterizeSegment(layer, brush, from, to);
+
+        AssertEx.False(dirty.IsEmpty);
+        AssertEx.Equal(1, tip.GenerateCount, "Large strokes should reuse the stroke mask instead of regenerating it per stamp.");
+    }
+
+    public static void BrushEngine_DoesNotDisposeTipOwnedCachedMasks()
+    {
+        var tip = new CachedCountingBrushTip();
+        var brush = new BrushPreset("Cached", BrushKind.Ink, 80, 1, 0.7, 0.1, Colors.Black, 0)
+        {
+            Tip = tip,
+            Shape = null
+        };
+        var layer = new DrawingLayer("Layer", 400, 240);
+
+        using (var engine = new BrushEngine())
+        {
+            var from = Sample(40, 120, 0);
+            var to = Sample(300, 120, 16_000);
+            engine.BeginStroke(brush, from);
+            engine.RasterizeSegment(layer, brush, from, to);
+            engine.EndStroke();
+
+            from = Sample(40, 150, 32_000);
+            to = Sample(300, 150, 48_000);
+            engine.BeginStroke(brush, from);
+            var dirty = engine.RasterizeSegment(layer, brush, from, to);
+            AssertEx.False(dirty.IsEmpty);
+        }
+
+        AssertEx.False(tip.CachedMaskDisposed, "BrushEngine must not dispose masks owned by the brush tip cache.");
+        tip.Dispose();
+    }
+
+    private sealed class CountingBrushTip : IBrushTip
+    {
+        public int GenerateCount { get; private set; }
+
+        public SKBitmap GenerateMask(int baseSize, float hardness)
+        {
+            GenerateCount++;
+            var bitmap = new SKBitmap(new SKImageInfo(baseSize, baseSize, SKColorType.Alpha8, SKAlphaType.Unpremul));
+            bitmap.Erase(new SKColor(255, 255, 255, 255));
+            return bitmap;
+        }
+    }
+
+    private sealed class CachedCountingBrushTip : IBrushTip, IDisposable
+    {
+        private SKBitmap? _cached;
+
+        public bool CachedMaskDisposed => _cached?.Handle == IntPtr.Zero;
+
+        public SKBitmap GenerateMask(int baseSize, float hardness)
+        {
+            if (_cached != null) return _cached;
+
+            _cached = new SKBitmap(new SKImageInfo(baseSize, baseSize, SKColorType.Alpha8, SKAlphaType.Unpremul));
+            _cached.Erase(new SKColor(255, 255, 255, 255));
+            return _cached;
+        }
+
+        public void Dispose() => _cached?.Dispose();
+    }
+
+    private static CanvasInputSample Sample(double x, double y, long timeMicros)
+        => new(x, y, 1, 0, 0, 0, timeMicros, 1, CanvasInputSource.Mouse, CanvasInputPhase.Move);
 
     public static unsafe void ImageBrushTip_PreservesAspectRatio()
     {

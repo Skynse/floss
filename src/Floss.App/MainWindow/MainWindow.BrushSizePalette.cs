@@ -72,8 +72,8 @@ public partial class MainWindow
         var sz = size;
         btn.Click += (_, _) =>
         {
-            _sizeSlider.Value = sz;
-            UpdateCurrentBrush(p => p with { Size = sz });
+            SetActiveToolSize(sz);
+            FinishActiveToolSizeEdit();
         };
 
         return btn;

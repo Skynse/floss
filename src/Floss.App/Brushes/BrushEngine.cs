@@ -358,8 +358,7 @@ public sealed class BrushEngine : IDisposable
 
             canvas.Save();
             canvas.Concat(in stroke.Matrix);
-            using var image = SKImage.FromBitmap(mask);
-            canvas.DrawImage(image, 0f, 0f, new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None), stroke.Paint);
+            canvas.DrawBitmap(mask, 0f, 0f, stroke.Paint);
             canvas.Restore();
 
             stroke.ReleaseMask(mask);
@@ -675,6 +674,9 @@ public sealed class BrushEngine : IDisposable
     private sealed class ActiveStroke : IDisposable
     {
         private readonly BrushPreset _brush;
+        private const int MaxCachedMasks = 16;
+        private readonly Dictionary<int, SKBitmap> _maskCache = new();
+        private readonly HashSet<SKBitmap> _ownedMasks = new();
         
         private readonly SKColor _baseColor;
         private SKColor _currentColor;
@@ -703,6 +705,8 @@ public sealed class BrushEngine : IDisposable
 
             BaseMaskSize = Math.Max(1, (int)Math.Ceiling(brush.Size));
             Mask = brush.Tip.GenerateMask(BaseMaskSize, (float)brush.Hardness);
+            if (brush.Tip is CompoundBrushTip)
+                _ownedMasks.Add(Mask);
             _baseColor = ToSkColor(brush.Color);
             _currentColor = _baseColor;
             // Initial smudge colour: DensityOfPaint determines how much brush
@@ -764,21 +768,55 @@ public sealed class BrushEngine : IDisposable
 
         public SKBitmap MaskFor(float hardness)
         {
-            var tipMask = _brush.Tip.GenerateMask(BaseMaskSize, hardness);
-            if (_brush.Shape == null) return tipMask;
-            var shapeMask = _brush.Shape.GenerateMask(BaseMaskSize, hardness);
+            var key = QuantizeHardness(hardness);
+            if (_maskCache.TryGetValue(key, out var cached))
+                return cached;
+
+            var normalizedHardness = key / 255f;
+            var tipMask = key == QuantizeHardness((float)_brush.Hardness)
+                ? Mask
+                : _brush.Tip.GenerateMask(BaseMaskSize, normalizedHardness);
+            if (_brush.Tip is CompoundBrushTip && !ReferenceEquals(tipMask, Mask))
+                _ownedMasks.Add(tipMask);
+
+            if (_brush.Shape == null)
+                return CacheOrReturnTemporary(key, tipMask);
+
+            var shapeMask = _brush.Shape.GenerateMask(BaseMaskSize, normalizedHardness);
             var combined = MultiplyMasks(tipMask, shapeMask, BaseMaskSize);
-            if (_brush.Tip is CompoundBrushTip) tipMask.Dispose();
-            return combined;
+            DisposeOwnedTemporary(tipMask);
+            _ownedMasks.Add(combined);
+            return CacheOrReturnTemporary(key, combined);
         }
 
         public void ReleaseMask(SKBitmap mask)
         {
-            if (_brush.Shape != null)
-                mask.Dispose(); // combined mask is always freshly allocated
-            else if (!ReferenceEquals(mask, Mask) && _brush.Tip is CompoundBrushTip)
+            if (_ownedMasks.Contains(mask) && !_maskCache.ContainsValue(mask))
+            {
+                _ownedMasks.Remove(mask);
                 mask.Dispose();
+            }
         }
+
+        private void DisposeOwnedTemporary(SKBitmap mask)
+        {
+            if (ReferenceEquals(mask, Mask) || !_ownedMasks.Remove(mask))
+                return;
+
+            mask.Dispose();
+        }
+
+        private SKBitmap CacheOrReturnTemporary(int key, SKBitmap mask)
+        {
+            if (_maskCache.Count >= MaxCachedMasks)
+                return mask;
+
+            _maskCache[key] = mask;
+            return mask;
+        }
+
+        private static int QuantizeHardness(float hardness)
+            => Math.Clamp((int)MathF.Round(Math.Clamp(hardness, 0.001f, 1f) * 255f), 0, 255);
 
         private static unsafe SKBitmap MultiplyMasks(SKBitmap tip, SKBitmap shape, int size)
         {
@@ -805,8 +843,13 @@ public sealed class BrushEngine : IDisposable
 
         public void Dispose()
         {
-            if (_brush.Tip is CompoundBrushTip)
-                Mask.Dispose();
+            foreach (var mask in _maskCache.Values)
+            {
+                if (_ownedMasks.Contains(mask))
+                    mask.Dispose();
+            }
+            _maskCache.Clear();
+            _ownedMasks.Clear();
             // _mixedFilter is assigned to Paint.ColorFilter; Paint.Dispose()
             // releases the paint and its filter reference. Disposing the
             // filter separately here would double-dispose the same native

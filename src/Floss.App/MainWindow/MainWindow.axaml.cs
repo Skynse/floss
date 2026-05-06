@@ -209,6 +209,9 @@ public partial class MainWindow : Window
     private Point _lastPanPoint;
     private Point _gestureStartPoint;
     private Point _brushSizeGestureStartCanvasPoint;
+    private Point _brushSizeGestureCenterCanvasPoint;
+    private double _brushSizeGestureStartSize;
+    private bool _brushSizeGestureHasCenter;
     private SettingsWindow? _settingsWindow;
 
     private bool _suppressBrushSettingsRestored;

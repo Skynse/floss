@@ -682,7 +682,7 @@ public sealed class DrawingCanvas : Control
             bool isBrushLike = _toolController.ActiveTool is CompositeTool ct && ct.Input.HasBrushCursor;
             if (_forceBrushOutlineCursor || (isBrushLike && mode is BrushCursorMode.Outline or BrushCursorMode.DotAndOutline))
             {
-                var r = _brush.Size * 0.5;
+                var r = ActiveToolCursorSize() * 0.5;
                 context.DrawEllipse(null, new Pen(CursorOuterBrush, t * 3), pos, r, r);
                 context.DrawEllipse(null, new Pen(CursorInnerBrush, t), pos, r, r);
             }
@@ -705,6 +705,13 @@ public sealed class DrawingCanvas : Control
             }
         }
     }
+
+    private double ActiveToolCursorSize()
+        => _ctx.ActivePreset?.OutputProcess switch
+        {
+            OutputProcessType.Liquify => _ctx.ActivePreset.LiquifySize,
+            _ => _brush.Size
+        };
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {

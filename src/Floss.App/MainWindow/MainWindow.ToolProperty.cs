@@ -184,11 +184,11 @@ public partial class MainWindow
             case OutputProcessType.Liquify:
                 props.AddRange([
                     SliderProp("liquify.size", "Size", true,
-                        () => preset.LiquifySize, v => preset.LiquifySize = v, 10, 500, "px"),
+                        () => preset.LiquifySize, v => UpdateActiveToolPreset(p => p.LiquifySize = v), 10, 500, "px"),
                     SliderProp("liquify.strength", "Strength", true,
-                        () => preset.LiquifyStrength, v => preset.LiquifyStrength = v, 0, 1, "%"),
+                        () => preset.LiquifyStrength, v => UpdateActiveToolPreset(p => p.LiquifyStrength = v), 0, 1, "%"),
                     EnumProp("liquify.mode", "Mode", true,
-                        () => preset.LiquifyMode, v => preset.LiquifyMode = v),
+                        () => preset.LiquifyMode, v => UpdateActiveToolPreset(p => p.LiquifyMode = v)),
                 ]);
                 break;
 
@@ -219,8 +219,10 @@ public partial class MainWindow
         if (preset == null) return;
 
         update(preset);
-        if (preset.OutputProcess != OutputProcessType.DirectDraw)
+        if (preset.OutputProcess is not (OutputProcessType.DirectDraw or OutputProcessType.Liquify))
             _canvas.SetActiveTool(ToolForPreset(preset), preset);
+        else
+            _canvas.InvalidateVisual();
         App.ToolGroups.Save();
     }
 

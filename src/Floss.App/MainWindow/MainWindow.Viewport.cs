@@ -68,7 +68,10 @@ public partial class MainWindow
         if (_activeGesture == GestureMode.BrushSize)
         {
             _brushSizeGestureStartCanvasPoint = e.GetPosition(_canvas);
-            _canvas.LockCursorPreview(_brushSizeGestureStartCanvasPoint, forceBrushOutline: true);
+            _brushSizeGestureCenterCanvasPoint = _brushSizeGestureStartCanvasPoint;
+            _brushSizeGestureStartSize = GetActiveToolSize();
+            _brushSizeGestureHasCenter = false;
+            _canvas.LockCursorPreview(_brushSizeGestureCenterCanvasPoint, forceBrushOutline: true);
         }
         e.Pointer.Capture(_workspaceViewport);
         e.Handled = true;
@@ -90,16 +93,31 @@ public partial class MainWindow
         if (_activeGesture == GestureMode.BrushSize)
         {
             var canvasPoint = e.GetPosition(_canvas);
-            var dx = canvasPoint.X - _brushSizeGestureStartCanvasPoint.X;
-            var dy = canvasPoint.Y - _brushSizeGestureStartCanvasPoint.Y;
+            if (!_brushSizeGestureHasCenter)
+            {
+                var startDx = canvasPoint.X - _brushSizeGestureStartCanvasPoint.X;
+                var startDy = canvasPoint.Y - _brushSizeGestureStartCanvasPoint.Y;
+                var startDistance = Math.Sqrt(startDx * startDx + startDy * startDy);
+                if (startDistance > 0.001)
+                {
+                    var startRadius = _brushSizeGestureStartSize * 0.5;
+                    _brushSizeGestureCenterCanvasPoint = new Point(
+                        _brushSizeGestureStartCanvasPoint.X - startDx / startDistance * startRadius,
+                        _brushSizeGestureStartCanvasPoint.Y - startDy / startDistance * startRadius);
+                    _brushSizeGestureHasCenter = true;
+                }
+            }
+
+            var dx = canvasPoint.X - _brushSizeGestureCenterCanvasPoint.X;
+            var dy = canvasPoint.Y - _brushSizeGestureCenterCanvasPoint.Y;
             var radiusDistance = Math.Sqrt(dx * dx + dy * dy);
-            _sizeSlider.Value = BrushSizeAdjustment.FromRadiusDistance(
+            SetActiveToolSize(BrushSizeAdjustment.FromRadiusDistance(
                 radiusDistance,
-                _sizeSlider.Minimum,
-                _sizeSlider.Maximum);
+                GetActiveToolSizeMinimum(),
+                GetActiveToolSizeMaximum()));
             _lastPanPoint = pt;
             _canvas.LockCursorPreview(
-                _brushSizeGestureStartCanvasPoint,
+                _brushSizeGestureCenterCanvasPoint,
                 forceBrushOutline: true);
             e.Handled = true;
             return;
@@ -137,6 +155,8 @@ public partial class MainWindow
         if (!_isPanning) return;
         if (IsResizeDragging) EndResizeDrag();
         _isPanning = false;
+        if (_activeGesture == GestureMode.BrushSize)
+            FinishActiveToolSizeEdit();
         _canvas.UnlockCursorPreview();
         e.Pointer.Capture(null);
         e.Handled = true;
@@ -146,12 +166,59 @@ public partial class MainWindow
     {
         var sc = App.Shortcuts;
         var configuredStep = large ? sc.BrushSizeStepLarge : sc.BrushSizeStep;
-        _sizeSlider.Value = BrushSizeAdjustment.Nudge(
-            _sizeSlider.Value,
+        SetActiveToolSize(BrushSizeAdjustment.Nudge(
+            GetActiveToolSize(),
             direction,
             configuredStep,
-            _sizeSlider.Minimum,
-            _sizeSlider.Maximum);
+            GetActiveToolSizeMinimum(),
+            GetActiveToolSizeMaximum()));
+        FinishActiveToolSizeEdit();
+    }
+
+    private double GetActiveToolSize()
+    {
+        var preset = _activeToolGroup?.ActivePreset;
+        return preset?.OutputProcess switch
+        {
+            OutputProcessType.Liquify => preset.LiquifySize,
+            OutputProcessType.DirectDraw => _activePreset?.Size ?? _canvas.Brush.Size,
+            _ => _sizeSlider.Value
+        };
+    }
+
+    private double GetActiveToolSizeMinimum()
+    {
+        var preset = _activeToolGroup?.ActivePreset;
+        return preset?.OutputProcess == OutputProcessType.Liquify ? 10 : _sizeSlider.Minimum;
+    }
+
+    private double GetActiveToolSizeMaximum()
+    {
+        var preset = _activeToolGroup?.ActivePreset;
+        return preset?.OutputProcess == OutputProcessType.Liquify ? 500 : _sizeSlider.Maximum;
+    }
+
+    private void SetActiveToolSize(double size)
+    {
+        var preset = _activeToolGroup?.ActivePreset;
+        var clamped = Math.Clamp(size, GetActiveToolSizeMinimum(), GetActiveToolSizeMaximum());
+        if (preset?.OutputProcess == OutputProcessType.Liquify)
+        {
+            preset.LiquifySize = clamped;
+            _canvas.InvalidateVisual();
+            return;
+        }
+
+        _sizeSlider.Value = clamped;
+    }
+
+    private void FinishActiveToolSizeEdit()
+    {
+        if (_activeToolGroup?.ActivePreset?.OutputProcess == OutputProcessType.Liquify)
+        {
+            RefreshToolProperties();
+            App.ToolGroups.Save();
+        }
     }
 
     // pan_new = (cursor - vpCenter) * (1 - ratio) + pan_old * ratio
@@ -474,10 +541,13 @@ public partial class MainWindow
                 ? (mods & _gestureModifiers) != _gestureModifiers
                 : e.Key == _gestureKey))
         {
+            var wasBrushSizeGesture = _activeGesture == GestureMode.BrushSize;
             _activeGesture = GestureMode.None;
             _gestureKey = Key.None;
             _gestureModifiers = KeyModifiers.None;
             _isPanning = false;
+            if (wasBrushSizeGesture)
+                FinishActiveToolSizeEdit();
             _canvas.UnlockCursorPreview();
             _canvas.PaintInputSuspended = false;
             Cursor = Cursor.Default;
@@ -543,10 +613,13 @@ public partial class MainWindow
     {
         if (_activeGesture != GestureMode.None || _canvas.AlternateTool != null || _altToolBeforeGesture != null)
         {
+            var wasBrushSizeGesture = _activeGesture == GestureMode.BrushSize;
             _activeGesture = GestureMode.None;
             _gestureKey = Key.None;
             _gestureModifiers = KeyModifiers.None;
             _isPanning = false;
+            if (wasBrushSizeGesture)
+                FinishActiveToolSizeEdit();
             _canvas.PaintInputSuspended = false;
             _canvas.UnlockCursorPreview();
             _canvas.SetAlternateTool(null);
