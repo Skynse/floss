@@ -186,6 +186,9 @@ public sealed class ToolPreset
     // Brush/Eraser/Smudge — references a BrushAsset on disk; null = use current brush
     public string? BrushId { get; set; }
 
+    // Icon path (MDI SVG path string). When set, drives the toolbar group icon.
+    public string? PresetIcon { get; set; }
+
     // Select
     public SelectMode SelectMode { get; set; } = SelectMode.Rect;
     public SelectOp SelectOp { get; set; } = SelectOp.Replace;
@@ -271,7 +274,7 @@ public sealed class ToolGroup
 
     [JsonIgnore]
     public string ActiveIcon =>
-        CustomIcon ?? Icons.DefaultIcon(ActivePreset?.Engine ?? DefaultEngine);
+        CustomIcon ?? ActivePreset?.PresetIcon ?? Icons.DefaultIcon(ActivePreset?.Engine ?? DefaultEngine);
 
     [JsonIgnore]
     public ToolPreset? ActivePreset =>

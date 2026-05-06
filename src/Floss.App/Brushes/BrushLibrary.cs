@@ -51,6 +51,12 @@ public sealed class BrushLibrary
         asset.FilePath = path;
     }
 
+    public void Delete(BrushAsset asset)
+    {
+        if (!string.IsNullOrEmpty(asset.FilePath))
+            try { File.Delete(asset.FilePath); } catch { }
+    }
+
     private void SeedDefaults(bool force = false)
     {
         foreach (var asset in DefaultAssets())

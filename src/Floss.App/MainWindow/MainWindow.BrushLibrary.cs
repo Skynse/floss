@@ -136,6 +136,7 @@ public partial class MainWindow : Window
                 RefreshGroupPresets();
             };
             btn.DoubleTapped += (_, _) => RenameCategoryPrompt(group, cat);
+            btn.ContextMenu = BuildCategoryContextMenu(group, cat);
             EnableCategoryDrop(btn, group, catName);
             EnableCategoryReorder(btn, group, catName);
             _brushCategoryPanel.Children.Add(btn);
@@ -225,9 +226,20 @@ public partial class MainWindow : Window
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 7, 0),
         };
+        var iconPath = preset.PresetIcon ?? Icons.DefaultIcon(preset.Engine);
+        var iconOverlay = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(120, 0, 0, 0)),
+            CornerRadius = new CornerRadius(0, 0, 3, 0),
+            Padding = new Thickness(4, 3),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom,
+            Child = Icons.Make(iconPath, 11, new SolidColorBrush(Color.FromArgb(210, 255, 255, 255)))
+        };
         var panel = new Panel { ClipToBounds = true };
         panel.Children.Add(strokePreview);
         panel.Children.Add(namePill);
+        panel.Children.Add(iconOverlay);
 
         var row = new Button
         {
@@ -243,14 +255,19 @@ public partial class MainWindow : Window
             Content = panel,
             Tag = preset.Id,
         };
-    row.Click += (_, _) => ActivatePreset(group, preset);
-    EnablePresetDrag(row, preset.Id);
-    row.ContextMenu = BuildPresetContextMenu(group, preset);
-    return row;
-}
+        row.Click += (_, _) => ActivatePreset(group, preset);
+        EnablePresetDragAndReorder(row, group, preset);
+        row.ContextMenu = BuildPresetContextMenu(group, preset);
+        return row;
+    }
 
-private Button BuildSimplePresetRow(ToolGroup group, ToolPreset preset, bool isActive)
+    private Button BuildSimplePresetRow(ToolGroup group, ToolPreset preset, bool isActive)
     {
+        var iconPath = preset.PresetIcon ?? Icons.DefaultIcon(preset.Engine);
+        var iconElem = Icons.Make(iconPath, 12,
+            new SolidColorBrush(Color.Parse(isActive ? TextPrimary : TextSecondary)));
+        iconElem.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center;
+
         var nameText = new TextBlock
         {
             Text = preset.Name,
@@ -258,8 +275,17 @@ private Button BuildSimplePresetRow(ToolGroup group, ToolPreset preset, bool isA
             FontWeight = FontWeight.SemiBold,
             Foreground = new SolidColorBrush(Color.Parse(isActive ? TextPrimary : TextSecondary)),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            Margin = new Thickness(8, 0),
         };
+        var content = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Margin = new Thickness(8, 0),
+            Spacing = 5,
+        };
+        content.Children.Add(iconElem);
+        content.Children.Add(nameText);
+
         var row = new Button
         {
             Height = 26,
@@ -271,14 +297,14 @@ private Button BuildSimplePresetRow(ToolGroup group, ToolPreset preset, bool isA
             BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke)),
             BorderThickness = new Thickness(isActive ? 2 : 1),
             CornerRadius = new CornerRadius(3),
-            Content = nameText,
+            Content = content,
             Tag = preset.Id,
         };
-    row.Click += (_, _) => ActivatePreset(group, preset);
-    EnablePresetDrag(row, preset.Id);
-    row.ContextMenu = BuildPresetContextMenu(group, preset);
-    return row;
-}
+        row.Click += (_, _) => ActivatePreset(group, preset);
+        EnablePresetDragAndReorder(row, group, preset);
+        row.ContextMenu = BuildPresetContextMenu(group, preset);
+        return row;
+    }
 
 // ── Preset context menu ─────────────────────────────────────────────────
 
@@ -501,6 +527,34 @@ private void ShowPresetPropertiesDialog(ToolGroup group, ToolPreset preset)
         CornerRadius = new CornerRadius(3)
     };
 
+    string? selectedIcon = preset.PresetIcon;
+    Action refreshIconPicker = null!;
+    var iconPickerPanel = new WrapPanel { Orientation = Avalonia.Layout.Orientation.Horizontal };
+    refreshIconPicker = () =>
+    {
+        iconPickerPanel.Children.Clear();
+        foreach (var (iName, iPath) in Icons.ToolIcons)
+        {
+            var iSelected = iPath == selectedIcon;
+            var iBtn = new Button
+            {
+                Width = 28, Height = 28,
+                Padding = new Thickness(4),
+                Content = Icons.Make(iPath, 14, new SolidColorBrush(Color.Parse(iSelected ? Accent : TextSecondary))),
+                Background = new SolidColorBrush(Color.Parse(iSelected ? AccentSoft : Bg2)),
+                BorderBrush = new SolidColorBrush(Color.Parse(iSelected ? Accent : Stroke)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(3),
+                Margin = new Thickness(0, 0, 3, 3)
+            };
+            ToolTip.SetTip(iBtn, iName);
+            var capturedPath = iPath;
+            iBtn.Click += (_, _) => { selectedIcon = capturedPath; refreshIconPicker(); };
+            iconPickerPanel.Children.Add(iBtn);
+        }
+    };
+    refreshIconPicker();
+
     var dlg = new Window
     {
         Title = $"Tool Properties — {preset.Name}",
@@ -521,6 +575,8 @@ private void ShowPresetPropertiesDialog(ToolGroup group, ToolPreset preset)
                 enginePicker,
                 new TextBlock { Text = "Output Process", FontSize = 10, Foreground = new SolidColorBrush(Color.Parse(TextMuted)) },
                 outputPicker,
+                new TextBlock { Text = "Tool Icon", FontSize = 10, Foreground = new SolidColorBrush(Color.Parse(TextMuted)) },
+                iconPickerPanel,
                 new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 8, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right, Children = { cancelBtn, saveBtn } }
             }
         }
@@ -531,6 +587,7 @@ private void ShowPresetPropertiesDialog(ToolGroup group, ToolPreset preset)
         preset.Name = nameBox.Text?.Trim() ?? preset.Name;
         preset.Engine = (ToolPresetEngine)(enginePicker.SelectedItem ?? preset.Engine);
         preset.OutputProcess = (OutputProcessType)(outputPicker.SelectedItem ?? preset.OutputProcess);
+        preset.PresetIcon = selectedIcon;
         App.ToolGroups.Save();
         RefreshGroupPresets();
         if (_activeToolGroup == group && group.ActivePreset == preset)
@@ -620,30 +677,91 @@ private void DeletePreset(ToolGroup group, ToolPreset preset)
 
 // ── Drag-and-drop helpers ─────────────────────────────────────────────────
 
-    private static void EnablePresetDrag(Control source, string presetId)
+    private void EnablePresetDragAndReorder(Button row, ToolGroup group, ToolPreset preset)
     {
-        DragDrop.SetAllowDrop(source, true);
-        source.AddHandler(DragDrop.DropEvent, (_, e) =>
+        DragDrop.SetAllowDrop(row, true);
+        var presetId = preset.Id;
+
+        var origBorderBrush = row.BorderBrush;
+        var origBorderThickness = row.BorderThickness;
+
+        row.PointerPressed += (_, e) =>
         {
-            if (e.DataTransfer.Contains(PresetIdDragFormat))
-                e.Handled = true;
-        });
-        source.AddHandler(DragDrop.DragOverEvent, (_, e) =>
-        {
-            if (e.DataTransfer.Contains(PresetIdDragFormat))
-                e.DragEffects = DragDropEffects.Move;
-        });
-        source.PointerPressed += (_, e) =>
-        {
-            if (e.GetCurrentPoint(source).Properties.IsLeftButtonPressed)
-            {
-                var item = new DataTransferItem();
-                item.Set(PresetIdDragFormat, presetId);
-                var data = new DataTransfer();
-                data.Add(item);
-                _ = DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
-            }
+            if (!e.GetCurrentPoint(row).Properties.IsLeftButtonPressed) return;
+            var item = new DataTransferItem();
+            item.Set(PresetIdDragFormat, presetId);
+            var data = new DataTransfer();
+            data.Add(item);
+            _ = DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
         };
+
+        row.AddHandler(DragDrop.DragOverEvent, (object? _, DragEventArgs e) =>
+        {
+            var draggedId = e.DataTransfer.TryGetValue<string>(PresetIdDragFormat);
+            if (string.IsNullOrEmpty(draggedId) || draggedId == presetId)
+            {
+                e.DragEffects = DragDropEffects.None;
+                return;
+            }
+            e.DragEffects = DragDropEffects.Move;
+            var before = e.GetPosition(row).Y < row.Bounds.Height / 2;
+            row.BorderThickness = before ? new Thickness(1, 3, 1, 1) : new Thickness(1, 1, 1, 3);
+            row.BorderBrush = new SolidColorBrush(Color.Parse(Accent));
+            e.Handled = true;
+        });
+
+        row.AddHandler(DragDrop.DragLeaveEvent, (_, _) =>
+        {
+            row.BorderBrush = origBorderBrush;
+            row.BorderThickness = origBorderThickness;
+        });
+
+        row.AddHandler(DragDrop.DropEvent, (object? _, DragEventArgs e) =>
+        {
+            row.BorderBrush = origBorderBrush;
+            row.BorderThickness = origBorderThickness;
+            if (!e.DataTransfer.Contains(PresetIdDragFormat)) return;
+            var draggedId = e.DataTransfer.TryGetValue<string>(PresetIdDragFormat);
+            if (string.IsNullOrEmpty(draggedId) || draggedId == presetId) return;
+            var before = e.GetPosition(row).Y < row.Bounds.Height / 2;
+            MovePresetRelativeTo(group, draggedId, presetId, before);
+            e.Handled = true;
+        });
+    }
+
+    private void MovePresetRelativeTo(ToolGroup group, string draggedId, string targetId, bool insertBefore)
+    {
+        if (draggedId == targetId) return;
+
+        ToolCategory? draggedCat = null, targetCat = null;
+        foreach (var c in group.Categories)
+        {
+            if (c.PresetIds.Contains(draggedId)) draggedCat = c;
+            if (c.PresetIds.Contains(targetId)) targetCat = c;
+        }
+
+        if (targetCat == null)
+        {
+            // Neither is in a category — reorder in group.Presets
+            var dp = group.Presets.FirstOrDefault(p => p.Id == draggedId);
+            var tp = group.Presets.FirstOrDefault(p => p.Id == targetId);
+            if (dp == null || tp == null) return;
+            group.Presets.Remove(dp);
+            var idx = group.Presets.IndexOf(tp);
+            group.Presets.Insert(Math.Clamp(insertBefore ? idx : idx + 1, 0, group.Presets.Count), dp);
+        }
+        else
+        {
+            draggedCat?.PresetIds.Remove(draggedId);
+            var tIdx = targetCat.PresetIds.IndexOf(targetId);
+            var ins = tIdx < 0 ? targetCat.PresetIds.Count : (insertBefore ? tIdx : tIdx + 1);
+            targetCat.PresetIds.Insert(Math.Clamp(ins, 0, targetCat.PresetIds.Count), draggedId);
+            if (draggedCat != null && draggedCat != targetCat)
+                _selectedCategory = targetCat.Name;
+        }
+
+        App.ToolGroups.Save();
+        RefreshGroupPresets();
     }
 
     private void EnableCategoryDrop(Control target, ToolGroup group, string category)
@@ -753,6 +871,62 @@ private void DeletePreset(ToolGroup group, ToolPreset preset)
         cat.Name = newName;
         App.ToolGroups.Save();
         RefreshGroupPresets();
+    }
+
+    private ContextMenu BuildCategoryContextMenu(ToolGroup group, ToolCategory cat)
+    {
+        var menu = new ContextMenu();
+
+        var renameItem = new MenuItem { Header = "Rename" };
+        renameItem.Click += (_, _) => RenameCategoryPrompt(group, cat);
+
+        var deleteItem = new MenuItem { Header = "Delete Category and Brushes" };
+        deleteItem.Click += (_, _) => DeleteCategory(group, cat);
+
+        menu.Items.Add(renameItem);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(deleteItem);
+        return menu;
+    }
+
+    private void DeleteCategory(ToolGroup group, ToolCategory cat)
+    {
+        var presetIds = cat.PresetIds.ToList();
+        group.Categories.Remove(cat);
+
+        var wasActiveDeleted = false;
+        foreach (var presetId in presetIds)
+        {
+            var preset = group.Presets.FirstOrDefault(p => p.Id == presetId);
+            if (preset == null) continue;
+
+            if (preset.BrushId != null)
+            {
+                var asset = _brushAssets.FirstOrDefault(a => a.Id == preset.BrushId);
+                if (asset != null) _brushLibrary.Delete(asset);
+            }
+
+            group.Presets.Remove(preset);
+            if (group.LastActivePresetId == preset.Id)
+            {
+                group.LastActivePresetId = null;
+                wasActiveDeleted = true;
+            }
+        }
+
+        if (_selectedCategory == cat.Name)
+            _selectedCategory = group.Categories.FirstOrDefault()?.Name;
+
+        App.ToolGroups.Save();
+        LoadBrushAssets();
+
+        if (wasActiveDeleted && _activeToolGroup == group)
+        {
+            var next = group.ActivePreset ?? group.Presets.FirstOrDefault();
+            if (next != null) ActivatePreset(group, next);
+        }
+
+        _footerStatusText.Text = $"Deleted category \"{cat.Name}\" and {presetIds.Count} brush{(presetIds.Count == 1 ? "" : "es")}";
     }
 
     private void EnableCategoryReorder(Button btn, ToolGroup group, string cat)
@@ -999,6 +1173,8 @@ private void DeletePreset(ToolGroup group, ToolPreset preset)
 
         var imported = 0;
         var lastDiag = "";
+        var fileImports = new List<(string CategoryName, List<string> AssetIds)>();
+
         foreach (var file in files)
         {
             await using var stream = await file.OpenReadAsync();
@@ -1006,17 +1182,44 @@ private void DeletePreset(ToolGroup group, ToolPreset preset)
             try { brushes = await System.Threading.Tasks.Task.Run(() => Brushes.AbrImporter.Import(stream, out lastDiag)); }
             catch (Exception ex) { lastDiag = ex.Message; continue; }
 
+            var categoryName = Path.GetFileNameWithoutExtension(file.Name);
+            var assetIds = new List<string>();
             foreach (var asset in brushes)
             {
                 _brushLibrary.Save(asset);
+                assetIds.Add(asset.Id);
                 imported++;
             }
+            if (assetIds.Count > 0)
+                fileImports.Add((categoryName, assetIds));
         }
 
         if (imported > 0)
         {
             LoadBrushAssets();
-            _footerStatusText.Text = $"Imported {imported} brush{(imported == 1 ? "" : "es")} from .abr [{lastDiag}]";
+
+            // Move imported brushes from their auto-assigned type categories into a
+            // named category matching the ABR file (one category per file imported).
+            var brushGroup = App.ToolGroups.Groups.FirstOrDefault(g => g.DefaultEngine == ToolPresetEngine.Brush)
+                ?? App.ToolGroups.Groups.First();
+
+            foreach (var (catName, ids) in fileImports)
+            {
+                foreach (var assetId in ids)
+                {
+                    var preset = brushGroup.Presets.FirstOrDefault(p => p.BrushId == assetId);
+                    if (preset == null) continue;
+                    foreach (var c in brushGroup.Categories) c.PresetIds.Remove(preset.Id);
+                    var cat = brushGroup.Categories.FirstOrDefault(c => c.Name == catName);
+                    if (cat == null) { cat = new ToolCategory { Name = catName }; brushGroup.Categories.Add(cat); }
+                    if (!cat.PresetIds.Contains(preset.Id)) cat.PresetIds.Add(preset.Id);
+                }
+            }
+
+            App.ToolGroups.Save();
+            _selectedCategory = fileImports[^1].CategoryName;
+            RefreshGroupPresets();
+            _footerStatusText.Text = $"Imported {imported} brush{(imported == 1 ? "" : "es")} [{lastDiag}]";
         }
         else
         {
