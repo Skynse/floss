@@ -306,7 +306,7 @@ public partial class MainWindow : Window
         return row;
     }
 
-// ── Preset context menu ─────────────────────────────────────────────────
+    // ── Preset context menu ─────────────────────────────────────────────────
 
     private ContextMenu BuildPresetContextMenu(ToolGroup group, ToolPreset preset)
     {
@@ -464,110 +464,111 @@ public partial class MainWindow : Window
         UpdateStatus();
     }
 
-private void ShowPresetPropertiesDialog(ToolGroup group, ToolPreset preset)
-{
-    var nameBox = new TextBox
+    private void ShowPresetPropertiesDialog(ToolGroup group, ToolPreset preset)
     {
-        Text = preset.Name,
-        Width = 200,
-        Height = 28,
-        FontSize = 11,
-        Padding = new Thickness(6, 0),
-        Background = new SolidColorBrush(Color.Parse("#1a1c22")),
-        Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
-        BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-        BorderThickness = new Thickness(1),
-        CornerRadius = new CornerRadius(3)
-    };
-
-    var enginePicker = new ComboBox
-    {
-        ItemsSource = Enum.GetValues<ToolPresetEngine>(),
-        SelectedItem = preset.Engine,
-        Width = 200,
-        Height = 28,
-        FontSize = 11
-    };
-
-    var outputPicker = new ComboBox
-    {
-        ItemsSource = Enum.GetValues<OutputProcessType>(),
-        SelectedItem = preset.OutputProcess,
-        Width = 200,
-        Height = 28,
-        FontSize = 11
-    };
-
-    var saveBtn = new Button
-    {
-        Content = "Save",
-        Height = 28,
-        Padding = new Thickness(14, 0),
-        FontSize = 11,
-        HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-        VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
-        Background = new SolidColorBrush(Color.Parse(AccentSoft)),
-        Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
-        BorderBrush = new SolidColorBrush(Color.Parse(Accent)),
-        BorderThickness = new Thickness(1),
-        CornerRadius = new CornerRadius(3)
-    };
-    var cancelBtn = new Button
-    {
-        Content = "Cancel",
-        Height = 28,
-        Padding = new Thickness(14, 0),
-        FontSize = 11,
-        HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-        VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
-        Background = new SolidColorBrush(Color.Parse(Bg2)),
-        Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-        BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-        BorderThickness = new Thickness(1),
-        CornerRadius = new CornerRadius(3)
-    };
-
-    string? selectedIcon = preset.PresetIcon;
-    Action refreshIconPicker = null!;
-    var iconPickerPanel = new WrapPanel { Orientation = Avalonia.Layout.Orientation.Horizontal };
-    refreshIconPicker = () =>
-    {
-        iconPickerPanel.Children.Clear();
-        foreach (var (iName, iPath) in Icons.ToolIcons)
+        var nameBox = new TextBox
         {
-            var iSelected = iPath == selectedIcon;
-            var iBtn = new Button
+            Text = preset.Name,
+            Width = 200,
+            Height = 28,
+            FontSize = 11,
+            Padding = new Thickness(6, 0),
+            Background = new SolidColorBrush(Color.Parse("#1a1c22")),
+            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(3)
+        };
+
+        var enginePicker = new ComboBox
+        {
+            ItemsSource = Enum.GetValues<ToolPresetEngine>(),
+            SelectedItem = preset.Engine,
+            Width = 200,
+            Height = 28,
+            FontSize = 11
+        };
+
+        var outputPicker = new ComboBox
+        {
+            ItemsSource = Enum.GetValues<OutputProcessType>(),
+            SelectedItem = preset.OutputProcess,
+            Width = 200,
+            Height = 28,
+            FontSize = 11
+        };
+
+        var saveBtn = new Button
+        {
+            Content = "Save",
+            Height = 28,
+            Padding = new Thickness(14, 0),
+            FontSize = 11,
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Background = new SolidColorBrush(Color.Parse(AccentSoft)),
+            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Accent)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(3)
+        };
+        var cancelBtn = new Button
+        {
+            Content = "Cancel",
+            Height = 28,
+            Padding = new Thickness(14, 0),
+            FontSize = 11,
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(3)
+        };
+
+        string? selectedIcon = preset.PresetIcon;
+        Action refreshIconPicker = null!;
+        var iconPickerPanel = new WrapPanel { Orientation = Avalonia.Layout.Orientation.Horizontal };
+        refreshIconPicker = () =>
+        {
+            iconPickerPanel.Children.Clear();
+            foreach (var (iName, iPath) in Icons.ToolIcons)
             {
-                Width = 28, Height = 28,
-                Padding = new Thickness(4),
-                Content = Icons.Make(iPath, 14, new SolidColorBrush(Color.Parse(iSelected ? Accent : TextSecondary))),
-                Background = new SolidColorBrush(Color.Parse(iSelected ? AccentSoft : Bg2)),
-                BorderBrush = new SolidColorBrush(Color.Parse(iSelected ? Accent : Stroke)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(3),
-                Margin = new Thickness(0, 0, 3, 3)
-            };
-            ToolTip.SetTip(iBtn, iName);
-            var capturedPath = iPath;
-            iBtn.Click += (_, _) => { selectedIcon = capturedPath; refreshIconPicker(); };
-            iconPickerPanel.Children.Add(iBtn);
-        }
-    };
-    refreshIconPicker();
+                var iSelected = iPath == selectedIcon;
+                var iBtn = new Button
+                {
+                    Width = 28,
+                    Height = 28,
+                    Padding = new Thickness(4),
+                    Content = Icons.Make(iPath, 14, new SolidColorBrush(Color.Parse(iSelected ? Accent : TextSecondary))),
+                    Background = new SolidColorBrush(Color.Parse(iSelected ? AccentSoft : Bg2)),
+                    BorderBrush = new SolidColorBrush(Color.Parse(iSelected ? Accent : Stroke)),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(3),
+                    Margin = new Thickness(0, 0, 3, 3)
+                };
+                ToolTip.SetTip(iBtn, iName);
+                var capturedPath = iPath;
+                iBtn.Click += (_, _) => { selectedIcon = capturedPath; refreshIconPicker(); };
+                iconPickerPanel.Children.Add(iBtn);
+            }
+        };
+        refreshIconPicker();
 
-    var dlg = new Window
-    {
-        Title = $"Tool Properties — {preset.Name}",
-        Width = 260,
-        SizeToContent = SizeToContent.Height,
-        CanResize = false,
-        ShowInTaskbar = false,
-        Background = new SolidColorBrush(Color.Parse(Bg1)),
-        Content = new StackPanel
+        var dlg = new Window
         {
-            Margin = new Thickness(16),
-            Spacing = 10,
-            Children =
+            Title = $"Tool Properties — {preset.Name}",
+            Width = 260,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            ShowInTaskbar = false,
+            Background = new SolidColorBrush(Color.Parse(Bg1)),
+            Content = new StackPanel
+            {
+                Margin = new Thickness(16),
+                Spacing = 10,
+                Children =
             {
                 new TextBlock { Text = "Name", FontSize = 10, Foreground = new SolidColorBrush(Color.Parse(TextMuted)) },
                 nameBox,
@@ -579,56 +580,56 @@ private void ShowPresetPropertiesDialog(ToolGroup group, ToolPreset preset)
                 iconPickerPanel,
                 new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 8, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right, Children = { cancelBtn, saveBtn } }
             }
-        }
-    };
+            }
+        };
 
-    saveBtn.Click += (_, _) =>
+        saveBtn.Click += (_, _) =>
+        {
+            preset.Name = nameBox.Text?.Trim() ?? preset.Name;
+            preset.Engine = (ToolPresetEngine)(enginePicker.SelectedItem ?? preset.Engine);
+            preset.OutputProcess = (OutputProcessType)(outputPicker.SelectedItem ?? preset.OutputProcess);
+            preset.PresetIcon = selectedIcon;
+            App.ToolGroups.Save();
+            RefreshGroupPresets();
+            if (_activeToolGroup == group && group.ActivePreset == preset)
+            {
+                ActivatePreset(group, preset);
+                BuildToolRail();
+            }
+            dlg.Close();
+        };
+        cancelBtn.Click += (_, _) => dlg.Close();
+
+        dlg.ShowDialog(this);
+    }
+
+    private async System.Threading.Tasks.Task RenamePresetPrompt(ToolGroup group, ToolPreset preset)
     {
-        preset.Name = nameBox.Text?.Trim() ?? preset.Name;
-        preset.Engine = (ToolPresetEngine)(enginePicker.SelectedItem ?? preset.Engine);
-        preset.OutputProcess = (OutputProcessType)(outputPicker.SelectedItem ?? preset.OutputProcess);
-        preset.PresetIcon = selectedIcon;
+        var tcs = new System.Threading.Tasks.TaskCompletionSource<string?>();
+        var dialog = new Window
+        {
+            Title = "Rename Preset",
+            Width = 280,
+            Height = 140,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = new SolidColorBrush(Color.Parse(Bg0))
+        };
+        var tb = new TextBox { Margin = new Thickness(12), Text = preset.Name };
+        var ok = new Button { Content = "Rename", Margin = new Thickness(12, 0, 12, 12) };
+        ok.Click += (_, _) => { tcs.TrySetResult(tb.Text); dialog.Close(); };
+        tb.KeyDown += (_, e) => { if (e.Key == Key.Enter) { tcs.TrySetResult(tb.Text); dialog.Close(); } };
+        dialog.Closed += (_, _) => tcs.TrySetResult(null);
+        dialog.Content = new StackPanel { Children = { tb, ok } };
+        await dialog.ShowDialog(this);
+
+        var newName = (await tcs.Task)?.Trim();
+        if (string.IsNullOrWhiteSpace(newName) || newName == preset.Name) return;
+        preset.Name = newName;
         App.ToolGroups.Save();
         RefreshGroupPresets();
         if (_activeToolGroup == group && group.ActivePreset == preset)
-        {
             ActivatePreset(group, preset);
-            BuildToolRail();
-        }
-        dlg.Close();
-    };
-    cancelBtn.Click += (_, _) => dlg.Close();
-
-    dlg.ShowDialog(this);
-}
-
-private async System.Threading.Tasks.Task RenamePresetPrompt(ToolGroup group, ToolPreset preset)
-{
-    var tcs = new System.Threading.Tasks.TaskCompletionSource<string?>();
-    var dialog = new Window
-    {
-        Title = "Rename Preset",
-        Width = 280,
-        Height = 140,
-        WindowStartupLocation = WindowStartupLocation.CenterOwner,
-        Background = new SolidColorBrush(Color.Parse(Bg0))
-    };
-    var tb = new TextBox { Margin = new Thickness(12), Text = preset.Name };
-    var ok = new Button { Content = "Rename", Margin = new Thickness(12, 0, 12, 12) };
-    ok.Click += (_, _) => { tcs.TrySetResult(tb.Text); dialog.Close(); };
-    tb.KeyDown += (_, e) => { if (e.Key == Key.Enter) { tcs.TrySetResult(tb.Text); dialog.Close(); } };
-    dialog.Closed += (_, _) => tcs.TrySetResult(null);
-    dialog.Content = new StackPanel { Children = { tb, ok } };
-    await dialog.ShowDialog(this);
-
-    var newName = (await tcs.Task)?.Trim();
-    if (string.IsNullOrWhiteSpace(newName) || newName == preset.Name) return;
-    preset.Name = newName;
-    App.ToolGroups.Save();
-    RefreshGroupPresets();
-    if (_activeToolGroup == group && group.ActivePreset == preset)
-        ActivatePreset(group, preset);
-}
+    }
 
     private void DuplicatePreset(ToolGroup group, ToolPreset preset)
     {
@@ -655,55 +656,71 @@ private async System.Threading.Tasks.Task RenamePresetPrompt(ToolGroup group, To
             PolylineClosePath = preset.PolylineClosePath,
             PolylineStrokeWidth = preset.PolylineStrokeWidth
         };
-    group.Presets.Add(copy);
-    App.ToolGroups.Save();
-    RefreshGroupPresets();
-}
-
-private void DeletePreset(ToolGroup group, ToolPreset preset)
-{
-    if (group.Presets.Count <= 1) return;
-    group.Presets.Remove(preset);
-    if (group.LastActivePresetId == preset.Id)
-        group.LastActivePresetId = group.Presets.FirstOrDefault()?.Id;
-    App.ToolGroups.Save();
-    RefreshGroupPresets();
-    if (_activeToolGroup == group)
-    {
-        var active = group.ActivePreset ?? group.Presets.FirstOrDefault();
-        if (active != null) ActivatePreset(group, active);
+        group.Presets.Add(copy);
+        App.ToolGroups.Save();
+        RefreshGroupPresets();
     }
-}
 
-// ── Drag-and-drop helpers ─────────────────────────────────────────────────
+    private void DeletePreset(ToolGroup group, ToolPreset preset)
+    {
+        if (group.Presets.Count <= 1) return;
+        group.Presets.Remove(preset);
+        if (group.LastActivePresetId == preset.Id)
+            group.LastActivePresetId = group.Presets.FirstOrDefault()?.Id;
+        App.ToolGroups.Save();
+        RefreshGroupPresets();
+        if (_activeToolGroup == group)
+        {
+            var active = group.ActivePreset ?? group.Presets.FirstOrDefault();
+            if (active != null) ActivatePreset(group, active);
+        }
+    }
+
+    // ── Drag-and-drop helpers ─────────────────────────────────────────────────
 
     private void EnablePresetDragAndReorder(Button row, ToolGroup group, ToolPreset preset)
     {
         DragDrop.SetAllowDrop(row, true);
         var presetId = preset.Id;
-
         var origBorderBrush = row.BorderBrush;
         var origBorderThickness = row.BorderThickness;
 
-        row.PointerPressed += (_, e) =>
+        PointerPressedEventArgs? pressEvent = null;
+        var dragging = false;
+
+        // Capture press in tunnel phase before Button steals pointer focus.
+        row.AddHandler(InputElement.PointerPressedEvent, (_, e) =>
         {
-            if (!e.GetCurrentPoint(row).Properties.IsLeftButtonPressed) return;
+            if (e.GetCurrentPoint(row).Properties.IsLeftButtonPressed)
+                pressEvent = e;
+        }, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+
+        row.PointerMoved += (_, e) =>
+        {
+            if (dragging || pressEvent == null) return;
+            if (!e.GetCurrentPoint(row).Properties.IsLeftButtonPressed) { pressEvent = null; return; }
+            var delta = e.GetPosition(row) - pressEvent.GetPosition(row);
+            if (Math.Abs(delta.X) < 4 && Math.Abs(delta.Y) < 4) return;
+
+            dragging = true;
+            var savedPress = pressEvent;
+            pressEvent = null;
             var item = new DataTransferItem();
             item.Set(PresetIdDragFormat, presetId);
             var data = new DataTransfer();
             data.Add(item);
-            _ = DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
+            _ = DragDrop.DoDragDropAsync(savedPress, data, DragDropEffects.Move)
+                .ContinueWith(_ => dragging = false);
         };
+
+        row.PointerReleased += (_, _) => { pressEvent = null; dragging = false; };
 
         row.AddHandler(DragDrop.DragOverEvent, (object? _, DragEventArgs e) =>
         {
-            var draggedId = e.DataTransfer.TryGetValue<string>(PresetIdDragFormat);
-            if (string.IsNullOrEmpty(draggedId) || draggedId == presetId)
-            {
-                e.DragEffects = DragDropEffects.None;
-                return;
-            }
+            if (!e.DataTransfer.Contains(PresetIdDragFormat)) return;
             e.DragEffects = DragDropEffects.Move;
+            var draggedId = e.DataTransfer.TryGetValue<string>(PresetIdDragFormat);
+            if (string.IsNullOrEmpty(draggedId) || draggedId == presetId) return;
             var before = e.GetPosition(row).Y < row.Bounds.Height / 2;
             row.BorderThickness = before ? new Thickness(1, 3, 1, 1) : new Thickness(1, 1, 1, 3);
             row.BorderBrush = new SolidColorBrush(Color.Parse(Accent));

@@ -31,21 +31,32 @@ public static class AbrImporter
         else if (version is 6 or 7)
         {
             var subVersion = (int)extra;
-            var errors = 0;
-            while (stream.Position < stream.Length - 8)
+            // Sub-version 2 uses the same 8BIM block layout as v10
+            if (subVersion == 2)
             {
-                try
-                {
-                    if (!TryReadV6(r, subVersion, results)) break;
-                }
-                catch (Exception ex)
-                {
-                    errors++;
-                    if (errors > 5) break;
-                    _ = ex;
-                }
+                var errors = 0;
+                try { ReadV10(stream, results, ref errors); }
+                catch { errors++; }
+                diagnostic = $"v{version} sub{subVersion}, {results.Count} imported, {errors} errors";
             }
-            diagnostic = $"v{version} sub{subVersion}, {results.Count} imported, {errors} errors";
+            else
+            {
+                var errors = 0;
+                while (stream.Position < stream.Length - 8)
+                {
+                    try
+                    {
+                        if (!TryReadV6(r, subVersion, results)) break;
+                    }
+                    catch (Exception ex)
+                    {
+                        errors++;
+                        if (errors > 5) break;
+                        _ = ex;
+                    }
+                }
+                diagnostic = $"v{version} sub{subVersion}, {results.Count} imported, {errors} errors";
+            }
         }
         else if (version == 10)
         {
