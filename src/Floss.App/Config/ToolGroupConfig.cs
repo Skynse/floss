@@ -276,7 +276,7 @@ public sealed class ToolGroup
 
     [JsonIgnore]
     public string ActiveIcon =>
-        CustomIcon ?? ActivePreset?.PresetIcon ?? Icons.DefaultIcon(ActivePreset?.Engine ?? DefaultEngine);
+        CustomIcon ?? ActivePreset?.PresetIcon ?? Icons.DefaultIcon(DefaultEngine);
 
     [JsonIgnore]
     public ToolPreset? ActivePreset =>

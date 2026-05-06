@@ -148,6 +148,19 @@ public partial class MainWindow
         var setShortcutItem = new MenuItem { Header = "Set Shortcut" };
         setShortcutItem.Click += (_, _) => StartToolGroupShortcutRecording(group, btn);
 
+        var addFromDefaultItem = new MenuItem { Header = "Add from Default" };
+        foreach (var defaultGroup in ToolGroupConfig.Defaults())
+        {
+            var template = defaultGroup;
+            var item = new MenuItem
+            {
+                Header = template.Name,
+                Icon = MaterialIcon(template.ActiveIcon, 14)
+            };
+            item.Click += (_, _) => AddToolGroupFromDefault(group, template);
+            addFromDefaultItem.Items.Add(item);
+        }
+
         var moveUpItem = new MenuItem { Header = "Move Up" };
         moveUpItem.Click += (_, _) => MoveToolGroup(group, -1);
 
@@ -160,6 +173,7 @@ public partial class MainWindow
         menu.Items.Add(renameItem);
         menu.Items.Add(setIconItem);
         menu.Items.Add(setShortcutItem);
+        menu.Items.Add(addFromDefaultItem);
         menu.Items.Add(new Separator());
         menu.Items.Add(moveUpItem);
         menu.Items.Add(moveDownItem);
@@ -171,6 +185,21 @@ public partial class MainWindow
     }
 
     // ── Tool group mutations ──────────────────────────────────────────────────
+
+    private void AddToolGroupFromDefault(ToolGroup afterGroup, ToolGroup template)
+    {
+        var groups = App.ToolGroups.Groups;
+        if (groups.Any(g => !g.Shortcut.IsEmpty && g.Shortcut.ToString() == template.Shortcut.ToString()))
+            template.Shortcut = Input.KeyBinding.Empty;
+
+        var index = groups.IndexOf(afterGroup);
+        groups.Insert(index < 0 ? groups.Count : index + 1, template);
+        App.ToolGroups.Save();
+        BuildToolRail();
+
+        var preset = template.ActivePreset ?? template.Presets.FirstOrDefault();
+        if (preset != null) ActivatePreset(template, preset);
+    }
 
     private void MoveToolGroup(ToolGroup group, int delta)
     {
