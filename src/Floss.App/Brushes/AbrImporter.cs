@@ -116,22 +116,9 @@ public static class AbrImporter
 
         var allParams = descData != null
             ? ParseDescBrushParams(descData)
-            : [];
+            : new List<AbrBrushParams>();
 
-        // Build GUID → params lookup for sampled brushes
-        var guidToParams = new Dictionary<string, AbrBrushParams>(
-            StringComparer.OrdinalIgnoreCase);
-        var unnamedParams = new Queue<AbrBrushParams>();
-
-        foreach (var p in allParams)
-        {
-            if (!string.IsNullOrEmpty(p.SampledDataGuid))
-                guidToParams.TryAdd(p.SampledDataGuid, p);
-            else
-                unnamedParams.Enqueue(p);
-        }
-
-        ScanV10Samp(sampData, guidToParams, unnamedParams, results, ref errors);
+        ScanV10Samp(sampData, allParams, results, ref errors);
     }
 
     // ── Desc block parser ─────────────────────────────────────────────────────
@@ -482,13 +469,11 @@ public static class AbrImporter
     // ── Samp block scan ────────────────────────────────────────────────────────
 
     private static void ScanV10Samp(byte[] samp,
-        Dictionary<string, AbrBrushParams> guidToParams,
-        Queue<AbrBrushParams> unnamedParams,
+        List<AbrBrushParams> descParams,
         List<BrushAsset> results, ref int errors)
     {
         var pos = 0;
         var brushIndex = 0;
-        var usedGuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         while (pos + 4 <= samp.Length)
         {
@@ -498,14 +483,9 @@ public static class AbrImporter
 
             if (brushSize <= 0 || pos + brushSize > samp.Length) break;
 
-            var entryGuid = TryReadEntryGuid(samp, pos);
-            AbrBrushParams? matchedParams = null;
-
-            if (entryGuid != null && guidToParams.TryGetValue(entryGuid, out var mp))
-            {
-                matchedParams = mp;
-                usedGuids.Add(entryGuid);
-            }
+            // Sequential pairing: desc entry[N] names samp entry[N].
+            // GUID matching is skipped because many ABR files have no GUIDs in desc.
+            AbrBrushParams? matchedParams = brushIndex < descParams.Count ? descParams[brushIndex] : null;
 
             var name = matchedParams?.Name;
             if (string.IsNullOrEmpty(name))
@@ -523,27 +503,15 @@ public static class AbrImporter
             pos += aligned;
         }
 
-        // Import remaining desc presets that didn't match a samp tip.
-        // These are computed brushes (no tip image) or presets whose tip GUID
-        // wasn't found in the samp block.
-        foreach (var p in unnamedParams)
+        // Any remaining desc entries beyond samp count are computed brushes (no tip image).
+        for (var i = brushIndex; i < descParams.Count; i++)
         {
+            var p = descParams[i];
             if (string.IsNullOrEmpty(p.Name)) continue;
-            // Only import if this preset has shape parameters (not just a bare name)
-            if (!p.HasDiameter && !p.HasHardness && !p.HasSpacing) continue;
             var asset = MakeComputedAsset(p);
             if (asset != null)
                 results.Add(asset);
         }
-    }
-
-    private static string? TryReadEntryGuid(byte[] data, int entryStart)
-    {
-        if (IsV10Guid(data, entryStart))
-        {
-            return Encoding.ASCII.GetString(data, entryStart + 1, 36);
-        }
-        return null;
     }
 
     // ── Per-brush entry parsing ────────────────────────────────────────────────
