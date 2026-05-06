@@ -670,6 +670,8 @@ public sealed class LayerCompositor
         var lastTileX = FloorDiv(sourceRegion.Right - 1, ts);
         var lastTileY = FloorDiv(sourceRegion.Bottom - 1, ts);
 
+        var applyExpr = expressionColor != ExpressionColorMode.Color;
+
         // Integer fast path for Normal blend — avoids all float conversions.
         if (blendMode == "Normal")
         {
@@ -723,6 +725,16 @@ public sealed class LayerCompositor
                                 srcR = tile[tileOffset + 2];
                             }
 
+                            // Expression color: transform source pixel before blending (never touches other layers).
+                            if (applyExpr)
+                            {
+                                var lum = (srcR * 299 + srcG * 587 + srcB * 114) / 1000;
+                                byte gray = expressionColor == ExpressionColorMode.Gray
+                                    ? (byte)lum
+                                    : lum >= 128 ? (byte)255 : (byte)0;
+                                srcB = srcG = srcR = gray;
+                            }
+
                             if (srcA == 255)
                             {
                                 dstPtr[0] = srcB;
@@ -747,7 +759,6 @@ public sealed class LayerCompositor
                     }
                 }
             }
-            ApplyExpressionColor(dst, dstStride, docLeft, docTop, docRight, docBottom, originX, originY, expressionColor);
             return;
         }
 
@@ -798,6 +809,16 @@ public sealed class LayerCompositor
                             tintedR = tile[tileOffset + 2];
                         }
 
+                        // Expression color: transform source pixel before blending.
+                        if (applyExpr)
+                        {
+                            var lum = (tintedR * 299 + tintedG * 587 + tintedB * 114) / 1000;
+                            byte gray = expressionColor == ExpressionColorMode.Gray
+                                ? (byte)lum
+                                : lum >= 128 ? (byte)255 : (byte)0;
+                            tintedB = tintedG = tintedR = gray;
+                        }
+
                         var srcB = tintedB / 255.0;
                         var srcG = tintedG / 255.0;
                         var srcR = tintedR / 255.0;
@@ -812,8 +833,6 @@ public sealed class LayerCompositor
                 }
             }
         }
-
-        ApplyExpressionColor(dst, dstStride, docLeft, docTop, docRight, docBottom, originX, originY, expressionColor);
     }
 
     private static unsafe void ApplyExpressionColor(

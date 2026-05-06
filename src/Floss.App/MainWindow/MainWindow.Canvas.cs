@@ -4,55 +4,79 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Floss.App.Canvas;
 
 namespace Floss.App;
 
 public partial class MainWindow
 {
+    // ── Resize overlay state ──────────────────────────────────────────────────
+    private CanvasResizeOverlay? _resizeOverlay;
+    private Border? _resizeFloatingPanel;
+    private NumericUpDown? _resizeWidthBox;
+    private NumericUpDown? _resizeHeightBox;
+    private Button? _resizeOkBtn;
+    private Button? _resizeCancelBtn;
+    private Button[,]? _resizeAnchorBtns;
+    private int _resizeAnchorCol = 1;
+    private int _resizeAnchorRow = 1;
+    private bool _suppressResizeSync;
+    private int _resizeOldW, _resizeOldH;
+    private TaskCompletionSource<bool>? _resizeTcs;
+
     internal async Task ShowResizeCanvasDialog()
     {
-        var oldW = _canvas.Document.Width;
-        var oldH = _canvas.Document.Height;
+        _resizeOldW = _canvas.Document.Width;
+        _resizeOldH = _canvas.Document.Height;
 
-        // ── Inputs ────────────────────────────────────────────────────────────
-        var widthBox  = new NumericUpDown { Value = oldW, Minimum = 1, Maximum = 32000, Increment = 1, Width = 130, FontSize = 12 };
-        var heightBox = new NumericUpDown { Value = oldH, Minimum = 1, Maximum = 32000, Increment = 1, Width = 130, FontSize = 12 };
+        if (_resizeOverlay == null) BuildResizeOverlay();
 
-        // ── Preview canvas (scaled) ───────────────────────────────────────────
-        const int PreviewSize = 160;
-        var previewControl = new PreviewBox(PreviewSize) { Width = PreviewSize, Height = PreviewSize };
+        _suppressResizeSync = true;
+        _resizeWidthBox!.Value  = _resizeOldW;
+        _resizeHeightBox!.Value = _resizeOldH;
+        _resizeAnchorCol = 1;
+        _resizeAnchorRow = 1;
+        _suppressResizeSync = false;
 
-        // ── Anchor grid (3×3) ─────────────────────────────────────────────────
-        var anchorCol = 1;
-        var anchorRow = 1;
-        var anchorBtns = new Button[3, 3];
-        var anchorGrid = new Grid { Width = 96, Height = 96 };
+        UpdateResizeAnchorColors();
+        _resizeOverlay!.SetPreview(_resizeOldW, _resizeOldH, 0, 0);
+        _resizeOverlay.IsVisible = true;
+        _resizeFloatingPanel!.IsVisible = true;
+        _canvas.PaintInputSuspended = true;
+
+        _resizeTcs = new TaskCompletionSource<bool>();
+        var confirmed = await _resizeTcs.Task;
+
+        _resizeOverlay.IsVisible = false;
+        _resizeFloatingPanel.IsVisible = false;
+        _canvas.PaintInputSuspended = false;
+
+        if (!confirmed) return;
+
+        _canvas.ResizeCanvas(_resizeOverlay.PreviewW, _resizeOverlay.PreviewH,
+                             _resizeOverlay.PreviewOffX, _resizeOverlay.PreviewOffY);
+        SyncCanvasFrameToDocument(fitToViewport: true);
+        BuildLayerList();
+    }
+
+    private void BuildResizeOverlay()
+    {
+        _resizeOverlay = new CanvasResizeOverlay(_canvas) { IsVisible = false };
+        _workspaceViewport.Children.Add(_resizeOverlay);
+
+        _resizeWidthBox  = new NumericUpDown { Value = 1, Minimum = 1, Maximum = 32000, Increment = 1, Width = 110, FontSize = 11 };
+        _resizeHeightBox = new NumericUpDown { Value = 1, Minimum = 1, Maximum = 32000, Increment = 1, Width = 110, FontSize = 11 };
+        _resizeWidthBox.ValueChanged  += (_, _) => OnResizeInputChanged();
+        _resizeHeightBox.ValueChanged += (_, _) => OnResizeInputChanged();
+
+        // Anchor grid 3x3
+        _resizeAnchorBtns = new Button[3, 3];
+        var anchorGrid = new Grid { Width = 72, Height = 72 };
         for (var i = 0; i < 3; i++)
         {
             anchorGrid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
             anchorGrid.RowDefinitions.Add(new RowDefinition(GridLength.Star));
         }
-
-        void UpdatePreview()
-        {
-            var nw = (int)(widthBox.Value  ?? oldW);
-            var nh = (int)(heightBox.Value ?? oldH);
-            var ox = (int)Math.Round((nw - oldW) * anchorCol / 2.0);
-            var oy = (int)Math.Round((nh - oldH) * anchorRow / 2.0);
-            previewControl.SetData(nw, nh, ox, oy, oldW, oldH);
-        }
-
-        void UpdateAnchorColors()
-        {
-            for (var r = 0; r < 3; r++)
-                for (var c = 0; c < 3; c++)
-                {
-                    var active = r == anchorRow && c == anchorCol;
-                    anchorBtns[r, c].Background = new SolidColorBrush(active ? Color.Parse("#1e3a78") : Color.Parse(Bg3));
-                    anchorBtns[r, c].BorderBrush = new SolidColorBrush(active ? Color.Parse("#3a5aaa") : Color.Parse(Stroke));
-                }
-        }
-
         for (var r = 0; r < 3; r++)
         {
             for (var c = 0; c < 3; c++)
@@ -65,163 +89,152 @@ public partial class MainWindow
                     CornerRadius = new CornerRadius(2),
                     Padding = new Thickness(0)
                 };
-                btn.Click += (_, _) => { anchorCol = cc; anchorRow = cr; UpdateAnchorColors(); UpdatePreview(); };
+                btn.Click += (_, _) =>
+                {
+                    _resizeAnchorCol = cc;
+                    _resizeAnchorRow = cr;
+                    UpdateResizeAnchorColors();
+                    OnResizeInputChanged();
+                };
                 Grid.SetRow(btn, r); Grid.SetColumn(btn, c);
                 anchorGrid.Children.Add(btn);
-                anchorBtns[r, c] = btn;
+                _resizeAnchorBtns[r, c] = btn;
             }
         }
-        UpdateAnchorColors();
 
-        widthBox.ValueChanged  += (_, _) => UpdatePreview();
-        heightBox.ValueChanged += (_, _) => UpdatePreview();
-        UpdatePreview();
-
-        // ── Layout ────────────────────────────────────────────────────────────
-        var inputGrid = new Grid { Margin = new Thickness(0, 0, 0, 12), RowSpacing = 6, ColumnSpacing = 8 };
-        inputGrid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
-        inputGrid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
-        inputGrid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-        inputGrid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-
-        var wLabel = FieldLabel("Width");
-        var hLabel = FieldLabel("Height");
-        Grid.SetRow(wLabel, 0); Grid.SetColumn(wLabel, 0);
-        Grid.SetRow(widthBox, 0); Grid.SetColumn(widthBox, 1);
-        Grid.SetRow(hLabel, 1); Grid.SetColumn(hLabel, 0);
-        Grid.SetRow(heightBox, 1); Grid.SetColumn(heightBox, 1);
-        inputGrid.Children.Add(wLabel);
-        inputGrid.Children.Add(widthBox);
-        inputGrid.Children.Add(hLabel);
-        inputGrid.Children.Add(heightBox);
-
-        var anchorLabel = new TextBlock { Text = "Anchor", FontSize = 10, Foreground = new SolidColorBrush(Color.Parse(TextSecondary)), Margin = new Thickness(0, 0, 0, 4) };
-
-        var leftCol = new StackPanel { Spacing = 10 };
-        leftCol.Children.Add(inputGrid);
-        leftCol.Children.Add(anchorLabel);
-        leftCol.Children.Add(anchorGrid);
-
-        var topRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
-        topRow.Children.Add(leftCol);
-        topRow.Children.Add(previewControl);
-
-        // ── Footer ────────────────────────────────────────────────────────────
-        var okBtn = new Button
+        _resizeOkBtn = new Button
         {
-            Content = "Resize", Padding = new Thickness(14, 5), FontSize = 11,
+            Content = "Resize", Padding = new Thickness(12, 4), FontSize = 11,
             Background = new SolidColorBrush(Color.Parse("#1e3a78")),
             Foreground = new SolidColorBrush(Color.Parse("#90baf0")),
             BorderBrush = new SolidColorBrush(Color.Parse("#2a4a98")),
             BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3)
         };
-        var cancelBtn = new Button
+        _resizeCancelBtn = new Button
         {
-            Content = "Cancel", Padding = new Thickness(14, 5), FontSize = 11,
+            Content = "Cancel", Padding = new Thickness(12, 4), FontSize = 11,
             Background = new SolidColorBrush(Color.Parse("#1a1c22")),
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3)
         };
+        _resizeOkBtn.Click     += (_, _) => _resizeTcs?.TrySetResult(true);
+        _resizeCancelBtn.Click += (_, _) => _resizeTcs?.TrySetResult(false);
 
-        var footer = new Grid { Margin = new Thickness(0, 12, 0, 0) };
-        footer.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
-        footer.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
-        footer.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
-        Grid.SetColumn(cancelBtn, 1); Grid.SetColumn(okBtn, 2);
-        footer.Children.Add(cancelBtn);
-        footer.Children.Add(okBtn);
+        var inputGrid = new Grid { RowSpacing = 5, ColumnSpacing = 6, Margin = new Thickness(0, 0, 0, 8) };
+        inputGrid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        inputGrid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        inputGrid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        inputGrid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        var wLbl = FieldLabel("Width");
+        var hLbl = FieldLabel("Height");
+        Grid.SetRow(wLbl, 0);              Grid.SetColumn(wLbl, 0);
+        Grid.SetRow(_resizeWidthBox, 0);   Grid.SetColumn(_resizeWidthBox, 1);
+        Grid.SetRow(hLbl, 1);              Grid.SetColumn(hLbl, 0);
+        Grid.SetRow(_resizeHeightBox, 1);  Grid.SetColumn(_resizeHeightBox, 1);
+        inputGrid.Children.Add(wLbl);
+        inputGrid.Children.Add(_resizeWidthBox);
+        inputGrid.Children.Add(hLbl);
+        inputGrid.Children.Add(_resizeHeightBox);
 
-        var root = new StackPanel { Margin = new Thickness(16), Spacing = 0 };
-        root.Children.Add(topRow);
-        root.Children.Add(footer);
-
-        var tcs = new TaskCompletionSource<bool>();
-        var dialog = new Window
+        var anchorLabel = new TextBlock
         {
-            Title = "Resize Canvas",
-            Content = root,
-            SizeToContent = SizeToContent.WidthAndHeight,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            CanResize = false,
-            Background = new SolidColorBrush(Color.Parse(Bg1)),
+            Text = "Anchor", FontSize = 9,
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            MinWidth = 320
+            Margin = new Thickness(0, 0, 0, 3)
         };
 
-        okBtn.Click += (_, _) => { tcs.TrySetResult(true);  dialog.Close(); };
-        cancelBtn.Click += (_, _) => { tcs.TrySetResult(false); dialog.Close(); };
-        dialog.Closed += (_, _) => tcs.TrySetResult(false);
+        var btnRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal, Spacing = 6,
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
+        btnRow.Children.Add(_resizeCancelBtn);
+        btnRow.Children.Add(_resizeOkBtn);
 
-        await dialog.ShowDialog(this);
-        if (!await tcs.Task) return;
+        var panel = new StackPanel { Margin = new Thickness(12), Spacing = 0 };
+        panel.Children.Add(inputGrid);
+        panel.Children.Add(anchorLabel);
+        panel.Children.Add(anchorGrid);
+        panel.Children.Add(new Border { Height = 10 });
+        panel.Children.Add(btnRow);
 
-        var newW   = (int)(widthBox.Value  ?? oldW);
-        var newH   = (int)(heightBox.Value ?? oldH);
-        var offX   = (int)Math.Round((newW - oldW) * anchorCol / 2.0);
-        var offY   = (int)Math.Round((newH - oldH) * anchorRow / 2.0);
+        _resizeFloatingPanel = new Border
+        {
+            IsVisible = false,
+            Background = new SolidColorBrush(Color.Parse(Bg1)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(0, 0, 16, 16),
+            Child = panel
+        };
+        _workspaceViewport.Children.Add(_resizeFloatingPanel);
 
-        _canvas.ResizeCanvas(newW, newH, offX, offY);
-        SyncCanvasFrameToDocument(fitToViewport: true);
-        BuildLayerList();
+        _resizeOverlay.PreviewChanged += (w, h, _, _) =>
+        {
+            _suppressResizeSync = true;
+            _resizeWidthBox.Value  = w;
+            _resizeHeightBox.Value = h;
+            _suppressResizeSync = false;
+        };
+    }
+
+    // ── Resize drag — called from workspace pointer handlers ──────────────────
+
+    internal bool TryBeginResizeDrag(Point vpPos, bool leftButton)
+    {
+        if (_resizeOverlay == null || !_resizeOverlay.IsVisible || !leftButton) return false;
+        var h = _resizeOverlay.HitHandle(vpPos);
+        if (h < 0) return false;
+        _resizeOverlay.BeginDrag(h, vpPos);
+        return true;
+    }
+
+    internal bool IsResizeDragging => _resizeOverlay?.DragHandle >= 0;
+
+    internal void UpdateResizeDrag(Point vpPos)
+    {
+        if (_resizeOverlay == null) return;
+        _resizeOverlay.UpdateDrag(vpPos);
+        _resizeOverlay.InvalidateVisual();
+    }
+
+    internal void EndResizeDrag()
+    {
+        _resizeOverlay?.EndDrag();
+    }
+
+    private void OnResizeInputChanged()
+    {
+        if (_suppressResizeSync || _resizeOverlay == null) return;
+        var nw   = (int)(_resizeWidthBox!.Value  ?? _resizeOldW);
+        var nh   = (int)(_resizeHeightBox!.Value ?? _resizeOldH);
+        var offX = (int)Math.Round((nw - _resizeOldW) * _resizeAnchorCol / 2.0);
+        var offY = (int)Math.Round((nh - _resizeOldH) * _resizeAnchorRow / 2.0);
+        _resizeOverlay.SetPreview(nw, nh, offX, offY);
+    }
+
+    private void UpdateResizeAnchorColors()
+    {
+        if (_resizeAnchorBtns == null) return;
+        for (var r = 0; r < 3; r++)
+            for (var c = 0; c < 3; c++)
+            {
+                var active = r == _resizeAnchorRow && c == _resizeAnchorCol;
+                _resizeAnchorBtns[r, c].Background  = new SolidColorBrush(Color.Parse(active ? "#1e3a78" : Bg3));
+                _resizeAnchorBtns[r, c].BorderBrush = new SolidColorBrush(Color.Parse(active ? "#3a5aaa" : Stroke));
+            }
     }
 
     private static TextBlock FieldLabel(string text) => new()
     {
         Text = text,
-        Width = 52,
-        FontSize = 12,
+        Width = 46,
+        FontSize = 11,
         VerticalAlignment = VerticalAlignment.Center,
         Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
     };
-
-    // ── Preview box ───────────────────────────────────────────────────────────
-
-    private sealed class PreviewBox : Control
-    {
-        private readonly int _size;
-        private double _nw, _nh, _ox, _oy, _cw, _ch;
-
-        public PreviewBox(int size) { _size = size; }
-
-        public void SetData(int newW, int newH, int offsetX, int offsetY, int contentW, int contentH)
-        {
-            _nw = newW; _nh = newH; _ox = offsetX; _oy = offsetY; _cw = contentW; _ch = contentH;
-            InvalidateVisual();
-        }
-
-        public override void Render(DrawingContext dc)
-        {
-            if (_nw <= 0 || _nh <= 0) return;
-
-            // Scale to fit preview box with padding
-            const double pad = 6;
-            var scale = Math.Min((_size - pad * 2) / _nw, (_size - pad * 2) / _nh);
-            var pw = _nw * scale;
-            var ph = _nh * scale;
-            var px = (_size - pw) / 2.0;
-            var py = (_size - ph) / 2.0;
-
-            // New canvas border
-            var canvasRect = new Rect(px, py, pw, ph);
-            dc.DrawRectangle(new SolidColorBrush(Color.Parse("#1a1c24")), new Pen(new SolidColorBrush(Color.Parse("#3a4060")), 1), canvasRect);
-
-            // Content position (old canvas area mapped into new canvas)
-            var cx = px + _ox * scale;
-            var cy = py + _oy * scale;
-            var cw = _cw * scale;
-            var ch = _ch * scale;
-
-            // Clipped intersection
-            var ix = Math.Max(cx, px);
-            var iy = Math.Max(cy, py);
-            var ix2 = Math.Min(cx + cw, px + pw);
-            var iy2 = Math.Min(cy + ch, py + ph);
-            if (ix2 > ix && iy2 > iy)
-            {
-                var contentRect = new Rect(ix, iy, ix2 - ix, iy2 - iy);
-                dc.DrawRectangle(new SolidColorBrush(Color.Parse("#243050")), new Pen(new SolidColorBrush(Color.Parse("#4060a8")), 1), contentRect);
-            }
-        }
-    }
 }

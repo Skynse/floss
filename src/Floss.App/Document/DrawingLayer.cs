@@ -105,10 +105,23 @@ public sealed class DrawingLayer : IDisposable
                 return;
             }
 
-            srcX0 = content.X;
-            srcY0 = content.Y;
-            srcW  = content.Width;
-            srcH  = content.Height;
+            // Clamp to non-negative document coords — tiles written at negative offsets
+            // (e.g. when canvas is shrunk from the left) must not enter the thumbnail scan
+            // because C# integer division truncates toward zero, making tilLocalX negative.
+            srcX0 = Math.Max(content.X, 0);
+            srcY0 = Math.Max(content.Y, 0);
+            srcW  = Math.Min(content.Right,  Pixels.MaxX) - srcX0;
+            srcH  = Math.Min(content.Bottom, Pixels.MaxY) - srcY0;
+            if (srcW <= 0 || srcH <= 0)
+            {
+                for (var y = 0; y < dstH; y++)
+                {
+                    var row = dst + y * dstFrame.RowBytes;
+                    for (var x = 0; x < dstW; x++) *(uint*)(row + x * 4) = 0;
+                }
+                _thumbnailDirty = false;
+                return;
+            }
 
             for (var y = 0; y < dstH; y++)
             {
