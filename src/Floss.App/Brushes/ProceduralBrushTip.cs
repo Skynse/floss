@@ -44,26 +44,68 @@ public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circl
         return _cachedMask;
     }
 
-    private SKBitmap GenerateSmooth(int size, float hardness)
+    private unsafe SKBitmap GenerateSmooth(int size, float hardness)
     {
-        var bmp = NewAlpha8(size);
-        using var canvas = new SKCanvas(bmp);
-        canvas.Clear(SKColors.Transparent);
         var cx = size * 0.5f;
         var cy = size * 0.5f;
         var maxR = size * 0.5f - 0.5f;
-        using var paint = new SKPaint { IsAntialias = true, Color = SKColors.White, Style = SKPaintStyle.Fill };
 
-        if (Shape == BrushTipShape.SoftRound)
+        // Circle and ellipse shapes use per-pixel radial alpha so the soft edge
+        // never gets clipped by bitmap boundaries (the Gaussian-blur approach was
+        // cutting off the falloff and making large soft brushes look square).
+        if (Shape is BrushTipShape.Circle or BrushTipShape.SoftRound or BrushTipShape.Ellipse)
         {
-            // Always carries some softness regardless of hardness slider
-            var sigma = (0.12f + (1f - hardness) * 0.22f) * size;
-            paint.MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, sigma);
-            DrawEllipse(canvas, paint, cx, cy, maxR, BrushTipShape.Circle, 1f);
+            var bmp    = NewAlpha8(size);
+            var pixels = bmp.GetPixels();
+            if (pixels == IntPtr.Zero) return bmp; // allocation failed; return blank
+            var dst    = (byte*)pixels.ToPointer();
+            var stride = bmp.RowBytes;
+            if (maxR < 0.001f) { dst[0] = 255; return bmp; } // degenerate 1px case
+
+            float aspect = Shape == BrushTipShape.Ellipse ? Math.Clamp(AspectRatio, 0.05f, 20f) : 1f;
+            // rx/ry: half-axes of the ellipse in pixels.
+            float rx = aspect >= 1f ? maxR : maxR * aspect;
+            float ry = aspect >= 1f ? maxR / aspect : maxR;
+            bool isSoft = Shape == BrushTipShape.SoftRound;
+
+            for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                float dx = (x + 0.5f - cx) / rx;
+                float dy = (y + 0.5f - cy) / ry;
+                float t  = MathF.Sqrt(dx * dx + dy * dy); // 0=centre, 1=edge
+
+                float alpha;
+                if (t >= 1f)
+                {
+                    alpha = 0f;
+                }
+                else if (t <= hardness)
+                {
+                    alpha = 1f;
+                }
+                else
+                {
+                    var fade = (t - hardness) / (1f - hardness);
+                    // Smoothstep for SoftRound, cosine-ease for Circle.
+                    alpha = isSoft
+                        ? 1f - fade * fade * (3f - 2f * fade)
+                        : (MathF.Cos(fade * MathF.PI) + 1f) * 0.5f;
+                }
+
+                dst[y * stride + x] = (byte)(alpha * 255f + 0.5f);
+            }
+            return bmp;
         }
         else
         {
+            // Flat, Rectangle — Gaussian blur is fine; no risk of clipping at edge
+            // because these shapes are rectilinear and intentionally hard-edged.
+            var bmp = NewAlpha8(size);
+            using var canvas = new SKCanvas(bmp);
+            canvas.Clear(SKColors.Transparent);
             var aspect = Shape == BrushTipShape.Flat ? 4.0f : Math.Clamp(AspectRatio, 0.05f, 20f);
+            using var paint = new SKPaint { IsAntialias = true, Color = SKColors.White, Style = SKPaintStyle.Fill };
             var sigma = (1f - hardness) * size * 0.22f;
             paint.MaskFilter = sigma > 0.01f ? SKMaskFilter.CreateBlur(SKBlurStyle.Normal, sigma) : null;
             DrawEllipse(canvas, paint, cx, cy, maxR, Shape, aspect);
@@ -72,8 +114,8 @@ public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circl
                 paint.MaskFilter = null;
                 DrawEllipse(canvas, paint, cx, cy, maxR * hardness, Shape, aspect);
             }
+            return bmp;
         }
-        return bmp;
     }
 
     private static SKBitmap GenerateChalk(int size, float hardness)

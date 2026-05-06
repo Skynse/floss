@@ -53,25 +53,24 @@ public sealed class MoveLayerOutput : IOutputProcess
             return;
         }
 
-        // Restore original position so we can capture proper before-tiles
-        if (_hasPreview)
-        {
-            layer.OffsetX = _origOffsetX;
-            layer.OffsetY = _origOffsetY;
-        }
+        var newX = _origOffsetX + dx;
+        var newY = _origOffsetY + dy;
 
-        var beforeTiles = layer.Pixels.CaptureTiles(layer.Pixels.Bounds);
-        layer.OffsetX = _origOffsetX + dx;
-        layer.OffsetY = _origOffsetY + dy;
+        // Apply the final position (Preview already moved it, so no tile change).
+        layer.OffsetX = newX;
+        layer.OffsetY = newY;
+
+        // Push undo state that captures the offset change, not pixel data.
+        ctx.Document.CommitLayerOffsetMutation(ctx.ActiveLayerIndex, _origOffsetX, _origOffsetY, newX, newY);
 
         var dirty = new PixelRegion(
-            Math.Min(layer.OffsetX, _origOffsetX),
-            Math.Min(layer.OffsetY, _origOffsetY),
+            Math.Min(newX, _origOffsetX),
+            Math.Min(newY, _origOffsetY),
             layer.Width + Math.Abs(dx),
             layer.Height + Math.Abs(dy));
 
         layer.MarkThumbnailDirty();
-        ctx.CommitMutation(ctx.ActiveLayerIndex, beforeTiles, dirty);
+        ctx.Document.NotifyChanged(dirty, ctx.ActiveLayerIndex);
         _hasPreview = false;
     }
 }

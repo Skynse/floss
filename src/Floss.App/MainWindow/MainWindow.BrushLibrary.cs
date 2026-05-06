@@ -29,14 +29,11 @@ public partial class MainWindow : Window
 
         _strokePreview = new BrushStrokePreview { Height = 48 };
 
-        var importPngBtn = SmBtn("PNG", "Import brush tip PNG");
         var importAbrBtn = SmBtn("ABR", "Import .abr brush pack");
         _saveBrushButton = SmIconBtn(Icons.ContentSaveOutline, "Save brush");
         var duplicateBrushBtn = SmIconBtn(Icons.ContentCopy, "Duplicate brush");
         var editBrushBtn = SmIconBtn(Icons.TuneVertical, "Tool properties");
-        importPngBtn.Width = 38;
         importAbrBtn.Width = 38;
-        importPngBtn.Click += async (_, _) => await ImportBrushTipPngAsync();
         importAbrBtn.Click += async (_, _) => await ImportAbrAsync();
         _saveBrushButton.Click += (_, _) => SaveActiveBrush();
         duplicateBrushBtn.Click += (_, _) => DuplicateActiveBrush();
@@ -70,9 +67,9 @@ public partial class MainWindow : Window
         var brushToolRow = new WrapPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
-            Children = { importPngBtn, importAbrBtn, _saveBrushButton, duplicateBrushBtn, editBrushBtn }
+            Children = { importAbrBtn, _saveBrushButton, duplicateBrushBtn, editBrushBtn }
         };
-        foreach (var b in new[] { importPngBtn, importAbrBtn, _saveBrushButton, duplicateBrushBtn, editBrushBtn })
+        foreach (var b in new[] { importAbrBtn, _saveBrushButton, duplicateBrushBtn, editBrushBtn })
             b.Margin = new Thickness(0, 0, 3, 3);
 
         var root = new Grid

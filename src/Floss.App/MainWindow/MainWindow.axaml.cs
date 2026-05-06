@@ -89,7 +89,7 @@ public partial class MainWindow : Window
     // ── Blend modes ───────────────────────────────────────────────────────────
     private static readonly string[] BlendModes =
     [
-        "Normal", "Dissolve",
+        "Normal", "PassThrough", "Dissolve",
         "Multiply", "Screen", "Overlay", "SoftLight", "HardLight",
         "ColorDodge", "ColorBurn", "LinearDodge", "LinearBurn",
         "Darken", "Lighten", "DarkerColor", "LighterColor",
@@ -159,6 +159,10 @@ public partial class MainWindow : Window
     private Button _deleteLayerButton = null!;
     private Button _moveLayerUpButton = null!;
     private Button _moveLayerDownButton = null!;
+    private Button _lockLayerBtn = null!;
+    private Button _alphaLockLayerBtn = null!;
+    private Button _clipLayerBtn = null!;
+    private Button _refLayerBtn = null!;
     private TextBlock _toolStatusText = null!;
     private TextBlock _footerStatusText = null!;
     private TextBlock _canvasStatusText = null!;

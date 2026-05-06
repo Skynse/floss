@@ -51,9 +51,11 @@ internal sealed class CheckerboardOverlay : Control
         var sw = docW * zoom;
         var sh = docH * zoom;
 
-        // Canvas rect in viewport space (before rotation), centered
-        var ox = (vpw - sw) * 0.5;
-        var oy = (vph - sh) * 0.5;
+        // Canvas rect in viewport space (before rotation), centered.
+        // When flipped, the canvas origin (0,0) is at the far edge, so shift
+        // the anchor so the checkerboard stays aligned with the flipped canvas.
+        var ox = flipX == 1 ? (vpw - sw) * 0.5 : (vpw + sw) * 0.5;
+        var oy = flipY == 1 ? (vph - sh) * 0.5 : (vph + sh) * 0.5;
 
         // Transform corners: (0,0), (docW,0), (docW,docH), (0,docH)
         static Point T(double x, double y, double ox, double oy,

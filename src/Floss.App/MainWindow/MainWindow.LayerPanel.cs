@@ -54,6 +54,9 @@ public partial class MainWindow
     private static readonly IBrush PreviewFrameBorder = new SolidColorBrush(Color.Parse("#2e3340"));
     private static readonly IBrush SwatchBorder = new SolidColorBrush(Color.Parse("#3a4050"));
 
+    // Clipping strip
+    private static readonly IBrush ClipIndicatorBrush = new SolidColorBrush(Color.Parse("#e8527a"));
+
     // Fonts
     private static readonly FontFamily MonospaceFont = new FontFamily("Consolas, Courier New, monospace");
 
@@ -117,7 +120,57 @@ public partial class MainWindow
         blendOpRow.Children.Add(_blendModeComboBox);
         blendOpRow.Children.Add(_layerOpacitySlider);
 
-        // Action buttons
+        // ── Layer property toggles (row 3 — above list, like CSP) ───────────────
+        _lockLayerBtn      = SmIconBtn(Icons.LockOutline,        "Lock layer");
+        _alphaLockLayerBtn = SmIconBtn(Icons.AlphaLock,          "Alpha lock");
+        _clipLayerBtn      = SmIconBtn(Icons.ClipToBelow,        "Clipping mask");
+        _refLayerBtn       = SmIconBtn(Icons.Eye,                "Reference layer");
+
+        _lockLayerBtn.Click      += (_, _) => { _canvas.ToggleLayerLock(_canvas.ActiveLayerIndex);      BuildLayerList(); };
+        _alphaLockLayerBtn.Click += (_, _) => { _canvas.ToggleLayerAlphaLock(_canvas.ActiveLayerIndex); BuildLayerList(); };
+        _clipLayerBtn.Click      += (_, _) => { _canvas.ToggleLayerClipping(_canvas.ActiveLayerIndex);  BuildLayerList(); };
+        _refLayerBtn.Click       += (_, _) => { _canvas.ToggleLayerReference(_canvas.ActiveLayerIndex); BuildLayerList(); };
+
+        foreach (var btn in new[] { _lockLayerBtn, _alphaLockLayerBtn, _clipLayerBtn, _refLayerBtn })
+            btn.Margin = new Thickness(0, 0, 2, 0);
+
+        var toggleRow = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            Margin = new Thickness(0, 2, 0, 2),
+            Children = { _lockLayerBtn, _alphaLockLayerBtn, _clipLayerBtn, _refLayerBtn }
+        };
+
+        // 1. Initialize the Virtualized ListBox
+        _layerListBox = new ListBox
+        {
+            ItemsSource = _visibleLayers,
+            Background = Avalonia.Media.Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Styles =
+            {
+                new Style(x => x.OfType<ListBoxItem>())
+                {
+                    Setters =
+                    {
+                        new Setter(ListBoxItem.PaddingProperty, new Thickness(0)),
+                        new Setter(ListBoxItem.MarginProperty, new Thickness(0, 0, 0, 2)),
+                        new Setter(ListBoxItem.BackgroundProperty, Avalonia.Media.Brushes.Transparent),
+                        new Setter(ListBoxItem.BorderThicknessProperty, new Thickness(0))
+                    }
+                }
+            },
+            ItemTemplate = new FuncDataTemplate<DrawingLayer>((layer, _) =>
+            {
+                if (layer == null) return new Border();
+                var i = LayerIndexOf(layer);
+                var (row, refs) = BuildLayerRow(i, layer);
+                if (i >= 0) _layerRows[i] = refs;
+                return row;
+            })
+        };
+
+        // ── Action buttons (bottom bar — like CSP) ───────────────────────────────
         var addBtn = SmIconBtn(Icons.LayerPlus, "Add layer  (Ctrl+Shift+N)");
         var folderBtn = SmIconBtn(Icons.FolderOpenOutline, "Add layer folder");
         var dupBtn = SmIconBtn(Icons.ContentCopy, "Duplicate  (Ctrl+J)");
@@ -133,70 +186,35 @@ public partial class MainWindow
         _moveLayerDownButton.Click += (_, _) => _canvas.MoveActiveLayer(-1);
 
         foreach (var btn in new Button[] { addBtn, folderBtn, dupBtn, _deleteLayerButton, _moveLayerUpButton, _moveLayerDownButton })
-            btn.Margin = new Thickness(0, 0, 2, 2);
+            btn.Margin = new Thickness(0, 0, 2, 0);
 
         var ctrlRow = new WrapPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
-            Children = { addBtn, folderBtn, dupBtn, _deleteLayerButton, _moveLayerUpButton, _moveLayerDownButton }
+            Margin = new Thickness(0, 2, 0, 0),
+            Children = { addBtn, folderBtn, dupBtn, _moveLayerUpButton, _moveLayerDownButton, _deleteLayerButton }
         };
 
-        // 1. Initialize the Virtualized ListBox
-        _layerListBox = new ListBox
-        {
-            ItemsSource = _visibleLayers,
-            Background = Avalonia.Media.Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            // Strip out the ugly default hover/selection styles of the ListBoxItem
-            Styles =
-            {
-                new Style(x => x.OfType<ListBoxItem>())
-                {
-                    Setters =
-                    {
-                        // FIXED: Use ListBoxItem instead of Control for these properties
-                        new Setter(ListBoxItem.PaddingProperty, new Thickness(0)),
-                        new Setter(ListBoxItem.MarginProperty, new Thickness(0, 0, 0, 2)),
-                        new Setter(ListBoxItem.BackgroundProperty, Avalonia.Media.Brushes.Transparent),
-                        new Setter(ListBoxItem.BorderThicknessProperty, new Thickness(0))
-                    }
-                }
-            },
-            ItemTemplate = new FuncDataTemplate<DrawingLayer>((layer, _) =>
-            {
-                if (layer == null) return new Border();
-                var i = LayerIndexOf(layer);
-                var (row, refs) = BuildLayerRow(i, layer);
-
-                if (i >= 0)
-                {
-                    _layerRows[i] = refs;
-                }
-
-                return row;
-            })
-        };
-
-        // 2. Constrained Grid for Virtualization
+        // Grid: name | blend+opacity | toggles | list(*) | actions
         var mainGrid = new Grid
         {
             Margin = new Thickness(6, 3, 6, 6),
-
-            RowDefinitions = new RowDefinitions("Auto, Auto, Auto, *")
+            RowDefinitions = new RowDefinitions("Auto, Auto, Auto, *, Auto")
         };
 
         Grid.SetRow(_layerNameBox, 0);
         Grid.SetRow(blendOpRow, 1);
-        Grid.SetRow(ctrlRow, 2);
+        Grid.SetRow(toggleRow, 2);
         Grid.SetRow(_layerListBox, 3);
+        Grid.SetRow(ctrlRow, 4);
 
         blendOpRow.Margin = new Thickness(0, 3, 0, 0);
-        ctrlRow.Margin = new Thickness(0, 3, 0, 3);
 
         mainGrid.Children.Add(_layerNameBox);
         mainGrid.Children.Add(blendOpRow);
-        mainGrid.Children.Add(ctrlRow);
+        mainGrid.Children.Add(toggleRow);
         mainGrid.Children.Add(_layerListBox);
+        mainGrid.Children.Add(ctrlRow);
 
         return mainGrid;
     }
@@ -229,8 +247,19 @@ public partial class MainWindow
             _layerNameBox.Text = active.Name;
             _syncingLayerUi = false;
             RefreshLayerProperties();
+            RefreshLayerToggleButtons(active);
         }
     }
+
+    private void RefreshLayerToggleButtons(DrawingLayer layer)
+    {
+        if (_lockLayerBtn == null) return;
+        SetToggleActive(_lockLayerBtn,       layer.IsLocked);
+        SetToggleActive(_alphaLockLayerBtn,  layer.IsAlphaLocked);
+        SetToggleActive(_clipLayerBtn,       layer.IsClipping);
+        SetToggleActive(_refLayerBtn,        layer.IsReference);
+    }
+
 
     private IEnumerable<int> VisibleLayerIndexes()
     {
@@ -292,7 +321,7 @@ public partial class MainWindow
             Padding = new Thickness(2, 1),
             Margin = new Thickness(layer.IndentLevel * 10, 0, 0, 0),
             Tag = i,
-            ContextMenu = BuildLayerContextMenu(i, layer)
+            ContextMenu = BuildLayerContextMenu(i)
         };
 
         DragDrop.SetAllowDrop(row, true);
@@ -302,8 +331,15 @@ public partial class MainWindow
         row.AddHandler(DragDrop.DragOverEvent, LayerRowDragOver);
         row.AddHandler(DragDrop.DropEvent, LayerRowDrop);
 
-        // cols: disclosure | visibility | thumbnail | name/status
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("12,16,28,*") };
+        // cols: clip-strip | disclosure | visibility | thumbnail | name/status
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("3,12,16,28,*") };
+
+        // Thin pink strip on the left edge to signal "clipped to layer below"
+        var clipStrip = new Border
+        {
+            Background = layer.IsClipping ? ClipIndicatorBrush : Avalonia.Media.Brushes.Transparent,
+            IsHitTestVisible = false
+        };
 
         var disclosureBtn = LayerDisclosureBtn(layer, i);
 
@@ -357,16 +393,18 @@ public partial class MainWindow
             ClipToBounds = true
         };
 
-        Grid.SetColumn(disclosureBtn, 0);
-        Grid.SetColumn(visBtn, 1);
-        Grid.SetColumn(preview, 2);
-        Grid.SetColumn(nameHost, 3);
+        Grid.SetColumn(clipStrip, 0);
+        Grid.SetColumn(disclosureBtn, 1);
+        Grid.SetColumn(visBtn, 2);
+        Grid.SetColumn(preview, 3);
+        Grid.SetColumn(nameHost, 4);
+        grid.Children.Add(clipStrip);
         grid.Children.Add(disclosureBtn);
         grid.Children.Add(visBtn);
         grid.Children.Add(preview);
         grid.Children.Add(nameHost);
         row.Child = grid;
-        return (row, new LayerRowRefs(row, disclosureBtn, visBtn, nameHost, previewImage));
+        return (row, new LayerRowRefs(row, disclosureBtn, visBtn, nameHost, previewImage, clipStrip));
     }
 
     private static string LayerStatusText(DrawingLayer layer)
@@ -397,7 +435,18 @@ public partial class MainWindow
         return btn;
     }
 
-    private ContextMenu BuildLayerContextMenu(int index, DrawingLayer layer)
+    private ContextMenu BuildLayerContextMenu(int index)
+    {
+        var menu = new ContextMenu();
+        menu.Opening += (_, _) =>
+        {
+            if (index < 0 || index >= _canvas.Layers.Count) return;
+            menu.ItemsSource = BuildLayerContextMenuItems(index, _canvas.Layers[index]);
+        };
+        return menu;
+    }
+
+    private List<MenuItem> BuildLayerContextMenuItems(int index, DrawingLayer layer)
     {
         MenuItem Item(string header, Action action)
         {
@@ -433,7 +482,6 @@ public partial class MainWindow
             Item(layer.IsClipping ? "Disable Clipping Mask" : "Enable Clipping Mask", () => _canvas.ToggleLayerClipping(index))
         };
 
-        // "Create folder and insert layers" — works with any selection (1+ layers)
         if (hasSelection)
         {
             items.Insert(2, Item("Create Folder and Insert Layers", () =>
@@ -464,7 +512,6 @@ public partial class MainWindow
                 }));
         }
 
-        // Selection helpers
         var visibleCount = VisibleLayerIndexes().Count();
         items.Add(new() { Header = "-" });
         if (_selectedLayerIndices.Count < visibleCount)
@@ -485,7 +532,6 @@ public partial class MainWindow
             items.Add(deselectAll);
         }
 
-        // Filters submenu
         MenuItem AsyncItem(string header, Func<Task> action)
         {
             var mi = new MenuItem { Header = header };
@@ -501,11 +547,11 @@ public partial class MainWindow
                 AsyncItem("_Gaussian Blur...", ApplyBlurFilter),
                 AsyncItem("_Sharpen...",       ApplySharpenFilter),
                 AsyncItem("_Noise...",         ApplyNoiseFilter),
-                AsyncItem("_Color Curves...",   ApplyColorCurvesFilter),
+                AsyncItem("_Color Curves...",  ApplyColorCurvesFilter),
             }
         });
 
-        return new ContextMenu { ItemsSource = items };
+        return items;
     }
 
     private void SelectLayerWithModifiers(int index, KeyModifiers mods)
@@ -805,6 +851,7 @@ public partial class MainWindow
 
         refs.Row.Background = isActive ? RowBgActive : isSelected ? RowBgSelected : RowBgDefault;
         refs.Row.BorderBrush = isActive ? RowBorderActive : isSelected ? RowBorderSelected : RowBorderDefault;
+        refs.ClipStrip.Background = layer.IsClipping ? ClipIndicatorBrush : Avalonia.Media.Brushes.Transparent;
 
         SetLayerIconBtnIcon(refs.VisibilityButton,
             layer.IsVisible ? Icons.Eye : Icons.EyeOff,
@@ -848,6 +895,7 @@ public partial class MainWindow
             _blendModeComboBox.SelectedItem = layer.BlendMode;
             _layerNameBox.Text = layer.Name;
             _syncingLayerUi = false;
+            RefreshLayerToggleButtons(layer);
         }
     }
 
@@ -888,5 +936,6 @@ public partial class MainWindow
         Button DisclosureButton,
         Button VisibilityButton,
         ContentControl NameHost,
-        Image? PreviewImage);
+        Image? PreviewImage,
+        Border ClipStrip);
 }

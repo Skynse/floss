@@ -85,15 +85,34 @@ public sealed class DrawingLayer : IDisposable
         unsafe
         {
             var dst  = (byte*)dstFrame.Address;
-            var srcW = Width;
-            var srcH = Height;
             var dstW = _thumbnail.PixelSize.Width;
             var dstH = _thumbnail.PixelSize.Height;
             const int ts = TiledPixelBuffer.TileSize;
 
+            // Zoom thumbnail into drawn content bounds for better readability.
+            var content = Pixels.ContentTileBounds;
+            int srcX0, srcY0, srcW, srcH;
+            if (content.IsEmpty)
+            {
+                // Empty layer — clear thumbnail.
+                for (var y = 0; y < dstH; y++)
+                {
+                    var row = dst + y * dstFrame.RowBytes;
+                    for (var x = 0; x < dstW; x++)
+                        *(uint*)(row + x * 4) = 0;
+                }
+                _thumbnailDirty = false;
+                return;
+            }
+
+            srcX0 = content.X;
+            srcY0 = content.Y;
+            srcW  = content.Width;
+            srcH  = content.Height;
+
             for (var y = 0; y < dstH; y++)
             {
-                var srcY       = Math.Clamp((int)((y + 0.5) * srcH / dstH), 0, srcH - 1);
+                var srcY       = srcY0 + Math.Clamp((int)((y + 0.5) * srcH / dstH), 0, srcH - 1);
                 var tilY       = srcY / ts;
                 var tilLocalY  = srcY - tilY * ts;
                 var dstRow     = dst + y * dstFrame.RowBytes;
@@ -103,7 +122,7 @@ public sealed class DrawingLayer : IDisposable
 
                 for (var x = 0; x < dstW; x++)
                 {
-                    var srcX      = Math.Clamp((int)((x + 0.5) * srcW / dstW), 0, srcW - 1);
+                    var srcX      = srcX0 + Math.Clamp((int)((x + 0.5) * srcW / dstW), 0, srcW - 1);
                     var tilX      = srcX / ts;
                     var tilLocalX = srcX - tilX * ts;
                     var dstPx     = dstRow + x * 4;

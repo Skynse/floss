@@ -15,6 +15,8 @@ public sealed class BrushEngine : IDisposable
     private readonly List<StampSample> _stamps = new(InitialStampCapacity);
     private readonly List<SKColor> _stampColors = new(InitialStampCapacity);
     private ActiveStroke? _activeStroke;
+    // Scratch bitmap for intra-segment wet-layer compositing (prevents opacity compounding).
+    private SKBitmap? _scratch;
 
     public void BeginStroke(BrushPreset brush, CanvasInputSample sample)
     {
@@ -59,11 +61,20 @@ public sealed class BrushEngine : IDisposable
         if (brush.BlendMode != SKBlendMode.DstOut && (brush.ColorMix > 0.001 || brush.DensityOfPaint < 0.999))
             PrepareStampColors(layer, brush, stroke);
 
-        var clippedDirty = dirty;
-        if (clippedDirty.IsEmpty) return PixelRegion.Empty;
+        if (dirty.IsEmpty) return PixelRegion.Empty;
 
-        layer.Pixels.RenderWithSkia(clippedDirty, canvas => RenderPreparedStamps(stroke, canvas));
-        return clippedDirty;
+        // For standard SrcOver brushes without color mixing, render stamps to a
+        // temporary scratch with Lighten blend so overlapping stamps within this
+        // segment take the MAX alpha rather than compounding. The scratch is then
+        // composited onto the layer with SrcOver once.
+        bool useScratch = brush.BlendMode == SKBlendMode.SrcOver
+            && _stampColors.Count == 0; // no color mixing
+        if (useScratch)
+            RenderStampsViaScratch(layer, stroke, dirty);
+        else
+            layer.Pixels.RenderWithSkia(dirty, canvas => RenderPreparedStamps(stroke, canvas));
+
+        return dirty;
     }
 
     public PixelRegion RasterizeDab(
@@ -114,7 +125,12 @@ public sealed class BrushEngine : IDisposable
     public PixelRegion EstimateDabRegion(DrawingLayer layer, BrushPreset brush, CanvasInputSample sample)
         => EstimateSegmentRegion(layer, brush, sample, sample);
 
-    public void Dispose() => EndStroke();
+    public void Dispose()
+    {
+        EndStroke();
+        _scratch?.Dispose();
+        _scratch = null;
+    }
 
     private void EnsureStroke(BrushPreset brush, CanvasInputSample sample)
     {
@@ -269,6 +285,57 @@ public sealed class BrushEngine : IDisposable
         var spacing = maxSize * Math.Max(0.01, brush.Spacing) * Math.Max(1.0, brush.Dynamics.Spacing.MaxOutput);
         var scatter = brush.Dynamics.Scatter.IsEnabled ? maxSize * Math.Max(0.0, brush.Dynamics.Scatter.MaxOutput) : 0.0;
         return Math.Max(1.0, maxSize * 0.75 + spacing + scatter + 3.0);
+    }
+
+    private void RenderStampsViaScratch(DrawingLayer layer, ActiveStroke stroke, PixelRegion dirty)
+    {
+        var w = dirty.Width;
+        var h = dirty.Height;
+
+        // Grow scratch bitmap on demand; never shrink to avoid churn.
+        if (_scratch == null || _scratch.Width < w || _scratch.Height < h)
+        {
+            // Cache old dimensions BEFORE disposing so we can take the max.
+            var oldW = _scratch?.Width ?? 0;
+            var oldH = _scratch?.Height ?? 0;
+            _scratch?.Dispose();
+            _scratch = new SKBitmap(new SKImageInfo(
+                Math.Max(w, oldW),
+                Math.Max(h, oldH),
+                SKColorType.Bgra8888, SKAlphaType.Unpremul));
+        }
+
+        // Clear then render stamps into the scratch with Lighten blend so that
+        // overlapping stamps within this segment take the max alpha per pixel
+        // rather than compounding via SrcOver.
+        using (var sc = new SKCanvas(_scratch))
+        {
+            sc.Save();
+            sc.ClipRect(SKRect.Create(0, 0, w, h));
+            sc.Clear(SKColors.Transparent);
+            sc.Restore();
+
+            sc.Save();
+            sc.Translate(-dirty.X, -dirty.Y);
+            sc.ClipRect(SKRect.Create(dirty.X, dirty.Y, w, h));
+            stroke.Paint.BlendMode = SKBlendMode.Lighten;
+            RenderPreparedStamps(stroke, sc);
+            stroke.Paint.BlendMode = SKBlendMode.SrcOver;
+            sc.Restore();
+        }
+
+        // Composite the scratch result onto the layer tiles with SrcOver.
+        // We snapshot the bitmap into an SKImage before the RenderWithSkia call
+        // so SkiaSharp doesn't mutate it while the canvas is live on another thread.
+        using var scratchImage = SKImage.FromBitmap(_scratch);
+        var srcRect = SKRect.Create(0, 0, w, h);
+        var dstRect = SKRect.Create(dirty.X, dirty.Y, w, h);
+        var sampling = new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None);
+        layer.Pixels.RenderWithSkia(dirty, canvas =>
+        {
+            using var paint = new SKPaint { BlendMode = SKBlendMode.SrcOver };
+            canvas.DrawImage(scratchImage, srcRect, dstRect, sampling, paint);
+        });
     }
 
     private void RenderPreparedStamps(ActiveStroke stroke, SKCanvas canvas)

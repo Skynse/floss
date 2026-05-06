@@ -690,6 +690,18 @@ public sealed class DrawingCanvas : Control
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
+
+        // Ctrl+Shift+Click: pick the topmost opaque layer under the cursor (CSP-style layer pick).
+        var pt = e.GetCurrentPoint(this);
+        if (pt.Properties.IsLeftButtonPressed &&
+            e.KeyModifiers.HasFlag(KeyModifiers.Control) &&
+            e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+        {
+            TryPickLayerAtPoint((int)pt.Position.X, (int)pt.Position.Y);
+            e.Handled = true;
+            return;
+        }
+
         if (PaintInputSuspended && _toolController.AlternateTool == null) return;
         if (IsPaintBlockedByLock) return;
 
@@ -820,6 +832,22 @@ public sealed class DrawingCanvas : Control
             point, Bounds.Size,
             _document.Width, _document.Height,
             phase);
+
+    private void TryPickLayerAtPoint(int x, int y)
+    {
+        var layers = _document.Layers;
+        for (int i = layers.Count - 1; i >= 0; i--)
+        {
+            var layer = layers[i];
+            if (!layer.IsVisible || layer.IsGroup) continue;
+            layer.Pixels.GetPixel(x - layer.OffsetX, y - layer.OffsetY, out _, out _, out _, out byte a);
+            if (a > 0)
+            {
+                _document.SelectLayer(i);
+                return;
+            }
+        }
+    }
 
     private Color? SampleDocumentColor(int x, int y, EyedropperSampleOptions options)
     {
