@@ -271,7 +271,7 @@ public partial class MainWindow : Window
         RestoreFromConfig();
         BuildSwatches();
         LoadBrushAssets();
-        SelectInitialBrush();
+        SelectInitialTool();
         SetColor(Color.Parse(App.Config.LastColor));
         _canvasFrame.IsVisible = false;
         SetDocumentPanelsVisible(false);
@@ -1927,6 +1927,7 @@ public partial class MainWindow : Window
 
         var cfg = App.Config;
         SaveWorkspaceLayoutFromUi();
+        SaveActiveToolSelection();
         cfg.LastBrushSize = _sizeSlider.Value;
         cfg.LastBrushOpacity = _opacitySlider.Value;
         cfg.LastBrushHardness = _hardnessSlider.Value;
@@ -2006,6 +2007,7 @@ public partial class MainWindow : Window
 
         group.LastActivePresetId = preset.Id;
         _activeToolGroup = group;
+        _selectedCategory = ResolveStartupCategory(group, _selectedCategory, preset);
 
         // For brush-based engines, load the referenced brush asset first
         // and overlay the tool-preset scalar values (size, opacity etc.).
@@ -2083,6 +2085,7 @@ public partial class MainWindow : Window
 
         RefreshGroupPresets();
         App.ToolGroups.Save();
+        SaveActiveToolSelection();
     }
 
     private void CaptureActiveBrushToPreset()

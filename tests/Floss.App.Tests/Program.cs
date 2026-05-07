@@ -13,6 +13,8 @@ using Floss.App.Brushes;
 using Floss.App.Document;
 using Floss.App.Input;
 using Floss.App.Psd;
+using Floss.App.Processes;
+using Floss.App.Processes.Output;
 using Floss.App.Tools;
 using Microsoft.Data.Sqlite;
 using SkiaSharp;
@@ -55,6 +57,10 @@ internal static class Program
         ("BrushPreset legacy dynamics bridge preserves settings", BrushTests.BrushPreset_LegacyDynamicsBridge),
         ("Brush engine reuses masks during large strokes", BrushTests.BrushEngine_ReusesMasksDuringLargeStrokes),
         ("Brush engine treats color mix as a master switch", BrushTests.BrushEngine_ColorMixOffIgnoresWetPaintFields),
+        ("Brush engine applies CSP-style tip thickness", BrushTests.BrushEngine_AppliesTipThickness),
+        ("Brush engine blend mode does not drag paint across empty canvas", BrushTests.BrushEngine_BlendModeDoesNotCarryPaint),
+        ("Direct draw color mixing samples pre-stroke pixels", BrushTests.DirectDraw_ColorMixingDoesNotSampleOwnStroke),
+        ("Brush engine color mixing amount controls deposited color", BrushTests.BrushEngine_ColorMixAmountControlsDepositedColor),
         ("Brush engine does not dispose tip-owned cached masks", BrushTests.BrushEngine_DoesNotDisposeTipOwnedCachedMasks),
         ("Tool controller does not restore stale engine brush state", BrushTests.ToolController_DoesNotOverridePresetBrushState),
         ("Image brush tips preserve source aspect ratio", BrushTests.ImageBrushTip_PreservesAspectRatio),
@@ -832,6 +838,123 @@ internal static class BrushTests
         AssertEx.True(alpha > 0, "Disabling color mix should make wet-paint fields inert, not make the brush invisible.");
     }
 
+    public static void BrushEngine_AppliesTipThickness()
+    {
+        using var engine = new BrushEngine();
+        var layer = new DrawingLayer("Layer", 100, 100);
+        var brush = new BrushPreset("Flat tip", BrushKind.Ink, 40, 1, 1, 0.1, Colors.Black, 0)
+        {
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            TipThickness = 0.25,
+            TipDirection = BrushTipDirection.Horizontal,
+            Shape = null
+        };
+        var sample = Sample(50, 50, 0);
+
+        engine.BeginStroke(brush, sample);
+        engine.RasterizeDab(layer, brush, sample, velocity: 0);
+
+        var (minX, minY, maxX, maxY) = AlphaBounds(layer);
+        var width = maxX - minX + 1;
+        var height = maxY - minY + 1;
+        AssertEx.True(width > height * 2, $"Horizontal tip thickness should flatten the rendered stamp, got {width}x{height}.");
+    }
+
+    public static void BrushEngine_BlendModeDoesNotCarryPaint()
+    {
+        using var engine = new BrushEngine();
+        var brush = new BrushPreset("Blend", BrushKind.Ink, 8, 1, 1, 0.6, Colors.White, 0)
+        {
+            ColorMix = true,
+            SmudgeMode = SmudgeMode.Blend,
+            AmountOfPaint = 0,
+            DensityOfPaint = 0,
+            ColorStretch = 0.1,
+            Tip = new CountingBrushTip(),
+            Shape = null
+        };
+        var layer = new DrawingLayer("Layer", 180, 60);
+        for (var y = 26; y <= 34; y++)
+        for (var x = 16; x <= 24; x++)
+            layer.Pixels.SetPixel(x, y, 0, 0, 0, 255);
+
+        var from = Sample(20, 30, 0);
+        var to = Sample(150, 30, 16_000);
+
+        engine.BeginStroke(brush, from);
+        var dirty = engine.RasterizeSegment(layer, brush, from, to);
+
+        AssertEx.False(dirty.IsEmpty);
+        layer.Pixels.GetPixel(140, 30, out _, out _, out _, out var farAlpha);
+        AssertEx.Equal((byte)0, farAlpha, "Blend mode should blur local paint, not carry it across transparent canvas.");
+    }
+
+    public static void DirectDraw_ColorMixingDoesNotSampleOwnStroke()
+    {
+        using var engine = new BrushEngine();
+        var document = new DrawingDocument();
+        var layer = document.ActiveLayer;
+        for (var y = 26; y <= 34; y++)
+        for (var x = 16; x <= 24; x++)
+            layer.Pixels.SetPixel(x, y, 0, 0, 0, 255);
+
+        var brush = new BrushPreset("Blend", BrushKind.Ink, 8, 1, 1, 0.6, Colors.White, 0)
+        {
+            ColorMix = true,
+            SmudgeMode = SmudgeMode.Blend,
+            AmountOfPaint = 0,
+            DensityOfPaint = 0,
+            ColorStretch = 0.1,
+            Tip = new CountingBrushTip(),
+            Shape = null
+        };
+        var ctx = new ToolContext(document) { Brush = brush, PaintColor = Colors.White };
+        var output = new DirectDrawOutput(engine, document);
+        var samples = Enumerable.Range(0, 66)
+            .Select(i => Sample(20 + i * 2, 30, i * 1_000))
+            .ToList();
+
+        output.Execute(ctx, new StrokeInput { RawSamples = samples, SmoothedSamples = samples });
+
+        layer.Pixels.GetPixel(140, 30, out _, out _, out _, out var farAlpha);
+        AssertEx.Equal((byte)0, farAlpha, "Color mixing must sample the pre-stroke layer, not feed back from its own slow stroke.");
+    }
+
+    public static void BrushEngine_ColorMixAmountControlsDepositedColor()
+    {
+        using var lowEngine = new BrushEngine();
+        using var highEngine = new BrushEngine();
+        var lowLayer = new DrawingLayer("Low", 80, 60);
+        var highLayer = new DrawingLayer("High", 80, 60);
+        for (var y = 26; y <= 34; y++)
+        for (var x = 16; x <= 24; x++)
+        {
+            lowLayer.Pixels.SetPixel(x, y, 0, 0, 0, 255);
+            highLayer.Pixels.SetPixel(x, y, 0, 0, 0, 255);
+        }
+
+        BrushPreset Brush(double amount) => new("Mix", BrushKind.Ink, 8, 1, 1, 0.6, Colors.White, 0)
+        {
+            ColorMix = true,
+            SmudgeMode = SmudgeMode.Blend,
+            AmountOfPaint = amount,
+            DensityOfPaint = 1,
+            ColorStretch = 0,
+            Tip = new CountingBrushTip(),
+            Shape = null
+        };
+        var sample = Sample(20, 30, 0);
+
+        lowEngine.BeginStroke(Brush(0), sample);
+        highEngine.BeginStroke(Brush(1), sample);
+        lowEngine.RasterizeDab(lowLayer, Brush(0), sample, velocity: 0);
+        highEngine.RasterizeDab(highLayer, Brush(1), sample, velocity: 0);
+
+        lowLayer.Pixels.GetPixel(20, 30, out _, out _, out var lowRed, out _);
+        highLayer.Pixels.GetPixel(20, 30, out _, out _, out var highRed, out _);
+        AssertEx.True(highRed > lowRed, "Amount of paint should increase drawing color contribution.");
+    }
+
     public static void BrushEngine_DoesNotDisposeTipOwnedCachedMasks()
     {
         var tip = new CachedCountingBrushTip();
@@ -890,6 +1013,26 @@ internal static class BrushTests
         AssertEx.Equal(SmudgeMode.Smear, context.Brush.SmudgeMode);
         AssertEx.Near(0.25, context.Brush.AmountOfPaint);
         AssertEx.Near(0, context.Brush.DensityOfPaint);
+    }
+
+    private static (int MinX, int MinY, int MaxX, int MaxY) AlphaBounds(DrawingLayer layer)
+    {
+        var minX = layer.Width;
+        var minY = layer.Height;
+        var maxX = -1;
+        var maxY = -1;
+        for (var y = 0; y < layer.Height; y++)
+        for (var x = 0; x < layer.Width; x++)
+        {
+            layer.Pixels.GetPixel(x, y, out _, out _, out _, out var a);
+            if (a == 0) continue;
+            minX = Math.Min(minX, x);
+            minY = Math.Min(minY, y);
+            maxX = Math.Max(maxX, x);
+            maxY = Math.Max(maxY, y);
+        }
+
+        return (minX, minY, maxX, maxY);
     }
 
     private sealed class CountingBrushTip : IBrushTip
@@ -979,6 +1122,10 @@ internal static class BrushTests
 
         SetField(p, "HasDiameter", true);
         SetField(p, "Diameter", 32.0);
+        SetField(p, "HasAngle", true);
+        SetField(p, "Angle", 15.0);
+        SetField(p, "HasRoundness", true);
+        SetField(p, "Roundness", 40.0);
         SetField(p, "HasSpacing", true);
         SetField(p, "Spacing", 8.0);
         SetField(p, "UseScatter", true);
@@ -996,6 +1143,9 @@ internal static class BrushTests
         var preset = (BrushPreset)(args[4] ?? throw new InvalidOperationException("No preset returned."));
         AssertEx.Equal(32.0, preset.Size);
         AssertEx.Near(0.08, preset.Spacing);
+        AssertEx.Near(15.0, preset.Angle);
+        AssertEx.Near(0.40, preset.TipThickness);
+        AssertEx.Equal(BrushTipDirection.Horizontal, preset.TipDirection);
         AssertEx.Equal(BrushDynamics.AngleSource.DirectionOfLine, preset.BaseAngleSource);
         AssertEx.True(preset.AngleJitter > 0.4f);
         AssertEx.True(preset.Dynamics.Size.IsEnabled);

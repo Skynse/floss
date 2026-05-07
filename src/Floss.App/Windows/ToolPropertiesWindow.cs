@@ -316,9 +316,8 @@ public sealed class ToolPropertiesWindow : Window
 
         var result = new StackPanel { Spacing = 0 };
 
-        // ── SHAPE section ────────────────────────────────────────────────────────
-        // When tip is procedural: shape grid controls Tip directly (no separate clip).
-        // When tip is image-based: shape grid controls preset.Shape (the clip mask).
+        // CSP-style model: Material is the raw sampled/procedural stamp, then
+        // thickness/direction/angle transform that stamp at render time.
 
         var gridShapes = new (BrushTipShape shape, string label)[]
         {
@@ -354,16 +353,35 @@ public sealed class ToolPropertiesWindow : Window
             shapeGrid.Children.Add(MkShapeCell(label, s, active, onClick));
         }
 
-        result.Children.Add(SectionHeader("SHAPE"));
+        result.Children.Add(SectionHeader("TIP SHAPE"));
         result.Children.Add(shapeGrid);
 
         if (isProc && procTip.Shape == BrushTipShape.Ellipse)
         {
-            var aspectSlider = MkSlider(0.1, 1.0, Math.Clamp(procTip.AspectRatio, 0.1, 1.0), "Aspect ratio (width/height)");
+            var aspectSlider = MkSlider(0.1, 8.0, Math.Clamp(procTip.AspectRatio, 0.1, 8.0), "Procedural oval width/height");
             WireSlider(aspectSlider, v => CommitMainTip(new ProceduralBrushTip(procTip.Shape, (float)v)));
-            result.Children.Add(SectionHeader("ASPECT RATIO"));
+            result.Children.Add(SectionHeader("OVAL RATIO"));
             result.Children.Add(PlainSliderRowRaw(aspectSlider, "f2"));
         }
+
+        result.Children.Add(SectionHeader("BRUSH TIP"));
+        var localHardness = MkSlider(0, 1, _brushPreset.Hardness, "Brush tip hardness");
+        WireSlider(localHardness, v => Commit(p => p with { Hardness = v }));
+        result.Children.Add(PlainSliderRow("Hardness", localHardness, "%", "brush.hardness"));
+
+        var thicknessSlider = MkSlider(0.01, 1, Math.Clamp(_brushPreset.TipThickness, 0.01, 1.0), "CSP-style brush tip thickness");
+        WireSlider(thicknessSlider, v => Commit(p => p with { TipThickness = v }));
+        result.Children.Add(PlainSliderRow("Thickness", thicknessSlider, "%", "brush.tipThickness"));
+
+        result.Children.Add(BuildTipDirectionRow());
+
+        var localAngle = MkSlider(0, 360, Math.Clamp(_brushPreset.Angle, 0, 360), "Brush tip angle");
+        WireSlider(localAngle, v => Commit(p => p with { Angle = v }));
+        result.Children.Add(PlainSliderRow("Angle", localAngle, "°", "brush.angle"));
+
+        var localDensity = MkSlider(0, 1, Math.Clamp(_brushPreset.TipDensity, 0, 1), "Brush tip density");
+        WireSlider(localDensity, v => Commit(p => p with { TipDensity = v }));
+        result.Children.Add(PlainSliderRow("Brush density", localDensity, "%", "brush.tipDensity"));
 
         // ── TIP TEXTURE section ──────────────────────────────────────────────────
         // Shows the raw texture bitmap. For procedural tips this is just the shape
@@ -419,10 +437,40 @@ public sealed class ToolPropertiesWindow : Window
             Children = { previewBtn, tipBtnRow }
         };
 
-        result.Children.Add(SectionHeader("TIP TEXTURE"));
+        result.Children.Add(SectionHeader(isProc ? "MATERIAL" : "MATERIAL"));
         result.Children.Add(tipRow);
 
         return result;
+    }
+
+    private Control BuildTipDirectionRow()
+    {
+        Button horizontal = null!;
+        Button vertical = null!;
+        void SetDirection(BrushTipDirection direction)
+        {
+            if (_syncing) return;
+            Commit(p => p with { TipDirection = direction });
+            StylizeToggle(horizontal, direction == BrushTipDirection.Horizontal);
+            StylizeToggle(vertical, direction == BrushTipDirection.Vertical);
+        }
+
+        horizontal = MkToggleBtn("Horizontal", _brushPreset.TipDirection == BrushTipDirection.Horizontal, () => SetDirection(BrushTipDirection.Horizontal));
+        vertical = MkToggleBtn("Vertical", _brushPreset.TipDirection == BrushTipDirection.Vertical, () => SetDirection(BrushTipDirection.Vertical));
+        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        panel.Children.Add(horizontal);
+        panel.Children.Add(vertical);
+
+        return new DockPanel
+        {
+            LastChildFill = true,
+            Margin = new Thickness(0, 2, 0, 2),
+            Children =
+            {
+                new TextBlock { Text = "Direction", FontSize = 11, Foreground = new SolidColorBrush(Color.Parse(TextSecondary)), Width = 72, VerticalAlignment = VerticalAlignment.Center },
+                panel
+            }
+        };
     }
 
     private Button MkShapeCell(string label, BrushTipShape? shape, bool active, Action onClick)
@@ -483,7 +531,7 @@ public sealed class ToolPropertiesWindow : Window
 
     private static Bitmap? RenderTipThumbnail(BrushTipShape shape)
     {
-        var tip = new ProceduralBrushTip(shape, shape == BrushTipShape.Ellipse ? 0.45f : 1.0f);
+        var tip = new ProceduralBrushTip(shape, shape == BrushTipShape.Ellipse ? 2.4f : 1.0f);
         return RenderMaskThumbnail(tip, 40);
     }
 

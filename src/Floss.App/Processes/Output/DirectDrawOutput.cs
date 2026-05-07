@@ -116,7 +116,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         if (region.IsEmpty) return;
 
         CaptureBeforeTiles(layer, region);
-        var dirty = _brushEngine.RasterizeDab(layer, brush, localSample, velocity);
+        var dirty = _brushEngine.RasterizeDab(layer, brush, localSample, velocity, ReadBeforeStrokePixel);
         if (!dirty.IsEmpty)
         {
             RestoreUnselectedPixels(layer, dirty, selection);
@@ -130,7 +130,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         if (region.IsEmpty) return;
 
         CaptureBeforeTiles(layer, region);
-        var dirty = _brushEngine.RasterizeSegment(layer, brush, from, to);
+        var dirty = _brushEngine.RasterizeSegment(layer, brush, from, to, ReadBeforeStrokePixel);
         if (!dirty.IsEmpty)
         {
             RestoreUnselectedPixels(layer, dirty, selection);
@@ -171,6 +171,38 @@ public sealed class DirectDrawOutput : IOutputProcess
         if (_beforeTiles == null) return;
         layer.CaptureTiles(region, _beforeTiles);
     }
+
+    private void ReadBeforeStrokePixel(int x, int y, out byte b, out byte g, out byte r, out byte a)
+    {
+        if (_beforeTiles == null)
+        {
+            if (_currentLayer != null)
+                _currentLayer.Pixels.GetPixel(x, y, out b, out g, out r, out a);
+            else
+                b = g = r = a = 0;
+            return;
+        }
+
+        const int ts = TiledPixelBuffer.TileSize;
+        var tx = FloorDiv(x, ts);
+        var ty = FloorDiv(y, ts);
+        if (!_beforeTiles.TryGetValue((tx, ty), out var tile) || tile == null)
+        {
+            b = g = r = a = 0;
+            return;
+        }
+
+        var lx = x - tx * ts;
+        var ly = y - ty * ts;
+        var offset = (ly * ts + lx) * 4;
+        b = tile[offset];
+        g = tile[offset + 1];
+        r = tile[offset + 2];
+        a = tile[offset + 3];
+    }
+
+    private static int FloorDiv(int value, int divisor)
+        => (int)Math.Floor(value / (double)divisor);
 
     private void RestoreUnselectedPixels(DrawingLayer layer, PixelRegion dirty, SelectionMask selection)
     {

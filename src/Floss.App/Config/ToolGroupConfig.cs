@@ -115,6 +115,8 @@ public sealed class ToolPreset
     public double? BrushAmountOfPaint { get; set; }
     public double? BrushDensityOfPaint { get; set; }
     public double? BrushTipDensity { get; set; }
+    public double? BrushTipThickness { get; set; }
+    public BrushTipDirection? BrushTipDirection { get; set; }
     public SkiaSharp.SKBlendMode? BrushBlendMode { get; set; }
     public string? BrushDynamicsJson { get; set; }
 
@@ -126,6 +128,7 @@ public sealed class ToolPreset
             BrushGrain.HasValue || BrushColorMix.HasValue || BrushColorLoad.HasValue ||
             BrushColorStretch.HasValue || BrushBlurAmount.HasValue || BrushSmudgeMode.HasValue || BrushMixingMode.HasValue ||
             BrushAmountOfPaint.HasValue || BrushDensityOfPaint.HasValue || BrushTipDensity.HasValue ||
+            BrushTipThickness.HasValue || BrushTipDirection.HasValue ||
             BrushBlendMode.HasValue || !string.IsNullOrEmpty(BrushDynamicsJson);
 
         if (!needsUpdate) return preset;
@@ -148,6 +151,8 @@ public sealed class ToolPreset
             AmountOfPaint = BrushAmountOfPaint ?? preset.AmountOfPaint,
             DensityOfPaint = BrushDensityOfPaint ?? preset.DensityOfPaint,
             TipDensity = BrushTipDensity ?? preset.TipDensity,
+            TipThickness = BrushTipThickness ?? preset.TipThickness,
+            TipDirection = BrushTipDirection ?? preset.TipDirection,
             BlendMode = BrushBlendMode ?? preset.BlendMode,
         };
 
@@ -183,6 +188,8 @@ public sealed class ToolPreset
         BrushAmountOfPaint = preset.AmountOfPaint;
         BrushDensityOfPaint = preset.DensityOfPaint;
         BrushTipDensity = preset.TipDensity;
+        BrushTipThickness = preset.TipThickness;
+        BrushTipDirection = preset.TipDirection;
         BrushBlendMode = preset.BlendMode;
         BrushDynamicsJson = preset.Dynamics.Serialize();
     }

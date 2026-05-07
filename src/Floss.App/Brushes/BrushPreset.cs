@@ -8,6 +8,7 @@ namespace Floss.App.Brushes;
 public enum BrushKind { Ink, Pencil, Marker, Airbrush, Eraser }
 public enum MixingMode { Standard, Perceptual }
 public enum SmudgeMode { Blend, Smear, Smudge }
+public enum BrushTipDirection { Horizontal, Vertical }
 
 public sealed record BrushPreset(
     string Name,
@@ -38,6 +39,9 @@ public sealed record BrushPreset(
     public double DensityOfPaint { get; init; } = 1.0;
     // Brush tip density — how much the texture/tip pattern influences stamp appearance (0 = none, 1 = full)
     public double TipDensity { get; init; } = 1.0;
+    // CSP-style brush tip thickness. 1 = original shape, lower values flatten the short axis.
+    public double TipThickness { get; init; } = 1.0;
+    public BrushTipDirection TipDirection { get; init; } = BrushTipDirection.Horizontal;
     public double Grain { get; init; } = 0.0;
     public double Smoothing { get; init; } = 0.3;
     public IBrushTip Tip { get; init; } = new ProceduralBrushTip();
@@ -119,7 +123,7 @@ public sealed record BrushPreset(
             },
             Flow = 0.25, Smoothing = 0.65, Grain = 0.04
         },
-        new("Smudge", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 100)
+        new("Smudge", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
         {
             Dynamics = new BrushDynamics
             {
@@ -134,10 +138,12 @@ public sealed record BrushPreset(
             MixingMode = MixingMode.Perceptual,
             AmountOfPaint = 0.74,
             DensityOfPaint = 1.0,
+            TipThickness = 0.42,
+            TipDirection = BrushTipDirection.Horizontal,
             SmudgeMode = SmudgeMode.Smudge,
             Smoothing = 0.45
         },
-        new("Blend", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 100)
+        new("Blend", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
         {
             Dynamics = new BrushDynamics
             {
@@ -151,10 +157,12 @@ public sealed record BrushPreset(
             BlurAmount = 0.81,
             AmountOfPaint = 0.0,
             DensityOfPaint = 0.0,
+            TipThickness = 0.42,
+            TipDirection = BrushTipDirection.Horizontal,
             SmudgeMode = SmudgeMode.Blend,
             Smoothing = 0.45
         },
-        new("Smear", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 100)
+        new("Smear", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
         {
             Dynamics = new BrushDynamics
             {
@@ -168,6 +176,8 @@ public sealed record BrushPreset(
             BlurAmount = 0.0,
             AmountOfPaint = 0.5,
             DensityOfPaint = 1.0,
+            TipThickness = 0.42,
+            TipDirection = BrushTipDirection.Horizontal,
             SmudgeMode = SmudgeMode.Smear,
             Smoothing = 0.45
         },

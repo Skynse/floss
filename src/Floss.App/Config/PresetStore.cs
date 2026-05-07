@@ -600,6 +600,8 @@ public sealed class PresetStore
         public double AmountOfPaint { get; set; }
         public double DensityOfPaint { get; set; }
         public double TipDensity { get; set; }
+        public double TipThickness { get; set; } = 1.0;
+        public BrushTipDirection TipDirection { get; set; } = BrushTipDirection.Horizontal;
         public double Grain { get; set; }
         public double Smoothing { get; set; }
         public SKBlendMode BlendMode { get; set; }
@@ -627,6 +629,8 @@ public sealed class PresetStore
             AmountOfPaint = preset.AmountOfPaint,
             DensityOfPaint = preset.DensityOfPaint,
             TipDensity = preset.TipDensity,
+            TipThickness = preset.TipThickness,
+            TipDirection = preset.TipDirection,
             Grain = preset.Grain,
             Smoothing = preset.Smoothing,
             BlendMode = preset.BlendMode,
@@ -649,6 +653,8 @@ public sealed class PresetStore
                 AmountOfPaint = AmountOfPaint,
                 DensityOfPaint = DensityOfPaint,
                 TipDensity = TipDensity,
+                TipThickness = TipThickness <= 0 ? 1.0 : TipThickness,
+                TipDirection = TipDirection,
                 Grain = Grain,
                 Smoothing = Smoothing,
                 BlendMode = BlendMode,

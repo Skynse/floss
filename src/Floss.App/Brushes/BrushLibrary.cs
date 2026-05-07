@@ -103,7 +103,7 @@ public sealed class BrushLibrary
             });
 
         yield return BrushAsset.FromPreset(
-            new BrushPreset("Smudge", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 100)
+            new BrushPreset("Smudge", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
             {
                 SizeDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
                 OpacityDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
@@ -115,13 +115,15 @@ public sealed class BrushLibrary
                 MixingMode = MixingMode.Perceptual,
                 AmountOfPaint = 0.74,
                 DensityOfPaint = 1.0,
+                TipThickness = 0.42,
+                TipDirection = BrushTipDirection.Horizontal,
                 SmudgeMode = SmudgeMode.Smudge,
                 Smoothing = 0.45,
                 Tip = new ProceduralBrushTip(BrushTipShape.Circle)
             });
 
         yield return BrushAsset.FromPreset(
-            new BrushPreset("Blend", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 100)
+            new BrushPreset("Blend", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
             {
                 SizeDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
                 OpacityDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
@@ -132,13 +134,15 @@ public sealed class BrushLibrary
                 BlurAmount = 0.81,
                 AmountOfPaint = 0.0,
                 DensityOfPaint = 0.0,
+                TipThickness = 0.42,
+                TipDirection = BrushTipDirection.Horizontal,
                 SmudgeMode = SmudgeMode.Blend,
                 Smoothing = 0.45,
                 Tip = new ProceduralBrushTip(BrushTipShape.Circle)
             });
 
         yield return BrushAsset.FromPreset(
-            new BrushPreset("Smear", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 100)
+            new BrushPreset("Smear", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
             {
                 SizeDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
                 OpacityDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
@@ -149,6 +153,8 @@ public sealed class BrushLibrary
                 BlurAmount = 0.5,
                 AmountOfPaint = 0.0,
                 DensityOfPaint = 0.2,
+                TipThickness = 0.42,
+                TipDirection = BrushTipDirection.Horizontal,
                 SmudgeMode = SmudgeMode.Smear,
                 Smoothing = 0.45,
                 Tip = new ProceduralBrushTip(BrushTipShape.Circle)

@@ -18,6 +18,9 @@ public sealed class AppConfig
     public int NewCanvasHeight { get; set; } = 2048;
     public string LastColor { get; set; } = "#111111";
     public string LastBrushName { get; set; } = "Technical Pen";
+    public string? LastToolGroupId { get; set; }
+    public string? LastToolCategoryName { get; set; }
+    public string? LastToolPresetId { get; set; }
     public double LastBrushSize { get; set; } = 8;
     public double LastBrushOpacity { get; set; } = 1.0;
     public double LastBrushHardness { get; set; } = 0.95;

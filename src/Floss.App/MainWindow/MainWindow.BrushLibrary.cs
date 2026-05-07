@@ -136,6 +136,7 @@ public partial class MainWindow : Window
             btn.Click += (_, _) =>
             {
                 _selectedCategory = catName;
+                SaveActiveToolSelection();
                 RefreshGroupPresets();
             };
             btn.DoubleTapped += (_, _) => RenameCategoryPrompt(group, cat);
@@ -1070,6 +1071,43 @@ public partial class MainWindow : Window
         RefreshGroupPresets();
     }
 
+    private void SelectInitialTool()
+    {
+        var cfg = App.Config;
+        var group = cfg.LastToolGroupId == null
+            ? null
+            : App.ToolGroups.Groups.FirstOrDefault(g => g.Id == cfg.LastToolGroupId);
+
+        group ??= cfg.LastToolPresetId == null
+            ? null
+            : App.ToolGroups.Groups.FirstOrDefault(g => g.Presets.Any(p => p.Id == cfg.LastToolPresetId));
+
+        if (group != null)
+        {
+            var preset = cfg.LastToolPresetId == null
+                ? group.ActivePreset
+                : group.Presets.FirstOrDefault(p => p.Id == cfg.LastToolPresetId) ?? group.ActivePreset;
+            if (preset != null)
+            {
+                _selectedCategory = ResolveStartupCategory(group, cfg.LastToolCategoryName, preset);
+                ActivatePreset(group, preset);
+                return;
+            }
+        }
+
+        SelectInitialBrush();
+    }
+
+    private static string? ResolveStartupCategory(ToolGroup group, string? preferredCategory, ToolPreset preset)
+    {
+        if (preferredCategory != null &&
+            group.Categories.Any(c => c.Name == preferredCategory && c.PresetIds.Contains(preset.Id)))
+            return preferredCategory;
+
+        return group.Categories.FirstOrDefault(c => c.PresetIds.Contains(preset.Id))?.Name
+            ?? group.Categories.FirstOrDefault()?.Name;
+    }
+
     private void SelectInitialBrush()
     {
         var initial = _brushAssets.FirstOrDefault(b => b.Preset.Name == App.Config.LastBrushName)
@@ -1092,6 +1130,19 @@ public partial class MainWindow : Window
             if (fallback != null) ActivatePreset(brushGroup, fallback);
         }
         ApplyBrushAsset(initial);
+    }
+
+    private void SaveActiveToolSelection()
+    {
+        var group = _activeToolGroup;
+        var preset = group?.ActivePreset;
+        if (group == null || preset == null) return;
+
+        App.Config.LastToolGroupId = group.Id;
+        App.Config.LastToolPresetId = preset.Id;
+        App.Config.LastToolCategoryName = _selectedCategory;
+        App.Config.LastBrushName = _activePreset?.Name ?? App.Config.LastBrushName;
+        App.Config.Save();
     }
 
     private void ApplyBrushAsset(BrushAsset asset)

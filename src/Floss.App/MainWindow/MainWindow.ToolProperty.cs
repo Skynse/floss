@@ -106,6 +106,10 @@ public partial class MainWindow
                     () => _activePreset?.Angle ?? 0, v => UpdateCurrentBrush(p => p with { Angle = v }), 0, 360, "°"),
                 SliderProp("brush.tipDensity", "Tip Density", false,
                     () => _activePreset?.TipDensity ?? 1, v => UpdateCurrentBrush(p => p with { TipDensity = v }), 0, 1, "%"),
+                SliderProp("brush.tipThickness", "Tip Thickness", false,
+                    () => _activePreset?.TipThickness ?? 1, v => UpdateCurrentBrush(p => p with { TipThickness = v }), 0.01, 1, "%"),
+                EnumProp("brush.tipDirection", "Tip Direction", false,
+                    () => _activePreset?.TipDirection ?? BrushTipDirection.Horizontal, v => UpdateCurrentBrush(p => p with { TipDirection = v })),
             ]);
         }
 

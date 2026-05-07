@@ -1076,24 +1076,19 @@ public static class AbrImporter
         var kind = BrushKind.Ink;
         if (p?.IsEraser == true) kind = BrushKind.Eraser;
 
+        var tipThickness = 1.0;
+        if (p?.HasRoundness == true)
+            tipThickness = Math.Clamp(p.Roundness / 100.0, 0.01, 1.0);
+
         tipData = new BrushTipData
         {
             Kind = pngBytes.Length > 0 ? BrushTipStorageKind.EmbeddedPng : BrushTipStorageKind.Procedural,
             PngBytes = pngBytes.Length > 0 ? pngBytes : [],
-            Shape = pngBytes.Length > 0 ? BrushTipShape.Circle : (p?.HasRoundness == true ? BrushTipShape.Circle : BrushTipShape.Circle),
-            AspectRatio = p?.HasRoundness == true ? (float)(100.0 / Math.Max(p.Roundness, 1)) : 1.0f
+            Shape = BrushTipShape.Circle,
+            AspectRatio = 1.0f
         };
 
-        shapeData = pngBytes.Length > 0
-            ? null
-            : new BrushTipData
-            {
-                Kind = BrushTipStorageKind.Procedural,
-                Shape = BrushTipShape.Circle,
-                AspectRatio = 1.0f
-            };
-
-        var circleShape = new ProceduralBrushTip(BrushTipShape.Circle);
+        shapeData = null;
 
         // ── Angle jitter ──────────────────────────────────────────────────
         var angleJitter = 0f;
@@ -1107,12 +1102,14 @@ public static class AbrImporter
         {
             Dynamics = BuildDynamics(p),
             Tip = tipData.CreateTip(),
-            Shape = pngBytes.Length > 0 ? null : circleShape,
+            Shape = null,
             Flow = flow,
             Smoothing = smoothing,
             Color = Color.Parse("#111111"),
             BaseAngleSource = DetectAngleSource(p),
             AngleJitter = angleJitter,
+            TipThickness = tipThickness,
+            TipDirection = BrushTipDirection.Horizontal,
             Grain = p?.UseColorDynamics == true
                 ? Math.Clamp((Math.Abs(p.HueJitter) + Math.Abs(p.SaturationJitter) + Math.Abs(p.BrightnessJitter)) / 300.0, 0.0, 1.0)
                 : 0.0
