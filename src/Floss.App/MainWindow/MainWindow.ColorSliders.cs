@@ -24,6 +24,7 @@ public partial class MainWindow
     // Preview
     private Border _colorPreview = null!;
     private bool _syncingColorSliders;
+    private bool _updatingFromHsv;
 
     private StackPanel BuildColorSlidersSection()
     {
@@ -120,7 +121,9 @@ public partial class MainWindow
         var s = _hsvSatSlider.Value / 100;
         var v = _hsvValSlider.Value / 100;
         var (rd, gd, bd) = HsvToRgb(h, s, v);
+        _updatingFromHsv = true;
         SetColor(Color.FromRgb((byte)(rd * 255), (byte)(gd * 255), (byte)(bd * 255)));
+        _updatingFromHsv = false;
     }
 
     private void UpdateColorFromRgb()
@@ -140,19 +143,29 @@ public partial class MainWindow
         try
         {
             var color = _canvas.Brush.Color;
-            var (h, s, v) = RgbToHsv(color.R / 255.0, color.G / 255.0, color.B / 255.0);
+            double h, s, v;
 
-            _hsvHueSlider.Value = h;
-            _hsvSatSlider.Value = s * 100;
-            _hsvValSlider.Value = v * 100;
+            if (_updatingFromHsv)
+            {
+                // HSV sliders drove this update — read values directly to avoid
+                // the RGB→HSV roundtrip clobbering H/S at low value or saturation.
+                h = _hsvHueSlider.Value;
+                s = _hsvSatSlider.Value / 100;
+                v = _hsvValSlider.Value / 100;
+            }
+            else
+            {
+                (h, s, v) = RgbToHsv(color.R / 255.0, color.G / 255.0, color.B / 255.0);
+                _hsvHueSlider.Value = h;
+                _hsvSatSlider.Value = s * 100;
+                _hsvValSlider.Value = v * 100;
+            }
 
             _rgbRSlider.Value = color.R;
             _rgbGSlider.Value = color.G;
             _rgbBSlider.Value = color.B;
 
             _colorPreview.Background = new SolidColorBrush(color);
-
-            // Update HSV gradient backgrounds dynamically
             UpdateHsvGradients(h, s, v);
         }
         finally

@@ -212,6 +212,9 @@ public partial class MainWindow : Window
     private Point _brushSizeGestureCenterCanvasPoint;
     private double _brushSizeGestureStartSize;
     private bool _brushSizeGestureHasCenter;
+    private double _brushSizeLastDirX;
+    private double _brushSizeLastDirY;
+    private bool _brushSizeHasLastDir;
     private SettingsWindow? _settingsWindow;
 
     private bool _suppressBrushSettingsRestored;

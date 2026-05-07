@@ -42,6 +42,11 @@ public partial class MainWindow
     {
         var pt = e.GetCurrentPoint(_workspaceViewport);
 
+        // Ignore phantom pen events (hover without contact)
+        if ((pt.Pointer.Type == PointerType.Pen || pt.Properties.IsEraser) &&
+            pt.Properties.Pressure < 0.02f)
+            return;
+
         // Resize mode — handle drags before normal gesture logic
         if (TryBeginResizeDrag(pt.Position, pt.Properties.IsLeftButtonPressed))
         {
@@ -68,9 +73,22 @@ public partial class MainWindow
         if (_activeGesture == GestureMode.BrushSize)
         {
             _brushSizeGestureStartCanvasPoint = e.GetPosition(_canvas);
-            _brushSizeGestureCenterCanvasPoint = _brushSizeGestureStartCanvasPoint;
             _brushSizeGestureStartSize = GetActiveToolSize();
-            _brushSizeGestureHasCenter = false;
+            if (_brushSizeHasLastDir)
+            {
+                // Re-anchor center using the saved direction so the cursor lands
+                // on the same side of the circle as the last resize ended on.
+                var startRadius = _brushSizeGestureStartSize * 0.5;
+                _brushSizeGestureCenterCanvasPoint = new Point(
+                    _brushSizeGestureStartCanvasPoint.X - _brushSizeLastDirX * startRadius,
+                    _brushSizeGestureStartCanvasPoint.Y - _brushSizeLastDirY * startRadius);
+                _brushSizeGestureHasCenter = true;
+            }
+            else
+            {
+                _brushSizeGestureCenterCanvasPoint = _brushSizeGestureStartCanvasPoint;
+                _brushSizeGestureHasCenter = false;
+            }
             _canvas.LockCursorPreview(_brushSizeGestureCenterCanvasPoint, forceBrushOutline: true);
         }
         e.Pointer.Capture(_workspaceViewport);
@@ -98,7 +116,9 @@ public partial class MainWindow
                 var startDx = canvasPoint.X - _brushSizeGestureStartCanvasPoint.X;
                 var startDy = canvasPoint.Y - _brushSizeGestureStartCanvasPoint.Y;
                 var startDistance = Math.Sqrt(startDx * startDx + startDy * startDy);
-                if (startDistance > 0.001)
+                // Require ~10 viewport pixels of deliberate movement before locking the
+                // center direction so tablet jitter can't randomly flip which side you're on.
+                if (startDistance > 10.0 / _zoom)
                 {
                     var startRadius = _brushSizeGestureStartSize * 0.5;
                     _brushSizeGestureCenterCanvasPoint = new Point(
@@ -106,11 +126,25 @@ public partial class MainWindow
                         _brushSizeGestureStartCanvasPoint.Y - startDy / startDistance * startRadius);
                     _brushSizeGestureHasCenter = true;
                 }
+                else
+                {
+                    // Dead zone: hold the starting size, don't move the preview yet.
+                    _lastPanPoint = pt;
+                    _canvas.LockCursorPreview(_brushSizeGestureCenterCanvasPoint, forceBrushOutline: true);
+                    e.Handled = true;
+                    return;
+                }
             }
 
             var dx = canvasPoint.X - _brushSizeGestureCenterCanvasPoint.X;
             var dy = canvasPoint.Y - _brushSizeGestureCenterCanvasPoint.Y;
             var radiusDistance = Math.Sqrt(dx * dx + dy * dy);
+            if (radiusDistance > 0.001)
+            {
+                _brushSizeLastDirX = dx / radiusDistance;
+                _brushSizeLastDirY = dy / radiusDistance;
+                _brushSizeHasLastDir = true;
+            }
             SetActiveToolSize(BrushSizeAdjustment.FromRadiusDistance(
                 radiusDistance,
                 GetActiveToolSizeMinimum(),
@@ -144,8 +178,27 @@ public partial class MainWindow
                 SetZoom(_zoom * Math.Pow(sc.GestureZoomSensitivity, axisDelta), _gestureStartPoint);
                 break;
             case GestureMode.Rotate:
-                SetRotation(_rotation + d.X * sc.GestureRotateSensitivity);
+            {
+                // Arc-based rotation around the viewport center.
+                // Using viewport center (not gesture start) as pivot avoids the
+                // cursor ever passing through the pivot and flipping the angle.
+                var vpCenter = new Point(
+                    _workspaceViewport.Bounds.Width  * 0.5,
+                    _workspaceViewport.Bounds.Height * 0.5);
+                var prevPt  = pt - d;
+                var fromVec = prevPt - vpCenter;
+                var toVec   = pt    - vpCenter;
+                var fromDistSq = fromVec.X * fromVec.X + fromVec.Y * fromVec.Y;
+                var toDistSq   = toVec.X   * toVec.X   + toVec.Y   * toVec.Y;
+                if (fromDistSq > 400 && toDistSq > 400) // >20 px from center
+                {
+                    var deltaRad = Math.Atan2(toVec.Y, toVec.X) - Math.Atan2(fromVec.Y, fromVec.X);
+                    if (deltaRad >  Math.PI) deltaRad -= 2 * Math.PI;
+                    if (deltaRad < -Math.PI) deltaRad += 2 * Math.PI;
+                    SetRotation(_rotation + deltaRad * 180.0 / Math.PI);
+                }
                 break;
+            }
         }
         e.Handled = true;
     }
@@ -251,7 +304,24 @@ public partial class MainWindow
 
     private void SetRotation(double degrees)
     {
-        _rotation = degrees % 360;
+        var oldRotation = _rotation;
+        var newRotation = degrees % 360;
+        var deltaRad = (newRotation - oldRotation) * Math.PI / 180.0;
+        if (Math.Abs(deltaRad) > 1e-9)
+        {
+            // Rotate the pan vector by the delta so the visual viewport center stays fixed.
+            // In Y-down screen coords a positive angle is CW, which corresponds to the
+            // standard CCW (Y-up) rotation matrix applied to the pan offset vector.
+            var cos = Math.Cos(deltaRad);
+            var sin = Math.Sin(deltaRad);
+            var px = _canvasPan.X;
+            var py = _canvasPan.Y;
+            _canvasPan.X = px * cos - py * sin;
+            _canvasPan.Y = px * sin + py * cos;
+            _canvas.PanOffsetX = _canvasPan.X;
+            _canvas.PanOffsetY = _canvasPan.Y;
+        }
+        _rotation = newRotation;
         _canvasRotate.Angle = _rotation;
         _canvas.CanvasRotation = _rotation;
         _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual();
