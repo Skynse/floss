@@ -48,8 +48,10 @@ public sealed class ToolContext
     public DrawingDocument Document { get; }
     public BrushPreset Brush { get; set; } = null!;
     public Color PaintColor { get; set; } = Color.Parse("#111111");
-    public SelectionMask Selection { get; } = new();
+    public SelectionMask Selection => Document.Selection;
     public Action InvalidateRender { get; init; } = () => { };
+    public Action SelectionChanged { get; init; } = () => { };
+    public Action<SelectionMask.Snapshot> CommitSelectionMutation { get; init; } = _ => { };
     public Action<Color> OnColorSampled { get; init; } = _ => { };
     public Func<int, int, EyedropperSampleOptions, Color?> SampleDocumentColor { get; init; } = (_, _, _) => null;
     public ToolPreset? ActivePreset { get; set; }

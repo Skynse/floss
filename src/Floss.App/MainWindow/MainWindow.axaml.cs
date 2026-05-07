@@ -135,6 +135,7 @@ public partial class MainWindow : Window
     private DrawingCanvas _canvas = null!;
     private Grid _workspaceViewport = null!;
     private Border _canvasFrame = null!;
+    private Border _selectionActionBar = null!;
     private HsvColorPicker _colorPicker = null!;
     private TextBox _hexInput = null!;
     private Border _colorWell = null!;
@@ -315,6 +316,9 @@ public partial class MainWindow : Window
         _rulerOverlay.IsVisible = _showRulers;
         _workspaceViewport.Children.Add(_rulerOverlay);
 
+        _selectionActionBar = BuildSelectionActionBar();
+        _workspaceViewport.Children.Add(_selectionActionBar);
+
         _canvasStatusText = MiniText();
         _footerStatusText = MiniText();
 
@@ -402,6 +406,72 @@ public partial class MainWindow : Window
         FontSize = 11,
         VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
     };
+
+    private Border BuildSelectionActionBar()
+    {
+        var row = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            Spacing = 1,
+            Margin = new Thickness(4)
+        };
+
+        var invert = SelectionBarButton(Icons.InvertColors, "Invert selection");
+        invert.Click += (_, _) => { _canvas.InvertSelection(); UpdateSelectionActionBar(); };
+
+        var cutPaste = SelectionBarButton(Icons.ContentCut, "Cut and paste selection");
+        cutPaste.Click += (_, _) => { _canvas.CutSelectionAndPaste(); BuildLayerList(); UpdateSelectionActionBar(); };
+
+        var copyPaste = SelectionBarButton(Icons.ContentCopy, "Copy and paste selection");
+        copyPaste.Click += (_, _) => { _canvas.CopySelectionAndPaste(); BuildLayerList(); UpdateSelectionActionBar(); };
+
+        var transform = SelectionBarButton(Icons.FitToScreenOutline, "Scale / rotate selection");
+        transform.Click += (_, _) =>
+        {
+            _canvas.BeginSelectionTransform(_selectedLayerIndices.Count > 1 ? _selectedLayerIndices.ToList() : null);
+            UpdateSelectionActionBar();
+        };
+
+        var fill = SelectionBarButton(Icons.FormatColorFill, "Fill selection");
+        fill.Click += (_, _) => { _canvas.FillSelection(); UpdateSelectionActionBar(); };
+
+        row.Children.Add(invert);
+        row.Children.Add(cutPaste);
+        row.Children.Add(copyPaste);
+        row.Children.Add(transform);
+        row.Children.Add(fill);
+
+        return new Border
+        {
+            IsVisible = false,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top,
+            Background = new SolidColorBrush(Color.Parse("#3c3c3f")),
+            BorderBrush = new SolidColorBrush(Color.Parse("#6a6a70")),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(2),
+            Child = row,
+            ZIndex = 50
+        };
+    }
+
+    private static Button SelectionBarButton(string icon, string tip)
+    {
+        var btn = new Button
+        {
+            Content = Icons.Make(icon, 15, new SolidColorBrush(Color.Parse(TextPrimary))),
+            Width = 30,
+            Height = 26,
+            Padding = new Thickness(0),
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Background = Avalonia.Media.Brushes.Transparent,
+            BorderBrush = Avalonia.Media.Brushes.Transparent,
+            CornerRadius = new CornerRadius(2)
+        };
+        ToolTip.SetTip(btn, tip);
+        return btn;
+    }
 
     private Control BuildMenuBar()
     {
@@ -971,6 +1041,7 @@ public partial class MainWindow : Window
 
         _canvas.StatsChanged += (_, _) => UpdateStatus();
         _canvas.HistoryChanged += (_, _) => UpdateStatus();
+        _canvas.SelectionChanged += (_, _) => UpdateSelectionActionBar();
         _canvas.LayersChanged += (_, _) =>
         {
             _selectedLayerIndices.Clear();
@@ -980,6 +1051,7 @@ public partial class MainWindow : Window
             _rulerOverlay?.InvalidateVisual();
             BuildLayerList();
             UpdateStatus();
+            UpdateSelectionActionBar();
         };
         _canvas.LayerMetadataChanged += (_, e) => { UpdateLayerRow(e.LayerIndex); UpdateStatus(); };
         _canvas.LayersFoundByRect += ExpandAndScrollToLayers;

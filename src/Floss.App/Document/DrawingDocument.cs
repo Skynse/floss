@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Avalonia.Media;
+using Floss.App.Tools;
 
 namespace Floss.App.Document;
 
@@ -25,6 +26,7 @@ public sealed class DrawingDocument
     {
         Width = width;
         Height = height;
+        Selection.Resize(width, height);
         _layers.Add(new DrawingLayer("Layer 1", width, height));
         ActiveLayerIndex = 0;
     }
@@ -36,6 +38,7 @@ public sealed class DrawingDocument
     public event EventHandler<LayerMetadataChangedEventArgs>? LayerMetadataChanged;
     public event EventHandler<DrawingLayer>? LayerRemoved;
     public event EventHandler? DirtyStateChanged;
+    public event EventHandler? SelectionChanged;
 
     // --- Properties ---
     public int Width { get; private set; }
@@ -48,6 +51,7 @@ public sealed class DrawingDocument
     public IReadOnlyList<DrawingLayer> Layers => _layers;
     public int ActiveLayerIndex { get; private set; }
     public DrawingLayer ActiveLayer => _layers[ActiveLayerIndex];
+    public SelectionMask Selection { get; } = new();
     public int CommittedStrokeCount { get; private set; }
     public bool CanUndo => _undo.Count > 0;
     public bool CanRedo => _redo.Count > 0;
@@ -122,9 +126,11 @@ public sealed class DrawingDocument
 
         Width = newW;
         Height = newH;
+        Selection.Resize(newW, newH);
 
         ActiveLayerIndex = Math.Clamp(ActiveLayerIndex, 0, _layers.Count - 1);
         NotifyLayersChanged();
+        NotifySelectionChanged();
         NotifyChanged();
     }
 
@@ -133,6 +139,7 @@ public sealed class DrawingDocument
     {
         Width = width;
         Height = height;
+        Selection.Resize(width, height);
     }
 
     public void ClearForImport()
@@ -147,6 +154,8 @@ public sealed class DrawingDocument
         _savedStateId = 0;
         _nextStateId = 1;
         CommittedStrokeCount = 0;
+        Selection.Resize(Width, Height);
+        Selection.Clear();
     }
 
     public void ReplaceWith(DrawingDocument source)
@@ -212,6 +221,44 @@ public sealed class DrawingDocument
 
         PushHistoryState(new LayerTileHistoryState(layerIndex, patches.ToArray(), dirtyRegion));
         NotifyChanged(dirtyRegion, layerIndex);
+    }
+
+    public void CommitLayerTileMutations(IReadOnlyList<LayerTileMutation> mutations)
+    {
+        if (mutations.Count == 0) return;
+
+        var states = new List<IHistoryState>(mutations.Count);
+        foreach (var mutation in mutations)
+        {
+            if (mutation.BeforeTiles.Count == 0 || mutation.DirtyRegion.IsEmpty ||
+                mutation.LayerIndex < 0 || mutation.LayerIndex >= _layers.Count)
+                continue;
+
+            var layer = _layers[mutation.LayerIndex];
+            var patches = new List<LayerTilePatch>(mutation.BeforeTiles.Count);
+            foreach (var (key, before) in mutation.BeforeTiles)
+            {
+                var after = layer.CaptureTile(key.X, key.Y);
+                if (TileBytesEqual(before, after)) continue;
+                patches.Add(new LayerTilePatch(key.X, key.Y, before, after));
+            }
+
+            if (patches.Count == 0) continue;
+            states.Add(new LayerTileHistoryState(mutation.LayerIndex, patches.ToArray(), mutation.DirtyRegion));
+        }
+
+        if (states.Count == 0) return;
+        PushHistoryState(states.Count == 1 ? states[0] : new CompositeHistoryState(states.ToArray()));
+        foreach (var mutation in mutations)
+            NotifyChanged(mutation.DirtyRegion, mutation.LayerIndex);
+    }
+
+    public void CommitSelectionMutation(SelectionMask.Snapshot before)
+    {
+        var after = Selection.CaptureSnapshot();
+        if (SelectionSnapshotsEqual(before, after)) return;
+        PushHistoryState(new SelectionHistoryState(before, after));
+        NotifySelectionChanged();
     }
 
     public void ApplyFilterToLayers(IReadOnlyList<int> indices, Action<DrawingLayer> apply)
@@ -686,6 +733,7 @@ public sealed class DrawingDocument
 
     // --- Helpers / Notifications ---
     public void NotifyChanged(PixelRegion? dirtyRegion = null, int? layerIndex = null) => Changed?.Invoke(this, new DocumentChangedEventArgs(dirtyRegion, layerIndex));
+    public void NotifySelectionChanged() => SelectionChanged?.Invoke(this, EventArgs.Empty);
     private void NotifyLayersChanged()
     {
         LayersChanged?.Invoke(this, EventArgs.Empty);
@@ -803,6 +851,25 @@ public sealed class DrawingDocument
         return a.AsSpan().SequenceEqual(b);
     }
 
+    private static bool SelectionSnapshotsEqual(SelectionMask.Snapshot a, SelectionMask.Snapshot b)
+    {
+        if (a.Width != b.Width || a.Height != b.Height ||
+            a.GeometryType != b.GeometryType ||
+            a.GeometryRect != b.GeometryRect ||
+            a.GeometryPolygon.Length != b.GeometryPolygon.Length)
+            return false;
+
+        for (var i = 0; i < a.GeometryPolygon.Length; i++)
+        {
+            if (a.GeometryPolygon[i] != b.GeometryPolygon[i])
+                return false;
+        }
+
+        if (ReferenceEquals(a.Mask, b.Mask)) return true;
+        if (a.Mask == null || b.Mask == null || a.Mask.Length != b.Mask.Length) return false;
+        return a.Mask.AsSpan().SequenceEqual(b.Mask);
+    }
+
     private LayerSnapshot CaptureLayerSnapshot(DrawingLayer layer) => new(layer.Name, layer.IsVisible, layer.IsLocked, layer.IsAlphaLocked, layer.IsReference, layer.Opacity, layer.BlendMode, layer.OffsetX, layer.OffsetY, layer.IsGroup, layer.IsOpen, layer.IsClipping, layer.IndentLevel, layer.Parent is null ? -1 : _layers.IndexOf(layer.Parent), layer.Width, layer.Height, layer.CaptureTiles());
 
     private DrawingLayer CreateLayerFromSnapshot(LayerSnapshot snap)
@@ -812,11 +879,12 @@ public sealed class DrawingDocument
         return layer;
     }
 
-    private DocumentSnapshot CaptureSnapshot() => new(Width, Height, ActiveLayerIndex, _layers.Select(CaptureLayerSnapshot).ToArray());
+    private DocumentSnapshot CaptureSnapshot() => new(Width, Height, ActiveLayerIndex, _layers.Select(CaptureLayerSnapshot).ToArray(), Selection.CaptureSnapshot());
 
     private void RestoreSnapshot(DocumentSnapshot snapshot)
     {
         Width = snapshot.Width; Height = snapshot.Height;
+        Selection.RestoreSnapshot(snapshot.Selection);
         foreach (var l in _layers) l.Dispose();
         _layers.Clear();
         foreach (var snap in snapshot.Layers) _layers.Add(CreateLayerFromSnapshot(snap));
@@ -831,13 +899,31 @@ public sealed class DrawingDocument
 
         ActiveLayerIndex = Math.Clamp(snapshot.ActiveLayerIndex, 0, _layers.Count - 1);
         NotifyLayersChanged();
+        NotifySelectionChanged();
     }
 
     // --- Records and State Classes ---
-    private sealed record DocumentSnapshot(int Width, int Height, int ActiveLayerIndex, LayerSnapshot[] Layers);
+    private sealed record DocumentSnapshot(int Width, int Height, int ActiveLayerIndex, LayerSnapshot[] Layers, SelectionMask.Snapshot Selection);
     private sealed record LayerSnapshot(string Name, bool IsVisible, bool IsLocked, bool IsAlphaLocked, bool IsReference, double Opacity, string BlendMode, int OffsetX, int OffsetY, bool IsGroup, bool IsOpen, bool IsClipping, int IndentLevel, int ParentIndex, int BitmapWidth, int BitmapHeight, Dictionary<(int X, int Y), byte[]> Tiles);
 
     private interface IHistoryState { IHistoryState CaptureRedo(DrawingDocument document); void Restore(DrawingDocument document); }
+
+    private sealed record CompositeHistoryState(IHistoryState[] States) : IHistoryState
+    {
+        public IHistoryState CaptureRedo(DrawingDocument document)
+        {
+            var redo = new IHistoryState[States.Length];
+            for (var i = States.Length - 1; i >= 0; i--)
+                redo[i] = States[i].CaptureRedo(document);
+            return new CompositeHistoryState(redo);
+        }
+
+        public void Restore(DrawingDocument document)
+        {
+            for (var i = States.Length - 1; i >= 0; i--)
+                States[i].Restore(document);
+        }
+    }
 
     private sealed record SnapshotHistoryState(DocumentSnapshot Snapshot) : IHistoryState
     {
@@ -893,6 +979,18 @@ public sealed class DrawingDocument
         public void Restore(DrawingDocument document) { if (LayerIndex < 0 || LayerIndex >= document._layers.Count) return; var layer = document._layers[LayerIndex]; foreach (var patch in Patches) { layer.RestoreTile(patch.TileX, patch.TileY, patch.BeforePixels); } document.NotifyChanged(DirtyRegion, LayerIndex); }
     }
 
+    private sealed record SelectionHistoryState(SelectionMask.Snapshot Before, SelectionMask.Snapshot After) : IHistoryState
+    {
+        public IHistoryState CaptureRedo(DrawingDocument document)
+            => new SelectionHistoryState(After, Before);
+
+        public void Restore(DrawingDocument document)
+        {
+            document.Selection.RestoreSnapshot(Before);
+            document.NotifySelectionChanged();
+        }
+    }
+
     private sealed record LayerPropertyHistoryState<T>(int LayerIndex, T OldValue, T NewValue, Action<DrawingLayer, T> Apply, bool AffectsComposite, PixelRegion DirtyRegion) : IHistoryState
     {
         public IHistoryState CaptureRedo(DrawingDocument document) => new LayerPropertyHistoryState<T>(LayerIndex, NewValue, OldValue, Apply, AffectsComposite, DirtyRegion);
@@ -903,3 +1001,4 @@ public sealed class DrawingDocument
 public sealed class DocumentChangedEventArgs(PixelRegion? dirtyRegion, int? layerIndex) : EventArgs { public PixelRegion? DirtyRegion { get; } = dirtyRegion; public int? LayerIndex { get; } = layerIndex; }
 public sealed class LayerMetadataChangedEventArgs(int layerIndex) : EventArgs { public int LayerIndex { get; } = layerIndex; }
 public readonly record struct LayerRegionPatch(PixelRegion Region, byte[] BeforePixels);
+public readonly record struct LayerTileMutation(int LayerIndex, IReadOnlyDictionary<(int X, int Y), byte[]?> BeforeTiles, PixelRegion DirtyRegion);

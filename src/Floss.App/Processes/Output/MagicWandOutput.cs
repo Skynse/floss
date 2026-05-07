@@ -28,6 +28,8 @@ public sealed class MagicWandOutput : IOutputProcess
         layer.Pixels.GetPixel(cx, cy, out byte refB, out byte refG, out byte refR, out byte refA);
 
         // Create a mask-based selection (single flood fill in SetFromFloodFill).
+        var before = ctx.Selection.CaptureSnapshot();
         ctx.Selection.SetFromFloodFill(layer.Pixels, cx, cy, layer.OffsetX, layer.OffsetY, Tolerance, Operation);
+        ctx.CommitSelectionMutation(before);
     }
 }

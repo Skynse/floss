@@ -28,6 +28,7 @@ public partial class MainWindow
             ResetView();
         else
             _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual();
+        UpdateSelectionActionBar();
     }
 
     private void Workspace_OnPointerWheelChanged(object? sender, PointerWheelEventArgs e)
@@ -172,6 +173,7 @@ public partial class MainWindow
                 _rulerOverlay?.InvalidateVisual();
                 _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual();
                 ClampCanvasPan();
+                UpdateSelectionActionBar();
                 break;
             case GestureMode.Zoom:
                 var axisDelta = sc.GestureZoomAxis == GestureAxis.Horizontal ? d.X : -d.Y;
@@ -300,6 +302,7 @@ public partial class MainWindow
         ClampCanvasPan();
         _zoomDisplay.Text = $"{Math.Round(_zoom * 100)}%";
         UpdateStatus();
+        UpdateSelectionActionBar();
     }
 
     private void SetRotation(double degrees)
@@ -328,6 +331,7 @@ public partial class MainWindow
         ClampCanvasPan();
         _rotDisplay.Text = $"{Math.Round(_rotation)}°";
         UpdateStatus();
+        UpdateSelectionActionBar();
     }
 
     private void ResetView()
@@ -362,6 +366,40 @@ public partial class MainWindow
         _zoomDisplay.Text = $"{Math.Round(_zoom * 100)}%";
         _rotDisplay.Text = "0°";
         UpdateStatus();
+        UpdateSelectionActionBar();
+    }
+
+    private void UpdateSelectionActionBar()
+    {
+        if (_selectionActionBar == null || _workspaceViewport == null || _canvas == null)
+            return;
+
+        var visible = _canvasFrame.IsVisible && _canvas.HasSelection && !_canvas.IsTransformActive;
+        _selectionActionBar.IsVisible = visible;
+        if (!visible) return;
+
+        var x = Math.Max(12, (_workspaceViewport.Bounds.Width - 180) * 0.5);
+        var y = 12.0;
+        var bounds = _canvas.Selection.GetMaskBounds();
+        if (bounds is { } b)
+        {
+            var anchor = _canvas.TranslatePoint(
+                new Point(b.Left + b.Width * 0.5, b.Top),
+                _workspaceViewport);
+            if (anchor.HasValue)
+            {
+                var barW = Math.Max(180, _selectionActionBar.Bounds.Width);
+                var barH = Math.Max(34, _selectionActionBar.Bounds.Height);
+                x = anchor.Value.X - barW * 0.5;
+                y = anchor.Value.Y - barH - 12;
+            }
+        }
+
+        var maxX = Math.Max(12, _workspaceViewport.Bounds.Width - Math.Max(180, _selectionActionBar.Bounds.Width) - 12);
+        var maxY = Math.Max(12, _workspaceViewport.Bounds.Height - Math.Max(34, _selectionActionBar.Bounds.Height) - 12);
+        x = Math.Clamp(x, 12, maxX);
+        y = Math.Clamp(y, 12, maxY);
+        _selectionActionBar.Margin = new Thickness(Math.Round(x), Math.Round(y), 0, 0);
     }
 
     private void ToggleCanvasOnly()

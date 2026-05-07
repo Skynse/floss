@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Avalonia.Media;
 using Floss.App.Document;
 using SkiaSharp;
@@ -12,6 +13,14 @@ public enum SelectOp { Replace, Add, Subtract }
 // Stored in ToolContext and inspected by brush, fill, gradient, etc.
 public sealed class SelectionMask
 {
+    public sealed record Snapshot(
+        int Width,
+        int Height,
+        byte[]? Mask,
+        string GeometryType,
+        SKRectI GeometryRect,
+        SKPoint[] GeometryPolygon);
+
     private byte[]? _mask;       // null = nothing restricted (all pixels writable)
     private int _docW, _docH;
 
@@ -24,6 +33,28 @@ public sealed class SelectionMask
     private enum SelectionGeometry { None, Rect, Polygon, Mask }
 
     public bool HasSelection => _mask != null;
+
+    public Snapshot CaptureSnapshot()
+        => new(
+            _docW,
+            _docH,
+            _mask?.ToArray(),
+            _geoType.ToString(),
+            _geoRect,
+            _geoPoly.ToArray());
+
+    public void RestoreSnapshot(Snapshot snapshot)
+    {
+        _docW = snapshot.Width;
+        _docH = snapshot.Height;
+        _mask = snapshot.Mask?.ToArray();
+        _geoRect = snapshot.GeometryRect;
+        _geoPoly = snapshot.GeometryPolygon.ToList();
+        _geoType = Enum.TryParse<SelectionGeometry>(snapshot.GeometryType, out var type)
+            ? type
+            : SelectionGeometry.None;
+        _cachedMaskGeo = null;
+    }
 
     public void Resize(int w, int h)
     {
@@ -65,16 +96,23 @@ public sealed class SelectionMask
 
     public void Invert()
     {
+        var next = new byte[_docW * _docH];
         if (_mask == null)
         {
-            _mask = new byte[_docW * _docH]; // all zeros = nothing selected
+            Array.Fill(next, (byte)255);
         }
         else
         {
             for (int i = 0; i < _mask.Length; i++)
-                _mask[i] = _mask[i] > 0 ? (byte)0 : (byte)255;
+                next[i] = _mask[i] > 0 ? (byte)0 : (byte)255;
         }
-        _geoType = SelectionGeometry.None;
+
+        CommitMask(next);
+        if (_mask != null)
+        {
+            _geoType = SelectionGeometry.Mask;
+            _geoPoly.Clear();
+        }
         _cachedMaskGeo = null;
     }
 

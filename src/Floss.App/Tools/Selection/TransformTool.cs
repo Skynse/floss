@@ -21,6 +21,13 @@ internal enum OverlayAction
     Cancel
 }
 
+public enum TransformCompletionKind
+{
+    Commit,
+    Cancel,
+    Delete
+}
+
 internal enum TransformDragPart
 {
     None,
@@ -42,7 +49,7 @@ public sealed class TransformTool : ITool
     private ITool? _previousTool;
 
     // Called after commit/cancel/delete so the canvas can restore the previous tool.
-    public Action? OnCompleted { get; set; }
+    public Action<TransformCompletionKind>? OnCompleted { get; set; }
 
     public bool HasPendingOperation => _operation != null;
 
@@ -80,7 +87,7 @@ public sealed class TransformTool : ITool
         _operation?.Cancel();
         _operation = null;
         ctx.InvalidateRender();
-        var cb = OnCompleted; OnCompleted = null; cb?.Invoke();
+        var cb = OnCompleted; OnCompleted = null; cb?.Invoke(TransformCompletionKind.Cancel);
     }
 
     public void Commit(ToolContext ctx)
@@ -88,7 +95,7 @@ public sealed class TransformTool : ITool
         _operation?.CommitCurrent();
         _operation = null;
         ctx.InvalidateRender();
-        var cb = OnCompleted; OnCompleted = null; cb?.Invoke();
+        var cb = OnCompleted; OnCompleted = null; cb?.Invoke(TransformCompletionKind.Commit);
     }
 
     public void Delete(ToolContext ctx)
@@ -96,7 +103,7 @@ public sealed class TransformTool : ITool
         _operation?.CommitDelete();
         _operation = null;
         ctx.InvalidateRender();
-        var cb = OnCompleted; OnCompleted = null; cb?.Invoke();
+        var cb = OnCompleted; OnCompleted = null; cb?.Invoke(TransformCompletionKind.Delete);
     }
 
     public StandardCursorType? CursorFor(Point canvasPos, double zoom) => _operation?.CursorFor(canvasPos, zoom);
@@ -398,11 +405,13 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
     {
         // Pixels were already erased from layers during TryCreate — just push the tile
         // mutation so undo can restore them.
+        var mutations = new List<LayerTileMutation>(_layerData.Count);
         foreach (var data in _layerData)
         {
             var dirty = new PixelRegion(data.SrcX, data.SrcY, data.SrcW, data.SrcH);
-            _context.CommitMutation(data.Index, data.BeforeTiles, dirty);
+            mutations.Add(new LayerTileMutation(data.Index, data.BeforeTiles, dirty));
         }
+        _context.Document.CommitLayerTileMutations(mutations);
         _overlayBitmap?.Dispose();
         _overlayBitmap = null;
     }
@@ -414,6 +423,7 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         var dest = RotatedBounds(_rect, _angle);
         if (dest.IsEmpty) return;
 
+        var mutations = new List<LayerTileMutation>(_layerData.Count);
         foreach (var data in _layerData)
         {
             var layer = _context.Document.Layers[data.Index];
@@ -436,8 +446,9 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
 
             layer.MarkThumbnailDirty();
             var dirty = new PixelRegion(data.SrcX, data.SrcY, data.SrcW, data.SrcH).Union(dest);
-            _context.CommitMutation(data.Index, allBefore, dirty);
+            mutations.Add(new LayerTileMutation(data.Index, allBefore, dirty));
         }
+        _context.Document.CommitLayerTileMutations(mutations);
 
         _context.Selection.SetFromRect(dest.X, dest.Y, dest.Width, dest.Height);
         _overlayBitmap?.Dispose();

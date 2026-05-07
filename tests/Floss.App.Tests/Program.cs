@@ -69,6 +69,8 @@ internal static class Program
         ("DrawingDocument prevents painting locked and group layers", DrawingDocumentTests.CapabilityFlags_RespectLayerState),
         ("DrawingDocument property changes undo and redo", DrawingDocumentTests.LayerPropertyMutations_UndoRedo),
         ("DrawingDocument reference flag participates in undo and duplicate", DrawingDocumentTests.ReferenceLayerFlag_UndoRedoAndDuplicate),
+        ("DrawingDocument selection changes undo and redo", DrawingDocumentTests.SelectionMutations_UndoRedo),
+        ("DrawingDocument selection inversion keeps renderable mask geometry", DrawingDocumentTests.SelectionInvert_KeepsRenderableMaskGeometry),
         ("DrawingDocument clear active layer records tile history", DrawingDocumentTests.ClearActiveLayer_UndoRedoRestoresPixels),
         ("DrawingDocument move layer validates invalid targets", DrawingDocumentTests.MoveLayer_ValidatesTargetsAndMoves),
         ("DrawingDocument grouping keeps children and can undo", DrawingDocumentTests.GroupSelectedLayers_CreatesGroupAndUndoRestores),
@@ -1055,6 +1057,50 @@ internal static class DrawingDocumentTests
 
         document.DuplicateActiveLayer();
         AssertEx.True(document.ActiveLayer.IsReference);
+    }
+
+    public static void SelectionMutations_UndoRedo()
+    {
+        var document = new DrawingDocument(8, 8);
+        var changed = 0;
+        document.SelectionChanged += (_, _) => changed++;
+
+        var before = document.Selection.CaptureSnapshot();
+        document.Selection.SetFromRect(1, 1, 3, 3);
+        document.CommitSelectionMutation(before);
+
+        AssertEx.True(document.Selection.HasSelection);
+        AssertEx.True(document.Selection.IsSelected(2, 2));
+        AssertEx.False(document.Selection.IsSelected(5, 5));
+        AssertEx.True(document.CanUndo);
+
+        document.Undo();
+        AssertEx.False(document.Selection.HasSelection);
+
+        document.Redo();
+        AssertEx.True(document.Selection.HasSelection);
+        AssertEx.True(document.Selection.IsSelected(2, 2));
+        AssertEx.True(changed >= 3);
+    }
+
+    public static void SelectionInvert_KeepsRenderableMaskGeometry()
+    {
+        var document = new DrawingDocument(8, 8);
+        document.Selection.SetFromRect(2, 2, 2, 2);
+        document.Selection.Invert();
+
+        var snapshot = document.Selection.CaptureSnapshot();
+        AssertEx.True(document.Selection.HasSelection);
+        AssertEx.Equal("Mask", snapshot.GeometryType);
+        AssertEx.False(document.Selection.IsSelected(2, 2));
+        AssertEx.True(document.Selection.IsSelected(0, 0));
+        AssertEx.Equal(new SKRectI(0, 0, 8, 8), document.Selection.GetMaskBounds());
+
+        document.Selection.Clear();
+        document.Selection.Invert();
+        AssertEx.True(document.Selection.HasSelection);
+        AssertEx.Equal("Mask", document.Selection.CaptureSnapshot().GeometryType);
+        AssertEx.Equal(new SKRectI(0, 0, 8, 8), document.Selection.GetMaskBounds());
     }
 
     public static void ClearActiveLayer_UndoRedoRestoresPixels()

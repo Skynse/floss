@@ -76,9 +76,10 @@ public sealed class DrawingCanvas : Control
                 ColorSampled?.Invoke(this, c);
                 InvalidateVisual();
             },
+            SelectionChanged = NotifySelectionChanged,
+            CommitSelectionMutation = _document.CommitSelectionMutation,
             SampleDocumentColor = SampleDocumentColor
         };
-        _ctx.Selection.Resize(_document.Width, _document.Height);
 
         _brushTool = new CompositeTool(new BrushStrokeInputProcess(), new DirectDrawOutput(BrushEngine, _document));
         _eraserTool = new CompositeTool(new BrushStrokeInputProcess(), new DirectDrawOutput(BrushEngine, _document));
@@ -92,9 +93,9 @@ public sealed class DrawingCanvas : Control
             StatsChanged?.Invoke(this, EventArgs.Empty);
         };
         _document.HistoryChanged += (_, _) => HistoryChanged?.Invoke(this, EventArgs.Empty);
+        _document.SelectionChanged += (_, _) => NotifySelectionChanged();
         _document.LayersChanged += (_, _) =>
         {
-            _ctx.Selection.Resize(_document.Width, _document.Height);
             _compositor.Invalidate(null);
             LayersChanged?.Invoke(this, EventArgs.Empty);
         };
@@ -109,6 +110,7 @@ public sealed class DrawingCanvas : Control
     public event EventHandler<LayerMetadataChangedEventArgs>? LayerMetadataChanged;
     public event EventHandler<Color>? ColorSampled;
     public event EventHandler? DirtyStateChanged;
+    public event EventHandler? SelectionChanged;
     public event Action<BrushPreset>? BrushSettingsRestored;
 
     public int ActiveSampleCount => _toolController.ActiveTool.HasPendingOperation ? 1 : 0;
@@ -239,18 +241,19 @@ public sealed class DrawingCanvas : Control
         if (_toolController.ActiveTool is TransformTool)
         {
             _transformTool.Cancel(_ctx);
-            EndSelectionTransform();
         }
         else if (!_toolController.Cancel() && _ctx.Selection.HasSelection)
+        {
+            var before = _ctx.Selection.CaptureSnapshot();
             _ctx.Selection.Clear();
+            _document.CommitSelectionMutation(before);
+        }
         InvalidateVisual();
     }
 
     public void CommitActiveTool()
     {
         _toolController.ActiveTool.Commit(_ctx);
-        if (_toolController.ActiveTool is TransformTool)
-            EndSelectionTransform();
         InvalidateVisual();
     }
 
@@ -261,7 +264,10 @@ public sealed class DrawingCanvas : Control
         _transformTool.SetPreviousTool(previousTool);
         _transformTool.OnCompleted = EndSelectionTransform;
         if (_transformTool.BeginTransform(_ctx, layerIndices))
+        {
+            NotifySelectionChanged();
             return true;
+        }
 
         _transformTool.OnCompleted = null;
         _transformTool.SetPreviousTool(null);
@@ -269,20 +275,21 @@ public sealed class DrawingCanvas : Control
         return false;
     }
 
-    public void EndSelectionTransform()
+    public void EndSelectionTransform(TransformCompletionKind completion)
     {
         var previous = _transformTool.GetPreviousTool();
         _transformTool.SetPreviousTool(null);
         _transformTool.OnCompleted = null;
-        _ctx.Selection.Clear();
+        if (completion != TransformCompletionKind.Cancel)
+            _ctx.Selection.Clear();
         if (previous != null)
             SetActiveTool(previous);
+        _document.NotifySelectionChanged();
     }
 
     public void DeleteSelectionTransform()
     {
         _transformTool.Delete(_ctx);
-        EndSelectionTransform();
         InvalidateVisual();
     }
 
@@ -314,25 +321,30 @@ public sealed class DrawingCanvas : Control
     public void ResizeCanvas(int newW, int newH, int offsetX, int offsetY)
     {
         _document.ResizeCanvas(newW, newH, offsetX, offsetY);
-        _ctx.Selection.Resize(newW, newH);
         InvalidateVisual();
     }
 
     public void SelectAll()
     {
+        var before = _ctx.Selection.CaptureSnapshot();
         _ctx.Selection.SetFromRect(0, 0, _document.Width, _document.Height);
+        _document.CommitSelectionMutation(before);
         InvalidateVisual();
     }
 
     public void Deselect()
     {
+        var before = _ctx.Selection.CaptureSnapshot();
         _ctx.Selection.Clear();
+        _document.CommitSelectionMutation(before);
         InvalidateVisual();
     }
 
     public void InvertSelection()
     {
+        var before = _ctx.Selection.CaptureSnapshot();
         _ctx.Selection.Invert();
+        _document.CommitSelectionMutation(before);
         InvalidateVisual();
     }
 
@@ -363,6 +375,47 @@ public sealed class DrawingCanvas : Control
             }
         }
 
+        layer.MarkThumbnailDirty();
+        _ctx.CommitMutation(_ctx.ActiveLayerIndex, beforeTiles, layerBounds.Translate(layer.OffsetX, layer.OffsetY));
+        InvalidateVisual();
+    }
+
+    public void FillSelection()
+    {
+        if (!_ctx.Selection.HasSelection) return;
+        var layer = _ctx.ActiveLayer;
+        if (layer == null || layer.IsGroup || layer.IsLocked || !layer.IsVisible) return;
+
+        var bounds = _ctx.Selection.GetMaskBounds();
+        if (bounds == null) return;
+        var b = bounds.Value;
+
+        var layerBounds = new PixelRegion(
+            b.Left - layer.OffsetX, b.Top - layer.OffsetY, b.Width, b.Height);
+        if (layerBounds.IsEmpty) return;
+
+        var beforeTiles = layer.Pixels.CaptureTiles(layerBounds);
+        var c = _paintColor;
+        var changed = false;
+
+        for (int docY = b.Top; docY < b.Bottom; docY++)
+        {
+            int layY = docY - layer.OffsetY;
+            for (int docX = b.Left; docX < b.Right; docX++)
+            {
+                if (!_ctx.Selection.IsSelected(docX, docY)) continue;
+                int layX = docX - layer.OffsetX;
+                if (layer.IsAlphaLocked)
+                {
+                    layer.Pixels.GetPixel(layX, layY, out _, out _, out _, out var a);
+                    if (a == 0) continue;
+                }
+                layer.Pixels.SetPixel(layX, layY, c.B, c.G, c.R, c.A);
+                changed = true;
+            }
+        }
+
+        if (!changed) return;
         layer.MarkThumbnailDirty();
         _ctx.CommitMutation(_ctx.ActiveLayerIndex, beforeTiles, layerBounds.Translate(layer.OffsetX, layer.OffsetY));
         InvalidateVisual();
@@ -465,6 +518,7 @@ public sealed class DrawingCanvas : Control
 
         doc.SwapDimensions();
         _ctx.Selection.Resize(doc.Width, doc.Height);
+        _document.NotifySelectionChanged();
         doc.NotifyChanged();
         InvalidateVisual();
     }
@@ -514,6 +568,7 @@ public sealed class DrawingCanvas : Control
 
         doc.SwapDimensions();
         _ctx.Selection.Resize(doc.Width, doc.Height);
+        _document.NotifySelectionChanged();
         doc.NotifyChanged();
         InvalidateVisual();
     }
@@ -574,6 +629,59 @@ public sealed class DrawingCanvas : Control
         _clipboardH = _document.Height;
     }
 
+    public void CopySelectionAndPaste()
+    {
+        if (!CopySelectionToClipboard()) return;
+        PasteFromClipboard();
+    }
+
+    public void CutSelectionAndPaste()
+    {
+        var layer = _ctx.ActiveLayer;
+        if (layer == null || layer.IsGroup || layer.IsLocked || !layer.IsVisible) return;
+        if (!CopySelectionToClipboard()) return;
+        ClearSelectionContent();
+        PasteFromClipboard();
+    }
+
+    private bool CopySelectionToClipboard()
+    {
+        if (!_ctx.Selection.HasSelection) return false;
+        var layer = _ctx.ActiveLayer;
+        if (layer == null || layer.IsGroup || !layer.IsVisible) return false;
+
+        var bounds = _ctx.Selection.GetMaskBounds();
+        if (bounds == null) return false;
+
+        var pixels = new byte[_document.Width * _document.Height * 4];
+        var b = bounds.Value;
+        var copied = false;
+
+        for (int docY = b.Top; docY < b.Bottom; docY++)
+        {
+            int layY = docY - layer.OffsetY;
+            for (int docX = b.Left; docX < b.Right; docX++)
+            {
+                if (!_ctx.Selection.IsSelected(docX, docY)) continue;
+                int layX = docX - layer.OffsetX;
+                layer.Pixels.GetPixel(layX, layY, out var pb, out var pg, out var pr, out var pa);
+                if (pa == 0) continue;
+                var dst = (docY * _document.Width + docX) * 4;
+                pixels[dst] = pb;
+                pixels[dst + 1] = pg;
+                pixels[dst + 2] = pr;
+                pixels[dst + 3] = pa;
+                copied = true;
+            }
+        }
+
+        if (!copied) return false;
+        _clipboardPixels = pixels;
+        _clipboardW = _document.Width;
+        _clipboardH = _document.Height;
+        return true;
+    }
+
     public bool CanPaste => _clipboardPixels != null && _clipboardW > 0 && _clipboardH > 0;
 
     public void PasteFromClipboard()
@@ -592,6 +700,12 @@ public sealed class DrawingCanvas : Control
     }
 
     public bool IsTransformActive => _toolController.ActiveTool is TransformTool tt && tt.HasPendingOperation;
+
+    private void NotifySelectionChanged()
+    {
+        SelectionChanged?.Invoke(this, EventArgs.Empty);
+        InvalidateVisual();
+    }
 
     public void Clear(bool pushHistory = true)
     {

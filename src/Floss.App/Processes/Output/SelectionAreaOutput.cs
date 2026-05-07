@@ -16,12 +16,14 @@ public sealed class SelectionAreaOutput : IOutputProcess
 
     public void Execute(ToolContext ctx, IProcessedInput input)
     {
+        var before = ctx.Selection.CaptureSnapshot();
         switch (input)
         {
             case PolygonInput poly when poly.SmoothedPoints.Count >= 3:
                 {
                     var points = poly.SmoothedPoints.Select(p => new SKPoint((float)p.X, (float)p.Y)).ToList();
                     ctx.Selection.SetFromPolygon(points, Operation);
+                    ctx.CommitSelectionMutation(before);
                     break;
                 }
             case RectInput rect:
@@ -31,6 +33,7 @@ public sealed class SelectionAreaOutput : IOutputProcess
                     var w = (int)Math.Abs(rect.End.X - rect.Start.X);
                     var h = (int)Math.Abs(rect.End.Y - rect.Start.Y);
                     ctx.Selection.SetFromRect(x, y, w, h, Operation);
+                    ctx.CommitSelectionMutation(before);
                     break;
                 }
         }
