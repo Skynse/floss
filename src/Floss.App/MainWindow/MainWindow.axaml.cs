@@ -979,6 +979,12 @@ public partial class MainWindow : Window
             else DetachDocker(id);
         };
 
+        var dockLeft = new MenuItem { Header = "Dock to _Left Column" };
+        dockLeft.Click += (_, _) => DockDockerToColumn(id, 0);
+
+        var dockRight = new MenuItem { Header = "Dock to _Right Column" };
+        dockRight.Click += (_, _) => DockDockerToColumn(id, 1);
+
         var moveUp = new MenuItem { Header = "Move _Up", IsEnabled = !IsDockerFloating(id) };
         moveUp.Click += (_, _) => MoveDocker(id, -1);
 
@@ -997,7 +1003,7 @@ public partial class MainWindow : Window
 
         return new ContextMenu
         {
-            ItemsSource = new object[] { floatItem, new Separator(), moveUp, moveDown, moveColumn, new Separator(), reset }
+            ItemsSource = new object[] { floatItem, dockLeft, dockRight, new Separator(), moveUp, moveDown, moveColumn, new Separator(), reset }
         };
     }
 
@@ -1037,6 +1043,28 @@ public partial class MainWindow : Window
         var targetColumn = App.Config.WorkspaceLayout.RightColumns[columnIndex == 0 ? 1 : 0];
         column.Panels.RemoveAt(panelIndex);
         targetColumn.Panels.Add(id);
+        RebuildDockers();
+        App.Config.Save();
+    }
+
+    private void DockDockerToColumn(string id, int columnIndex)
+    {
+        SaveWorkspaceLayoutFromUi();
+        var layout = NormalizedWorkspaceLayout();
+        if ((uint)columnIndex >= (uint)layout.RightColumns.Count) return;
+
+        foreach (var column in layout.RightColumns)
+            column.Panels.Remove(id);
+        layout.RightColumns[columnIndex].Panels.Add(id);
+
+        if (layout.FloatingPanels.TryGetValue(id, out var floating))
+            floating.IsFloating = false;
+        if (_floatingDockers.Remove(id, out var win))
+        {
+            win.Closing -= FloatingDockerClosing;
+            win.Close();
+        }
+
         RebuildDockers();
         App.Config.Save();
     }
@@ -1307,6 +1335,24 @@ public partial class MainWindow : Window
             RefreshWorkspaceLoadMenu();
         };
 
+        var deletePreset = new MenuItem { Header = "_Delete Preset" };
+        deletePreset.SubmenuOpened += (_, _) =>
+        {
+            deletePreset.ItemsSource = App.Config.WorkspacePresets.Count == 0
+                ? new object[] { new MenuItem { Header = "(No presets)", IsEnabled = false } }
+                : App.Config.WorkspacePresets.Keys.OrderBy(x => x).Select(name =>
+                {
+                    var item = new MenuItem { Header = name };
+                    item.Click += (_, _) =>
+                    {
+                        App.Config.WorkspacePresets.Remove(name);
+                        App.Config.Save();
+                        RefreshWorkspaceLoadMenu();
+                    };
+                    return item;
+                }).Cast<object>().ToArray();
+        };
+
         var reset = new MenuItem { Header = "_Reset Layout" };
         reset.Click += (_, _) =>
         {
@@ -1317,7 +1363,7 @@ public partial class MainWindow : Window
         return new MenuItem
         {
             Header = "_Workspace",
-            ItemsSource = new object[] { savePreset, _workspaceLoadMenu, new Separator(), reset }
+            ItemsSource = new object[] { savePreset, _workspaceLoadMenu, deletePreset, new Separator(), reset }
         };
     }
 
