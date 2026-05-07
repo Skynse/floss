@@ -538,6 +538,22 @@ public partial class MainWindow
         else if (sc.LayerMoveUp.Matches(key, mods)) { _canvas.MoveActiveLayer(1); e.Handled = true; }
         else if (sc.LayerMoveDown.Matches(key, mods)) { _canvas.MoveActiveLayer(-1); e.Handled = true; }
         else if (sc.LayerMerge.Matches(key, mods)) { _canvas.MergeDown(_selectedLayerIndices.Count > 1 ? _selectedLayerIndices.OrderBy(x => x).ToList() : null); e.Handled = true; }
+        else if (sc.LayerGroup.Matches(key, mods))
+        {
+            if (_selectedLayerIndices.Count > 1)
+            {
+                var sorted = _selectedLayerIndices.OrderBy(x => x).ToList();
+                _canvas.GroupSelectedLayers(sorted);
+                _selectedLayerIndices.Clear();
+                _selectedLayerIndices.Add(_canvas.ActiveLayerIndex);
+                BuildLayerList();
+            }
+            else
+            {
+                _canvas.AddGroupLayer();
+            }
+            e.Handled = true;
+        }
         else if (sc.LayerToggleColor.Matches(key, mods)) { ToggleActiveLayerColor(); e.Handled = true; }
         else if (sc.ZoomReset.Matches(key, mods)) { ResetView(); e.Handled = true; }
         else if (sc.ZoomFit.Matches(key, mods)) { SyncCanvasFrameToDocument(fitToViewport: true); e.Handled = true; }
@@ -628,6 +644,12 @@ public partial class MainWindow
             _opacitySlider.Value = Math.Min(_opacitySlider.Maximum, _opacitySlider.Value + sc.BrushOpacityStep);
             e.Handled = true;
         }
+        else if (sc.FilterBlur.Matches(key, mods)) { _ = ApplyBlurFilter(); e.Handled = true; }
+        else if (sc.FilterSharpen.Matches(key, mods)) { _ = ApplySharpenFilter(); e.Handled = true; }
+        else if (sc.FilterNoise.Matches(key, mods)) { _ = ApplyNoiseFilter(); e.Handled = true; }
+        else if (sc.FilterColorCurves.Matches(key, mods)) { _ = ApplyColorCurvesFilter(); e.Handled = true; }
+        else if (sc.FilterChromaticAberration.Matches(key, mods)) { _ = ApplyChromaticAberrationFilter(); e.Handled = true; }
+        else if (sc.FilterBaseColorMask.Matches(key, mods)) { _ = RunBaseColorMaskGenerator(); e.Handled = true; }
 
         if (!e.Handled)
         {

@@ -479,9 +479,10 @@ public partial class MainWindow
 
     private List<MenuItem> BuildLayerContextMenuItems(int index, DrawingLayer layer)
     {
-        MenuItem Item(string header, Action action)
+        MenuItem Item(string header, Action action, KeyGesture? gesture = null)
         {
             var item = new MenuItem { Header = header };
+            if (gesture != null) item.InputGesture = gesture;
             item.Click += (_, _) =>
             {
                 if (index >= 0 && index < _canvas.Layers.Count)
@@ -499,12 +500,12 @@ public partial class MainWindow
 
         var items = new List<MenuItem>
         {
-            Item("_New Layer Above", () => _canvas.AddLayer()),
-            Item("New _Folder Above", () => _canvas.AddGroupLayer()),
-            Item("_Duplicate", () => _canvas.DuplicateLayer()),
+            Item("_New Layer Above", () => _canvas.AddLayer(), new KeyGesture(Key.N, KeyModifiers.Control | KeyModifiers.Shift)),
+            Item("New _Folder Above", () => _canvas.AddGroupLayer(), new KeyGesture(Key.G, KeyModifiers.Control)),
+            Item("_Duplicate", () => _canvas.DuplicateLayer(), new KeyGesture(Key.J, KeyModifiers.Control)),
             Item("_Copy", () => _canvas.CopyLayer(index)),
             pasteItem,
-            Item("_Delete", () => _canvas.DeleteLayer()),
+            Item("_Delete", () => _canvas.DeleteLayer(), new KeyGesture(Key.Delete, KeyModifiers.Control)),
             new() { Header = "-" },
             Item(layer.IsVisible ? "Hide Layer" : "Show Layer", () => _canvas.ToggleLayerVisibility(index)),
             Item(layer.IsLocked ? "Unlock Layer" : "Lock Layer", () => _canvas.ToggleLayerLock(index)),
@@ -522,7 +523,7 @@ public partial class MainWindow
                 _selectedLayerIndices.Clear();
                 _selectedLayerIndices.Add(_canvas.ActiveLayerIndex);
                 BuildLayerList();
-            }));
+            }, new KeyGesture(Key.G, KeyModifiers.Control)));
         }
 
         if (layer.IsGroup)
@@ -540,7 +541,8 @@ public partial class MainWindow
                         _canvas.MergeSelectedLayers(_selectedLayerIndices.OrderBy(x => x).ToList());
                     else
                         _canvas.MergeDown();
-                }));
+                },
+                new KeyGesture(Key.E, KeyModifiers.Control)));
         }
 
         var visibleCount = VisibleLayerIndexes().Count();
@@ -573,12 +575,14 @@ public partial class MainWindow
         items.Add(new MenuItem
         {
             Header = "Filters",
-            ItemsSource = new[]
+            ItemsSource = new object[]
             {
                 AsyncItem("_Gaussian Blur...", ApplyBlurFilter),
                 AsyncItem("_Sharpen...",       ApplySharpenFilter),
                 AsyncItem("_Noise...",         ApplyNoiseFilter),
+                new Separator(),
                 AsyncItem("_Color Curves...",  ApplyColorCurvesFilter),
+                AsyncItem("Chromatic _Aberration...", ApplyChromaticAberrationFilter),
             }
         });
 

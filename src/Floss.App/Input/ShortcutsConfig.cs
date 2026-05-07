@@ -127,7 +127,17 @@ public sealed class ShortcutsConfig
     public KeyBinding LayerMoveUp { get; set; } = new(Key.Up, KeyModifiers.Control);
     public KeyBinding LayerMoveDown { get; set; } = new(Key.Down, KeyModifiers.Control);
     public KeyBinding LayerMerge { get; set; } = new(Key.E, KeyModifiers.Control);
+    public KeyBinding LayerGroup { get; set; } = new(Key.G, KeyModifiers.Control);
     public KeyBinding LayerToggleColor { get; set; } = new(Key.B, KeyModifiers.Control);
+
+    // ── Filters ───────────────────────────────────────────────────────────────
+
+    public KeyBinding FilterBlur { get; set; } = new(Key.None);
+    public KeyBinding FilterSharpen { get; set; } = new(Key.None);
+    public KeyBinding FilterNoise { get; set; } = new(Key.None);
+    public KeyBinding FilterColorCurves { get; set; } = new(Key.None);
+    public KeyBinding FilterChromaticAberration { get; set; } = new(Key.None);
+    public KeyBinding FilterBaseColorMask { get; set; } = new(Key.None);
 
     // ── Pen gestures — hold key + drag pen ───────────────────────────────────
     // Pan  : held key + any pen drag → translate canvas

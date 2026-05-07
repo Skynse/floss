@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -9,6 +10,8 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Floss.App.Document;
 using Floss.App.Filters;
+using Floss.App.ImageFiles;
+using SkiaSharp;
 
 namespace Floss.App;
 
@@ -123,6 +126,201 @@ public partial class MainWindow
         var amt = (float)slider.Value;
         var mono = monoCheck.IsChecked == true;
         _canvas.ApplyFilter(EffectiveLayerSelection(), l => FilterEngine.ApplyNoise(l, amt, mono, sel));
+        BuildLayerList();
+    }
+
+    internal async Task ApplyChromaticAberrationFilter()
+    {
+        var preview = new PreviewHandle();
+        var intensityLabel = FilterValueLabel("5.0");
+        var intensitySlider = new Slider { Minimum = 0, Maximum = 30, Value = 5, Width = 240, Margin = new Thickness(0, 4, 0, 0) };
+
+        var radialToggle = new RadioButton
+        {
+            Content = new TextBlock { Text = "Radial", Foreground = new SolidColorBrush(Color.Parse(TextSecondary)), FontSize = 11 },
+            IsChecked = true,
+            GroupName = "CAMode"
+        };
+        var lateralToggle = new RadioButton
+        {
+            Content = new TextBlock { Text = "Lateral", Foreground = new SolidColorBrush(Color.Parse(TextSecondary)), FontSize = 11 },
+            IsChecked = false,
+            GroupName = "CAMode",
+            Margin = new Thickness(12, 0, 0, 0)
+        };
+
+        var angleLabel = FilterValueLabel("0°");
+        var angleSlider = new Slider { Minimum = 0, Maximum = 360, Value = 0, Width = 240, Margin = new Thickness(0, 4, 0, 0), IsEnabled = false };
+
+        lateralToggle.IsCheckedChanged += (_, _) =>
+        {
+            angleSlider.IsEnabled = lateralToggle.IsChecked == true;
+            preview.Schedule();
+        };
+        radialToggle.IsCheckedChanged += (_, _) => preview.Schedule();
+
+        intensitySlider.PropertyChanged += (_, e) =>
+        {
+            if (e.Property.Name == nameof(Slider.Value))
+            {
+                intensityLabel.Text = $"{intensitySlider.Value:0.0}";
+                preview.Schedule();
+            }
+        };
+        angleSlider.PropertyChanged += (_, e) =>
+        {
+            if (e.Property.Name == nameof(Slider.Value))
+            {
+                angleLabel.Text = $"{(int)angleSlider.Value}°";
+                preview.Schedule();
+            }
+        };
+
+        var sel = _canvas.Selection;
+        Func<Action<DrawingLayer>> buildPreview = () =>
+        {
+            var i = (float)intensitySlider.Value;
+            var radial = radialToggle.IsChecked == true;
+            var a = (float)angleSlider.Value;
+            return l => FilterEngine.ApplyChromaticAbberation(l, i, radial, a, sel);
+        };
+
+        var panel = new StackPanel { Spacing = 4 };
+        panel.Children.Add(FilterRow(FilterLabel("Intensity"), intensitySlider, intensityLabel));
+        var modeRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 0) };
+        modeRow.Children.Add(radialToggle);
+        modeRow.Children.Add(lateralToggle);
+        panel.Children.Add(modeRow);
+        panel.Children.Add(FilterRow(FilterLabel("Angle"), angleSlider, angleLabel));
+
+        var ok = await ShowFilterDialog("Chromatic Aberration", panel, LayerSelectionLabel(), buildPreview, preview);
+        if (!ok) return;
+
+        var intensity = (float)intensitySlider.Value;
+        var isRadial = radialToggle.IsChecked == true;
+        var angle = (float)angleSlider.Value;
+        _canvas.ApplyFilter(EffectiveLayerSelection(), l => FilterEngine.ApplyChromaticAbberation(l, intensity, isRadial, angle, sel));
+        BuildLayerList();
+    }
+
+    internal async Task RunBaseColorMaskGenerator()
+    {
+        var slider = new Slider { Minimum = 2, Maximum = 20, Value = 5, Width = 240, Margin = new Thickness(0, 4, 0, 0) };
+        var valueLabel = FilterValueLabel("5");
+        slider.PropertyChanged += (_, e) =>
+        {
+            if (e.Property.Name == nameof(Slider.Value))
+                valueLabel.Text = $"{(int)slider.Value}";
+        };
+
+        var content = new StackPanel { Spacing = 4 };
+        content.Children.Add(new TextBlock
+        {
+            Text = "Min distance from lines",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary))
+        });
+        content.Children.Add(FilterRow(FilterLabel("Distance"), slider, valueLabel));
+        content.Children.Add(new TextBlock
+        {
+            Text = "Lower (3-5) = more small regions  |  Higher (10-15) = fewer larger regions",
+            FontSize = 10,
+            Foreground = new SolidColorBrush(Color.Parse("#7080a0")),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 4, 0, 0)
+        });
+
+        var tcs = new TaskCompletionSource<bool>();
+        var dialog = new Window
+        {
+            Title = "Base Color Masks from Sketch",
+            Content = new StackPanel
+            {
+                Margin = new Thickness(16),
+                Spacing = 8,
+                Children =
+                {
+                    content,
+                    new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+                        Spacing = 6,
+                        Children =
+                        {
+                            new Button
+                            {
+                                Content = "Cancel",
+                                Padding = new Thickness(14, 5), FontSize = 11,
+                                Background = new SolidColorBrush(Color.Parse("#1a1c22")),
+                                Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+                                BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+                                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3)
+                            },
+                            new Button
+                            {
+                                Content = "Generate",
+                                Padding = new Thickness(14, 5), FontSize = 11,
+                                Background = new SolidColorBrush(Color.Parse("#1e3a78")),
+                                Foreground = new SolidColorBrush(Color.Parse("#90baf0")),
+                                BorderBrush = new SolidColorBrush(Color.Parse("#2a4a98")),
+                                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3)
+                            }
+                        }
+                    }
+                }
+            },
+            SizeToContent = SizeToContent.WidthAndHeight,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            CanResize = false,
+            Background = new SolidColorBrush(Color.Parse(Bg1)),
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            MinWidth = 360
+        };
+
+        var buttons = ((StackPanel)((StackPanel)dialog.Content).Children[^1]);
+        var cancelBtn = (Button)buttons.Children[0];
+        var generateBtn = (Button)buttons.Children[1];
+
+        cancelBtn.Click += (_, _) => { tcs.TrySetResult(false); dialog.Close(); };
+        generateBtn.Click += (_, _) => { tcs.TrySetResult(true); dialog.Close(); };
+        dialog.Closed += (_, _) => tcs.TrySetResult(false);
+
+        await dialog.ShowDialog(this);
+        if (!await tcs.Task) return;
+
+        var minDist = (int)slider.Value;
+
+        // Flatten canvas
+        var bitmap = DocumentRasterizer.RenderFlattenedBitmap(_canvas.Document);
+        var w = bitmap.Width;
+        var h = bitmap.Height;
+        var raw = new byte[w * h * 4];
+        Marshal.Copy(bitmap.GetPixels(), raw, 0, raw.Length);
+        bitmap.Dispose();
+
+        // Run algorithm natively
+        var masks = BaseColorMaskEngine.GenerateMasks(raw, w, h, minDist);
+
+        if (masks.Count == 0)
+        {
+            await ShowMessage("No Masks Generated",
+                "No fill regions were found.\nTry a smaller min_distance value (3-5).");
+            return;
+        }
+
+        // Import mask below the sketch layer
+        var insertIdx = Math.Max(0, _canvas.ActiveLayerIndex);
+        for (var i = 0; i < masks.Count; i++)
+        {
+            var layer = new DrawingLayer("Base Color", w, h);
+            layer.Pixels.CopyFromBgra(masks[i], w, h);
+            layer.MarkThumbnailDirty();
+            _canvas.Document.InsertAndSelectLayer(layer, insertIdx);
+        }
+        // Re-select the sketch layer so it sits above the fill
+        _canvas.Document.SelectLayer(insertIdx + masks.Count);
+        _canvas.InvalidateVisual();
         BuildLayerList();
     }
 
@@ -413,5 +611,44 @@ public partial class MainWindow
         row.Children.Add(slider);
         row.Children.Add(value);
         return row;
+    }
+
+    private async Task ShowMessage(string title, string message)
+    {
+        var tcs = new TaskCompletionSource<bool>();
+        var dialog = new Window
+        {
+            Title = title,
+            Content = new StackPanel
+            {
+                Margin = new Thickness(16),
+                Spacing = 10,
+                Children =
+                {
+                    new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, MaxWidth = 400, FontSize = 11, Foreground = new SolidColorBrush(Color.Parse(TextSecondary)) },
+                    new Button
+                    {
+                        Content = "OK", Padding = new Thickness(20, 5), FontSize = 11,
+                        HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+                        Background = new SolidColorBrush(Color.Parse("#1e3a78")),
+                        Foreground = new SolidColorBrush(Color.Parse("#90baf0")),
+                        BorderBrush = new SolidColorBrush(Color.Parse("#2a4a98")),
+                        BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3)
+                    }
+                }
+            },
+            SizeToContent = SizeToContent.WidthAndHeight,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            CanResize = false,
+            Background = new SolidColorBrush(Color.Parse(Bg1)),
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            MinWidth = 250,
+            MaxWidth = 500
+        };
+        var btn = (Button)((StackPanel)dialog.Content).Children[1];
+        btn.Click += (_, _) => { tcs.TrySetResult(true); dialog.Close(); };
+        dialog.Closed += (_, _) => tcs.TrySetResult(true);
+        await dialog.ShowDialog(this);
+        await tcs.Task;
     }
 }

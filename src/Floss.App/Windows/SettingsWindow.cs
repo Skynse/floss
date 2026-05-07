@@ -45,6 +45,11 @@ public sealed class SettingsWindow : Window
     private bool _recordingGesture;
     private KeyModifiers _recordingPendingModifiers;
     private string? _recordingLabel;
+    private string _recordingOriginalText = string.Empty;
+
+    // Maps label → "refresh this row's display from current value".
+    // Allows targeted row updates without rebuilding the whole page (preserves scroll).
+    private readonly Dictionary<string, Action> _rowRefreshers = new();
 
     // All binding descriptors — rebuilt each time the keyboard page is shown.
     // Used for conflict detection when recording a new shortcut.
@@ -200,147 +205,113 @@ public sealed class SettingsWindow : Window
 
     // ── Keyboard page ─────────────────────────────────────────────────────────
 
+    // Single source of truth: add one entry here to get a row in the settings
+    // page AND conflict-detection coverage. Nothing else needs to change.
+    private sealed record BindingDesc(string Label, string Group, Func<KeyBinding> Get, Action<KeyBinding> Set, bool IsGesture = false);
+
+    private BindingDesc[] BuildBindingDescs()
+    {
+        var sc = _sc;
+        return
+        [
+            // File
+            new("New file",               "File",             () => sc.FileNew,                v => sc.FileNew = v),
+            new("Open file",              "File",             () => sc.FileOpen,               v => sc.FileOpen = v),
+            new("Save file",              "File",             () => sc.FileSave,               v => sc.FileSave = v),
+            new("Save file as",           "File",             () => sc.FileSaveAs,             v => sc.FileSaveAs = v),
+            // Edit
+            new("Undo",                   "Edit",             () => sc.Undo,                   v => sc.Undo = v),
+            new("Redo",                   "Edit",             () => sc.Redo,                   v => sc.Redo = v),
+            new("Redo (alt)",             "Edit",             () => sc.RedoAlt,                v => sc.RedoAlt = v),
+            new("Copy",                   "Edit",             () => sc.Copy,                   v => sc.Copy = v),
+            new("Paste",                  "Edit",             () => sc.Paste,                  v => sc.Paste = v),
+            new("Delete selection",       "Edit",             () => sc.DeleteSelection,        v => sc.DeleteSelection = v),
+            new("Transform selection",    "Edit",             () => sc.Transform,              v => sc.Transform = v),
+            // View — Zoom
+            new("Zoom in",                "View — Zoom",      () => sc.ZoomIn,                 v => sc.ZoomIn = v),
+            new("Zoom in (alt)",          "View — Zoom",      () => sc.ZoomInAlt,              v => sc.ZoomInAlt = v),
+            new("Zoom out",               "View — Zoom",      () => sc.ZoomOut,                v => sc.ZoomOut = v),
+            new("Reset view",             "View — Zoom",      () => sc.ZoomReset,              v => sc.ZoomReset = v),
+            new("Fit to view",            "View — Zoom",      () => sc.ZoomFit,                v => sc.ZoomFit = v),
+            // View — Rotation
+            new("Rotate left",            "View — Rotation",  () => sc.RotateLeft,             v => sc.RotateLeft = v),
+            new("Rotate right",           "View — Rotation",  () => sc.RotateRight,            v => sc.RotateRight = v),
+            new("Reset rotation",         "View — Rotation",  () => sc.RotateReset,            v => sc.RotateReset = v),
+            // View — Mirror
+            new("Mirror horizontal",      "View — Mirror",    () => sc.MirrorHorizontal,       v => sc.MirrorHorizontal = v),
+            new("Mirror vertical",        "View — Mirror",    () => sc.MirrorVertical,         v => sc.MirrorVertical = v),
+            new("Toggle canvas only",     "View — Mirror",    () => sc.ToggleCanvasOnly,       v => sc.ToggleCanvasOnly = v),
+            new("Toggle rulers",          "View — Mirror",    () => sc.ToggleRulers,           v => sc.ToggleRulers = v),
+            // Image
+            new("Flip canvas horizontal", "Image",            () => sc.FlipHorizontal,         v => sc.FlipHorizontal = v),
+            new("Flip canvas vertical",   "Image",            () => sc.FlipVertical,           v => sc.FlipVertical = v),
+            new("Rotate canvas 90° CW",   "Image",            () => sc.RotateCanvas90Cw,       v => sc.RotateCanvas90Cw = v),
+            new("Rotate canvas 90° CCW",  "Image",            () => sc.RotateCanvas90Ccw,      v => sc.RotateCanvas90Ccw = v),
+            new("Rotate canvas 180°",     "Image",            () => sc.RotateCanvas180,        v => sc.RotateCanvas180 = v),
+            // Selection
+            new("Select all",             "Selection",        () => sc.SelectAll,              v => sc.SelectAll = v),
+            new("Deselect",               "Selection",        () => sc.Deselect,               v => sc.Deselect = v),
+            new("Invert select",          "Selection",        () => sc.InvertSelect,           v => sc.InvertSelect = v),
+            // Brush — Size
+            new("Size decrease (small)",  "Brush — Size",     () => sc.BrushSizeDecrease,      v => sc.BrushSizeDecrease = v),
+            new("Size increase (small)",  "Brush — Size",     () => sc.BrushSizeIncrease,      v => sc.BrushSizeIncrease = v),
+            new("Size decrease (large)",  "Brush — Size",     () => sc.BrushSizeDecreaseLarge, v => sc.BrushSizeDecreaseLarge = v),
+            new("Size increase (large)",  "Brush — Size",     () => sc.BrushSizeIncreaseLarge, v => sc.BrushSizeIncreaseLarge = v),
+            // Brush — Opacity
+            new("Opacity decrease",       "Brush — Opacity",  () => sc.BrushOpacityDecrease,   v => sc.BrushOpacityDecrease = v),
+            new("Opacity increase",       "Brush — Opacity",  () => sc.BrushOpacityIncrease,   v => sc.BrushOpacityIncrease = v),
+            // Color
+            new("Cycle swatch",           "Color",            () => sc.ColorCycle,             v => sc.ColorCycle = v),
+            new("Default black",          "Color",            () => sc.ColorDefault,           v => sc.ColorDefault = v),
+            // Layers
+            new("New layer",              "Layers",           () => sc.LayerNew,               v => sc.LayerNew = v),
+            new("Duplicate layer",        "Layers",           () => sc.LayerDuplicate,         v => sc.LayerDuplicate = v),
+            new("Delete layer",           "Layers",           () => sc.LayerDelete,            v => sc.LayerDelete = v),
+            new("Group layers",           "Layers",           () => sc.LayerGroup,             v => sc.LayerGroup = v),
+            new("Merge / Flatten",        "Layers",           () => sc.LayerMerge,             v => sc.LayerMerge = v),
+            new("Move up",                "Layers",           () => sc.LayerMoveUp,            v => sc.LayerMoveUp = v),
+            new("Move down",              "Layers",           () => sc.LayerMoveDown,          v => sc.LayerMoveDown = v),
+            new("Toggle layer color",     "Layers",           () => sc.LayerToggleColor,       v => sc.LayerToggleColor = v),
+            // Filters
+            new("Gaussian Blur",          "Filters",          () => sc.FilterBlur,             v => sc.FilterBlur = v),
+            new("Sharpen",                "Filters",          () => sc.FilterSharpen,          v => sc.FilterSharpen = v),
+            new("Noise",                  "Filters",          () => sc.FilterNoise,            v => sc.FilterNoise = v),
+            new("Color Curves",           "Filters",          () => sc.FilterColorCurves,      v => sc.FilterColorCurves = v),
+            new("Chromatic Aberration",   "Filters",          () => sc.FilterChromaticAberration, v => sc.FilterChromaticAberration = v),
+            new("Base Color Masks",       "Filters",          () => sc.FilterBaseColorMask,    v => sc.FilterBaseColorMask = v),
+            // Misc
+            new("Open settings",          "Misc",             () => sc.OpenSettings,           v => sc.OpenSettings = v),
+            new("Open brush editor",      "Misc",             () => sc.OpenBrushEditor,        v => sc.OpenBrushEditor = v),
+            new("Alternate invocation",   "Misc",             () => sc.AlternateInvocation,    v => sc.AlternateInvocation = v),
+            // Pen Gestures
+            new("Pan canvas",             "Pen Gestures  (hold key + drag pen)", () => sc.GesturePan,       v => sc.GesturePan = v,       IsGesture: true),
+            new("Zoom  (drag ↑↓)",        "Pen Gestures  (hold key + drag pen)", () => sc.GestureZoom,      v => sc.GestureZoom = v,      IsGesture: true),
+            new("Rotate (drag ←→)",       "Pen Gestures  (hold key + drag pen)", () => sc.GestureRotate,    v => sc.GestureRotate = v,    IsGesture: true),
+            new("Brush size (←→)",        "Pen Gestures  (hold key + drag pen)", () => sc.GestureBrushSize, v => sc.GestureBrushSize = v, IsGesture: true),
+        ];
+    }
+
     private Control BuildKeyboardPage()
     {
+        _rowRefreshers.Clear();
+
         var content = new StackPanel { Spacing = 0, Margin = new Thickness(20, 16, 20, 20) };
 
         content.Children.Add(PageHeader("Keyboard & Gestures"));
         content.Children.Add(RecordingHint());
 
-        var sc = _sc;
+        var descs = BuildBindingDescs();
 
-        _bindingDescriptors =
-        [
-            ("New File",               () => sc.FileNew,                v => sc.FileNew = v),
-            ("Open file",               () => sc.FileOpen,               v => sc.FileOpen = v),
-            ("Save file",               () => sc.FileSave,               v => sc.FileSave = v),
-            ("Save File As",            () => sc.FileSaveAs,             v => sc.FileSaveAs = v),
-            ("Undo",                    () => sc.Undo,                   v => sc.Undo = v),
-            ("Redo",                    () => sc.Redo,                   v => sc.Redo = v),
-            ("Redo (alt)",              () => sc.RedoAlt,                v => sc.RedoAlt = v),
-            ("Copy",                    () => sc.Copy,                   v => sc.Copy = v),
-            ("Paste",                   () => sc.Paste,                  v => sc.Paste = v),
-            ("Delete selection",        () => sc.DeleteSelection,         v => sc.DeleteSelection = v),
-            ("Transform selection",     () => sc.Transform,               v => sc.Transform = v),
-            ("Flip canvas horizontal",  () => sc.FlipHorizontal,         v => sc.FlipHorizontal = v),
-            ("Flip canvas vertical",    () => sc.FlipVertical,           v => sc.FlipVertical = v),
-            ("Mirror horizontal",      () => sc.MirrorHorizontal,      v => sc.MirrorHorizontal = v),
-            ("Mirror vertical",        () => sc.MirrorVertical,        v => sc.MirrorVertical = v),
-            ("Zoom in",                 () => sc.ZoomIn,                 v => sc.ZoomIn = v),
-            ("Zoom in (alt)",           () => sc.ZoomInAlt,              v => sc.ZoomInAlt = v),
-            ("Zoom out",                () => sc.ZoomOut,                v => sc.ZoomOut = v),
-            ("Reset view",              () => sc.ZoomReset,              v => sc.ZoomReset = v),
-            ("Fit to view",             () => sc.ZoomFit,                v => sc.ZoomFit = v),
-            ("Rotate left",             () => sc.RotateLeft,             v => sc.RotateLeft = v),
-            ("Rotate right",            () => sc.RotateRight,            v => sc.RotateRight = v),
-            ("Reset rotation",          () => sc.RotateReset,            v => sc.RotateReset = v),
-            ("Rotate canvas 90° CW",    () => sc.RotateCanvas90Cw,       v => sc.RotateCanvas90Cw = v),
-            ("Rotate canvas 90° CCW",   () => sc.RotateCanvas90Ccw,      v => sc.RotateCanvas90Ccw = v),
-            ("Rotate canvas 180°",      () => sc.RotateCanvas180,        v => sc.RotateCanvas180 = v),
-            ("Select all",              () => sc.SelectAll,              v => sc.SelectAll = v),
-            ("Deselect",                () => sc.Deselect,               v => sc.Deselect = v),
-            ("Invert select",           () => sc.InvertSelect,           v => sc.InvertSelect = v),
-            ("Size decrease (small)",   () => sc.BrushSizeDecrease,      v => sc.BrushSizeDecrease = v),
-            ("Size increase (small)",   () => sc.BrushSizeIncrease,      v => sc.BrushSizeIncrease = v),
-            ("Size decrease (large)",   () => sc.BrushSizeDecreaseLarge, v => sc.BrushSizeDecreaseLarge = v),
-            ("Size increase (large)",   () => sc.BrushSizeIncreaseLarge, v => sc.BrushSizeIncreaseLarge = v),
-            ("Opacity decrease",        () => sc.BrushOpacityDecrease,   v => sc.BrushOpacityDecrease = v),
-            ("Opacity increase",        () => sc.BrushOpacityIncrease,   v => sc.BrushOpacityIncrease = v),
-            ("Cycle swatch",            () => sc.ColorCycle,             v => sc.ColorCycle = v),
-            ("Default black",           () => sc.ColorDefault,           v => sc.ColorDefault = v),
-            ("New layer",               () => sc.LayerNew,               v => sc.LayerNew = v),
-            ("Duplicate layer",         () => sc.LayerDuplicate,         v => sc.LayerDuplicate = v),
-            ("Delete layer",            () => sc.LayerDelete,            v => sc.LayerDelete = v),
-            ("Move up",                 () => sc.LayerMoveUp,            v => sc.LayerMoveUp = v),
-            ("Move down",               () => sc.LayerMoveDown,          v => sc.LayerMoveDown = v),
-            ("Merge / Flatten",         () => sc.LayerMerge,             v => sc.LayerMerge = v),
-            ("Toggle layer color",       () => sc.LayerToggleColor,       v => sc.LayerToggleColor = v),
-            ("Open settings",           () => sc.OpenSettings,           v => sc.OpenSettings = v),
-            ("Open brush editor",       () => sc.OpenBrushEditor,        v => sc.OpenBrushEditor = v),
-            ("Toggle canvas only",      () => sc.ToggleCanvasOnly,       v => sc.ToggleCanvasOnly = v),
-            ("Toggle rulers",           () => sc.ToggleRulers,           v => sc.ToggleRulers = v),
-            ("Alternate invocation",    () => sc.AlternateInvocation,    v => sc.AlternateInvocation = v),
-            ("Pan canvas",              () => sc.GesturePan,             v => sc.GesturePan = v),
-            ("Zoom  (drag ↑↓)",         () => sc.GestureZoom,            v => sc.GestureZoom = v),
-            ("Rotate (drag ←→)",        () => sc.GestureRotate,          v => sc.GestureRotate = v),
-            ("Brush size (←→)",         () => sc.GestureBrushSize,       v => sc.GestureBrushSize = v),
-        ];
+        // Single array drives both conflict detection and UI — nothing to keep in sync
+        _bindingDescriptors = descs.Select(d => (d.Label, d.Get, d.Set)).ToArray();
 
-        content.Children.Add(GroupHeader("File"));
-        content.Children.Add(BindingRow("New File", sc.FileNew, v => sc.FileNew = v));
-        content.Children.Add(BindingRow("Open file", sc.FileOpen, v => sc.FileOpen = v));
-        content.Children.Add(BindingRow("Save file", sc.FileSave, v => sc.FileSave = v));
-        content.Children.Add(BindingRow("Save File As", sc.FileSaveAs, v => sc.FileSaveAs = v));
-
-        content.Children.Add(GroupHeader("Edit"));
-        content.Children.Add(BindingRow("Undo", sc.Undo, v => sc.Undo = v));
-        content.Children.Add(BindingRow("Redo", sc.Redo, v => sc.Redo = v));
-        content.Children.Add(BindingRow("Redo (alt)", sc.RedoAlt, v => sc.RedoAlt = v));
-        content.Children.Add(BindingRow("Copy", sc.Copy, v => sc.Copy = v));
-        content.Children.Add(BindingRow("Paste", sc.Paste, v => sc.Paste = v));
-        content.Children.Add(BindingRow("Delete selection", sc.DeleteSelection, v => sc.DeleteSelection = v));
-        content.Children.Add(BindingRow("Transform selection", sc.Transform, v => sc.Transform = v));
-
-        content.Children.Add(GroupHeader("View — Zoom"));
-        content.Children.Add(BindingRow("Zoom in", sc.ZoomIn, v => sc.ZoomIn = v));
-        content.Children.Add(BindingRow("Zoom in (alt)", sc.ZoomInAlt, v => sc.ZoomInAlt = v));
-        content.Children.Add(BindingRow("Zoom out", sc.ZoomOut, v => sc.ZoomOut = v));
-        content.Children.Add(BindingRow("Reset view", sc.ZoomReset, v => sc.ZoomReset = v));
-        content.Children.Add(BindingRow("Fit to view", sc.ZoomFit, v => sc.ZoomFit = v));
-
-        content.Children.Add(GroupHeader("View — Rotation"));
-        content.Children.Add(BindingRow("Rotate left", sc.RotateLeft, v => sc.RotateLeft = v));
-        content.Children.Add(BindingRow("Rotate right", sc.RotateRight, v => sc.RotateRight = v));
-        content.Children.Add(BindingRow("Reset rotation", sc.RotateReset, v => sc.RotateReset = v));
-
-        content.Children.Add(GroupHeader("Image"));
-        content.Children.Add(BindingRow("Flip canvas horizontal", sc.FlipHorizontal, v => sc.FlipHorizontal = v));
-        content.Children.Add(BindingRow("Flip canvas vertical", sc.FlipVertical, v => sc.FlipVertical = v));
-
-        content.Children.Add(GroupHeader("View — Mirror"));
-        content.Children.Add(BindingRow("Mirror horizontal", sc.MirrorHorizontal, v => sc.MirrorHorizontal = v));
-        content.Children.Add(BindingRow("Mirror vertical", sc.MirrorVertical, v => sc.MirrorVertical = v));
-
-        content.Children.Add(GroupHeader("Selection"));
-        content.Children.Add(BindingRow("Select all", sc.SelectAll, v => sc.SelectAll = v));
-        content.Children.Add(BindingRow("Deselect", sc.Deselect, v => sc.Deselect = v));
-        content.Children.Add(BindingRow("Invert select", sc.InvertSelect, v => sc.InvertSelect = v));
-
-        content.Children.Add(GroupHeader("Brush — Size"));
-        content.Children.Add(BindingRow("Size decrease (small)", sc.BrushSizeDecrease, v => sc.BrushSizeDecrease = v));
-        content.Children.Add(BindingRow("Size increase (small)", sc.BrushSizeIncrease, v => sc.BrushSizeIncrease = v));
-        content.Children.Add(BindingRow("Size decrease (large)", sc.BrushSizeDecreaseLarge, v => sc.BrushSizeDecreaseLarge = v));
-        content.Children.Add(BindingRow("Size increase (large)", sc.BrushSizeIncreaseLarge, v => sc.BrushSizeIncreaseLarge = v));
-
-        content.Children.Add(GroupHeader("Brush — Opacity"));
-        content.Children.Add(BindingRow("Opacity decrease", sc.BrushOpacityDecrease, v => sc.BrushOpacityDecrease = v));
-        content.Children.Add(BindingRow("Opacity increase", sc.BrushOpacityIncrease, v => sc.BrushOpacityIncrease = v));
-
-        content.Children.Add(GroupHeader("Color"));
-        content.Children.Add(BindingRow("Cycle swatch", sc.ColorCycle, v => sc.ColorCycle = v));
-        content.Children.Add(BindingRow("Default black", sc.ColorDefault, v => sc.ColorDefault = v));
-
-        content.Children.Add(GroupHeader("Layers"));
-        content.Children.Add(BindingRow("New layer", sc.LayerNew, v => sc.LayerNew = v));
-        content.Children.Add(BindingRow("Duplicate layer", sc.LayerDuplicate, v => sc.LayerDuplicate = v));
-        content.Children.Add(BindingRow("Delete layer", sc.LayerDelete, v => sc.LayerDelete = v));
-        content.Children.Add(BindingRow("Move up", sc.LayerMoveUp, v => sc.LayerMoveUp = v));
-        content.Children.Add(BindingRow("Move down", sc.LayerMoveDown, v => sc.LayerMoveDown = v));
-        content.Children.Add(BindingRow("Merge / Flatten", sc.LayerMerge, v => sc.LayerMerge = v));
-        content.Children.Add(BindingRow("Toggle layer color", sc.LayerToggleColor, v => sc.LayerToggleColor = v));
-
-        content.Children.Add(GroupHeader("Misc"));
-        content.Children.Add(BindingRow("Open settings", sc.OpenSettings, v => sc.OpenSettings = v));
-        content.Children.Add(BindingRow("Open brush editor", sc.OpenBrushEditor, v => sc.OpenBrushEditor = v));
-        content.Children.Add(BindingRow("Toggle canvas only", sc.ToggleCanvasOnly, v => sc.ToggleCanvasOnly = v));
-        content.Children.Add(BindingRow("Toggle rulers", sc.ToggleRulers, v => sc.ToggleRulers = v));
-        content.Children.Add(BindingRow("Alternate invocation", sc.AlternateInvocation, v => sc.AlternateInvocation = v));
-
-        content.Children.Add(GroupHeader("Pen Gestures  (hold key + drag pen)"));
-        content.Children.Add(BindingRow("Pan canvas", sc.GesturePan, v => sc.GesturePan = v, gesture: true));
-        content.Children.Add(BindingRow("Zoom  (drag ↑↓)", sc.GestureZoom, v => sc.GestureZoom = v, gesture: true));
-        content.Children.Add(BindingRow("Rotate (drag ←→)", sc.GestureRotate, v => sc.GestureRotate = v, gesture: true));
-        content.Children.Add(BindingRow("Brush size (←→)", sc.GestureBrushSize, v => sc.GestureBrushSize = v, gesture: true));
+        // Render rows grouped in declaration order (GroupBy preserves first-seen order)
+        foreach (var group in descs.GroupBy(d => d.Group))
+        {
+            content.Children.Add(GroupHeader(group.Key));
+            foreach (var d in group)
+                content.Children.Add(BindingRow(d.Label, d.Get, d.Set, gesture: d.IsGesture));
+        }
 
         // ── Tool-group alternate invocation ─────────────────────────────────
         var toolGroups = App.ToolGroups.Groups;
@@ -378,8 +349,9 @@ public sealed class SettingsWindow : Window
 
     // ── Row builders ──────────────────────────────────────────────────────────
 
-    private Border BindingRow(string label, KeyBinding current, Action<KeyBinding> setter, bool gesture = false)
+    private Border BindingRow(string label, Func<KeyBinding> getter, Action<KeyBinding> setter, bool gesture = false)
     {
+        var current = getter();
         var keyDisplay = new TextBlock
         {
             Text = current.Display(),
@@ -388,6 +360,14 @@ public sealed class SettingsWindow : Window
             FontFamily = new FontFamily("Consolas, Courier New, monospace"),
             Foreground = new SolidColorBrush(Color.Parse(current.IsEmpty ? TextMuted : TextPrimary)),
             VerticalAlignment = VerticalAlignment.Center
+        };
+
+        // Targeted update — called instead of rebuilding the page (preserves scroll position)
+        _rowRefreshers[label] = () =>
+        {
+            var b = getter();
+            keyDisplay.Text = b.Display();
+            keyDisplay.Foreground = new SolidColorBrush(Color.Parse(b.IsEmpty ? TextMuted : TextPrimary));
         };
 
         var recordBtn = new Button
@@ -822,6 +802,7 @@ public sealed class SettingsWindow : Window
         _recordingDisplay = display;
         _recordingRow = rowBorder;
         _recordingLabel = label;
+        _recordingOriginalText = display.Text ?? string.Empty;
 
         display.Text = "Press keys...";
         display.Foreground = new SolidColorBrush(Color.Parse(Accent));
@@ -841,9 +822,18 @@ public sealed class SettingsWindow : Window
         _recordingDisplay = null;
         _recordingRow = null;
         _recordingLabel = null;
+        _recordingOriginalText = string.Empty;
         _recordingGesture = false;
         _recordingPendingModifiers = KeyModifiers.None;
         Cursor = Cursor.Default;
+    }
+
+    private void RestoreDisplayText(TextBlock? display, string originalText)
+    {
+        if (display == null) return;
+        display.Text = originalText;
+        display.Foreground = new SolidColorBrush(Color.Parse(
+            originalText is "--" or "—" or "" ? TextMuted : TextPrimary));
     }
 
     private async void OnWindowKeyDown(object? sender, KeyEventArgs e)
@@ -869,14 +859,16 @@ public sealed class SettingsWindow : Window
             return;
         }
 
+        // Capture before StopRecording clears these
         var setter = _recordingSetter;
         var currentLabel = _recordingLabel;
+        var savedDisplay = _recordingDisplay;
+        var savedOriginalText = _recordingOriginalText;
 
-        // ESC cancels without changing the binding
         if (e.Key == Key.Escape)
         {
             StopRecording();
-            SelectPage(_activePage);
+            RestoreDisplayText(savedDisplay, savedOriginalText);
             e.Handled = true;
             return;
         }
@@ -903,16 +895,19 @@ public sealed class SettingsWindow : Window
                 if (confirmed)
                 {
                     conflict.Setter(KeyBinding.Empty);
-                    setter?.Invoke(newBinding);
+                    if (_rowRefreshers.TryGetValue(conflict.Label, out var refresh)) refresh();
+                    setter?.Invoke(newBinding);  // updates config + display via closure
                 }
-                SelectPage(_activePage);
+                else
+                {
+                    RestoreDisplayText(savedDisplay, savedOriginalText);
+                }
                 return;
             }
         }
 
-        setter?.Invoke(newBinding);
+        setter?.Invoke(newBinding);  // updates config + display via closure
         StopRecording();
-        SelectPage(_activePage);
     }
 
     private async void OnWindowKeyUp(object? sender, KeyEventArgs e)
@@ -934,6 +929,8 @@ public sealed class SettingsWindow : Window
         var newBinding = new KeyBinding(Key.None, _recordingPendingModifiers);
         var setter = _recordingSetter;
         var currentLabel = _recordingLabel;
+        var savedDisplay = _recordingDisplay;
+        var savedOriginalText = _recordingOriginalText;
 
         e.Handled = true;
 
@@ -951,15 +948,18 @@ public sealed class SettingsWindow : Window
             if (confirmed)
             {
                 conflict.Setter(KeyBinding.Empty);
+                if (_rowRefreshers.TryGetValue(conflict.Label, out var refresh)) refresh();
                 setter?.Invoke(newBinding);
             }
-            SelectPage(_activePage);
+            else
+            {
+                RestoreDisplayText(savedDisplay, savedOriginalText);
+            }
             return;
         }
 
         setter?.Invoke(newBinding);
         StopRecording();
-        SelectPage(_activePage);
     }
 
     private static int CountModifiers(KeyModifiers modifiers)

@@ -387,11 +387,13 @@ public sealed class DrawingDocument
         InsertLayerNear(group, topLayer, LayerDropPlacement.Above);
         RebuildFlatLayerOrder();
 
-        // Move each selected layer into the group, bottom-to-top so indices stay stable
-        foreach (var idx in sorted)
+        // Snapshot references before moving; MoveLayer shifts _layers so saved indices become stale
+        var layersToMove = sorted
+            .Select(i => _layers[i])
+            .Where(l => l != group && !l.IsGroup)
+            .ToList();
+        foreach (var layer in layersToMove)
         {
-            var layer = _layers[idx];
-            if (layer == group || layer.IsGroup) continue;
             var currentIndex = _layers.IndexOf(layer);
             var groupIndex = _layers.IndexOf(group);
             if (currentIndex >= 0 && groupIndex >= 0)

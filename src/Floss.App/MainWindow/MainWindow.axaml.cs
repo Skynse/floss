@@ -511,10 +511,10 @@ public partial class MainWindow : Window
             Header = "_File",
             ItemsSource = new object[]
             {
-                MenuAction("_New...", async () => await NewDocumentAsync()),
-                MenuAction("_Open...", async () => await OpenDocumentAsync()),
-                MenuAction("_Save", async () => await SaveDocumentAsync()),
-                MenuAction("Save _As...", async () => await SaveDocumentAsAsync()),
+                MenuAction("_New...", new KeyGesture(Key.N, KeyModifiers.Control), async () => await NewDocumentAsync()),
+                MenuAction("_Open...", new KeyGesture(Key.O, KeyModifiers.Control), async () => await OpenDocumentAsync()),
+                MenuAction("_Save", new KeyGesture(Key.S, KeyModifiers.Control), async () => await SaveDocumentAsync()),
+                MenuAction("Save _As...", new KeyGesture(Key.S, KeyModifiers.Control | KeyModifiers.Shift), async () => await SaveDocumentAsAsync()),
                 new Separator(),
                 new MenuItem
                 {
@@ -541,11 +541,11 @@ public partial class MainWindow : Window
             Header = "_Edit",
             ItemsSource = new object[]
             {
-                MenuAction("_Undo", () => _canvas.Undo()),
-                MenuAction("_Redo", () => _canvas.Redo()),
+                MenuAction("_Undo", new KeyGesture(Key.Z, KeyModifiers.Control), () => _canvas.Undo()),
+                MenuAction("_Redo", new KeyGesture(Key.Z, KeyModifiers.Control | KeyModifiers.Shift), () => _canvas.Redo()),
                 new Separator(),
-                MenuAction("_Copy", () => _canvas.CopyToClipboard()),
-                MenuAction("_Paste", () => _ = _canvas.PasteFromOSClipboardAsync()),
+                MenuAction("_Copy", new KeyGesture(Key.C, KeyModifiers.Control), () => _canvas.CopyToClipboard()),
+                MenuAction("_Paste", new KeyGesture(Key.V, KeyModifiers.Control), () => _ = _canvas.PasteFromOSClipboardAsync()),
                 new Separator(),
                 MenuAction("_Delete", () => _canvas.ClearSelectionContent())
             }
@@ -597,9 +597,11 @@ public partial class MainWindow : Window
             Header = "_Layer",
             ItemsSource = new object[]
             {
-                MenuAction("_Add Layer", () => _canvas.AddLayer()),
-                MenuAction("_Duplicate Layer", () => _canvas.DuplicateLayer()),
-                MenuAction("_Delete Layer", () => _canvas.DeleteLayer()),
+                MenuAction("_Add Layer", new KeyGesture(Key.N, KeyModifiers.Control | KeyModifiers.Shift), () => _canvas.AddLayer()),
+                MenuAction("_Duplicate Layer", new KeyGesture(Key.J, KeyModifiers.Control), () => _canvas.DuplicateLayer()),
+                MenuAction("_Delete Layer", new KeyGesture(Key.Delete, KeyModifiers.Control), () => _canvas.DeleteLayer()),
+                new Separator(),
+                MenuAction("_Merge Down", new KeyGesture(Key.E, KeyModifiers.Control), () => _canvas.MergeDown()),
                 new Separator(),
                 MenuAction("Move Layer _Up", () => _canvas.MoveActiveLayer(1)),
                 MenuAction("Move Layer _Down", () => _canvas.MoveActiveLayer(-1)),
@@ -630,6 +632,9 @@ public partial class MainWindow : Window
                 MenuAction("_Noise...",           async () => await ApplyNoiseFilter()),
                 new Separator(),
                 MenuAction("_Color Curves...",    async () => await ApplyColorCurvesFilter()),
+                MenuAction("Chromatic _Aberration...", async () => await ApplyChromaticAberrationFilter()),
+                new Separator(),
+                MenuAction("_Base Color Masks from Sketch...", async () => await RunBaseColorMaskGenerator()),
             }
         };
 
@@ -796,6 +801,13 @@ public partial class MainWindow : Window
     private static MenuItem MenuAction(string header, Action action)
     {
         var item = new MenuItem { Header = header };
+        item.Click += (_, _) => action();
+        return item;
+    }
+
+    private static MenuItem MenuAction(string header, KeyGesture gesture, Action action)
+    {
+        var item = new MenuItem { Header = header, InputGesture = gesture };
         item.Click += (_, _) => action();
         return item;
     }
