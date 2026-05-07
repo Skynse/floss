@@ -184,7 +184,11 @@ public partial class MainWindow : Window
     private IReadOnlyList<BrushAsset> _brushAssets = [];
     private readonly Dictionary<int, LayerRowRefs> _layerRows = new();
     private readonly HashSet<int> _selectedLayerIndices = new();
-    private readonly HashSet<string> _collapsedSections = ["Tool Property"];
+    private readonly Dictionary<string, RowDefinition> _dockerRows = new();
+    private readonly Dictionary<string, Window> _floatingDockers = new();
+    private MenuItem? _workspaceLoadMenu;
+    private bool _suppressFloatingDockerClosed;
+    private bool _suppressFloatingDockerSnap;
     private string? _currentFilePath; // Replaces _currentFlossPath
     private int _layerDragSourceIndex = -1;
     private int _renamingLayerIndex = -1;
@@ -542,6 +546,8 @@ public partial class MainWindow : Window
                 new Separator(),
                 MenuAction("_Show Canvas Only", ToggleCanvasOnly),
                 MenuAction("Show _Rulers", ToggleRulers),
+                new Separator(),
+                BuildWorkspaceMenu(),
             }
         };
 
@@ -761,47 +767,10 @@ public partial class MainWindow : Window
     // ── Right panel ───────────────────────────────────────────────────────────
     private Border BuildRightPanel()
     {
-        var leftDock = new Grid { ClipToBounds = true };
-        leftDock.RowDefinitions.Add(new RowDefinition(new GridLength(1.7, GridUnitType.Star)) { MinHeight = 220 });
-        leftDock.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-        leftDock.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-        leftDock.RowDefinitions.Add(new RowDefinition(new GridLength(1, GridUnitType.Star)) { MinHeight = 160 });
-
-        var brush = PanelSection("Brush", BuildBrushSection());
-        var toolProperties = PanelSection("Tool Property", BuildToolPropertySection());
-        var layerProperties = PanelSection("Layer Properties", BuildLayerPropertiesSection());
-        var layers = PanelSection("Layers", BuildLayersSection());
-
-        Grid.SetRow(brush, 0);
-        Grid.SetRow(toolProperties, 1);
-        Grid.SetRow(layerProperties, 2);
-        Grid.SetRow(layers, 3);
-        leftDock.Children.Add(brush);
-        leftDock.Children.Add(toolProperties);
-        leftDock.Children.Add(layerProperties);
-        leftDock.Children.Add(layers);
-
-        var rightDock = new Grid { ClipToBounds = true };
-        rightDock.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-        rightDock.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-        rightDock.RowDefinitions.Add(new RowDefinition(new GridLength(1, GridUnitType.Star)) { MinHeight = 160 });
-
-        var color = PanelSection("Color", BuildColorSection());
-        var colorSliders = PanelSection("Color Slider", BuildColorSlidersSection());
-        var brushSize = PanelSection("Brush Size", new ScrollViewer
-        {
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            ClipToBounds = true,
-            Content = BuildBrushSizePalette()
-        });
-
-        Grid.SetRow(color, 0);
-        Grid.SetRow(colorSliders, 1);
-        Grid.SetRow(brushSize, 2);
-        rightDock.Children.Add(color);
-        rightDock.Children.Add(colorSliders);
-        rightDock.Children.Add(brushSize);
+        _dockerRows.Clear();
+        var layout = NormalizedWorkspaceLayout();
+        var leftDock = BuildDockColumn(layout.RightColumns[0]);
+        var rightDock = BuildDockColumn(layout.RightColumns[1]);
 
         var splitter = new GridSplitter
         {
@@ -812,9 +781,10 @@ public partial class MainWindow : Window
         };
 
         var grid = new Grid { ClipToBounds = true };
-        grid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
+        var split = Math.Clamp(layout.RightDockSplit, 0.2, 0.8);
+        grid.ColumnDefinitions.Add(new ColumnDefinition(split, GridUnitType.Star));
         grid.ColumnDefinitions.Add(new ColumnDefinition(5, GridUnitType.Pixel));
-        grid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
+        grid.ColumnDefinitions.Add(new ColumnDefinition(1 - split, GridUnitType.Star));
 
         Grid.SetColumn(leftDock, 0);
         Grid.SetColumn(splitter, 1);
@@ -833,19 +803,54 @@ public partial class MainWindow : Window
         };
     }
 
-    private Border PanelSection(string title, Control content)
+    private Grid BuildDockColumn(DockColumnConfig column)
     {
-        var collapsed = _collapsedSections.Contains(title);
-        content.IsVisible = !collapsed;
+        var grid = new Grid { ClipToBounds = true };
+        var panelIds = column.Panels
+            .Where(id => GetDockerInfo(id) != null && !IsDockerFloating(id))
+            .ToList();
 
-        var arrow = new TextBlock
+        if (panelIds.Count == 0)
+            return grid;
+
+        for (var i = 0; i < panelIds.Count; i++)
         {
-            Text = collapsed ? "▸" : "▾",
-            FontSize = 8,
-            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 4, 0)
-        };
+            var id = panelIds[i];
+            var height = App.Config.WorkspaceLayout.PanelHeights.TryGetValue(id, out var saved)
+                ? Math.Max(80, saved)
+                : DefaultDockerHeight(id);
+            var row = new RowDefinition(new GridLength(height, GridUnitType.Star))
+            {
+                MinHeight = MinDockerHeight(id)
+            };
+            _dockerRows[id] = row;
+            grid.RowDefinitions.Add(row);
+
+            var info = GetDockerInfo(id)!;
+            var section = PanelSection(id, info.Title, info.Build());
+            Grid.SetRow(section, grid.RowDefinitions.Count - 1);
+            grid.Children.Add(section);
+
+            if (i == panelIds.Count - 1) continue;
+            grid.RowDefinitions.Add(new RowDefinition(new GridLength(5, GridUnitType.Pixel)));
+            var splitter = new GridSplitter
+            {
+                Height = 5,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
+                ResizeDirection = GridResizeDirection.Rows,
+                Background = new SolidColorBrush(Color.Parse(Stroke))
+            };
+            Grid.SetRow(splitter, grid.RowDefinitions.Count - 1);
+            grid.Children.Add(splitter);
+        }
+
+        return grid;
+    }
+
+    private Border PanelSection(string id, string title, Control content)
+    {
+        var body = BuildDockerBody(id, content);
         var titleText = new TextBlock
         {
             Text = title,
@@ -857,39 +862,520 @@ public partial class MainWindow : Window
         var headerRow = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
-            Children = { arrow, titleText }
+            Children = { titleText }
         };
         var header = new Border
         {
             Padding = new Thickness(8, 4, 8, 3),
-            Cursor = new Cursor(StandardCursorType.Hand),
-            Child = headerRow
-        };
-        header.PointerPressed += (_, e) =>
-        {
-            if (!e.GetCurrentPoint(header).Properties.IsLeftButtonPressed) return;
-            if (!_collapsedSections.Remove(title))
-                _collapsedSections.Add(title);
-            var nowCollapsed = _collapsedSections.Contains(title);
-            content.IsVisible = !nowCollapsed;
-            arrow.Text = nowCollapsed ? "▸" : "▾";
+            Child = headerRow,
+            ContextMenu = BuildDockerContextMenu(id)
         };
 
-        content.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch;
         var outer = new Grid
         {
-            RowDefinitions = new RowDefinitions("Auto,*")
+            RowDefinitions = new RowDefinitions("Auto,*"),
+            ClipToBounds = true
         };
         Grid.SetRow(header, 0);
-        Grid.SetRow(content, 1);
+        Grid.SetRow(body, 1);
         outer.Children.Add(header);
-        outer.Children.Add(content);
+        outer.Children.Add(body);
         return new Border
         {
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 0, 0, 1),
+            ClipToBounds = true,
             Child = outer
         };
+    }
+
+    private static Control BuildDockerBody(string id, Control content)
+    {
+        content.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch;
+        content.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch;
+        content.ClipToBounds = true;
+
+        Control child = id == "layers" || content is ScrollViewer
+            ? content
+            : new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                ClipToBounds = true,
+                Content = content
+            };
+
+        return new Border
+        {
+            ClipToBounds = true,
+            Child = child
+        };
+    }
+
+    private sealed record DockerInfo(string Id, string Title, Func<Control> Build);
+
+    private DockerInfo? GetDockerInfo(string id) => id switch
+    {
+        "brush" => new DockerInfo(id, "Brush", BuildBrushSection),
+        "tool-properties" => new DockerInfo(id, "Tool Property", BuildToolPropertySection),
+        "layer-properties" => new DockerInfo(id, "Layer Properties", BuildLayerPropertiesSection),
+        "layers" => new DockerInfo(id, "Layers", BuildLayersSection),
+        "color" => new DockerInfo(id, "Color", BuildColorSection),
+        "color-slider" => new DockerInfo(id, "Color Slider", BuildColorSlidersSection),
+        "brush-size" => new DockerInfo(id, "Brush Size", () => new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            ClipToBounds = true,
+            Content = BuildBrushSizePalette()
+        }),
+        _ => null
+    };
+
+    private WorkspaceLayoutConfig NormalizedWorkspaceLayout()
+    {
+        var layout = App.Config.WorkspaceLayout ??= WorkspaceLayoutConfig.Default();
+        if (layout.RightColumns.Count < 2)
+            layout.RightColumns = WorkspaceLayoutConfig.Default().RightColumns;
+        var known = new HashSet<string>(["brush", "tool-properties", "layer-properties", "layers", "color", "color-slider", "brush-size"]);
+        foreach (var column in layout.RightColumns)
+            column.Panels = column.Panels.Where(known.Contains).Distinct().ToList();
+        foreach (var id in known)
+        {
+            if (layout.RightColumns.Any(c => c.Panels.Contains(id))) continue;
+            layout.RightColumns[0].Panels.Add(id);
+        }
+        return layout;
+    }
+
+    private bool IsDockerFloating(string id)
+        => App.Config.WorkspaceLayout.FloatingPanels.TryGetValue(id, out var f) && f.IsFloating;
+
+    private static double DefaultDockerHeight(string id) => id switch
+    {
+        "brush" => 260,
+        "layers" => 220,
+        "brush-size" => 260,
+        "color" => 230,
+        "color-slider" => 170,
+        _ => 120
+    };
+
+    private static double MinDockerHeight(string id) => id switch
+    {
+        "brush" => 160,
+        "layers" => 140,
+        "brush-size" => 140,
+        "color" => 180,
+        _ => 64
+    };
+
+    private ContextMenu BuildDockerContextMenu(string id)
+    {
+        var floatItem = new MenuItem { Header = IsDockerFloating(id) ? "_Dock" : "_Detach" };
+        floatItem.Click += (_, _) =>
+        {
+            if (IsDockerFloating(id)) DockDocker(id);
+            else DetachDocker(id);
+        };
+
+        var moveUp = new MenuItem { Header = "Move _Up", IsEnabled = !IsDockerFloating(id) };
+        moveUp.Click += (_, _) => MoveDocker(id, -1);
+
+        var moveDown = new MenuItem { Header = "Move _Down", IsEnabled = !IsDockerFloating(id) };
+        moveDown.Click += (_, _) => MoveDocker(id, 1);
+
+        var moveColumn = new MenuItem { Header = "Move to _Other Column", IsEnabled = !IsDockerFloating(id) };
+        moveColumn.Click += (_, _) => MoveDockerToOtherColumn(id);
+
+        var reset = new MenuItem { Header = "_Reset Panel Size" };
+        reset.Click += (_, _) =>
+        {
+            App.Config.WorkspaceLayout.PanelHeights.Remove(id);
+            RebuildDockers();
+        };
+
+        return new ContextMenu
+        {
+            ItemsSource = new object[] { floatItem, new Separator(), moveUp, moveDown, moveColumn, new Separator(), reset }
+        };
+    }
+
+    private (DockColumnConfig Column, int ColumnIndex, int PanelIndex)? FindDockerPlacement(string id)
+    {
+        var layout = NormalizedWorkspaceLayout();
+        for (var col = 0; col < layout.RightColumns.Count; col++)
+        {
+            var index = layout.RightColumns[col].Panels.IndexOf(id);
+            if (index >= 0)
+                return (layout.RightColumns[col], col, index);
+        }
+        return null;
+    }
+
+    private void MoveDocker(string id, int delta)
+    {
+        SaveWorkspaceLayoutFromUi();
+        var placement = FindDockerPlacement(id);
+        if (placement == null) return;
+        var (column, _, panelIndex) = placement.Value;
+        var target = Math.Clamp(panelIndex + delta, 0, column.Panels.Count - 1);
+        if (target == panelIndex) return;
+        column.Panels.RemoveAt(panelIndex);
+        column.Panels.Insert(target, id);
+        RebuildDockers();
+        App.Config.Save();
+    }
+
+    private void MoveDockerToOtherColumn(string id)
+    {
+        SaveWorkspaceLayoutFromUi();
+        var placement = FindDockerPlacement(id);
+        if (placement == null) return;
+        var (column, columnIndex, panelIndex) = placement.Value;
+        if (App.Config.WorkspaceLayout.RightColumns.Count < 2) return;
+        var targetColumn = App.Config.WorkspaceLayout.RightColumns[columnIndex == 0 ? 1 : 0];
+        column.Panels.RemoveAt(panelIndex);
+        targetColumn.Panels.Add(id);
+        RebuildDockers();
+        App.Config.Save();
+    }
+
+    private void DetachDocker(string id)
+    {
+        SaveWorkspaceLayoutFromUi();
+        if (!App.Config.WorkspaceLayout.FloatingPanels.TryGetValue(id, out var floating))
+            floating = App.Config.WorkspaceLayout.FloatingPanels[id] = new FloatingDockerConfig();
+        floating.IsFloating = true;
+        if (floating.Width <= 0) floating.Width = 320;
+        if (floating.Height <= 0) floating.Height = 480;
+        RebuildDockers();
+        OpenFloatingDocker(id);
+        App.Config.Save();
+    }
+
+    private void DockDocker(string id)
+    {
+        SaveFloatingDockerBounds(id);
+        if (App.Config.WorkspaceLayout.FloatingPanels.TryGetValue(id, out var floating))
+            floating.IsFloating = false;
+        if (_floatingDockers.Remove(id, out var win))
+        {
+            win.Closing -= FloatingDockerClosing;
+            win.Close();
+        }
+        RebuildDockers();
+        App.Config.Save();
+    }
+
+    private void OpenFloatingDockersFromConfig()
+    {
+        foreach (var id in App.Config.WorkspaceLayout.FloatingPanels
+                     .Where(pair => pair.Value.IsFloating)
+                     .Select(pair => pair.Key)
+                     .ToArray())
+        {
+            OpenFloatingDocker(id);
+        }
+    }
+
+    private void OpenFloatingDocker(string id)
+    {
+        if (_floatingDockers.ContainsKey(id)) return;
+        var info = GetDockerInfo(id);
+        if (info == null) return;
+
+        var cfg = App.Config.WorkspaceLayout.FloatingPanels.TryGetValue(id, out var f)
+            ? f
+            : new FloatingDockerConfig();
+        var window = new Window
+        {
+            Title = info.Title,
+            Width = Math.Max(220, cfg.Width),
+            Height = Math.Max(180, cfg.Height),
+            MinWidth = 220,
+            MinHeight = 140,
+            WindowStartupLocation = WindowStartupLocation.Manual,
+            Background = new SolidColorBrush(Color.Parse(Bg0)),
+            Content = PanelSection(id, info.Title, info.Build())
+        };
+        var position = FindFloatingDockerPosition(id, cfg, window.Width, window.Height);
+        window.Position = position;
+        window.PositionChanged += (_, _) => SnapFloatingDocker(id);
+        window.Closing += FloatingDockerClosing;
+        window.Closed += (_, _) =>
+        {
+            _floatingDockers.Remove(id);
+            if (_suppressFloatingDockerClosed) return;
+            if (App.Config.WorkspaceLayout.FloatingPanels.TryGetValue(id, out var floating))
+            {
+                floating.IsFloating = false;
+                App.Config.Save();
+                RebuildDockers();
+            }
+        };
+        _floatingDockers[id] = window;
+        window.Show(this);
+    }
+
+    private const int DockerSnapDistance = 18;
+    private const int DockerGap = 6;
+
+    private PixelPoint FindFloatingDockerPosition(string id, FloatingDockerConfig cfg, double width, double height)
+    {
+        var x = cfg.X;
+        var y = cfg.Y;
+        var rect = new Rect(x, y, Math.Max(220, width), Math.Max(180, height));
+
+        for (var i = 0; i < 24 && FloatingDockerOverlaps(id, rect); i++)
+        {
+            rect = rect.WithX(rect.X + 28).WithY(rect.Y + 28);
+        }
+
+        return new PixelPoint((int)Math.Round(rect.X), (int)Math.Round(rect.Y));
+    }
+
+    private void SnapFloatingDocker(string id)
+    {
+        if (_suppressFloatingDockerSnap) return;
+        if (!_floatingDockers.TryGetValue(id, out var window)) return;
+
+        var rect = WindowRect(window);
+        var snapped = SnapRectToMagneticTargets(id, rect);
+        snapped = PushRectOutOfOverlaps(id, snapped);
+
+        if (Math.Abs(snapped.X - rect.X) < 0.5 && Math.Abs(snapped.Y - rect.Y) < 0.5)
+            return;
+
+        _suppressFloatingDockerSnap = true;
+        window.Position = new PixelPoint((int)Math.Round(snapped.X), (int)Math.Round(snapped.Y));
+        _suppressFloatingDockerSnap = false;
+    }
+
+    private Rect SnapRectToMagneticTargets(string id, Rect rect)
+    {
+        foreach (var target in FloatingDockerMagneticTargets(id))
+            rect = SnapRectToTarget(rect, target);
+        return rect;
+    }
+
+    private Rect SnapRectToTarget(Rect rect, Rect target)
+    {
+        var x = rect.X;
+        var y = rect.Y;
+
+        if (RangesOverlap(rect.Top, rect.Bottom, target.Top, target.Bottom, DockerSnapDistance))
+        {
+            if (Near(rect.Left, target.Left)) x = target.Left;
+            else if (Near(rect.Right, target.Right)) x = target.Right - rect.Width;
+            else if (Near(rect.Left, target.Right + DockerGap)) x = target.Right + DockerGap;
+            else if (Near(rect.Right + DockerGap, target.Left)) x = target.Left - DockerGap - rect.Width;
+        }
+
+        if (RangesOverlap(rect.Left, rect.Right, target.Left, target.Right, DockerSnapDistance))
+        {
+            if (Near(rect.Top, target.Top)) y = target.Top;
+            else if (Near(rect.Bottom, target.Bottom)) y = target.Bottom - rect.Height;
+            else if (Near(rect.Top, target.Bottom + DockerGap)) y = target.Bottom + DockerGap;
+            else if (Near(rect.Bottom + DockerGap, target.Top)) y = target.Top - DockerGap - rect.Height;
+        }
+
+        return new Rect(x, y, rect.Width, rect.Height);
+    }
+
+    private Rect PushRectOutOfOverlaps(string id, Rect rect)
+    {
+        for (var i = 0; i < 8; i++)
+        {
+            var overlap = FloatingDockerRects(id).FirstOrDefault(other => Intersects(rect, other));
+            if (overlap.Width <= 0 || overlap.Height <= 0)
+                return rect;
+
+            var pushRight = overlap.Right + DockerGap - rect.Left;
+            var pushLeft = rect.Right - overlap.Left + DockerGap;
+            var pushDown = overlap.Bottom + DockerGap - rect.Top;
+            var pushUp = rect.Bottom - overlap.Top + DockerGap;
+            var min = Math.Min(Math.Min(pushRight, pushLeft), Math.Min(pushDown, pushUp));
+
+            if (Math.Abs(min - pushRight) < 0.001)
+                rect = rect.WithX(overlap.Right + DockerGap);
+            else if (Math.Abs(min - pushLeft) < 0.001)
+                rect = rect.WithX(overlap.Left - DockerGap - rect.Width);
+            else if (Math.Abs(min - pushDown) < 0.001)
+                rect = rect.WithY(overlap.Bottom + DockerGap);
+            else
+                rect = rect.WithY(overlap.Top - DockerGap - rect.Height);
+        }
+
+        return rect;
+    }
+
+    private IEnumerable<Rect> FloatingDockerMagneticTargets(string movingId)
+    {
+        yield return WindowRect(this);
+        foreach (var rect in FloatingDockerRects(movingId))
+            yield return rect;
+    }
+
+    private IEnumerable<Rect> FloatingDockerRects(string movingId)
+    {
+        foreach (var (id, window) in _floatingDockers)
+        {
+            if (id == movingId) continue;
+            yield return WindowRect(window);
+        }
+    }
+
+    private bool FloatingDockerOverlaps(string id, Rect rect)
+        => FloatingDockerRects(id).Any(other => Intersects(rect, other));
+
+    private static Rect WindowRect(Window window)
+        => new(window.Position.X, window.Position.Y, Math.Max(1, window.Width), Math.Max(1, window.Height));
+
+    private static bool Near(double a, double b)
+        => Math.Abs(a - b) <= DockerSnapDistance;
+
+    private static bool RangesOverlap(double a0, double a1, double b0, double b1, double pad = 0)
+        => a0 <= b1 + pad && b0 <= a1 + pad;
+
+    private static bool Intersects(Rect a, Rect b)
+        => a.Left < b.Right && b.Left < a.Right && a.Top < b.Bottom && b.Top < a.Bottom;
+
+    private void FloatingDockerClosing(object? sender, WindowClosingEventArgs e)
+    {
+        if (sender is not Window window) return;
+        var id = _floatingDockers.FirstOrDefault(pair => pair.Value == window).Key;
+        if (string.IsNullOrWhiteSpace(id)) return;
+        SaveFloatingDockerBounds(id);
+    }
+
+    private void SaveFloatingDockerBounds(string id)
+    {
+        if (!_floatingDockers.TryGetValue(id, out var window)) return;
+        if (!App.Config.WorkspaceLayout.FloatingPanels.TryGetValue(id, out var cfg))
+            cfg = App.Config.WorkspaceLayout.FloatingPanels[id] = new FloatingDockerConfig();
+        cfg.X = window.Position.X;
+        cfg.Y = window.Position.Y;
+        cfg.Width = window.Width;
+        cfg.Height = window.Height;
+    }
+
+    private void RebuildDockers()
+    {
+        if (_rootGrid == null || _rightPanel == null) return;
+        var col = Grid.GetColumn(_rightPanel);
+        _rootGrid.Children.Remove(_rightPanel);
+        _rightPanel = BuildRightPanel();
+        Grid.SetColumn(_rightPanel, col);
+        _rootGrid.Children.Add(_rightPanel);
+    }
+
+    private void SaveWorkspaceLayoutFromUi()
+    {
+        var layout = NormalizedWorkspaceLayout();
+        if (_rootGrid != null && _rootGrid.ColumnDefinitions.Count > 3 &&
+            _rootGrid.ColumnDefinitions[3].ActualWidth > 0)
+            layout.RightPanelWidth = Math.Max(300, _rootGrid.ColumnDefinitions[3].ActualWidth);
+        if (_rightPanel is Border { Child: Grid dockGrid } && dockGrid.ColumnDefinitions.Count >= 3)
+        {
+            var left = dockGrid.ColumnDefinitions[0].ActualWidth;
+            var right = dockGrid.ColumnDefinitions[2].ActualWidth;
+            if (left + right > 1)
+                layout.RightDockSplit = left / (left + right);
+        }
+
+        foreach (var (id, row) in _dockerRows)
+            layout.PanelHeights[id] = Math.Max(40, row.ActualHeight > 0 ? row.ActualHeight : row.Height.Value);
+
+        foreach (var id in _floatingDockers.Keys.ToArray())
+            SaveFloatingDockerBounds(id);
+    }
+
+    private MenuItem BuildWorkspaceMenu()
+    {
+        _workspaceLoadMenu = new MenuItem { Header = "_Load Preset" };
+        RefreshWorkspaceLoadMenu();
+
+        var savePreset = new MenuItem { Header = "_Save Preset..." };
+        savePreset.Click += async (_, _) =>
+        {
+            var name = await PromptForWorkspacePresetName();
+            if (string.IsNullOrWhiteSpace(name)) return;
+            SaveWorkspaceLayoutFromUi();
+            App.Config.WorkspacePresets[name.Trim()] = App.Config.WorkspaceLayout.Clone();
+            App.Config.Save();
+            RefreshWorkspaceLoadMenu();
+        };
+
+        var reset = new MenuItem { Header = "_Reset Layout" };
+        reset.Click += (_, _) =>
+        {
+            App.Config.WorkspaceLayout = WorkspaceLayoutConfig.Default();
+            ApplyWorkspaceLayout();
+        };
+
+        return new MenuItem
+        {
+            Header = "_Workspace",
+            ItemsSource = new object[] { savePreset, _workspaceLoadMenu, new Separator(), reset }
+        };
+    }
+
+    private void RefreshWorkspaceLoadMenu()
+    {
+        if (_workspaceLoadMenu == null) return;
+        var items = App.Config.WorkspacePresets.Count == 0
+            ? new object[] { new MenuItem { Header = "(No presets)", IsEnabled = false } }
+            : App.Config.WorkspacePresets.Keys.OrderBy(x => x).Select(name =>
+            {
+                var item = new MenuItem { Header = name };
+                item.Click += (_, _) =>
+                {
+                    SaveWorkspaceLayoutFromUi();
+                    App.Config.WorkspaceLayout = App.Config.WorkspacePresets[name].Clone();
+                    ApplyWorkspaceLayout();
+                };
+                return item;
+            }).Cast<object>().ToArray();
+        _workspaceLoadMenu.ItemsSource = items;
+    }
+
+    private void ApplyWorkspaceLayout()
+    {
+        _suppressFloatingDockerClosed = true;
+        foreach (var window in _floatingDockers.Values.ToArray())
+            window.Close();
+        _suppressFloatingDockerClosed = false;
+        _floatingDockers.Clear();
+        if (_rootGrid != null && _rootGrid.ColumnDefinitions.Count > 3)
+            _rootGrid.ColumnDefinitions[3].Width = new GridLength(
+                Math.Clamp(App.Config.WorkspaceLayout.RightPanelWidth, 300, 1000),
+                GridUnitType.Pixel);
+        RebuildDockers();
+        OpenFloatingDockersFromConfig();
+        RefreshWorkspaceLoadMenu();
+        App.Config.Save();
+    }
+
+    private async System.Threading.Tasks.Task<string?> PromptForWorkspacePresetName()
+    {
+        var tcs = new System.Threading.Tasks.TaskCompletionSource<string?>();
+        var dialog = new Window
+        {
+            Title = "Save Workspace Preset",
+            Width = 300,
+            Height = 140,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = new SolidColorBrush(Color.Parse(Bg0))
+        };
+        var tb = new TextBox { Margin = new Thickness(12), PlaceholderText = "Preset name" };
+        var ok = new Button { Content = "Save", Margin = new Thickness(12, 0, 12, 12) };
+        ok.Click += (_, _) => { tcs.TrySetResult(tb.Text); dialog.Close(); };
+        tb.KeyDown += (_, e) => { if (e.Key == Key.Enter) { tcs.TrySetResult(tb.Text); dialog.Close(); } };
+        dialog.Closed += (_, _) => tcs.TrySetResult(null);
+        dialog.Content = new StackPanel { Children = { tb, ok } };
+        await dialog.ShowDialog(this);
+        return await tcs.Task;
     }
 
     // ── Widget helpers ────────────────────────────────────────────────────────
@@ -991,10 +1477,16 @@ public partial class MainWindow : Window
     private void RestoreFromConfig()
     {
         var cfg = App.Config;
+        cfg.WorkspaceLayout ??= WorkspaceLayoutConfig.Default();
+        if (_rootGrid != null && _rootGrid.ColumnDefinitions.Count > 3)
+            _rootGrid.ColumnDefinitions[3].Width = new GridLength(
+                Math.Clamp(cfg.WorkspaceLayout.RightPanelWidth, 300, 1000),
+                GridUnitType.Pixel);
         _sizeSlider.Value = Math.Clamp(cfg.LastBrushSize, _sizeSlider.Minimum, _sizeSlider.Maximum);
         _opacitySlider.Value = Math.Clamp(cfg.LastBrushOpacity, _opacitySlider.Minimum, _opacitySlider.Maximum);
         _hardnessSlider.Value = Math.Clamp(cfg.LastBrushHardness, _hardnessSlider.Minimum, _hardnessSlider.Maximum);
         _spacingSlider.Value = Math.Clamp(cfg.LastBrushSpacing, _spacingSlider.Minimum, _spacingSlider.Maximum);
+        OpenFloatingDockersFromConfig();
     }
 
     private readonly HashSet<string> _dirtyBrushAssetIds = new();
@@ -1020,6 +1512,7 @@ public partial class MainWindow : Window
         _dirtyBrushAssetIds.Clear();
 
         var cfg = App.Config;
+        SaveWorkspaceLayoutFromUi();
         cfg.LastBrushSize = _sizeSlider.Value;
         cfg.LastBrushOpacity = _opacitySlider.Value;
         cfg.LastBrushHardness = _hardnessSlider.Value;

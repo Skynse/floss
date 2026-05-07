@@ -25,6 +25,8 @@ public sealed class AppConfig
     public BrushCursorMode BrushCursorMode { get; set; } = BrushCursorMode.Outline;
     public bool ShowRulers { get; set; }
     public Dictionary<string, bool> ToolPropertyDockerVisibility { get; set; } = new();
+    public WorkspaceLayoutConfig WorkspaceLayout { get; set; } = WorkspaceLayoutConfig.Default();
+    public Dictionary<string, WorkspaceLayoutConfig> WorkspacePresets { get; set; } = new();
     public static event Action? ToolPropertyVisibilityChanged;
     public static void NotifyToolPropertyVisibilityChanged() => ToolPropertyVisibilityChanged?.Invoke();
     public string[] RecentFiles { get; set; } = [];
@@ -62,4 +64,37 @@ public sealed class AppConfig
         if (list.Count > 10) list.RemoveRange(10, list.Count - 10);
         RecentFiles = [.. list];
     }
+}
+
+public sealed class WorkspaceLayoutConfig
+{
+    public double RightPanelWidth { get; set; } = 520;
+    public double RightDockSplit { get; set; } = 0.5;
+    public List<DockColumnConfig> RightColumns { get; set; } =
+    [
+        new() { Id = "left", Panels = ["brush", "tool-properties", "layer-properties", "layers"] },
+        new() { Id = "right", Panels = ["color", "color-slider", "brush-size"] }
+    ];
+    public Dictionary<string, double> PanelHeights { get; set; } = new();
+    public Dictionary<string, FloatingDockerConfig> FloatingPanels { get; set; } = new();
+
+    public static WorkspaceLayoutConfig Default() => new();
+    public WorkspaceLayoutConfig Clone()
+        => JsonSerializer.Deserialize<WorkspaceLayoutConfig>(
+            JsonSerializer.Serialize(this)) ?? Default();
+}
+
+public sealed class DockColumnConfig
+{
+    public string Id { get; set; } = "";
+    public List<string> Panels { get; set; } = [];
+}
+
+public sealed class FloatingDockerConfig
+{
+    public bool IsFloating { get; set; }
+    public double X { get; set; } = 120;
+    public double Y { get; set; } = 120;
+    public double Width { get; set; } = 300;
+    public double Height { get; set; } = 420;
 }
