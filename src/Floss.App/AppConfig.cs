@@ -68,15 +68,18 @@ public sealed class AppConfig
 
 public sealed class WorkspaceLayoutConfig
 {
+    public double LeftRailWidth { get; set; } = 48;
     public double RightPanelWidth { get; set; } = 520;
     public double RightDockSplit { get; set; } = 0.5;
+    public DockColumnConfig LeftColumn { get; set; } = new() { Id = "left" };
     public List<DockColumnConfig> RightColumns { get; set; } =
     [
-        new() { Id = "left", Panels = ["brush", "tool-properties", "layer-properties", "layers"] },
-        new() { Id = "right", Panels = ["color", "color-slider", "brush-size"] }
+        new() { Id = "right-0", Panels = ["brush", "tool-properties", "layer-properties", "layers"] },
+        new() { Id = "right-1", Panels = ["color", "color-slider", "brush-size"] }
     ];
     public Dictionary<string, double> PanelHeights { get; set; } = new();
     public Dictionary<string, FloatingDockerConfig> FloatingPanels { get; set; } = new();
+    public HashSet<string> HiddenDockers { get; set; } = [];
 
     public static WorkspaceLayoutConfig Default() => new();
     public WorkspaceLayoutConfig Clone()

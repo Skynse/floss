@@ -11,6 +11,59 @@ namespace Floss.App;
 
 public partial class MainWindow
 {
+    // ── Tools docker content (used by the docker system) ──────────────────────
+    private Control BuildToolsContent()
+    {
+        _toolRailStack = new WrapPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 6),
+            ItemWidth = 38,
+            ItemHeight = 36
+        };
+
+        BuildToolRail();
+
+        _colorWell = new Border
+        {
+            Width = 24,
+            Height = 24,
+            CornerRadius = new CornerRadius(12),
+            BorderBrush = new SolidColorBrush(Color.Parse("#3a3a3e")),
+            BorderThickness = new Thickness(1.5),
+            Background = new SolidColorBrush(Color.Parse("#111112"))
+        };
+        var colorBtn = new Button
+        {
+            Content = _colorWell,
+            Width = 36,
+            Height = 34,
+            Background = Avalonia.Media.Brushes.Transparent,
+            Padding = new Thickness(5),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center
+        };
+        ToolTip.SetTip(colorBtn, "Cycle color  (X)");
+        colorBtn.Click += (_, _) => CycleColor();
+
+        var colorBar = new StackPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 4, 0, 8),
+            Children = { RailSep(), colorBtn }
+        };
+
+        var outerStack = new StackPanel
+        {
+            Orientation = Orientation.Vertical,
+            HorizontalAlignment = HorizontalAlignment.Center,
+        };
+        outerStack.Children.Add(_toolRailStack);
+        outerStack.Children.Add(colorBar);
+
+        return outerStack;
+    }
+
     // ── Left rail ─────────────────────────────────────────────────────────────
     private Control BuildLeftRail()
     {
@@ -38,38 +91,30 @@ public partial class MainWindow
         ToolTip.SetTip(colorBtn, "Cycle color  (X)");
         colorBtn.Click += (_, _) => CycleColor();
 
-        _toolRailStack = new StackPanel
+        _toolRailStack = new WrapPanel
         {
-            Orientation = Orientation.Vertical,
             HorizontalAlignment = HorizontalAlignment.Center,
             Margin = new Thickness(0, 6),
-            Spacing = 1
+            ItemWidth = 38,
+            ItemHeight = 36
         };
 
         BuildToolRail();
 
-        _undoButton = RailBtn(Icons.UndoVariant, "Undo  (Ctrl+Z)");
-        _redoButton = RailBtn(Icons.RedoVariant, "Redo  (Ctrl+Shift+Z)");
-        _undoButton.Click += (_, _) => _canvas.Undo();
-        _redoButton.Click += (_, _) => _canvas.Redo();
-
-        var clearBtn = RailBtn(Icons.DeleteOutline, "Clear layer");
-        clearBtn.Click += (_, _) => _canvas.Clear();
+        var colorBar = new StackPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 4, 0, 8),
+            Children = { RailSep(), colorBtn }
+        };
 
         var outerStack = new StackPanel
         {
             Orientation = Orientation.Vertical,
             HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 6),
-            Spacing = 1
         };
         outerStack.Children.Add(_toolRailStack);
-        outerStack.Children.Add(RailSep());
-        outerStack.Children.Add(colorBtn);
-        outerStack.Children.Add(RailSep());
-        outerStack.Children.Add(_undoButton);
-        outerStack.Children.Add(_redoButton);
-        outerStack.Children.Add(clearBtn);
+        outerStack.Children.Add(colorBar);
 
         return new Border
         {
@@ -80,7 +125,7 @@ public partial class MainWindow
             Child = new ScrollViewer
             {
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 Content = outerStack
             }
         };
@@ -104,15 +149,12 @@ public partial class MainWindow
         {
             Content = Icons.Make(Icons.Plus, 16, new SolidColorBrush(Color.Parse(TextSecondary))),
             Width = 36,
-            Height = 28,
-            FontSize = 16,
+            Height = 34,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
             Background = Avalonia.Media.Brushes.Transparent,
-            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
             CornerRadius = new CornerRadius(4),
             Padding = new Thickness(0),
-            Margin = new Thickness(0, 4, 0, 0)
         };
         ToolTip.SetTip(addBtn, "Add tool group");
         addBtn.Click += (_, _) => ShowAddToolGroupDialog();

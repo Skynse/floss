@@ -409,6 +409,7 @@ public partial class MainWindow
         // Krita-style: hide only the left/right dockers, keep
         // menu bar, top toolbar, status bar and footer visible.
         if (_leftRail != null) _leftRail.IsVisible = !_canvasOnly;
+        if (_leftSplitter != null) _leftSplitter.IsVisible = !_canvasOnly;
         if (_rightPanel != null) _rightPanel.IsVisible = !_canvasOnly;
         if (_splitterControl != null) _splitterControl.IsVisible = !_canvasOnly;
 
@@ -421,7 +422,7 @@ public partial class MainWindow
                 var col = _rootGrid.ColumnDefinitions[i];
                 if (_canvasOnly)
                 {
-                    col.Width = i == 1
+                    col.Width = i == 2
                         ? new GridLength(1, GridUnitType.Star)
                         : new GridLength(0);
                     col.MinWidth = 0;
@@ -430,8 +431,8 @@ public partial class MainWindow
                 else
                 {
                     col.Width = _rootColumnWidths[i];
-                    col.MinWidth = i == 1 ? 320 : (i == 3 ? 500 : 0);
-                    col.MaxWidth = i == 3 ? 900 : double.PositiveInfinity;
+                    col.MinWidth = i == 2 ? 320 : 0;
+                    col.MaxWidth = double.PositiveInfinity;
                 }
             }
         }
