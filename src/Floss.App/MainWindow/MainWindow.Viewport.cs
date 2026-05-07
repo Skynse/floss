@@ -585,7 +585,7 @@ public partial class MainWindow
         else if (sc.ColorCycle.Matches(key, mods)) { CycleColor(); e.Handled = true; }
         else if (sc.ColorDefault.Matches(key, mods)) { SetColor(Color.Parse("#111111")); e.Handled = true; }
         else if (sc.Copy.Matches(key, mods)) { _canvas.CopyToClipboard(); e.Handled = true; }
-        else if (sc.Paste.Matches(key, mods)) { _canvas.PasteFromClipboard(); e.Handled = true; }
+        else if (sc.Paste.Matches(key, mods)) { _ = _canvas.PasteFromOSClipboardAsync(); e.Handled = true; }
         else if (sc.FlipHorizontal.Matches(key, mods)) { _canvas.FlipCanvas(horizontal: true); e.Handled = true; }
         else if (sc.FlipVertical.Matches(key, mods)) { _canvas.FlipCanvas(horizontal: false); e.Handled = true; }
         else if (sc.MirrorHorizontal.Matches(key, mods)) { _canvasFlip.ScaleX = -_canvasFlip.ScaleX; _canvas.FlipX = (int)_canvasFlip.ScaleX; _rulerOverlay?.InvalidateVisual(); _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual(); ClampCanvasPan(); UpdateStatus(); e.Handled = true; }

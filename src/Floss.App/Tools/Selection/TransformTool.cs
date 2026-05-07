@@ -372,6 +372,7 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
     {
         foreach (var data in _layerData)
         {
+            if (data.Index < 0 || data.Index >= _context.Document.Layers.Count) continue;
             var layer = _context.Document.Layers[data.Index];
 
             for (var relY = 0; relY < data.SrcH; relY++)
@@ -408,6 +409,7 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         var mutations = new List<LayerTileMutation>(_layerData.Count);
         foreach (var data in _layerData)
         {
+            if (data.Index < 0 || data.Index >= _context.Document.Layers.Count) continue;
             var dirty = new PixelRegion(data.SrcX, data.SrcY, data.SrcW, data.SrcH);
             mutations.Add(new LayerTileMutation(data.Index, data.BeforeTiles, dirty));
         }
@@ -426,8 +428,8 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         var mutations = new List<LayerTileMutation>(_layerData.Count);
         foreach (var data in _layerData)
         {
+            if (data.Index < 0 || data.Index >= _context.Document.Layers.Count) continue;
             var layer = _context.Document.Layers[data.Index];
-            if (layer == null) continue;
 
             var destLayerRegion = new PixelRegion(
                 dest.X - layer.OffsetX,

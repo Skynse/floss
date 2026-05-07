@@ -545,7 +545,7 @@ public partial class MainWindow : Window
                 MenuAction("_Redo", () => _canvas.Redo()),
                 new Separator(),
                 MenuAction("_Copy", () => _canvas.CopyToClipboard()),
-                MenuAction("_Paste", () => _canvas.PasteFromClipboard()),
+                MenuAction("_Paste", () => _ = _canvas.PasteFromOSClipboardAsync()),
                 new Separator(),
                 MenuAction("_Delete", () => _canvas.ClearSelectionContent())
             }

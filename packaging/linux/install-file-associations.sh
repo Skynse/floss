@@ -7,6 +7,8 @@ repo_root="$(cd -- "$script_dir/../.." && pwd)"
 app_exec="${1:-$repo_root/src/Floss.App/bin/Debug/net10.0/Floss.App}"
 desktop_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 mime_dir="${XDG_DATA_HOME:-$HOME/.local/share}/mime"
+thumbnailer_dir="${XDG_DATA_HOME:-$HOME/.local/share}/thumbnailers"
+bin_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"
 desktop_file="$desktop_dir/floss.desktop"
 
 if [[ ! -x "$app_exec" ]]; then
@@ -16,9 +18,14 @@ if [[ ! -x "$app_exec" ]]; then
   exit 1
 fi
 
-mkdir -p "$desktop_dir" "$mime_dir/packages"
+mkdir -p "$desktop_dir" "$mime_dir/packages" "$thumbnailer_dir" "$bin_dir"
 
 install -m 0644 "$script_dir/application-x-floss.xml" "$mime_dir/packages/application-x-floss.xml"
+
+install -m 0755 "$script_dir/floss-thumbnailer" "$bin_dir/floss-thumbnailer"
+thumbnailer_exec="$bin_dir/floss-thumbnailer"
+sed "s|@THUMBNAILER_EXEC@|$thumbnailer_exec|g" "$script_dir/floss.thumbnailer" > "$thumbnailer_dir/floss.thumbnailer"
+chmod 0644 "$thumbnailer_dir/floss.thumbnailer"
 
 escaped_exec="${app_exec//\\/\\\\}"
 escaped_exec="${escaped_exec//\"/\\\"}"

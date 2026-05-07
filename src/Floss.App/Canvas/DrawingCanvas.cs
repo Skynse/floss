@@ -1,8 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
+using Avalonia.Platform.Storage;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Floss.App.Brushes;
@@ -12,6 +16,7 @@ using Floss.App.Processes;
 using Floss.App.Processes.Input;
 using Floss.App.Processes.Output;
 using Floss.App.Tools;
+using SkiaSharp;
 
 namespace Floss.App.Canvas;
 
@@ -695,6 +700,100 @@ public sealed class DrawingCanvas : Control
         var insertIdx = Math.Min(_document.ActiveLayerIndex + 1, _document.Layers.Count);
         _document.InsertAndSelectLayer(layer, insertIdx);
         InvalidateVisual();
+    }
+
+    public async Task<bool> PasteFromOSClipboardAsync()
+    {
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel == null) return false;
+        var clipboard = topLevel.Clipboard;
+        if (clipboard == null) return false;
+
+        var dataTransfer = await clipboard.TryGetDataAsync();
+        if (dataTransfer == null) return false;
+        var items = dataTransfer.Items;
+        if (items.Count == 0) return false;
+
+        var item = items[0];
+
+        try
+        {
+            var obj = await item.TryGetRawAsync(DataFormat.Bitmap);
+            if (obj is Bitmap bitmap)
+                return PasteBitmap(bitmap);
+        }
+        catch { }
+
+        try
+        {
+            var obj = await item.TryGetRawAsync(DataFormat.File);
+            if (obj is IEnumerable<IStorageFile> files)
+            {
+                foreach (var file in files)
+                    if (await TryPasteStorageFileAsync(file)) return true;
+            }
+            else if (obj is IStorageFile singleFile)
+                return await TryPasteStorageFileAsync(singleFile);
+        }
+        catch { }
+
+        return false;
+    }
+
+    private async Task<bool> TryPasteStorageFileAsync(IStorageFile file)
+    {
+        try
+        {
+            await using var stream = await file.OpenReadAsync();
+            using var skBitmap = SKBitmap.Decode(stream);
+            if (skBitmap != null)
+            {
+                PasteSKBitmap(skBitmap, Path.GetFileNameWithoutExtension(file.Name));
+                return true;
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    private bool PasteBitmap(Bitmap bitmap)
+    {
+        using var ms = new MemoryStream();
+        bitmap.Save(ms);
+        ms.Position = 0;
+        using var skBitmap = SKBitmap.Decode(ms);
+        if (skBitmap == null) return false;
+        return PasteSKBitmap(skBitmap, "Pasted");
+    }
+
+    private bool PasteSKBitmap(SKBitmap skBitmap, string name)
+    {
+        var w = skBitmap.Width;
+        var h = skBitmap.Height;
+
+        var pixels = new byte[w * h * 4];
+        for (var y = 0; y < h; y++)
+        {
+            for (var x = 0; x < w; x++)
+            {
+                var c = skBitmap.GetPixel(x, y);
+                var offset = (y * w + x) * 4;
+                pixels[offset] = c.Blue;
+                pixels[offset + 1] = c.Green;
+                pixels[offset + 2] = c.Red;
+                pixels[offset + 3] = c.Alpha;
+            }
+        }
+
+        _document.BeginDocumentMutation();
+        var layer = new DrawingLayer(name, _document.Width, _document.Height);
+        layer.Pixels.CopyFromBgra(pixels, w, h);
+        layer.MarkThumbnailDirty();
+        var insertIdx = Math.Min(_document.ActiveLayerIndex + 1, _document.Layers.Count);
+        _document.InsertAndSelectLayer(layer, insertIdx);
+        InvalidateVisual();
+        BeginSelectionTransform();
+        return true;
     }
 
     public bool IsTransformActive => _toolController.ActiveTool is TransformTool tt && tt.HasPendingOperation;
