@@ -111,27 +111,8 @@ public partial class MainWindow : Window
         var group = _activeToolGroup;
         if (group == null) return;
 
-        var allSelected = _selectedCategory == null;
-        var allBtn = new Button
-        {
-            Content = "All",
-            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            Padding = new Thickness(6, 2),
-            Height = 22,
-            Background = new SolidColorBrush(allSelected ? Color.Parse(AccentSoft) : Color.Parse(Bg2)),
-            Foreground = new SolidColorBrush(allSelected ? Color.Parse(TextPrimary) : Color.Parse(TextSecondary)),
-            BorderBrush = new SolidColorBrush(allSelected ? Color.Parse(Accent) : Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
-            FontSize = 10,
-            Margin = new Thickness(0, 0, 2, 2)
-        };
-        allBtn.Click += (_, _) =>
-        {
-            _selectedCategory = null;
-            RefreshGroupPresets();
-        };
-        _brushCategoryPanel.Children.Add(allBtn);
+        if (_selectedCategory == null)
+            _selectedCategory = group.Categories.FirstOrDefault()?.Name;
 
         foreach (var cat in group.Categories)
         {

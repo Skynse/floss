@@ -34,6 +34,8 @@ public partial class MainWindow
             Margin = new Thickness(8, 4, 8, 6),
             Children = { header, _toolPropertyPanel }
         };
+        _lastToolPropertyKey = "";
+        _builtToolPropertyDescriptors = null;
         RefreshToolProperties();
 
         // Listen for visibility changes from brush editor eye toggles
