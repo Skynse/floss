@@ -259,9 +259,11 @@ public sealed class DrawingCanvas : Control
         var previousTool = _toolController.ActiveTool;
         SetActiveTool(_transformTool);
         _transformTool.SetPreviousTool(previousTool);
+        _transformTool.OnCompleted = EndSelectionTransform;
         if (_transformTool.BeginTransform(_ctx, layerIndices))
             return true;
 
+        _transformTool.OnCompleted = null;
         _transformTool.SetPreviousTool(null);
         SetActiveTool(previousTool);
         return false;
@@ -271,9 +273,17 @@ public sealed class DrawingCanvas : Control
     {
         var previous = _transformTool.GetPreviousTool();
         _transformTool.SetPreviousTool(null);
+        _transformTool.OnCompleted = null;
         _ctx.Selection.Clear();
         if (previous != null)
             SetActiveTool(previous);
+    }
+
+    public void DeleteSelectionTransform()
+    {
+        _transformTool.Delete(_ctx);
+        EndSelectionTransform();
+        InvalidateVisual();
     }
 
     public void MergeSelectedLayers(IReadOnlyList<int> indices) => _document.MergeSelectedLayers(indices, _compositor);

@@ -158,6 +158,7 @@ public sealed class LayerCompositor
             if (item.IsClipped && item.BaseLayerIndex >= 0)
             {
                 var baseLayer = renderList[item.BaseLayerIndex].Layer;
+                if (!baseLayer.IsVisible) continue;
                 if (item.Layer.IsGroup)
                     CompositeClippedGroup(dst, dstStride, width, height, item.Layer, baseLayer, opacityScale, clip, originX, originY);
                 else

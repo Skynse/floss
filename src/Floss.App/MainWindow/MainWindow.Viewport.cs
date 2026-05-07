@@ -458,7 +458,11 @@ public partial class MainWindow
             e.Handled = true;
         }
         else if (key == Key.Back && mods == KeyModifiers.None)
-        { _canvas.ClearSelectionContent(); e.Handled = true; }
+        {
+            if (_canvas.ActiveTool is TransformTool) _canvas.DeleteSelectionTransform();
+            else _canvas.ClearSelectionContent();
+            e.Handled = true;
+        }
         else if (EffectiveAltInvocation().Matches(key, mods))
         {
             if (_canvas.AlternateTool == null)
@@ -477,7 +481,12 @@ public partial class MainWindow
         else if (sc.FlipVertical.Matches(key, mods)) { _canvas.FlipCanvas(horizontal: false); e.Handled = true; }
         else if (sc.MirrorHorizontal.Matches(key, mods)) { _canvasFlip.ScaleX = -_canvasFlip.ScaleX; _canvas.FlipX = (int)_canvasFlip.ScaleX; _rulerOverlay?.InvalidateVisual(); _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual(); ClampCanvasPan(); UpdateStatus(); e.Handled = true; }
         else if (sc.MirrorVertical.Matches(key, mods)) { _canvasFlip.ScaleY = -_canvasFlip.ScaleY; _canvas.FlipY = (int)_canvasFlip.ScaleY; _rulerOverlay?.InvalidateVisual(); _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual(); ClampCanvasPan(); UpdateStatus(); e.Handled = true; }
-        else if (sc.DeleteSelection.Matches(key, mods)) { _canvas.ClearSelectionContent(); e.Handled = true; }
+        else if (sc.DeleteSelection.Matches(key, mods))
+        {
+            if (_canvas.ActiveTool is TransformTool) _canvas.DeleteSelectionTransform();
+            else _canvas.ClearSelectionContent();
+            e.Handled = true;
+        }
         else if (sc.OpenSettings.Matches(key, mods)) { OpenSettings(); e.Handled = true; }
         else if (sc.OpenBrushEditor.Matches(key, mods)) { OpenToolProperties(); e.Handled = true; }
         else if (sc.BrushSizeDecrease.Matches(key, mods))

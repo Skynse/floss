@@ -454,6 +454,12 @@ public sealed class DrawingDocument
         var oldValue = _layers[index].IsClipping;
         var newValue = !oldValue;
         var dirtyRegion = LayerDirtyRegion(index);
+        // Consecutive clipping layers above also change their effective base — include their bounds.
+        for (int j = index + 1; j < _layers.Count; j++)
+        {
+            if (!_layers[j].IsClipping) break;
+            dirtyRegion = dirtyRegion.Union(LayerDirtyRegion(j));
+        }
         PushHistoryState(new LayerPropertyHistoryState<bool>(index, oldValue, newValue, (layer, value) => layer.IsClipping = value, true, dirtyRegion));
         _layers[index].IsClipping = newValue;
         NotifyLayerMetadataChanged(dirtyRegion, index);

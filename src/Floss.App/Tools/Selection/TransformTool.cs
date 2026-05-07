@@ -41,6 +41,9 @@ public sealed class TransformTool : ITool
     private SelectionTransformOperation? _operation;
     private ITool? _previousTool;
 
+    // Called after commit/cancel/delete so the canvas can restore the previous tool.
+    public Action? OnCompleted { get; set; }
+
     public bool HasPendingOperation => _operation != null;
 
     public void Deactivate(ToolContext ctx) => Cancel(ctx);
@@ -58,13 +61,12 @@ public sealed class TransformTool : ITool
 
     public void PointerDown(ToolContext ctx, CanvasInputSample s)
     {
-        if (_operation == null)
-            BeginTransform(ctx);
-        _operation?.PointerDown(s);
+        if (_operation == null) return;
+        _operation.PointerDown(s);
 
-        if (_operation?.RequestedAction == OverlayAction.Commit)
+        if (_operation.RequestedAction == OverlayAction.Commit)
             Commit(ctx);
-        else if (_operation?.RequestedAction == OverlayAction.Cancel)
+        else if (_operation.RequestedAction == OverlayAction.Cancel)
             Cancel(ctx);
     }
 
@@ -72,8 +74,31 @@ public sealed class TransformTool : ITool
     public void PointerUp(ToolContext ctx, CanvasInputSample s) => _operation?.PointerUp(s);
     public void RenderOverlay(DrawingContext dc, ToolContext ctx, double zoom) => _operation?.RenderOverlay(dc, zoom);
     public void Activate(ToolContext ctx) { }
-    public void Cancel(ToolContext ctx) { _operation?.Cancel(); _operation = null; ctx.InvalidateRender(); }
-    public void Commit(ToolContext ctx) { _operation?.CommitCurrent(); _operation = null; ctx.InvalidateRender(); }
+
+    public void Cancel(ToolContext ctx)
+    {
+        _operation?.Cancel();
+        _operation = null;
+        ctx.InvalidateRender();
+        var cb = OnCompleted; OnCompleted = null; cb?.Invoke();
+    }
+
+    public void Commit(ToolContext ctx)
+    {
+        _operation?.CommitCurrent();
+        _operation = null;
+        ctx.InvalidateRender();
+        var cb = OnCompleted; OnCompleted = null; cb?.Invoke();
+    }
+
+    public void Delete(ToolContext ctx)
+    {
+        _operation?.CommitDelete();
+        _operation = null;
+        ctx.InvalidateRender();
+        var cb = OnCompleted; OnCompleted = null; cb?.Invoke();
+    }
+
     public StandardCursorType? CursorFor(Point canvasPos, double zoom) => _operation?.CursorFor(canvasPos, zoom);
 }
 
@@ -365,6 +390,19 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
             _context.Document.NotifyChanged(new PixelRegion(_sourceX, _sourceY, _sourceW, _sourceH), data.Index);
         }
 
+        _overlayBitmap?.Dispose();
+        _overlayBitmap = null;
+    }
+
+    public void CommitDelete()
+    {
+        // Pixels were already erased from layers during TryCreate — just push the tile
+        // mutation so undo can restore them.
+        foreach (var data in _layerData)
+        {
+            var dirty = new PixelRegion(data.SrcX, data.SrcY, data.SrcW, data.SrcH);
+            _context.CommitMutation(data.Index, data.BeforeTiles, dirty);
+        }
         _overlayBitmap?.Dispose();
         _overlayBitmap = null;
     }
