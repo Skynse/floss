@@ -45,7 +45,7 @@ public sealed class PresetStore
         using (var command = connection.CreateCommand())
         {
             command.CommandText = """
-                SELECT id, name, shortcut_json, default_engine, custom_icon, last_active_preset_id
+                SELECT id, name, shortcut_json, default_engine, custom_icon, last_active_preset_id, last_active_category_name
                 FROM tool_groups
                 ORDER BY sort_order, rowid
                 """;
@@ -59,7 +59,8 @@ public sealed class PresetStore
                     Shortcut = JsonSerializer.Deserialize<Input.KeyBinding>(reader.GetString(2), JsonOpts) ?? Input.KeyBinding.Empty,
                     DefaultEngine = Enum.Parse<ToolPresetEngine>(reader.GetString(3)),
                     CustomIcon = NullableString(reader, 4),
-                    LastActivePresetId = NullableString(reader, 5)
+                    LastActivePresetId = NullableString(reader, 5),
+                    LastActiveCategoryName = NullableString(reader, 6)
                 });
             }
         }
@@ -89,8 +90,8 @@ public sealed class PresetStore
             {
                 command.Transaction = transaction;
                 command.CommandText = """
-                    INSERT INTO tool_groups(id, name, shortcut_json, default_engine, custom_icon, last_active_preset_id, sort_order)
-                    VALUES ($id, $name, $shortcut, $engine, $icon, $active, $sort)
+                    INSERT INTO tool_groups(id, name, shortcut_json, default_engine, custom_icon, last_active_preset_id, last_active_category_name, sort_order)
+                    VALUES ($id, $name, $shortcut, $engine, $icon, $active, $activeCat, $sort)
                     """;
                 Add(command, "$id", group.Id);
                 Add(command, "$name", group.Name);
@@ -98,6 +99,7 @@ public sealed class PresetStore
                 Add(command, "$engine", group.DefaultEngine.ToString());
                 Add(command, "$icon", group.CustomIcon);
                 Add(command, "$active", group.LastActivePresetId);
+                Add(command, "$activeCat", group.LastActiveCategoryName);
                 Add(command, "$sort", groupIndex);
                 command.ExecuteNonQuery();
             }
@@ -130,12 +132,13 @@ public sealed class PresetStore
                 using var categoryCommand = connection.CreateCommand();
                 categoryCommand.Transaction = transaction;
                 categoryCommand.CommandText = """
-                    INSERT INTO tool_categories(group_id, name, sort_order)
-                    VALUES ($group, $name, $sort)
+                    INSERT INTO tool_categories(group_id, name, sort_order, last_active_preset_id)
+                    VALUES ($group, $name, $sort, $activePr)
                     """;
                 Add(categoryCommand, "$group", group.Id);
                 Add(categoryCommand, "$name", category.Name);
                 Add(categoryCommand, "$sort", categoryIndex);
+                Add(categoryCommand, "$activePr", category.LastActivePresetId);
                 categoryCommand.ExecuteNonQuery();
 
                 for (var presetIndex = 0; presetIndex < category.PresetIds.Count; presetIndex++)
@@ -303,7 +306,7 @@ public sealed class PresetStore
     {
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT c.name, cp.preset_id
+            SELECT c.name, cp.preset_id, c.last_active_preset_id
             FROM tool_categories c
             LEFT JOIN category_presets cp ON cp.group_id = c.group_id AND cp.category_name = c.name
             WHERE c.group_id = $group
@@ -321,7 +324,7 @@ public sealed class PresetStore
             if (!string.Equals(currentName, name, StringComparison.Ordinal))
             {
                 currentName = name;
-                current = new ToolCategory { Name = name };
+                current = new ToolCategory { Name = name, LastActivePresetId = NullableString(reader, 2) };
                 categories.Add(current);
             }
 
@@ -351,9 +354,12 @@ public sealed class PresetStore
                 default_engine TEXT NOT NULL,
                 custom_icon TEXT NULL,
                 last_active_preset_id TEXT NULL,
+                last_active_category_name TEXT NULL,
                 sort_order INTEGER NOT NULL
             )
             """);
+        try { Execute(connection, null, "ALTER TABLE tool_groups ADD COLUMN last_active_category_name TEXT NULL"); }
+        catch { /* column already exists */ }
         Execute(connection, null, """
             CREATE TABLE IF NOT EXISTS tool_presets(
                 id TEXT PRIMARY KEY NOT NULL,
@@ -374,10 +380,13 @@ public sealed class PresetStore
                 group_id TEXT NOT NULL,
                 name TEXT NOT NULL,
                 sort_order INTEGER NOT NULL,
+                last_active_preset_id TEXT NULL,
                 PRIMARY KEY(group_id, name),
                 FOREIGN KEY(group_id) REFERENCES tool_groups(id) ON DELETE CASCADE
             )
             """);
+        try { Execute(connection, null, "ALTER TABLE tool_categories ADD COLUMN last_active_preset_id TEXT NULL"); }
+        catch { /* column already exists */ }
         Execute(connection, null, """
             CREATE TABLE IF NOT EXISTS category_presets(
                 group_id TEXT NOT NULL,
@@ -582,7 +591,6 @@ public sealed class PresetStore
     private sealed class BrushPresetDocument
     {
         public string Name { get; set; } = "";
-        public BrushKind Kind { get; set; }
         public double Size { get; set; }
         public double Opacity { get; set; }
         public double Hardness { get; set; }
@@ -611,7 +619,6 @@ public sealed class PresetStore
         public static BrushPresetDocument FromPreset(BrushPreset preset) => new()
         {
             Name = preset.Name,
-            Kind = preset.Kind,
             Size = preset.Size,
             Opacity = preset.Opacity,
             Hardness = preset.Hardness,
@@ -640,7 +647,7 @@ public sealed class PresetStore
 
         public BrushPreset ToPreset(BrushTipData tip, BrushTipData? shapeData)
         {
-            var preset = new BrushPreset(Name, Kind, Size, Opacity, Hardness, Spacing, Avalonia.Media.Color.FromUInt32(Color), Angle)
+            var preset = new BrushPreset(Name, Size, Opacity, Hardness, Spacing, Avalonia.Media.Color.FromUInt32(Color), Angle)
             {
                 Dynamics = BrushDynamics.Deserialize(DynamicsJson),
                 Flow = Flow,

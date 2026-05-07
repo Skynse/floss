@@ -71,6 +71,9 @@ internal static class Program
         ("Default tool groups have categories", PresetStoreTests.ToolGroups_DefaultsHaveCategories),
         ("Tool group sync categorizes brush assets", PresetStoreTests.ToolGroups_SyncCategorizesBrushAssets),
         ("Preset store round-trips brush assets", PresetStoreTests.BrushAssets_RoundTrip),
+        ("Preset store round-trips all brush fields via Capture/Apply", PresetStoreTests.BrushPresetOverride_RoundTrip),
+        ("Preset store isolates overrides between presets", PresetStoreTests.BrushPresetOverride_Isolation),
+        ("Preset store does not override Tip/Angle/Kind from Capture", PresetStoreTests.BrushPresetOverride_PreservesTipAndAngle),
         ("Preset packages export sub tools with brush assets", PresetStoreTests.Packages_ExportSubTool),
         ("Preset packages export sub tool groups with brush assets", PresetStoreTests.Packages_ExportSubToolGroup),
 
@@ -232,7 +235,7 @@ internal static class PresetStoreTests
                 Kind = BrushTipStorageKind.EmbeddedPng,
                 PngBytes = TestPngBytes()
             };
-            var preset = new BrushPreset("Loaded ABR Stamp", BrushKind.Marker, 77, 0.63, 0.38, 0.17, Color.Parse("#123456"), 24)
+            var preset = new BrushPreset("Loaded ABR Stamp", 77, 0.63, 0.38, 0.17, Color.Parse("#123456"), 24)
             {
                 Dynamics = new BrushDynamics
                 {
@@ -321,9 +324,12 @@ internal static class PresetStoreTests
                 new ToolGroup { Id = "eraser", Name = "Eraser", DefaultEngine = ToolPresetEngine.Eraser }
             ]
         };
-        var pen = BrushAsset.FromPreset(new BrushPreset("Technical Pen", BrushKind.Ink, 8, 1, 0.9, 0.1, Color.Parse("#000000"), 0));
-        var marker = BrushAsset.FromPreset(new BrushPreset("Marker", BrushKind.Marker, 32, 1, 0.5, 0.1, Color.Parse("#000000"), 0));
-        var eraser = BrushAsset.FromPreset(new BrushPreset("Eraser", BrushKind.Eraser, 32, 1, 0.5, 0.1, Color.Parse("#000000"), 0));
+        var pen    = BrushAsset.FromPreset(new BrushPreset("Technical Pen", 8, 1, 0.9, 0.1, Color.Parse("#000000"), 0), category: "Pens");
+        var marker = BrushAsset.FromPreset(new BrushPreset("Marker", 32, 1, 0.5, 0.1, Color.Parse("#000000"), 0), category: "Markers");
+        var eraser = BrushAsset.FromPreset(new BrushPreset("Eraser", 32, 1, 0.5, 0.1, Color.Parse("#000000"), 0)
+        {
+            BlendMode = SkiaSharp.SKBlendMode.DstOut
+        }, category: "Erasers");
 
         config.SyncWithAssets([pen, marker, eraser]);
 
@@ -333,10 +339,10 @@ internal static class PresetStoreTests
         AssertEx.True(brushGroup.Categories.Any(c => c.Name == "Markers" && c.PresetIds.Count == 1));
         AssertEx.True(eraserGroup.Categories.Any(c => c.Name == "Erasers" && c.PresetIds.Count == 1));
 
-        var uncategorized = brushGroup.Presets.First(p => p.BrushId == pen.Id);
+        var penPreset = brushGroup.Presets.First(p => p.BrushId == pen.Id);
         brushGroup.Categories.Clear();
         config.SyncWithAssets([pen]);
-        AssertEx.True(brushGroup.Categories.Any(c => c.Name == "Pens" && c.PresetIds.Contains(uncategorized.Id)));
+        AssertEx.True(brushGroup.Categories.Any(c => c.Name == "Pens" && c.PresetIds.Contains(penPreset.Id)));
     }
 
     public static void ToolGroups_DefaultsHaveCategories()
@@ -464,7 +470,7 @@ internal static class PresetStoreTests
         return new BrushAsset
         {
             Id = id,
-            Preset = new BrushPreset(name, BrushKind.Ink, 24, 1, 0.8, 0.1, Color.Parse("#000000"), 0)
+            Preset = new BrushPreset(name, 24, 1, 0.8, 0.1, Color.Parse("#000000"), 0)
             {
                 Tip = tip.CreateTip()
             },
@@ -490,6 +496,129 @@ internal static class PresetStoreTests
         using var image = SKImage.FromBitmap(bitmap);
         using var data = image.Encode(SKEncodedImageFormat.Png, 100);
         return data.ToArray();
+    }
+
+    // ── ToolPreset override round-trip ──────────────────────────────────────
+
+    public static void BrushPresetOverride_RoundTrip()
+    {
+        var original = new BrushPreset("Round", 42, 0.85, 0.67, 0.11, Color.Parse("#ff0000"), 33)
+        {
+            Dynamics = new BrushDynamics
+            {
+                Size = CurveOption.Pressure(1.0f),
+                Opacity = CurveOption.Pressure(0.5f),
+                Rotation = CurveOption.PressureSpeed(0.3f, 0.1f)
+            },
+            Flow = 0.77,
+            ColorMix = true,
+            ColorLoad = 0.33,
+            ColorStretch = 0.44,
+            BlurAmount = 0.12,
+            SmudgeMode = SmudgeMode.Smear,
+            MixingMode = MixingMode.Perceptual,
+            AmountOfPaint = 0.55,
+            DensityOfPaint = 0.66,
+            TipDensity = 0.88,
+            TipThickness = 2.5,
+            TipDirection = BrushTipDirection.Vertical,
+            Grain = 0.22,
+            Smoothing = 0.44,
+            BlendMode = SKBlendMode.Multiply,
+            BaseAngleSource = BrushDynamics.AngleSource.DirectionOfLine,
+            AngleJitter = 0.15f,
+            Tip = new ImageBrushTip(TestPngBytes()),
+            Shape = new ProceduralBrushTip(BrushTipShape.Ellipse, 0.5f)
+        };
+
+        var preset = new ToolPreset();
+        preset.CaptureFromBrushPreset(original);
+        var restored = preset.ApplyToBrushPreset(new BrushPreset("Base", 1, 1, 1, 1, Color.Parse("#000000"), 0));
+
+        AssertEx.Equal("Base", restored.Name, "Name should come from base preset, not captured");
+        AssertEx.Near(42, restored.Size);
+        AssertEx.Near(0.85, restored.Opacity);
+        AssertEx.Near(0.67, restored.Hardness);
+        AssertEx.Near(0.11, restored.Spacing);
+        AssertEx.Near(0.77, restored.Flow);
+        AssertEx.Near(0.22, restored.Grain);
+        AssertEx.Near(0.44, restored.Smoothing);
+        AssertEx.True(restored.ColorMix);
+        AssertEx.Near(0.33, restored.ColorLoad);
+        AssertEx.Near(0.44, restored.ColorStretch);
+        AssertEx.Near(0.12, restored.BlurAmount);
+        AssertEx.Equal(SmudgeMode.Smear, restored.SmudgeMode);
+        AssertEx.Equal(MixingMode.Perceptual, restored.MixingMode);
+        AssertEx.Near(0.55, restored.AmountOfPaint);
+        AssertEx.Near(0.66, restored.DensityOfPaint);
+        AssertEx.Near(0.88, restored.TipDensity);
+        AssertEx.Near(2.5, restored.TipThickness);
+        AssertEx.Equal(BrushTipDirection.Vertical, restored.TipDirection);
+        AssertEx.Equal(SKBlendMode.Multiply, restored.BlendMode);
+
+        // Dynamics should be captured and restored
+        AssertEx.True(restored.Dynamics.Size.IsEnabled);
+        AssertEx.True(restored.Dynamics.Opacity.IsEnabled);
+        AssertEx.True(restored.Dynamics.Rotation.IsEnabled);
+
+        // These fields are NOT captured by CaptureFromBrushPreset; they come from the base preset
+        AssertEx.Near(0, restored.Angle, 0.0001, "Angle should NOT be captured by ToolPreset");
+        AssertEx.Equal(BrushDynamics.AngleSource.None, restored.BaseAngleSource, "BaseAngleSource should NOT be captured");
+        AssertEx.Near(0, restored.AngleJitter, 0.0001, "AngleJitter should NOT be captured");
+        AssertEx.True(restored.Tip is not ImageBrushTip, "Tip should NOT be captured (comes from base preset)");
+        AssertEx.True(restored.Shape is null, "Shape should NOT be captured (comes from base preset)");
+        AssertEx.Equal(Color.Parse("#000000"), restored.Color, "Color should NOT be captured");
+    }
+
+    public static void BrushPresetOverride_Isolation()
+    {
+        var basePreset = new BrushPreset("Base", 5, 1, 1, 0.5, Color.Parse("#000000"), 0);
+
+        var presetA = new ToolPreset();
+        var brushA = basePreset with { Size = 10, Opacity = 0.5 };
+        presetA.CaptureFromBrushPreset(brushA);
+
+        var presetB = new ToolPreset();
+        var brushB = basePreset with { Size = 20, Opacity = 0.8 };
+        presetB.CaptureFromBrushPreset(brushB);
+
+        var restoredA = presetA.ApplyToBrushPreset(basePreset);
+        var restoredB = presetB.ApplyToBrushPreset(basePreset);
+
+        AssertEx.Near(10, restoredA.Size, 0.0001, "Preset A should keep its own size");
+        AssertEx.Near(0.5, restoredA.Opacity, 0.0001, "Preset A should keep its own opacity");
+        AssertEx.Near(20, restoredB.Size, 0.0001, "Preset B should keep its own size");
+        AssertEx.Near(0.8, restoredB.Opacity, 0.0001, "Preset B should keep its own opacity");
+    }
+
+    public static void BrushPresetOverride_PreservesTipAndAngle()
+    {
+        var fullPreset = new BrushPreset("Custom", 15, 0.9, 0.6, 0.2, Color.Parse("#112233"), 45)
+        {
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle, 1.0f),
+            BaseAngleSource = BrushDynamics.AngleSource.PenTilt,
+            AngleJitter = 0.25f,
+            Shape = new ProceduralBrushTip(BrushTipShape.Rectangle, 1.5f)
+        };
+
+        var preset = new ToolPreset();
+        preset.CaptureFromBrushPreset(fullPreset);
+
+        // Apply to a DIFFERENT base — the captured fields should override, rest should not
+        var differentBase = new BrushPreset("Default", 1, 1, 1, 1, Color.Parse("#000000"), 0);
+        var restored = preset.ApplyToBrushPreset(differentBase);
+
+        // Captured fields override the base
+        AssertEx.Near(15, restored.Size);
+        AssertEx.Near(0.9, restored.Opacity);
+
+        // NOT captured — these come from the base
+        AssertEx.Equal("Default", restored.Name);
+        AssertEx.Near(0, restored.Angle, 0.0001, "Angle should NOT be captured");
+        AssertEx.Equal(BrushDynamics.AngleSource.None, restored.BaseAngleSource);
+        AssertEx.Near(0, restored.AngleJitter, 0.0001);
+        AssertEx.True(restored.Tip is ProceduralBrushTip, "Tip should come from base");
+        AssertEx.True(restored.Shape is null, "Shape should come from base");
     }
 }
 
@@ -790,7 +919,7 @@ internal static class BrushTests
 
     public static void BrushPreset_LegacyDynamicsBridge()
     {
-        var preset = new BrushPreset("Test", BrushKind.Ink, 10, 1, 1, 1, Colors.Black, 0)
+        var preset = new BrushPreset("Test", 10, 1, 1, 1, Colors.Black, 0)
         {
             SizeDynamics = ParameterDynamics.DefaultSize,
             OpacityDynamics = ParameterDynamics.DefaultOpacity
@@ -806,7 +935,7 @@ internal static class BrushTests
     {
         using var engine = new BrushEngine();
         var tip = new CountingBrushTip();
-        var brush = new BrushPreset("Big", BrushKind.Ink, 160, 1, 0.7, 0.04, Colors.Black, 0)
+        var brush = new BrushPreset("Big", 160, 1, 0.7, 0.04, Colors.Black, 0)
         {
             Tip = tip,
             Shape = null
@@ -825,7 +954,7 @@ internal static class BrushTests
     public static void BrushEngine_ColorMixOffIgnoresWetPaintFields()
     {
         using var engine = new BrushEngine();
-        var brush = new BrushPreset("Dry", BrushKind.Ink, 30, 1, 1, 0.1, Colors.Black, 0)
+        var brush = new BrushPreset("Dry", 30, 1, 1, 0.1, Colors.Black, 0)
         {
             ColorMix = false,
             DensityOfPaint = 0.0,
@@ -847,7 +976,7 @@ internal static class BrushTests
     {
         using var engine = new BrushEngine();
         var layer = new DrawingLayer("Layer", 100, 100);
-        var brush = new BrushPreset("Flat tip", BrushKind.Ink, 40, 1, 1, 0.1, Colors.Black, 0)
+        var brush = new BrushPreset("Flat tip", 40, 1, 1, 0.1, Colors.Black, 0)
         {
             Tip = new ProceduralBrushTip(BrushTipShape.Circle),
             TipThickness = 0.25,
@@ -871,7 +1000,7 @@ internal static class BrushTests
         using var highEngine = new BrushEngine();
         var lowLayer = new DrawingLayer("Low", 100, 100);
         var highLayer = new DrawingLayer("High", 100, 100);
-        var brush = new BrushPreset("Dynamic tip", BrushKind.Ink, 40, 1, 1, 0.1, Colors.Black, 0)
+        var brush = new BrushPreset("Dynamic tip", 40, 1, 1, 0.1, Colors.Black, 0)
         {
             Tip = new ProceduralBrushTip(BrushTipShape.Circle),
             TipDensity = 1,
@@ -900,7 +1029,7 @@ internal static class BrushTests
     public static void BrushEngine_BlendModeDoesNotCarryPaint()
     {
         using var engine = new BrushEngine();
-        var brush = new BrushPreset("Blend", BrushKind.Ink, 8, 1, 1, 0.6, Colors.White, 0)
+        var brush = new BrushPreset("Blend", 8, 1, 1, 0.6, Colors.White, 0)
         {
             ColorMix = true,
             SmudgeMode = SmudgeMode.Blend,
@@ -935,7 +1064,7 @@ internal static class BrushTests
         for (var x = 16; x <= 24; x++)
             layer.Pixels.SetPixel(x, y, 0, 0, 0, 255);
 
-        var brush = new BrushPreset("Blend", BrushKind.Ink, 8, 1, 1, 0.6, Colors.White, 0)
+        var brush = new BrushPreset("Blend", 8, 1, 1, 0.6, Colors.White, 0)
         {
             ColorMix = true,
             SmudgeMode = SmudgeMode.Blend,
@@ -970,7 +1099,7 @@ internal static class BrushTests
             highLayer.Pixels.SetPixel(x, y, 0, 0, 0, 255);
         }
 
-        BrushPreset Brush(double amount) => new("Mix", BrushKind.Ink, 8, 1, 1, 0.6, Colors.White, 0)
+        BrushPreset Brush(double amount) => new("Mix", 8, 1, 1, 0.6, Colors.White, 0)
         {
             ColorMix = true,
             SmudgeMode = SmudgeMode.Blend,
@@ -995,7 +1124,7 @@ internal static class BrushTests
     public static void BrushEngine_DoesNotDisposeTipOwnedCachedMasks()
     {
         var tip = new CachedCountingBrushTip();
-        var brush = new BrushPreset("Cached", BrushKind.Ink, 80, 1, 0.7, 0.1, Colors.Black, 0)
+        var brush = new BrushPreset("Cached", 80, 1, 0.7, 0.1, Colors.Black, 0)
         {
             Tip = tip,
             Shape = null
@@ -1026,7 +1155,7 @@ internal static class BrushTests
         var document = new DrawingDocument();
         var context = new ToolContext(document)
         {
-            Brush = new BrushPreset("Source", BrushKind.Ink, 10, 1, 1, 0.1, Colors.Black, 0)
+            Brush = new BrushPreset("Source", 10, 1, 1, 0.1, Colors.Black, 0)
         };
         var first = new PresetApplyingTool();
         var second = new PresetApplyingTool();

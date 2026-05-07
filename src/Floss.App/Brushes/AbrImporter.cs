@@ -1073,8 +1073,7 @@ public static class AbrImporter
             smoothing = Math.Clamp(p.SmoothingValue / 100.0, 0.0, 1.0);
 
         // ── Kind ─────────────────────────────────────────────────────────────
-        var kind = BrushKind.Ink;
-        if (p?.IsEraser == true) kind = BrushKind.Eraser;
+        var blendMode = p?.IsEraser == true ? SkiaSharp.SKBlendMode.DstOut : SkiaSharp.SKBlendMode.SrcOver;
 
         var tipThickness = 1.0;
         if (p?.HasRoundness == true)
@@ -1097,7 +1096,7 @@ public static class AbrImporter
         else if (p?.RoundnessDyn.Jitter > 0)
             angleJitter = (float)Math.Clamp(p.RoundnessDyn.Jitter / 300.0, 0.0, 0.25);
 
-        preset = new BrushPreset(cleanName, kind, size, opacity, hardness, spacing,
+        preset = new BrushPreset(cleanName, size, opacity, hardness, spacing,
             Color.Parse("#111111"), angle)
         {
             Dynamics = BuildDynamics(p),
@@ -1108,6 +1107,7 @@ public static class AbrImporter
             Color = Color.Parse("#111111"),
             BaseAngleSource = DetectAngleSource(p),
             AngleJitter = angleJitter,
+            BlendMode = blendMode,
             TipThickness = tipThickness,
             TipDirection = BrushTipDirection.Horizontal,
             Grain = p?.UseColorDynamics == true

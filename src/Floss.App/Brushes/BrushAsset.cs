@@ -100,6 +100,7 @@ public sealed class BrushAsset
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string FilePath { get; set; } = "";
+    public string? Category { get; set; }
     public BrushPreset Preset { get; set; } = BrushPreset.Defaults[0];
     public BrushTipData Tip { get; set; } = new();
 
@@ -133,12 +134,13 @@ public sealed class BrushAsset
             ShapeData = ShapeData == null ? null : new BrushTipData { Kind = BrushTipStorageKind.Procedural, Shape = ShapeData.Shape, AspectRatio = ShapeData.AspectRatio }
         };
 
-    public static BrushAsset FromPreset(BrushPreset preset)
+    public static BrushAsset FromPreset(BrushPreset preset, string? category = null)
         => new()
         {
             Id = StableId(preset.Name),
             Preset = preset,
-            Tip = BrushTipData.FromTip(preset.Tip)
+            Tip = BrushTipData.FromTip(preset.Tip),
+            Category = category
         };
 
     private static string StableId(string name)

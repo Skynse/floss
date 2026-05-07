@@ -29,7 +29,7 @@ public static class BrushFileFormat
         var asset = new BrushAsset { Id = reader.ReadString(), FilePath = path };
 
         var name = reader.ReadString();
-        var kind = (BrushKind)reader.ReadInt32();
+        reader.ReadInt32(); // legacy BrushKind — discarded
         var size = reader.ReadDouble();
         var opacity = reader.ReadDouble();
         var hardness = reader.ReadDouble();
@@ -55,7 +55,7 @@ public static class BrushFileFormat
             var dynJson = reader.ReadString();
             var dynamics = BrushDynamics.Deserialize(dynJson);
             asset.Tip = ReadTip(reader);
-            asset.Preset = new BrushPreset(name, kind, size, opacity, hardness, spacing, color, angle)
+            asset.Preset = new BrushPreset(name, size, opacity, hardness, spacing, color, angle)
             {
                 Dynamics = dynamics,
                 Flow = flow,
@@ -76,7 +76,7 @@ public static class BrushFileFormat
             var sizeDyn = ReadParameterDynamics(reader);
             var opacDyn = ReadParameterDynamics(reader);
             asset.Tip = ReadTip(reader);
-            asset.Preset = new BrushPreset(name, kind, size, opacity, hardness, spacing, color, angle)
+            asset.Preset = new BrushPreset(name, size, opacity, hardness, spacing, color, angle)
             {
                 Dynamics = BrushDynamics.FromLegacy(sizeDyn, opacDyn),
                 Flow = flow,
@@ -126,7 +126,7 @@ public static class BrushFileFormat
                 (float)prOpMin, (float)prOpMax, velToOpac, (float)velocityOpac);
 
             asset.Tip = ReadTip(reader);
-            asset.Preset = new BrushPreset(name, kind, size, opacity, hardness, spacing, color, angle)
+            asset.Preset = new BrushPreset(name, size, opacity, hardness, spacing, color, angle)
             {
                 Dynamics = BrushDynamics.FromLegacy(sizeDyn, opacDyn),
                 Flow = flow,
@@ -150,7 +150,7 @@ public static class BrushFileFormat
         writer.Write(Version); // Writes Version 7
         writer.Write(string.IsNullOrWhiteSpace(asset.Id) ? Guid.NewGuid().ToString("N") : asset.Id);
         writer.Write(p.Name);
-        writer.Write((int)p.Kind);
+        writer.Write(0); // legacy BrushKind, now removed — write 0 for compat
         writer.Write(p.Size);
         writer.Write(p.Opacity);
         writer.Write(p.Hardness);

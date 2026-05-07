@@ -271,6 +271,7 @@ public sealed class ToolCategory
 {
     public string Name { get; set; } = "";
     public List<string> PresetIds { get; set; } = [];
+    public string? LastActivePresetId { get; set; }
 }
 
 public sealed class ToolGroup
@@ -283,6 +284,7 @@ public sealed class ToolGroup
     public List<ToolPreset> Presets { get; set; } = [];
     public List<ToolCategory> Categories { get; set; } = [];
     public string? LastActivePresetId { get; set; }
+    public string? LastActiveCategoryName { get; set; }
 
     [JsonIgnore]
     public string ActiveIcon =>
@@ -381,7 +383,7 @@ public sealed class ToolGroupConfig
         {
             if (allBrushIds.Contains(asset.Id)) continue;
 
-            if (asset.Preset.Kind == Brushes.BrushKind.Eraser && eraserGroup != null)
+            if (asset.Preset.BlendMode == SkiaSharp.SKBlendMode.DstOut && eraserGroup != null)
             {
                 var preset = new ToolPreset
                 {
@@ -392,7 +394,8 @@ public sealed class ToolGroupConfig
                     BrushBlendMode = SkiaSharp.SKBlendMode.DstOut
                 };
                 eraserGroup.Presets.Add(preset);
-                AddToCategory(eraserGroup, preset.Id, BrushCategoryName(asset));
+                if (asset.Category != null)
+                    AddToCategory(eraserGroup, preset.Id, asset.Category);
             }
             else
             {
@@ -404,31 +407,23 @@ public sealed class ToolGroupConfig
                     BrushId = asset.Id
                 };
                 brushGroup.Presets.Add(preset);
-                AddToCategory(brushGroup, preset.Id, BrushCategoryName(asset));
+                if (asset.Category != null)
+                    AddToCategory(brushGroup, preset.Id, asset.Category);
             }
         }
 
         foreach (var asset in assets)
         {
+            if (asset.Category == null) continue;
             foreach (var group in Groups)
             {
                 var preset = group.Presets.FirstOrDefault(p => p.BrushId == asset.Id);
                 if (preset == null) continue;
                 if (group.Categories.Any(c => c.PresetIds.Contains(preset.Id))) continue;
-                AddToCategory(group, preset.Id, BrushCategoryName(asset));
+                AddToCategory(group, preset.Id, asset.Category);
             }
         }
     }
-
-    private static string BrushCategoryName(BrushAsset asset)
-        => asset.Preset.Kind switch
-        {
-            Brushes.BrushKind.Marker => "Markers",
-            Brushes.BrushKind.Airbrush => "Airbrush",
-            Brushes.BrushKind.Pencil => "Pencils",
-            Brushes.BrushKind.Eraser => "Erasers",
-            _ => "Pens"
-        };
 
     private static void AddToCategory(ToolGroup group, string presetId, string categoryName)
     {

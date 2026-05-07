@@ -29,12 +29,11 @@ public partial class MainWindow : Window
 
         _strokePreview = new BrushStrokePreview { Height = 48 };
 
-        var importAbrBtn = SmBtn("ABR", "Import .abr brush pack");
+        var panelMenuBtn = SmIconBtn(Icons.DotsVertical, "Panel menu");
+        panelMenuBtn.Click += (_, _) => ShowBrushPanelMenu(panelMenuBtn);
         _saveBrushButton = SmIconBtn(Icons.ContentSaveOutline, "Save brush");
         var duplicateBrushBtn = SmIconBtn(Icons.ContentCopy, "Duplicate brush");
         var editBrushBtn = SmIconBtn(Icons.TuneVertical, "Tool properties");
-        importAbrBtn.Width = 38;
-        importAbrBtn.Click += async (_, _) => await ImportAbrAsync();
         _saveBrushButton.Click += (_, _) => SaveActiveBrush();
         duplicateBrushBtn.Click += (_, _) => DuplicateActiveBrush();
         editBrushBtn.Click += (_, _) => OpenToolProperties();
@@ -67,9 +66,9 @@ public partial class MainWindow : Window
         var brushToolRow = new WrapPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
-            Children = { importAbrBtn, _saveBrushButton, duplicateBrushBtn, editBrushBtn }
+            Children = { panelMenuBtn, _saveBrushButton, duplicateBrushBtn, editBrushBtn }
         };
-        foreach (var b in new[] { importAbrBtn, _saveBrushButton, duplicateBrushBtn, editBrushBtn })
+        foreach (var b in new[] { panelMenuBtn, _saveBrushButton, duplicateBrushBtn, editBrushBtn })
             b.Margin = new Thickness(0, 0, 3, 3);
 
         var root = new Grid
@@ -100,6 +99,7 @@ public partial class MainWindow : Window
     }
 
     private static readonly DataFormat<string> CategoryDragFormat = DataFormat.CreateInProcessFormat<string>("x-floss-category");
+    private static readonly DataFormat<string> CategoryGroupDragFormat = DataFormat.CreateInProcessFormat<string>("x-floss-category-group");
     private static readonly DataFormat<string> PresetIdDragFormat = DataFormat.CreateInProcessFormat<string>("x-floss-preset");
 
     // ── Preset panel ──────────────────────────────────────────────────────────
@@ -136,8 +136,26 @@ public partial class MainWindow : Window
             btn.Click += (_, _) =>
             {
                 _selectedCategory = catName;
-                SaveActiveToolSelection();
-                RefreshGroupPresets();
+                group.LastActiveCategoryName = catName;
+
+                var catObj = group.Categories.FirstOrDefault(c => c.Name == catName);
+                ToolPreset? toActivate = null;
+                if (catObj != null)
+                {
+                    if (catObj.LastActivePresetId != null && catObj.PresetIds.Contains(catObj.LastActivePresetId))
+                        toActivate = group.Presets.FirstOrDefault(p => p.Id == catObj.LastActivePresetId);
+                    toActivate ??= catObj.PresetIds
+                        .Select(id => group.Presets.FirstOrDefault(p => p.Id == id))
+                        .FirstOrDefault(p => p != null);
+                }
+
+                if (toActivate != null)
+                    ActivatePreset(group, toActivate);
+                else
+                {
+                    SaveActiveToolSelection();
+                    RefreshGroupPresets();
+                }
             };
             btn.DoubleTapped += (_, _) => RenameCategoryPrompt(group, cat);
             btn.ContextMenu = BuildCategoryContextMenu(group, cat);
@@ -483,18 +501,6 @@ public partial class MainWindow : Window
             _canvas.SyncBrushFromContext(overridden);
             _activeBrushLabel.Text = active.Name;
             _strokePreview.Brush = overridden;
-        }
-
-        var isEraserPreset = active.BrushBlendMode == SkiaSharp.SKBlendMode.DstOut
-            || (_brushAssets.FirstOrDefault(a => a.Id == active.BrushId)?.Preset.Kind == BrushKind.Eraser);
-        var targetKind = isEraserPreset ? BrushKind.Eraser : BrushKind.Ink;
-        var current = _activePreset ?? _canvas.Brush;
-        if (current.Kind != targetKind)
-        {
-            var fixedBrush = current with { Kind = targetKind };
-            _canvas.SyncBrushFromContext(fixedBrush);
-            _activePreset = fixedBrush;
-            _strokePreview.Brush = fixedBrush;
         }
 
         UpdateStatus();
@@ -1021,23 +1027,32 @@ public partial class MainWindow : Window
         {
             if (!e.GetCurrentPoint(btn).Properties.IsLeftButtonPressed) return;
             var item = new DataTransferItem();
-            item.Set(CategoryDragFormat, cat);
+            item.Set(CategoryGroupDragFormat, $"{group.Id}\0{cat}");
             var data = new DataTransfer();
             data.Add(item);
             _ = DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
         };
         btn.AddHandler(DragDrop.DragOverEvent, (_, e) =>
         {
-            if (e.DataTransfer.Contains(CategoryDragFormat) && e.DataTransfer.TryGetValue<string>(CategoryDragFormat) != cat)
-            {
-                e.DragEffects = DragDropEffects.Move;
-                e.Handled = true;
-            }
+            if (!e.DataTransfer.Contains(CategoryGroupDragFormat)) return;
+            var val = e.DataTransfer.TryGetValue<string>(CategoryGroupDragFormat);
+            if (string.IsNullOrEmpty(val)) return;
+            var sep = val.IndexOf('\0');
+            if (sep < 0) return;
+            if (val[..sep] != group.Id || val[(sep + 1)..] == cat) return;
+            e.DragEffects = DragDropEffects.Move;
+            e.Handled = true;
         });
         btn.AddHandler(DragDrop.DropEvent, (_, e) =>
         {
-            var dragged = e.DataTransfer.TryGetValue<string>(CategoryDragFormat);
-            if (string.IsNullOrEmpty(dragged) || dragged == cat) return;
+            if (!e.DataTransfer.Contains(CategoryGroupDragFormat)) return;
+            var val = e.DataTransfer.TryGetValue<string>(CategoryGroupDragFormat);
+            if (string.IsNullOrEmpty(val)) return;
+            var sep = val.IndexOf('\0');
+            if (sep < 0) return;
+            if (val[..sep] != group.Id) return;
+            var dragged = val[(sep + 1)..];
+            if (dragged == cat) return;
             var fromCat = group.Categories.FirstOrDefault(c => c.Name == dragged);
             var toCat = group.Categories.FirstOrDefault(c => c.Name == cat);
             if (fromCat == null || toCat == null) return;
@@ -1052,15 +1067,294 @@ public partial class MainWindow : Window
         });
     }
 
-    private static string KindTag(BrushKind kind) => kind switch
+    private void ShowBrushPanelMenu(Button anchor)
     {
-        BrushKind.Ink => "Ink",
-        BrushKind.Pencil => "Pencil",
-        BrushKind.Marker => "Marker",
-        BrushKind.Airbrush => "Air",
-        BrushKind.Eraser => "Eraser",
-        _ => ""
-    };
+        var menu = new ContextMenu();
+
+        var importAbr = new MenuItem { Header = "Import .abr brush pack…" };
+        importAbr.Click += async (_, _) => await ImportAbrAsync();
+
+        var importTool = new MenuItem { Header = "Import Tool (.flbr)…" };
+        importTool.Click += async (_, _) => await ImportSubToolAsync();
+
+        var importToolGroup = new MenuItem { Header = "Import Tool Group (.flbrg)…" };
+        importToolGroup.Click += async (_, _) => await ImportSubToolGroupAsync();
+
+        menu.Items.Add(importAbr);
+        menu.Items.Add(importTool);
+        menu.Items.Add(importToolGroup);
+
+        var group = _activeToolGroup;
+        if (group != null)
+        {
+            menu.Items.Add(new Separator());
+
+            var exportGroup = new MenuItem { Header = $"Export Tool Group \"{group.Name}\"…" };
+            exportGroup.Click += async (_, _) => await ExportCurrentToolGroupAsync();
+            menu.Items.Add(exportGroup);
+
+            var activePreset = group.ActivePreset;
+            if (activePreset != null)
+            {
+                var exportTool = new MenuItem { Header = $"Export Tool \"{activePreset.Name}\"…" };
+                exportTool.Click += async (_, _) => await ExportSubToolAsync(group, activePreset);
+                menu.Items.Add(exportTool);
+            }
+        }
+
+        menu.Open(anchor);
+    }
+
+    private async Task ImportSubToolAsync()
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Import Tool",
+            AllowMultiple = false,
+            FileTypeFilter = [FlossSubToolFileType]
+        });
+        if (files.Count == 0) return;
+
+        try
+        {
+            var (importedGroup, importedPreset, brushAssets) = PresetPackageFormat.ImportSubTool(files[0].Path.LocalPath);
+
+            foreach (var asset in brushAssets)
+                _brushLibrary.Save(asset);
+
+            var targetGroup = _activeToolGroup
+                ?? App.ToolGroups.Groups.FirstOrDefault(g => g.DefaultEngine == ToolPresetEngine.Brush)
+                ?? App.ToolGroups.Groups.FirstOrDefault();
+            if (targetGroup == null) return;
+
+            importedPreset.Id = Guid.NewGuid().ToString("N");
+            targetGroup.Presets.Add(importedPreset);
+
+            var catName = importedGroup.Categories.FirstOrDefault(c => c.PresetIds.Any())?.Name ?? _selectedCategory;
+            if (catName != null)
+            {
+                var cat = targetGroup.Categories.FirstOrDefault(c => c.Name == catName);
+                if (cat == null) { cat = new ToolCategory { Name = catName }; targetGroup.Categories.Add(cat); }
+                if (!cat.PresetIds.Contains(importedPreset.Id)) cat.PresetIds.Add(importedPreset.Id);
+            }
+
+            App.ToolGroups.Save();
+            LoadBrushAssets();
+            _footerStatusText.Text = $"Imported tool \"{importedPreset.Name}\"";
+        }
+        catch (Exception ex)
+        {
+            _footerStatusText.Text = $"Import error: {ex.Message}";
+        }
+    }
+
+    private async Task ImportSubToolGroupAsync()
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Import Tool Group",
+            AllowMultiple = false,
+            FileTypeFilter = [FlossSubToolGroupFileType]
+        });
+        if (files.Count == 0) return;
+
+        try
+        {
+            var (importedGroups, brushAssets) = PresetPackageFormat.ImportSubToolGroup(files[0].Path.LocalPath);
+
+            foreach (var asset in brushAssets)
+                _brushLibrary.Save(asset);
+
+            foreach (var importedGroup in importedGroups)
+            {
+                var existing = App.ToolGroups.Groups.FirstOrDefault(g => g.Name == importedGroup.Name);
+                if (existing != null)
+                {
+                    var idMap = new System.Collections.Generic.Dictionary<string, string>();
+                    foreach (var preset in importedGroup.Presets)
+                    {
+                        var newId = Guid.NewGuid().ToString("N");
+                        idMap[preset.Id] = newId;
+                        preset.Id = newId;
+                        existing.Presets.Add(preset);
+                    }
+                    foreach (var cat in importedGroup.Categories)
+                    {
+                        var existingCat = existing.Categories.FirstOrDefault(c => c.Name == cat.Name);
+                        if (existingCat == null) { existingCat = new ToolCategory { Name = cat.Name }; existing.Categories.Add(existingCat); }
+                        foreach (var oldId in cat.PresetIds)
+                            if (idMap.TryGetValue(oldId, out var newId) && !existingCat.PresetIds.Contains(newId))
+                                existingCat.PresetIds.Add(newId);
+                    }
+                }
+                else
+                {
+                    importedGroup.Id = Guid.NewGuid().ToString("N");
+                    App.ToolGroups.Groups.Add(importedGroup);
+                }
+            }
+
+            App.ToolGroups.Save();
+            LoadBrushAssets();
+            BuildToolRail();
+            _footerStatusText.Text = $"Imported tool group";
+        }
+        catch (Exception ex)
+        {
+            _footerStatusText.Text = $"Import error: {ex.Message}";
+        }
+    }
+
+    private async Task ExportCurrentToolGroupAsync()
+    {
+        var group = _activeToolGroup;
+        if (group == null) return;
+        CaptureActiveBrushToPreset();
+
+        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = "Export Tool Group",
+            FileTypeChoices = [FlossSubToolGroupFileType],
+            SuggestedFileName = SafePresetFileName(group.Name, PresetPackageFormat.SubToolGroupExtension)
+        });
+        if (file == null) return;
+
+        try
+        {
+            PresetPackageFormat.ExportSubToolGroup(file.Path.LocalPath, group, _brushAssets);
+            _footerStatusText.Text = $"Exported \"{group.Name}\" to {Path.GetFileName(file.Path.LocalPath)}";
+        }
+        catch (Exception ex)
+        {
+            _footerStatusText.Text = $"Export error: {ex.Message}";
+        }
+    }
+
+    internal void EnableCategoryPromoteDrop(Control target, ToolGroup? targetGroup)
+    {
+        DragDrop.SetAllowDrop(target, true);
+        var origBackground = (target as Button)?.Background;
+        var origBorder = (target as Button)?.BorderBrush;
+        var origThickness = (target as Button)?.BorderThickness ?? new Thickness(0);
+
+        target.AddHandler(DragDrop.DragOverEvent, (_, e) =>
+        {
+            if (!e.DataTransfer.Contains(CategoryGroupDragFormat)) return;
+            var val = e.DataTransfer.TryGetValue<string>(CategoryGroupDragFormat);
+            if (string.IsNullOrEmpty(val)) return;
+            var sep = val.IndexOf('\0');
+            if (sep < 0) return;
+            if (targetGroup?.Id == val[..sep]) return;
+            e.DragEffects = DragDropEffects.Move;
+            if (target is Button b)
+            {
+                b.Background = new SolidColorBrush(Color.Parse(AccentSoft));
+                b.BorderBrush = new SolidColorBrush(Color.Parse(Accent));
+                b.BorderThickness = new Thickness(1);
+            }
+            e.Handled = true;
+        });
+        target.AddHandler(DragDrop.DragLeaveEvent, (_, _) =>
+        {
+            if (target is Button b)
+            {
+                b.Background = origBackground;
+                b.BorderBrush = origBorder;
+                b.BorderThickness = origThickness;
+            }
+        });
+        target.AddHandler(DragDrop.DropEvent, (_, e) =>
+        {
+            if (target is Button b)
+            {
+                b.Background = origBackground;
+                b.BorderBrush = origBorder;
+                b.BorderThickness = origThickness;
+            }
+            if (!e.DataTransfer.Contains(CategoryGroupDragFormat)) return;
+            var val = e.DataTransfer.TryGetValue<string>(CategoryGroupDragFormat);
+            if (string.IsNullOrEmpty(val)) return;
+            var sep = val.IndexOf('\0');
+            if (sep < 0) return;
+            PromoteCategoryToGroup(val[..sep], val[(sep + 1)..], targetGroup);
+            e.Handled = true;
+        });
+    }
+
+    private void PromoteCategoryToGroup(string sourceGroupId, string catName, ToolGroup? targetGroup)
+    {
+        var sourceGroup = App.ToolGroups.Groups.FirstOrDefault(g => g.Id == sourceGroupId);
+        if (sourceGroup == null) return;
+        if (targetGroup != null && targetGroup.Id == sourceGroupId) return;
+
+        var sourceCat = sourceGroup.Categories.FirstOrDefault(c => c.Name == catName);
+        if (sourceCat == null) return;
+
+        var presetIds = sourceCat.PresetIds.ToList();
+        var presets = presetIds
+            .Select(id => sourceGroup.Presets.FirstOrDefault(p => p.Id == id))
+            .OfType<ToolPreset>()
+            .ToList();
+
+        foreach (var preset in presets)
+        {
+            sourceGroup.Presets.Remove(preset);
+            foreach (var c in sourceGroup.Categories)
+                c.PresetIds.Remove(preset.Id);
+        }
+        sourceGroup.Categories.Remove(sourceCat);
+
+        if (targetGroup == null)
+        {
+            targetGroup = new ToolGroup
+            {
+                Name = catName,
+                DefaultEngine = sourceGroup.DefaultEngine,
+                Presets = []
+            };
+            App.ToolGroups.Groups.Add(targetGroup);
+        }
+
+        foreach (var preset in presets)
+            targetGroup.Presets.Add(preset);
+
+        var targetCat = targetGroup.Categories.FirstOrDefault(c => c.Name == catName);
+        if (targetCat == null)
+        {
+            targetCat = new ToolCategory { Name = catName };
+            targetGroup.Categories.Add(targetCat);
+        }
+        foreach (var id in presetIds)
+            if (!targetCat.PresetIds.Contains(id))
+                targetCat.PresetIds.Add(id);
+
+        var sourceWasActive = _activeToolGroup == sourceGroup;
+        if (!sourceGroup.Presets.Any() && !sourceGroup.Categories.Any())
+        {
+            App.ToolGroups.Groups.Remove(sourceGroup);
+            if (sourceWasActive) _activeToolGroup = null;
+        }
+
+        App.ToolGroups.Save();
+        BuildToolRail();
+
+        _selectedCategory = catName;
+        if (_activeToolGroup != targetGroup)
+        {
+            var preset = targetGroup.ActivePreset ?? targetGroup.Presets.FirstOrDefault();
+            if (preset != null)
+                ActivatePreset(targetGroup, preset);
+            else
+            {
+                _activeToolGroup = targetGroup;
+                RefreshGroupPresets();
+            }
+        }
+        else
+        {
+            RefreshGroupPresets();
+        }
+    }
 
     private void LoadBrushAssets()
     {

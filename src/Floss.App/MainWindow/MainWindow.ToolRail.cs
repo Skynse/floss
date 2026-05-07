@@ -33,25 +33,8 @@ public partial class MainWindow
             BorderThickness = new Thickness(1.5),
             Background = new SolidColorBrush(Color.Parse("#111112"))
         };
-        var colorBtn = new Button
-        {
-            Content = _colorWell,
-            Width = 36,
-            Height = 34,
-            Background = Avalonia.Media.Brushes.Transparent,
-            Padding = new Thickness(5),
-            HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center
-        };
-        ToolTip.SetTip(colorBtn, "Cycle color  (X)");
-        colorBtn.Click += (_, _) => CycleColor();
 
-        var colorBar = new StackPanel
-        {
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 4, 0, 8),
-            Children = { RailSep(), colorBtn }
-        };
+
 
         var outerStack = new StackPanel
         {
@@ -59,7 +42,7 @@ public partial class MainWindow
             HorizontalAlignment = HorizontalAlignment.Center,
         };
         outerStack.Children.Add(_toolRailStack);
-        outerStack.Children.Add(colorBar);
+
 
         return outerStack;
     }
@@ -158,6 +141,7 @@ public partial class MainWindow
         };
         ToolTip.SetTip(addBtn, "Add tool group");
         addBtn.Click += (_, _) => ShowAddToolGroupDialog();
+        EnableCategoryPromoteDrop(addBtn, null);
         _toolRailStack.Children.Add(addBtn);
     }
 
@@ -223,6 +207,7 @@ public partial class MainWindow
         menu.Items.Add(deleteItem);
 
         btn.ContextMenu = menu;
+        EnableCategoryPromoteDrop(btn, group);
         return btn;
     }
 

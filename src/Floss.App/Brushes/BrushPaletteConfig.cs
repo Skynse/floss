@@ -41,36 +41,22 @@ public sealed class BrushPaletteConfig
 
     /// <summary>
     /// Ensure every brush in <paramref name="assets"/> has a category assignment.
-    /// Brushes without an assignment are placed according to their <see cref="BrushKind"/>.
+    /// Assets with a <see cref="BrushAsset.Category"/> set are placed there; others are left uncategorized.
     /// Missing categories are auto-created.
     /// </summary>
     public void SyncWithAssets(IReadOnlyList<BrushAsset> assets)
     {
-        var kindToDefaultCategory = new Dictionary<BrushKind, string>
-        {
-            [BrushKind.Pencil] = "Pencils",
-            [BrushKind.Ink] = "Pens",
-            [BrushKind.Marker] = "Markers",
-            [BrushKind.Airbrush] = "Airbrush",
-            [BrushKind.Eraser] = "Erasers",
-        };
-
         if (Categories.Count == 0)
-        {
-            Categories.AddRange(["Recent", "Pencils", "Pens", "Markers", "Airbrush"]);
-        }
+            Categories.Add("Recent");
 
         foreach (var asset in assets)
         {
             if (BrushCategory.ContainsKey(asset.Id)) continue;
+            if (asset.Category == null) continue;
 
-            var defaultCat = kindToDefaultCategory.TryGetValue(asset.Preset.Kind, out var cat)
-                ? cat : "Pens";
-
-            BrushCategory[asset.Id] = defaultCat;
-
-            if (!Categories.Contains(defaultCat))
-                Categories.Add(defaultCat);
+            BrushCategory[asset.Id] = asset.Category;
+            if (!Categories.Contains(asset.Category))
+                Categories.Add(asset.Category);
         }
     }
 }

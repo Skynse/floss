@@ -118,7 +118,7 @@ public sealed class DrawingCanvas : Control
     public bool CanDeleteLayer => _document.CanDeleteLayer;
     public BrushPreset Brush => _brush;
     public Color PaintColor => _paintColor;
-    public bool EraserEnabled => _brush.Kind == BrushKind.Eraser;
+    public bool EraserEnabled => _brush.BlendMode == SkiaSharp.SKBlendMode.DstOut;
     public DrawingDocument Document => _document;
     public IReadOnlyList<DrawingLayer> Layers => _document.Layers;
     public int ActiveLayerIndex => _document.ActiveLayerIndex;
@@ -868,9 +868,9 @@ public sealed class DrawingCanvas : Control
         var sample = MakeSample(point, CanvasInputPhase.Down);
 
         // Auto-switch to eraser when pen eraser tip is used with a paint tool.
-        if (sample.Source == CanvasInputSource.Eraser && _brush.Kind != BrushKind.Eraser)
+        if (sample.Source == CanvasInputSource.Eraser && _brush.BlendMode != SkiaSharp.SKBlendMode.DstOut)
         {
-            _brush = _brush with { Kind = BrushKind.Eraser };
+            _brush = _brush with { BlendMode = SkiaSharp.SKBlendMode.DstOut };
             _ctx.Brush = _brush;
             InvalidateVisual();
         }

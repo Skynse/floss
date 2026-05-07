@@ -25,6 +25,13 @@ public sealed class BrushLibrary
             assets = _store.LoadBrushAssets();
         }
 
+        var defaultCategories = DefaultAssets().ToDictionary(a => a.Id, a => a.Category);
+        foreach (var asset in assets)
+        {
+            if (asset.Category == null && defaultCategories.TryGetValue(asset.Id, out var cat))
+                asset.Category = cat;
+        }
+
         return assets;
     }
 
@@ -52,26 +59,26 @@ public sealed class BrushLibrary
     internal static IEnumerable<BrushAsset> DefaultAssets()
     {
         yield return BrushAsset.FromPreset(
-            new BrushPreset("Technical Pen", BrushKind.Ink, 8, 1.0, 0.96, 0.09, Color.Parse("#000000"), 100)
+            new BrushPreset("Technical Pen", 8, 1.0, 0.96, 0.09, Color.Parse("#000000"), 100)
             {
                 SizeDynamics = new() { PressureEnabled = true, CurveData = [0f, 0f, 0.5f, 0.42f, 1f, 1f], VelocityEnabled = true, VelocityStrength = 0.18f },
                 OpacityDynamics = new() { PressureEnabled = false },
                 Smoothing = 0.45,
                 Tip = new ProceduralBrushTip(BrushTipShape.Circle)
-            });
+            }, category: "Pens");
 
         yield return BrushAsset.FromPreset(
-            new BrushPreset("Round Sable", BrushKind.Ink, 18, 0.88, 0.62, 0.12, Color.Parse("#000000"), 100)
+            new BrushPreset("Round Sable", 18, 0.88, 0.62, 0.12, Color.Parse("#000000"), 100)
             {
                 SizeDynamics = new() { PressureEnabled = true, CurveData = [0f, 0f, 0.5f, 0.34f, 1f, 1f], VelocityEnabled = true, VelocityStrength = 0.35f },
                 OpacityDynamics = new() { PressureEnabled = true, CurveData = [0f, 0f, 0.5f, 0.34f, 1f, 1f], VelocityEnabled = true, VelocityStrength = 0.18f },
                 Smoothing = 0.52,
                 Flow = 0.82,
                 Tip = new ProceduralBrushTip(BrushTipShape.Ellipse, 0.78f)
-            });
+            }, category: "Brushes");
 
         yield return BrushAsset.FromPreset(
-            new BrushPreset("Soft Graphite", BrushKind.Pencil, 24, 0.55, 0.24, 0.16, Color.Parse("#000000"), 100)
+            new BrushPreset("Soft Graphite", 24, 0.55, 0.24, 0.16, Color.Parse("#000000"), 100)
             {
                 SizeDynamics = new() { PressureEnabled = true, CurveData = [0f, 0f, 0.5f, 0.47f, 1f, 1f], VelocityEnabled = true, VelocityStrength = 0.42f },
                 OpacityDynamics = new() { PressureEnabled = true, CurveData = [0f, 0f, 0.5f, 0.47f, 1f, 1f], VelocityEnabled = true, VelocityStrength = 0.35f },
@@ -79,20 +86,20 @@ public sealed class BrushLibrary
                 Grain = 0.55,
                 Flow = 0.75,
                 Tip = new ProceduralBrushTip(BrushTipShape.Circle)
-            });
+            }, category: "Pencils");
 
         yield return BrushAsset.FromPreset(
-            new BrushPreset("Chisel Marker", BrushKind.Marker, 42, 0.68, 0.46, 0.18, Color.Parse("#000000"), 100)
+            new BrushPreset("Chisel Marker", 42, 0.68, 0.46, 0.18, Color.Parse("#000000"), 100)
             {
                 SizeDynamics = new() { PressureEnabled = true, CurveData = [0f, 0f, 0.5f, 0.54f, 1f, 1f], VelocityEnabled = true, VelocityStrength = 0.12f },
                 OpacityDynamics = new() { PressureEnabled = false },
                 Flow = 0.58,
                 Smoothing = 0.55,
                 Tip = new ProceduralBrushTip(BrushTipShape.Rectangle, 2.8f)
-            });
+            }, category: "Markers");
 
         yield return BrushAsset.FromPreset(
-            new BrushPreset("Soft Airbrush", BrushKind.Airbrush, 64, 0.34, 0.08, 0.12, Color.Parse("#000000"), 100)
+            new BrushPreset("Soft Airbrush", 64, 0.34, 0.08, 0.12, Color.Parse("#000000"), 100)
             {
                 SizeDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
                 OpacityDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
@@ -100,10 +107,10 @@ public sealed class BrushLibrary
                 Smoothing = 0.68,
                 Grain = 0.03,
                 Tip = new ProceduralBrushTip(BrushTipShape.Circle)
-            });
+            }, category: "Airbrush");
 
         yield return BrushAsset.FromPreset(
-            new BrushPreset("Smudge", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
+            new BrushPreset("Smudge", 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
             {
                 SizeDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
                 OpacityDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
@@ -120,10 +127,10 @@ public sealed class BrushLibrary
                 SmudgeMode = SmudgeMode.Smudge,
                 Smoothing = 0.45,
                 Tip = new ProceduralBrushTip(BrushTipShape.Circle)
-            });
+            }, category: "Mixing");
 
         yield return BrushAsset.FromPreset(
-            new BrushPreset("Blend", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
+            new BrushPreset("Blend", 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
             {
                 SizeDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
                 OpacityDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
@@ -139,10 +146,10 @@ public sealed class BrushLibrary
                 SmudgeMode = SmudgeMode.Blend,
                 Smoothing = 0.45,
                 Tip = new ProceduralBrushTip(BrushTipShape.Circle)
-            });
+            }, category: "Mixing");
 
         yield return BrushAsset.FromPreset(
-            new BrushPreset("Smear", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
+            new BrushPreset("Smear", 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
             {
                 SizeDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
                 OpacityDynamics = new() { PressureEnabled = true, VelocityEnabled = false },
@@ -158,7 +165,7 @@ public sealed class BrushLibrary
                 SmudgeMode = SmudgeMode.Smear,
                 Smoothing = 0.45,
                 Tip = new ProceduralBrushTip(BrushTipShape.Circle)
-            });
+            }, category: "Mixing");
     }
 
 }

@@ -5,14 +5,12 @@ using static Floss.App.Brushes.BrushDynamics;
 
 namespace Floss.App.Brushes;
 
-public enum BrushKind { Ink, Pencil, Marker, Airbrush, Eraser }
 public enum MixingMode { Standard, Perceptual }
 public enum SmudgeMode { Blend, Smear, Smudge }
 public enum BrushTipDirection { Horizontal, Vertical }
 
 public sealed record BrushPreset(
     string Name,
-    BrushKind Kind,
     double Size,
     double Opacity,
     double Hardness,
@@ -23,37 +21,25 @@ public sealed record BrushPreset(
     public BrushDynamics Dynamics { get; init; } = new();
     public double Flow { get; init; } = 1.0;
     public bool ColorMix { get; init; } = false;
-    // How fast the brush reloads with fresh paint. 1 = always fresh, 0 = color accumulates
     public double ColorLoad { get; init; } = 1.0;
-    // How aggressively colors are stretched/mixed (0 = gentle, 1 = aggressive)
     public double ColorStretch { get; init; } = 0.5;
-    // Blur intensity applied during color mixing (0 = none, 1 = full)
     public double BlurAmount { get; init; } = 0.0;
-    // Color mixing sub-mode: Blend (soft edge-shift), Smear (pick-up with brush refill), Smudge (running color)
     public SmudgeMode SmudgeMode { get; init; } = SmudgeMode.Blend;
-    // Color mixing algorithm: Standard (RGB) or Perceptual (LCh)
     public MixingMode MixingMode { get; init; } = MixingMode.Standard;
-    // How much paint is deposited per dab (0 = none, 1 = full)
     public double AmountOfPaint { get; init; } = 1.0;
-    // Paint density/concentration (0 = pure canvas mixing/no own color, 1 = full brush color)
     public double DensityOfPaint { get; init; } = 1.0;
-    // Brush tip density — how much the texture/tip pattern influences stamp appearance (0 = none, 1 = full)
     public double TipDensity { get; init; } = 1.0;
-    // CSP-style brush tip thickness. 1 = original shape, lower values flatten the short axis.
     public double TipThickness { get; init; } = 1.0;
     public BrushTipDirection TipDirection { get; init; } = BrushTipDirection.Horizontal;
     public double Grain { get; init; } = 0.0;
     public double Smoothing { get; init; } = 0.3;
     public IBrushTip Tip { get; init; } = new ProceduralBrushTip();
     public SkiaSharp.SKBlendMode BlendMode { get; init; } = SkiaSharp.SKBlendMode.SrcOver;
-    // Optional silhouette mask multiplied against Tip at render time.
-    // Null = no extra clip (Tip stamps as-is, which is correct for procedural tips).
     public ProceduralBrushTip? Shape { get; init; } = null;
     public AngleSource BaseAngleSource { get; init; } = AngleSource.None;
-    public float AngleJitter { get; init; } = 0f; // 0.0 to 1.0
+    public float AngleJitter { get; init; } = 0f;
+
     public ParameterDynamics SizeDynamics
-
-
     {
         get => BrushDynamics.ToParameterDynamics(Dynamics.Size);
         init
@@ -77,7 +63,7 @@ public sealed record BrushPreset(
 
     public static IReadOnlyList<BrushPreset> Defaults { get; } =
     [
-        new("Technical Pen", BrushKind.Ink, 8, 1.0, 0.95, 0.10, Color.Parse("#000000"), 100)
+        new("Technical Pen", 8, 1.0, 0.95, 0.10, Color.Parse("#000000"), 100)
         {
             Dynamics = new BrushDynamics
             {
@@ -87,7 +73,7 @@ public sealed record BrushPreset(
             Smoothing = 0.45,
 
         },
-        new("Studio Pen", BrushKind.Ink, 16, 0.92, 0.72, 0.13, Color.Parse("#000000"), 100)
+        new("Studio Pen",  16, 0.92, 0.72, 0.13, Color.Parse("#000000"), 100)
         {
             Dynamics = new BrushDynamics
             {
@@ -96,7 +82,7 @@ public sealed record BrushPreset(
             },
             Smoothing = 0.5
         },
-        new("Soft Pencil", BrushKind.Pencil, 22, 0.58, 0.28, 0.18, Color.Parse("#000000"), 100)
+        new("Soft Pencil", 22, 0.58, 0.28, 0.18, Color.Parse("#000000"), 100)
         {
             Dynamics = new BrushDynamics
             {
@@ -105,7 +91,7 @@ public sealed record BrushPreset(
             },
             Smoothing = 0.2, Grain = 0.45
         },
-        new("Marker", BrushKind.Marker, 34, 0.70, 0.48, 0.20, Color.Parse("#000000"), 100)
+        new("Marker",      34, 0.70, 0.48, 0.20, Color.Parse("#000000"), 100)
         {
             Dynamics = new BrushDynamics
             {
@@ -114,7 +100,7 @@ public sealed record BrushPreset(
             },
             Flow = 0.6, Smoothing = 0.55
         },
-        new("Airbrush", BrushKind.Airbrush, 48, 0.35, 0.12, 0.16, Color.Parse("#000000"), 100)
+        new("Airbrush",    48, 0.35, 0.12, 0.16, Color.Parse("#000000"), 100)
         {
             Dynamics = new BrushDynamics
             {
@@ -123,7 +109,7 @@ public sealed record BrushPreset(
             },
             Flow = 0.25, Smoothing = 0.65, Grain = 0.04
         },
-        new("Smudge", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
+        new("Smudge",      24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
         {
             Dynamics = new BrushDynamics
             {
@@ -143,7 +129,7 @@ public sealed record BrushPreset(
             SmudgeMode = SmudgeMode.Smudge,
             Smoothing = 0.45
         },
-        new("Blend", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
+        new("Blend",       24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
         {
             Dynamics = new BrushDynamics
             {
@@ -162,7 +148,7 @@ public sealed record BrushPreset(
             SmudgeMode = SmudgeMode.Blend,
             Smoothing = 0.45
         },
-        new("Smear", BrushKind.Ink, 24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
+        new("Smear",       24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
         {
             Dynamics = new BrushDynamics
             {

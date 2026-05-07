@@ -76,6 +76,22 @@ public static class PresetPackageFormat
         return brushAssets.Where(a => brushIds.Contains(a.Id));
     }
 
+    public static (ToolGroup Group, ToolPreset Preset, IReadOnlyList<BrushAsset> BrushAssets) ImportSubTool(string path)
+    {
+        var store = PresetStore.OpenPackage(path);
+        var groups = store.LoadToolGroups();
+        var brushAssets = store.LoadBrushAssets();
+        var group = groups.FirstOrDefault() ?? throw new InvalidOperationException("No tool group in package");
+        var preset = group.Presets.FirstOrDefault() ?? throw new InvalidOperationException("No preset in package");
+        return (group, preset, brushAssets);
+    }
+
+    public static (IReadOnlyList<ToolGroup> Groups, IReadOnlyList<BrushAsset> BrushAssets) ImportSubToolGroup(string path)
+    {
+        var store = PresetStore.OpenPackage(path);
+        return (store.LoadToolGroups(), store.LoadBrushAssets());
+    }
+
     private static void ResetPackageFile(string path)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);

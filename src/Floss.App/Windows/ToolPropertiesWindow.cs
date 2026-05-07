@@ -90,7 +90,7 @@ public sealed class ToolPropertiesWindow : Window
     public ToolPropertiesWindow(ToolPreset toolPreset, BrushPreset? brushPreset, Action<ToolPreset, Func<BrushPreset, BrushPreset>?> onChange)
     {
         _toolPreset = toolPreset;
-        _brushPreset = brushPreset ?? new BrushPreset(toolPreset.Name, BrushKind.Ink, 8, 1.0, 0.9, 0.1, Colors.White, 0);
+        _brushPreset = brushPreset ?? new BrushPreset(toolPreset.Name, 8, 1.0, 0.9, 0.1, Colors.White, 0);
         _onChange = onChange;
         _isBrushTool = toolPreset.OutputProcess == OutputProcessType.DirectDraw;
 

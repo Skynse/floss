@@ -2005,9 +2005,18 @@ public partial class MainWindow : Window
         // Snapshot ALL tool settings into the preset we're leaving
         CaptureActiveBrushToPreset();
 
+        // Save the current category for the group we're leaving
+        if (_activeToolGroup != null && _activeToolGroup != group)
+            _activeToolGroup.LastActiveCategoryName = _selectedCategory;
+
         group.LastActivePresetId = preset.Id;
         _activeToolGroup = group;
-        _selectedCategory = ResolveStartupCategory(group, _selectedCategory, preset);
+        _selectedCategory = ResolveStartupCategory(group, group.LastActiveCategoryName, preset);
+
+        // Record the last active preset per category so switching back remembers the right one
+        var activeCat = group.Categories.FirstOrDefault(c => c.Name == _selectedCategory);
+        if (activeCat != null && activeCat.PresetIds.Contains(preset.Id))
+            activeCat.LastActivePresetId = preset.Id;
 
         // For brush-based engines, load the referenced brush asset first
         // and overlay the tool-preset scalar values (size, opacity etc.).
@@ -2058,19 +2067,6 @@ public partial class MainWindow : Window
                 _canvas.SyncBrushFromContext(overridden);
                 _activeBrushLabel.Text = preset.Name;
                 _strokePreview.Brush = overridden;
-            }
-
-            // Ensure the brush Kind matches the preset's eraser status.
-            // An eraser preset uses DstOut blend mode (or the linked asset is BrushKind.Eraser).
-            var isEraserPreset = preset.BrushBlendMode == SkiaSharp.SKBlendMode.DstOut
-                || (assetPreset?.Kind == BrushKind.Eraser);
-            var targetKind = isEraserPreset ? BrushKind.Eraser : BrushKind.Ink;
-            if ((_activePreset ?? _canvas.Brush).Kind != targetKind)
-            {
-                var fixedBrush = (_activePreset ?? _canvas.Brush) with { Kind = targetKind };
-                _canvas.SyncBrushFromContext(fixedBrush);
-                _activePreset = fixedBrush;
-                _strokePreview.Brush = fixedBrush;
             }
         }
         else
