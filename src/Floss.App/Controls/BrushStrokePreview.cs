@@ -165,12 +165,14 @@ public sealed class BrushStrokePreview : Control
 
                 var sizeM = brush.Dynamics.EvalSize(sp);
                 var opacM = brush.Dynamics.EvalOpacity(sp);
+                var tipDensityM = brush.Dynamics.TipDensity.IsEnabled ? brush.Dynamics.EvalTipDensity(sp) : 1f;
+                var tipThicknessM = brush.Dynamics.TipThickness.IsEnabled ? brush.Dynamics.EvalTipThickness(sp) : 1f;
                 var stampSize = (float)Math.Max(0.5, baseSize * sizeM);
-                var opacity = (float)Math.Clamp(brush.Opacity * brush.Flow * brush.TipDensity * opacM, 0.0, 1.0);
+                var opacity = (float)Math.Clamp(brush.Opacity * brush.Flow * brush.TipDensity * tipDensityM * opacM, 0.0, 1.0);
                 paint.Color = new SKColor(255, 255, 255, (byte)(opacity * 255));
 
                 var scale = stampSize / Math.Max(1, mask.Width);
-                var thickness = Math.Clamp((float)brush.TipThickness, 0.01f, 1f);
+                var thickness = Math.Clamp((float)brush.TipThickness * tipThicknessM, 0.01f, 1f);
                 var scaleX = scale;
                 var scaleY = scale;
                 if (brush.TipDirection == BrushTipDirection.Horizontal)

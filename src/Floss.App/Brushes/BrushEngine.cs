@@ -253,12 +253,14 @@ public sealed class BrushEngine : IDisposable
         var flowMul = dyn.EvalFlow(sp);
         var hardness = dyn.Hardness.IsEnabled ? dyn.EvalHardness(sp) : (float)brush.Hardness;
         var spacingMul = dyn.EvalSpacing(sp);
+        var tipDensityMul = dyn.TipDensity.IsEnabled ? dyn.EvalTipDensity(sp) : 1f;
+        var tipThicknessMul = dyn.TipThickness.IsEnabled ? dyn.EvalTipThickness(sp) : 1f;
         var scatter = dyn.Scatter.IsEnabled ? dyn.EvalScatter(sp) : 0f;
         var rotDeg = dyn.EvalRotationDeg(sp);
         var size = Math.Max(0.5f, (float)brush.Size * sizeMul);
         // Opacity is independent of AmountOfPaint. AmountOfPaint controls how much
         // brush color is deposited, not the visibility of the stamp.
-        var opacity = (float)Math.Clamp(brush.Opacity * brush.Flow * brush.TipDensity * opacMul * flowMul, 0, 1);
+        var opacity = (float)Math.Clamp(brush.Opacity * brush.Flow * brush.TipDensity * tipDensityMul * opacMul * flowMul, 0, 1);
         var trajectoryDeg = sp.DrawingAngle * (180f / MathF.PI);
         float directionContrib = brush.BaseAngleSource switch
         {
@@ -284,7 +286,8 @@ public sealed class BrushEngine : IDisposable
         return new StampSample(
             x, y, size, opacity, angle,
             Math.Clamp(hardness, 0.001f, 1f),
-            Math.Clamp(spacingMul, 0.05f, 4f));
+            Math.Clamp(spacingMul, 0.05f, 4f),
+            Math.Clamp(tipThicknessMul, 0.01f, 4f));
     }
 
     private static double EstimateBrushRadius(BrushPreset brush)
@@ -751,7 +754,7 @@ public sealed class BrushEngine : IDisposable
         public void UpdateMatrix(StampSample stamp)
         {
             var scale = stamp.Size / Math.Max(1, BaseMaskSize);
-            var thickness = Math.Clamp((float)_brush.TipThickness, 0.01f, 1f);
+            var thickness = Math.Clamp((float)_brush.TipThickness * stamp.TipThicknessMultiplier, 0.01f, 1f);
             var scaleX = scale;
             var scaleY = scale;
             if (_brush.TipDirection == BrushTipDirection.Horizontal)
@@ -878,6 +881,7 @@ public sealed class BrushEngine : IDisposable
         float Opacity,
         float Angle,
         float Hardness,
-        float SpacingMultiplier);
+        float SpacingMultiplier,
+        float TipThicknessMultiplier);
     private readonly record struct SplinePoint(float X, float Y, float Pressure, float TiltX, float TiltY, float Twist);
 }

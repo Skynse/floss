@@ -14,6 +14,8 @@ public sealed partial class BrushDynamics
     public CurveOption Scatter { get; set; } = CurveOption.Off();
     public CurveOption Rotation { get; set; } = CurveOption.Off();
     public CurveOption Spacing { get; set; } = CurveOption.Off();
+    public CurveOption TipDensity { get; set; } = CurveOption.Off();
+    public CurveOption TipThickness { get; set; } = CurveOption.Off();
 
     public enum AngleSource { None, DirectionOfLine, PenTilt, PenTwist }
 
@@ -31,6 +33,8 @@ public sealed partial class BrushDynamics
         return (Rotation.Compute(sp) - 0.5f) * 360f;
     }
     public float EvalSpacing(in StrokePoint sp) => Spacing.Compute(sp);
+    public float EvalTipDensity(in StrokePoint sp) => TipDensity.Compute(sp);
+    public float EvalTipThickness(in StrokePoint sp) => TipThickness.Compute(sp);
 
     public BrushDynamics Clone() => new()
     {
@@ -40,7 +44,9 @@ public sealed partial class BrushDynamics
         Hardness = Hardness.Clone(),
         Scatter = Scatter.Clone(),
         Rotation = Rotation.Clone(),
-        Spacing = Spacing.Clone()
+        Spacing = Spacing.Clone(),
+        TipDensity = TipDensity.Clone(),
+        TipThickness = TipThickness.Clone()
     };
 
     // ── Serialization ────────────────────────────────────────────────────────
@@ -61,7 +67,9 @@ public sealed partial class BrushDynamics
                 Hardness = FromDto(dto.Hardness),
                 Scatter = FromDto(dto.Scatter),
                 Rotation = FromDto(dto.Rotation),
-                Spacing = FromDto(dto.Spacing)
+                Spacing = FromDto(dto.Spacing),
+                TipDensity = FromDto(dto.TipDensity),
+                TipThickness = FromDto(dto.TipThickness)
             };
         }
         catch { return new BrushDynamics(); }
@@ -157,7 +165,9 @@ public sealed partial class BrushDynamics
         Hardness = ToDto(Hardness),
         Scatter = ToDto(Scatter),
         Rotation = ToDto(Rotation),
-        Spacing = ToDto(Spacing)
+        Spacing = ToDto(Spacing),
+        TipDensity = ToDto(TipDensity),
+        TipThickness = ToDto(TipThickness)
     };
 
     private static CurveOptionDto ToDto(CurveOption opt) => new()
@@ -211,6 +221,8 @@ public sealed partial class BrushDynamics
         public CurveOptionDto? Scatter { get; set; }
         public CurveOptionDto? Rotation { get; set; }
         public CurveOptionDto? Spacing { get; set; }
+        public CurveOptionDto? TipDensity { get; set; }
+        public CurveOptionDto? TipThickness { get; set; }
     }
 
     internal sealed class CurveOptionDto

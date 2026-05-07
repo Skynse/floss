@@ -58,6 +58,7 @@ internal static class Program
         ("Brush engine reuses masks during large strokes", BrushTests.BrushEngine_ReusesMasksDuringLargeStrokes),
         ("Brush engine treats color mix as a master switch", BrushTests.BrushEngine_ColorMixOffIgnoresWetPaintFields),
         ("Brush engine applies CSP-style tip thickness", BrushTests.BrushEngine_AppliesTipThickness),
+        ("Brush engine applies tip density and thickness dynamics", BrushTests.BrushEngine_AppliesTipDensityAndThicknessDynamics),
         ("Brush engine blend mode does not drag paint across empty canvas", BrushTests.BrushEngine_BlendModeDoesNotCarryPaint),
         ("Direct draw color mixing samples pre-stroke pixels", BrushTests.DirectDraw_ColorMixingDoesNotSampleOwnStroke),
         ("Brush engine color mixing amount controls deposited color", BrushTests.BrushEngine_ColorMixAmountControlsDepositedColor),
@@ -775,11 +776,15 @@ internal static class BrushTests
             Rotation = new CurveOption
             {
                 Sensors = [new SensorConfig { Type = SensorType.Random, Curve = CubicCurve.Identity() }]
-            }
+            },
+            TipDensity = CurveOption.Pressure(1.0f),
+            TipThickness = CurveOption.Pressure(1.0f)
         };
         var restored = BrushDynamics.Deserialize(dynamics.Serialize());
         AssertEx.Near(dynamics.EvalSize(StrokePoint(pressure: 0.5f)), restored.EvalSize(StrokePoint(pressure: 0.5f)), 0.01);
         AssertEx.Near(72.0, restored.EvalRotationDeg(StrokePoint(random: 0.7f)), 2.0);
+        AssertEx.Near(0.5, restored.EvalTipDensity(StrokePoint(pressure: 0.5f)), 0.02);
+        AssertEx.Near(0.5, restored.EvalTipThickness(StrokePoint(pressure: 0.5f)), 0.02);
         AssertEx.Equal(1.0f, BrushDynamics.Deserialize("{bad json").EvalSize(StrokePoint()));
     }
 
@@ -858,6 +863,38 @@ internal static class BrushTests
         var width = maxX - minX + 1;
         var height = maxY - minY + 1;
         AssertEx.True(width > height * 2, $"Horizontal tip thickness should flatten the rendered stamp, got {width}x{height}.");
+    }
+
+    public static void BrushEngine_AppliesTipDensityAndThicknessDynamics()
+    {
+        using var lowEngine = new BrushEngine();
+        using var highEngine = new BrushEngine();
+        var lowLayer = new DrawingLayer("Low", 100, 100);
+        var highLayer = new DrawingLayer("High", 100, 100);
+        var brush = new BrushPreset("Dynamic tip", BrushKind.Ink, 40, 1, 1, 0.1, Colors.Black, 0)
+        {
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            TipDensity = 1,
+            TipThickness = 1,
+            TipDirection = BrushTipDirection.Horizontal,
+            Dynamics = new BrushDynamics
+            {
+                TipDensity = CurveOption.Pressure(1.0f),
+                TipThickness = CurveOption.Pressure(1.0f)
+            },
+            Shape = null
+        };
+
+        lowEngine.RasterizeDab(lowLayer, brush, SampleWithPressure(50, 50, 0, 0.25), velocity: 0);
+        highEngine.RasterizeDab(highLayer, brush, SampleWithPressure(50, 50, 0, 1.0), velocity: 0);
+
+        lowLayer.Pixels.GetPixel(50, 50, out _, out _, out _, out var lowAlpha);
+        highLayer.Pixels.GetPixel(50, 50, out _, out _, out _, out var highAlpha);
+        var (_, lowMinY, _, lowMaxY) = AlphaBounds(lowLayer);
+        var (_, highMinY, _, highMaxY) = AlphaBounds(highLayer);
+
+        AssertEx.True(highAlpha > lowAlpha, "Tip density pressure dynamics should affect rendered stamp opacity.");
+        AssertEx.True(highMaxY - highMinY > lowMaxY - lowMinY, "Tip thickness pressure dynamics should affect rendered stamp thickness.");
     }
 
     public static void BrushEngine_BlendModeDoesNotCarryPaint()
@@ -1083,6 +1120,9 @@ internal static class BrushTests
 
     private static CanvasInputSample Sample(double x, double y, long timeMicros)
         => new(x, y, 1, 0, 0, 0, timeMicros, 1, CanvasInputSource.Mouse, CanvasInputPhase.Move);
+
+    private static CanvasInputSample SampleWithPressure(double x, double y, long timeMicros, double pressure)
+        => new(x, y, pressure, 0, 0, 0, timeMicros, 1, CanvasInputSource.Mouse, CanvasInputPhase.Move);
 
     public static unsafe void ImageBrushTip_PreservesAspectRatio()
     {

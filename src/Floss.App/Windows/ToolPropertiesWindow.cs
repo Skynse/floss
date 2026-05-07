@@ -73,6 +73,8 @@ public sealed class ToolPropertiesWindow : Window
     private DynamicsPopupWindow? _spacingDynPopup;
     private DynamicsPopupWindow? _scatterDynPopup;
     private DynamicsPopupWindow? _rotationDynPopup;
+    private DynamicsPopupWindow? _tipDensityDynPopup;
+    private DynamicsPopupWindow? _tipThicknessDynPopup;
     private AngleDynamicsPopupWindow? _angleDynPopup;
 
     // ── Cached category panels (built once to avoid re-parenting sliders) ────
@@ -241,6 +243,10 @@ public sealed class ToolPropertiesWindow : Window
         _scatterDynPopup = null;
         _rotationDynPopup?.Close();
         _rotationDynPopup = null;
+        _tipDensityDynPopup?.Close();
+        _tipDensityDynPopup = null;
+        _tipThicknessDynPopup?.Close();
+        _tipThicknessDynPopup = null;
         _angleDynPopup?.Close();
         _angleDynPopup = null;
 
@@ -371,17 +377,17 @@ public sealed class ToolPropertiesWindow : Window
 
         var thicknessSlider = MkSlider(0.01, 1, Math.Clamp(_brushPreset.TipThickness, 0.01, 1.0), "CSP-style brush tip thickness");
         WireSlider(thicknessSlider, v => Commit(p => p with { TipThickness = v }));
-        result.Children.Add(PlainSliderRow("Thickness", thicknessSlider, "%", "brush.tipThickness"));
+        result.Children.Add(DynSliderRow("Thickness", thicknessSlider, "%", () => OpenTipThicknessDynamics(), "brush.tipThickness"));
 
         result.Children.Add(BuildTipDirectionRow());
 
         var localAngle = MkSlider(0, 360, Math.Clamp(_brushPreset.Angle, 0, 360), "Brush tip angle");
         WireSlider(localAngle, v => Commit(p => p with { Angle = v }));
-        result.Children.Add(PlainSliderRow("Angle", localAngle, "°", "brush.angle"));
+        result.Children.Add(DynSliderRow("Angle", localAngle, "°", () => openAngleDynamics(), "brush.angle"));
 
         var localDensity = MkSlider(0, 1, Math.Clamp(_brushPreset.TipDensity, 0, 1), "Brush tip density");
         WireSlider(localDensity, v => Commit(p => p with { TipDensity = v }));
-        result.Children.Add(PlainSliderRow("Brush density", localDensity, "%", "brush.tipDensity"));
+        result.Children.Add(DynSliderRow("Brush density", localDensity, "%", () => OpenTipDensityDynamics(), "brush.tipDensity"));
 
         // ── TIP TEXTURE section ──────────────────────────────────────────────────
         // Shows the raw texture bitmap. For procedural tips this is just the shape
@@ -595,8 +601,7 @@ public sealed class ToolPropertiesWindow : Window
         Children =
         {
             DynSliderRow("Spacing",   _spacingSlider,   "%", () => OpenSpacingDynamics(), "brush.spacing"),
-            PlainSliderRow("Smoothing", _smoothingSlider, "%", "brush.smoothing"),
-            DynSliderRow("Angle", _angleSlider, "°", () => openAngleDynamics(), "brush.angle")
+            PlainSliderRow("Smoothing", _smoothingSlider, "%", "brush.smoothing")
         }
     };
 
@@ -621,7 +626,6 @@ public sealed class ToolPropertiesWindow : Window
             Children =
             {
                 PlainSliderRow("Grain", _grainSlider, "%", "brush.grain"),
-                PlainSliderRow("Tip Density", _tipDensitySlider, "%", "brush.tipDensity"),
                 new Border { Height = 4 },
                 headerRow,
                 _stampPanel
@@ -1149,6 +1153,30 @@ public sealed class ToolPropertiesWindow : Window
         _spacingDynPopup.Show(this);
     }
 
+    private void OpenTipDensityDynamics()
+    {
+        if (_tipDensityDynPopup != null) { _tipDensityDynPopup.Activate(); return; }
+        _tipDensityDynPopup = new DynamicsPopupWindow("Brush Density", BrushDynamics.ToParameterDynamics(_brushPreset.Dynamics.TipDensity), dyn =>
+        {
+            Commit(p => p with { Dynamics = WithDynamics(p.Dynamics, d => d.TipDensity = BrushDynamics.ToCurveOption(dyn)) });
+        });
+        _tipDensityDynPopup.Closed += (_, _) => _tipDensityDynPopup = null;
+        PositionPopup(_tipDensityDynPopup);
+        _tipDensityDynPopup.Show(this);
+    }
+
+    private void OpenTipThicknessDynamics()
+    {
+        if (_tipThicknessDynPopup != null) { _tipThicknessDynPopup.Activate(); return; }
+        _tipThicknessDynPopup = new DynamicsPopupWindow("Thickness", BrushDynamics.ToParameterDynamics(_brushPreset.Dynamics.TipThickness), dyn =>
+        {
+            Commit(p => p with { Dynamics = WithDynamics(p.Dynamics, d => d.TipThickness = BrushDynamics.ToCurveOption(dyn)) });
+        });
+        _tipThicknessDynPopup.Closed += (_, _) => _tipThicknessDynPopup = null;
+        PositionPopup(_tipThicknessDynPopup);
+        _tipThicknessDynPopup.Show(this);
+    }
+
     private void OpenScatterDynamics()
     {
         if (_scatterDynPopup != null) { _scatterDynPopup.Activate(); return; }
@@ -1405,6 +1433,8 @@ public sealed class ToolPropertiesWindow : Window
         _spacingDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.Spacing));
         _scatterDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.Scatter));
         _rotationDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.Rotation));
+        _tipDensityDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.TipDensity));
+        _tipThicknessDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.TipThickness));
         _angleDynPopup?.SyncState(preset.BaseAngleSource, preset.AngleJitter);
 
         RebuildStampPanel();
