@@ -481,7 +481,8 @@ public partial class MainWindow
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Center
             },
-            Width = 36, Height = 34,
+            Width = 36,
+            Height = 34,
             Margin = new Thickness(2),
             Background = new SolidColorBrush(Color.Parse(group.CustomIcon == null ? AccentSoft : Bg2)),
             BorderBrush = new SolidColorBrush(Color.Parse(group.CustomIcon == null ? Accent : Stroke)),
@@ -505,7 +506,8 @@ public partial class MainWindow
             var iconBtn = new Button
             {
                 Content = MaterialIcon(p, 18),
-                Width = 36, Height = 34,
+                Width = 36,
+                Height = 34,
                 Margin = new Thickness(2),
                 Background = new SolidColorBrush(Color.Parse(group.CustomIcon == p ? AccentSoft : Bg2)),
                 BorderBrush = new SolidColorBrush(Color.Parse(group.CustomIcon == p ? Accent : Stroke)),

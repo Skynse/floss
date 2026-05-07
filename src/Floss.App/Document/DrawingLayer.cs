@@ -84,7 +84,7 @@ public sealed class DrawingLayer : IDisposable
         using var dstFrame = _thumbnail.Lock();
         unsafe
         {
-            var dst  = (byte*)dstFrame.Address;
+            var dst = (byte*)dstFrame.Address;
             var dstW = _thumbnail.PixelSize.Width;
             var dstH = _thumbnail.PixelSize.Height;
             const int ts = TiledPixelBuffer.TileSize;
@@ -110,8 +110,8 @@ public sealed class DrawingLayer : IDisposable
             // because C# integer division truncates toward zero, making tilLocalX negative.
             srcX0 = Math.Max(content.X, 0);
             srcY0 = Math.Max(content.Y, 0);
-            srcW  = Math.Min(content.Right,  Pixels.MaxX) - srcX0;
-            srcH  = Math.Min(content.Bottom, Pixels.MaxY) - srcY0;
+            srcW = Math.Min(content.Right, Pixels.MaxX) - srcX0;
+            srcH = Math.Min(content.Bottom, Pixels.MaxY) - srcY0;
             if (srcW <= 0 || srcH <= 0)
             {
                 for (var y = 0; y < dstH; y++)
@@ -125,24 +125,24 @@ public sealed class DrawingLayer : IDisposable
 
             for (var y = 0; y < dstH; y++)
             {
-                var srcY       = srcY0 + Math.Clamp((int)((y + 0.5) * srcH / dstH), 0, srcH - 1);
-                var tilY       = srcY / ts;
-                var tilLocalY  = srcY - tilY * ts;
-                var dstRow     = dst + y * dstFrame.RowBytes;
+                var srcY = srcY0 + Math.Clamp((int)((y + 0.5) * srcH / dstH), 0, srcH - 1);
+                var tilY = srcY / ts;
+                var tilLocalY = srcY - tilY * ts;
+                var dstRow = dst + y * dstFrame.RowBytes;
 
-                int     prevTilX = -1;
-                byte[]? tile     = null;
+                int prevTilX = -1;
+                byte[]? tile = null;
 
                 for (var x = 0; x < dstW; x++)
                 {
-                    var srcX      = srcX0 + Math.Clamp((int)((x + 0.5) * srcW / dstW), 0, srcW - 1);
-                    var tilX      = srcX / ts;
+                    var srcX = srcX0 + Math.Clamp((int)((x + 0.5) * srcW / dstW), 0, srcW - 1);
+                    var tilX = srcX / ts;
                     var tilLocalX = srcX - tilX * ts;
-                    var dstPx     = dstRow + x * 4;
+                    var dstPx = dstRow + x * 4;
 
                     if (tilX != prevTilX)
                     {
-                        tile     = Pixels.GetTileOrNull(tilX, tilY);
+                        tile = Pixels.GetTileOrNull(tilX, tilY);
                         prevTilX = tilX;
                     }
 

@@ -231,7 +231,6 @@ public partial class MainWindow : Window
     private bool _brushSizeHasLastDir;
     private SettingsWindow? _settingsWindow;
 
-    private bool _suppressBrushSettingsRestored;
     private static readonly Cursor CursorPan = new(StandardCursorType.SizeAll);
     private static readonly Cursor CursorArrow = new(StandardCursorType.Arrow);
     private static readonly Cursor CursorNone = new(StandardCursorType.None);
@@ -281,11 +280,7 @@ public partial class MainWindow : Window
         Closing += (_, _) => SaveToConfig();
         Deactivated += (_, _) => ResetTransientInputState();
         LostFocus += (_, _) => ResetTransientInputState();
-        Loaded += (_, _) =>
-        {
-            var tab = CreateTab();
-            SwitchToTab(tab);
-        };
+        Loaded += (_, _) => UpdateTabBar();
     }
 
     // ── Root layout ───────────────────────────────────────────────────────────
@@ -353,13 +348,13 @@ public partial class MainWindow : Window
             Child = _footerStatusText
         };
 
-        var tabBarContainer = BuildTabBar();
+        BuildTabBar();
         var centerArea = new Grid { RowDefinitions = new RowDefinitions("28,26,*,22") };
-        Grid.SetRow(tabBarContainer, 0);
+        Grid.SetRow(_tabBarContainer, 0);
         Grid.SetRow(statusBar, 1);
         Grid.SetRow(_workspaceViewport, 2);
         Grid.SetRow(footer, 3);
-        centerArea.Children.Add(tabBarContainer);
+        centerArea.Children.Add(_tabBarContainer);
         centerArea.Children.Add(statusBar);
         centerArea.Children.Add(_workspaceViewport);
         centerArea.Children.Add(footer);
@@ -430,10 +425,10 @@ public partial class MainWindow : Window
 
     private void SetDocumentPanelsVisible(bool enabled)
     {
-        if (_leftRail     != null) _leftRail.IsEnabled     = enabled;
-        if (_rightPanel   != null) _rightPanel.IsEnabled   = enabled;
+        if (_leftRail != null) _leftRail.IsEnabled = enabled;
+        if (_rightPanel != null) _rightPanel.IsEnabled = enabled;
         if (_shellToolbar != null) _shellToolbar.IsEnabled = enabled;
-        if (_statusBar    != null) _statusBar.IsEnabled    = enabled;
+        if (_statusBar != null) _statusBar.IsEnabled = enabled;
     }
 
     private static TextBlock MiniText() => new()
@@ -1204,30 +1199,28 @@ public partial class MainWindow : Window
 
     private ContextMenu BuildDockerContextMenu(string id)
     {
-        var floatItem = new MenuItem { Header = IsDockerFloating(id) ? "_Dock" : "_Detach" };
+        var placement = FindDockerPlacement(id);
+        var isOnLeft = placement?.ColumnIndex == -1;
+        var isFloating = IsDockerFloating(id);
+
+        var floatItem = new MenuItem { Header = isFloating ? "_Dock" : "_Detach" };
         floatItem.Click += (_, _) =>
         {
             if (IsDockerFloating(id)) DockDocker(id);
             else DetachDocker(id);
         };
 
-        var dockToolbar = new MenuItem { Header = "Dock to _Toolbar" };
-        dockToolbar.Click += (_, _) => DockDockerToColumn(id, -1);
+        var moveLeft = new MenuItem { Header = "Move to _Left Side", IsEnabled = !isFloating && !isOnLeft };
+        moveLeft.Click += (_, _) => DockDockerToColumn(id, -1);
 
-        var dockLeft = new MenuItem { Header = "Dock to _Left Column" };
-        dockLeft.Click += (_, _) => DockDockerToColumn(id, 0);
+        var moveRight = new MenuItem { Header = "Move to _Right Side", IsEnabled = !isFloating && isOnLeft };
+        moveRight.Click += (_, _) => DockDockerToColumn(id, 0);
 
-        var dockRight = new MenuItem { Header = "Dock to _Right Column" };
-        dockRight.Click += (_, _) => DockDockerToColumn(id, 1);
-
-        var moveUp = new MenuItem { Header = "Move _Up", IsEnabled = !IsDockerFloating(id) };
+        var moveUp = new MenuItem { Header = "Move _Up", IsEnabled = !isFloating };
         moveUp.Click += (_, _) => MoveDocker(id, -1);
 
-        var moveDown = new MenuItem { Header = "Move _Down", IsEnabled = !IsDockerFloating(id) };
+        var moveDown = new MenuItem { Header = "Move _Down", IsEnabled = !isFloating };
         moveDown.Click += (_, _) => MoveDocker(id, 1);
-
-        var moveColumn = new MenuItem { Header = "Move to _Other Column", IsEnabled = !IsDockerFloating(id) };
-        moveColumn.Click += (_, _) => MoveDockerToOtherColumn(id);
 
         var reset = new MenuItem { Header = "_Reset Panel Size" };
         reset.Click += (_, _) =>
@@ -1238,7 +1231,7 @@ public partial class MainWindow : Window
 
         return new ContextMenu
         {
-            ItemsSource = new object[] { floatItem, dockToolbar, dockLeft, dockRight, new Separator(), moveUp, moveDown, moveColumn, new Separator(), reset }
+            ItemsSource = new object[] { floatItem, new Separator(), moveLeft, moveRight, new Separator(), moveUp, moveDown, new Separator(), reset }
         };
     }
 
@@ -1261,12 +1254,12 @@ public partial class MainWindow : Window
         dockersMenu.Items.Clear();
         foreach (var id in AllDockerIds)
         {
+            var dockerId = id;
             var item = new MenuItem
             {
                 Header = DockerTitle(id),
                 IsChecked = IsDockerVisible(id)
             };
-            var dockerId = id;
             item.Click += (_, _) => ToggleDockerVisibility(dockerId);
             dockersMenu.Items.Add(item);
         }
@@ -1587,6 +1580,29 @@ public partial class MainWindow : Window
         cfg.Height = window.Height;
     }
 
+    private void SyncLeftColumnWidth()
+    {
+        if (_rootGrid == null || _rootGrid.ColumnDefinitions.Count < 1) return;
+        var layout = NormalizedWorkspaceLayout();
+        var hasFullPanels = layout.LeftColumn.Panels.Any(id => id != "tools");
+        if (hasFullPanels)
+        {
+            // Expand to stored width or a sensible default if we were in narrow mode
+            if (layout.LeftRailWidth <= 56)
+                layout.LeftRailWidth = 280;
+            _rootGrid.ColumnDefinitions[0].Width =
+                new GridLength(Math.Clamp(layout.LeftRailWidth, 120, 800), GridUnitType.Pixel);
+            _rootGrid.ColumnDefinitions[0].MinWidth = 120;
+        }
+        else
+        {
+            // Narrow tool-strip mode
+            layout.LeftRailWidth = 48;
+            _rootGrid.ColumnDefinitions[0].Width = new GridLength(48, GridUnitType.Pixel);
+            _rootGrid.ColumnDefinitions[0].MinWidth = 36;
+        }
+    }
+
     private void RebuildDockers()
     {
         if (_rootGrid == null) return;
@@ -1617,6 +1633,7 @@ public partial class MainWindow : Window
             _rootGrid.Children.Add(_rightPanel);
         }
 
+        SyncLeftColumnWidth();
         RefreshDockerContentAfterRebuild();
     }
 
@@ -1737,7 +1754,7 @@ public partial class MainWindow : Window
         if (_rootGrid != null && _rootGrid.ColumnDefinitions.Count > 4)
         {
             _rootGrid.ColumnDefinitions[0].Width = new GridLength(
-                Math.Clamp(App.Config.WorkspaceLayout.LeftRailWidth, 36, 200),
+                Math.Clamp(App.Config.WorkspaceLayout.LeftRailWidth, 36, 800),
                 GridUnitType.Pixel);
             _rootGrid.ColumnDefinitions[4].Width = new GridLength(
                 Math.Clamp(App.Config.WorkspaceLayout.RightPanelWidth, 300, 1000),
@@ -1873,7 +1890,7 @@ public partial class MainWindow : Window
         if (_rootGrid != null && _rootGrid.ColumnDefinitions.Count > 4)
         {
             _rootGrid.ColumnDefinitions[0].Width = new GridLength(
-                Math.Clamp(cfg.WorkspaceLayout.LeftRailWidth, 36, 200),
+                Math.Clamp(cfg.WorkspaceLayout.LeftRailWidth, 36, 800),
                 GridUnitType.Pixel);
             _rootGrid.ColumnDefinitions[4].Width = new GridLength(
                 Math.Clamp(cfg.WorkspaceLayout.RightPanelWidth, 300, 1000),
@@ -2000,15 +2017,7 @@ public partial class MainWindow : Window
         _canvas.SaveBrushEnginePreset();
 
         var btn = _toolGroupButtons.FirstOrDefault(x => x.Group == group).Button;
-        _suppressBrushSettingsRestored = true;
-        try
-        {
-            ActivateTool(ToolForPreset(preset), btn, preset);
-        }
-        finally
-        {
-            _suppressBrushSettingsRestored = false;
-        }
+        ActivateTool(ToolForPreset(preset), btn, preset);
 
         // Now load the brush asset and sync the tool-property panel.
         // This runs after ActivateTool so that SetActiveTool's per-engine

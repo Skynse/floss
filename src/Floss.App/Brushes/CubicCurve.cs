@@ -77,7 +77,7 @@ public sealed class CubicCurve
     {
         var pts = _points.OrderBy(p => p.X).ToList();
         if (pts.Count == 0) { Array.Fill(_lut, 0.5f); return; }
-        if (pts[0].X > 0)   pts.Insert(0, new(0f, pts[0].Y));
+        if (pts[0].X > 0) pts.Insert(0, new(0f, pts[0].Y));
         if (pts[^1].X < 1f) pts.Add(new(1f, pts[^1].Y));
         int n = pts.Count;
 
@@ -99,34 +99,34 @@ public sealed class CubicCurve
 
         // Set up tridiagonal system for second derivatives M[i]
         var bd = new float[n]; // main diag
-        var c  = new float[n]; // upper
-        var d  = new float[n]; // rhs
+        var c = new float[n]; // upper
+        var d = new float[n]; // rhs
         bd[0] = 1f; c[0] = 0f; d[0] = 0f;               // natural: M[0] = 0
-        bd[n-1] = 1f; d[n-1] = 0f;                        // natural: M[n-1] = 0
+        bd[n - 1] = 1f; d[n - 1] = 0f;                        // natural: M[n-1] = 0
         for (int i = 1; i < n - 1; i++)
         {
             float hi = h[i], him1 = h[i - 1];
             bd[i] = 2f * (him1 + hi);
-            c[i]  = hi;
-            d[i]  = 6f * ((pts[i+1].Y - pts[i].Y) / hi - (pts[i].Y - pts[i-1].Y) / him1);
+            c[i] = hi;
+            d[i] = 6f * ((pts[i + 1].Y - pts[i].Y) / hi - (pts[i].Y - pts[i - 1].Y) / him1);
         }
 
         // Thomas algorithm forward
         var sub = new float[n]; // sub-diag (lower)
-        for (int i = 1; i < n; i++) sub[i] = h[i-1]; // h[i-1] for i<n-1, 0 for last
-        sub[n-1] = 0f;
+        for (int i = 1; i < n; i++) sub[i] = h[i - 1]; // h[i-1] for i<n-1, 0 for last
+        sub[n - 1] = 0f;
         for (int i = 1; i < n; i++)
         {
-            if (Math.Abs(bd[i-1]) < 1e-10f) continue;
-            float m = sub[i] / bd[i-1];
-            bd[i] -= m * c[i-1];
-            d[i]  -= m * d[i-1];
+            if (Math.Abs(bd[i - 1]) < 1e-10f) continue;
+            float m = sub[i] / bd[i - 1];
+            bd[i] -= m * c[i - 1];
+            d[i] -= m * d[i - 1];
         }
 
         var M = new float[n];
-        M[n-1] = Math.Abs(bd[n-1]) > 1e-10f ? d[n-1] / bd[n-1] : 0f;
+        M[n - 1] = Math.Abs(bd[n - 1]) > 1e-10f ? d[n - 1] / bd[n - 1] : 0f;
         for (int i = n - 2; i >= 0; i--)
-            M[i] = Math.Abs(bd[i]) > 1e-10f ? (d[i] - c[i] * M[i+1]) / bd[i] : 0f;
+            M[i] = Math.Abs(bd[i]) > 1e-10f ? (d[i] - c[i] * M[i + 1]) / bd[i] : 0f;
 
         // Evaluate at LUT sample points
         for (int k = 0; k < LutSize; k++)
@@ -138,9 +138,9 @@ public sealed class CubicCurve
             if (hi2 < 1e-7f) { _lut[k] = Math.Clamp(pts[seg].Y, 0, 1); continue; }
             float dx = x - pts[seg].X;
             float y = pts[seg].Y
-                    + ((pts[seg+1].Y - pts[seg].Y) / hi2 - hi2 * (2f * M[seg] + M[seg+1]) / 6f) * dx
+                    + ((pts[seg + 1].Y - pts[seg].Y) / hi2 - hi2 * (2f * M[seg] + M[seg + 1]) / 6f) * dx
                     + M[seg] / 2f * dx * dx
-                    + (M[seg+1] - M[seg]) / (6f * hi2) * dx * dx * dx;
+                    + (M[seg + 1] - M[seg]) / (6f * hi2) * dx * dx * dx;
             _lut[k] = Math.Clamp(y, 0, 1);
         }
     }

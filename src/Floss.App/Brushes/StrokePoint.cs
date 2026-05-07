@@ -8,7 +8,7 @@ public readonly struct StrokePoint
     public readonly float DrawingAngle;   // radians, direction of stroke motion
     public readonly float Speed;          // normalized 0–1
     public readonly float TotalDistance;  // cumulative pixels since stroke start
-    public readonly int   DabSeqNo;       // dab index since stroke start
+    public readonly int DabSeqNo;       // dab index since stroke start
     public readonly float Random;         // per-dab random [0,1]
     public readonly float StrokeRandom;   // per-stroke random [0,1]
 

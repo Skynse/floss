@@ -35,7 +35,7 @@ public sealed class ColorPickerWindow : Window
     public ColorPickerWindow(Color initialColor, Action<Color> onChange)
     {
         _onChange = onChange;
-        ( _hue, _saturation, _value ) = RgbToHsv(initialColor.R, initialColor.G, initialColor.B);
+        (_hue, _saturation, _value) = RgbToHsv(initialColor.R, initialColor.G, initialColor.B);
 
         Width = 420;
         Height = 480;

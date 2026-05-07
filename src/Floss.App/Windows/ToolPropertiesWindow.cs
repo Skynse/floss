@@ -38,9 +38,9 @@ public sealed class ToolPropertiesWindow : Window
     private readonly Border _contentHost = new();
 
     // ── State ─────────────────────────────────────────────────────────────────
-    private readonly ToolPreset _toolPreset;
+    private ToolPreset _toolPreset;
     private BrushPreset _brushPreset;
-    private readonly Action<ToolPreset, BrushPreset?> _onChange;
+    private readonly Action<ToolPreset, Func<BrushPreset, BrushPreset>?> _onChange;
     private readonly BrushStrokePreview _preview = new() { Height = 64 };
     private bool _syncing;
 
@@ -52,7 +52,7 @@ public sealed class ToolPropertiesWindow : Window
     private readonly Slider _sizeSlider = MkSlider(0.5, 1000, 8, "Brush size in pixels");
     private readonly Slider _opacitySlider = MkSlider(0.01, 1, 1.0, "Maximum opacity per stamp");
     private readonly Slider _flowSlider = MkSlider(0.01, 1, 1.0, "Paint buildup per dab");
-    private readonly Slider _colorMixSlider = MkSlider(0, 1, 0.0, "Canvas color pickup per dab (0=pure brush, 1=full mix)");
+    private Button? _mixToggle;
     private readonly Slider _colorLoadSlider = MkSlider(0, 1, 1.0, "Paint reload rate (1=always fresh, 0=color accumulates)");
     private readonly Slider _colorStretchSlider = MkSlider(0, 1, 0.5, "Color stretch intensity (0=gentle, 1=aggressive)");
     private readonly Slider _blurAmountSlider = MkSlider(0, 1, 0.0, "Blur during mixing (0=none, 1=full)");
@@ -85,7 +85,7 @@ public sealed class ToolPropertiesWindow : Window
 
     // ── Constructor ───────────────────────────────────────────────────────────
 
-    public ToolPropertiesWindow(ToolPreset toolPreset, BrushPreset? brushPreset, Action<ToolPreset, BrushPreset?> onChange)
+    public ToolPropertiesWindow(ToolPreset toolPreset, BrushPreset? brushPreset, Action<ToolPreset, Func<BrushPreset, BrushPreset>?> onChange)
     {
         _toolPreset = toolPreset;
         _brushPreset = brushPreset ?? new BrushPreset(toolPreset.Name, BrushKind.Ink, 8, 1.0, 0.9, 0.1, Colors.White, 0);
@@ -292,14 +292,13 @@ public sealed class ToolPropertiesWindow : Window
             DynSliderRow("Flow",    _flowSlider,    "%", () => OpenFlowDynamics(), "brush.flow"),
             BuildBlendModeRow(),
             SectionHeader("COLOR MIXING"),
+            BuildMixToggleRow(),
             BuildSmudgeModeRow(),
-            PlainSliderRow("Mix",  _colorMixSlider,  "%", "brush.colorMix"),
-            PlainSliderRow("Load", _colorLoadSlider, "%", "brush.colorLoad"),
-            PlainSliderRow("Stretch", _colorStretchSlider, "%", "brush.colorStretch"),
-            PlainSliderRow("Blur", _blurAmountSlider, "%", "brush.blurAmount"),
+            PlainSliderRow("Amount of paint", _amountOfPaintSlider, "%", "brush.amountOfPaint"),
+            PlainSliderRow("Density of paint", _densityOfPaintSlider, "%", "brush.densityOfPaint"),
+            PlainSliderRow("Color stretch", _colorStretchSlider, "%", "brush.colorStretch"),
+            PlainSliderRow("Intensity of blur", _blurAmountSlider, "%", "brush.blurAmount"),
             BuildMixingModeRow(),
-            PlainSliderRow("Amount", _amountOfPaintSlider, "%", "brush.amountOfPaint"),
-            PlainSliderRow("Density", _densityOfPaintSlider, "%", "brush.densityOfPaint"),
         }
     };
 
@@ -598,12 +597,24 @@ public sealed class ToolPropertiesWindow : Window
 
         if (cat == "Paint Settings")
         {
-            panel.Children.Add(BuildGenericSliderRow("Opacity", 0.01, 1.0,
-                _toolPreset.BrushOpacity ?? 1.0,
-                v => CommitTool(p => p.BrushOpacity = v), "%", mult: 100, toolPropId: "paint.opacity"));
-            panel.Children.Add(BuildGenericComboRow<SkiaSharp.SKBlendMode>("Blend Mode",
-                _toolPreset.BrushBlendMode ?? SkiaSharp.SKBlendMode.SrcOver,
-                v => CommitTool(p => p.BrushBlendMode = v), toolPropId: "paint.blendMode"));
+            if (_isBrushTool)
+            {
+                panel.Children.Add(BuildGenericSliderRow("Opacity", 0.01, 1.0,
+                    _brushPreset.Opacity,
+                    v => Commit(p => p with { Opacity = v }), "%", mult: 100, toolPropId: "paint.opacity"));
+                panel.Children.Add(BuildGenericComboRow<SkiaSharp.SKBlendMode>("Blend Mode",
+                    _brushPreset.BlendMode,
+                    v => Commit(p => p with { BlendMode = v }), toolPropId: "paint.blendMode"));
+            }
+            else
+            {
+                panel.Children.Add(BuildGenericSliderRow("Opacity", 0.01, 1.0,
+                    _toolPreset.BrushOpacity ?? 1.0,
+                    v => CommitTool(p => p.BrushOpacity = v), "%", mult: 100, toolPropId: "paint.opacity"));
+                panel.Children.Add(BuildGenericComboRow<SkiaSharp.SKBlendMode>("Blend Mode",
+                    _toolPreset.BrushBlendMode ?? SkiaSharp.SKBlendMode.SrcOver,
+                    v => CommitTool(p => p.BrushBlendMode = v), toolPropId: "paint.blendMode"));
+            }
             return panel;
         }
 
@@ -695,7 +706,7 @@ public sealed class ToolPropertiesWindow : Window
     private void CommitTool(Action<ToolPreset> update)
     {
         update(_toolPreset);
-        _onChange(_toolPreset, _isBrushTool ? _brushPreset : null);
+        _onChange(_toolPreset, null);
     }
 
     // ── Generic widget builders ───────────────────────────────────────────────
@@ -1266,8 +1277,6 @@ public sealed class ToolPropertiesWindow : Window
         WireSlider(_smoothingSlider, v => Commit(p => p with { Smoothing = v }));
         WireSlider(_grainSlider, v => Commit(p => p with { Grain = v }));
         WireSlider(_angleSlider, v => Commit(p => p with { Angle = v }));
-        WireSlider(_colorMixSlider, v => Commit(p => p with { ColorMix = v }));
-        WireSlider(_colorLoadSlider, v => Commit(p => p with { ColorLoad = v }));
         WireSlider(_colorStretchSlider, v => Commit(p => p with { ColorStretch = v }));
         WireSlider(_blurAmountSlider, v => Commit(p => p with { BlurAmount = v }));
         WireSlider(_amountOfPaintSlider, v => Commit(p => p with { AmountOfPaint = v }));
@@ -1281,7 +1290,8 @@ public sealed class ToolPropertiesWindow : Window
         _brushPreset = update(_brushPreset);
         _preview.Brush = _brushPreset;
         _preview.InvalidateBitmap();
-        Avalonia.Threading.Dispatcher.UIThread.Post(() => _onChange(_toolPreset, _isBrushTool ? _brushPreset : null), Avalonia.Threading.DispatcherPriority.Background);
+        var targetPreset = _toolPreset;
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => _onChange(targetPreset, _isBrushTool ? update : null), Avalonia.Threading.DispatcherPriority.Background);
     }
 
     private void CommitMainTip(IBrushTip tip)
@@ -1320,8 +1330,7 @@ public sealed class ToolPropertiesWindow : Window
         _smoothingSlider.Value = Math.Clamp(preset.Smoothing, _smoothingSlider.Minimum, _smoothingSlider.Maximum);
         _grainSlider.Value = Math.Clamp(preset.Grain, _grainSlider.Minimum, _grainSlider.Maximum);
         _angleSlider.Value = Math.Clamp(preset.Angle, _angleSlider.Minimum, _angleSlider.Maximum);
-        _colorMixSlider.Value = Math.Clamp(preset.ColorMix, _colorMixSlider.Minimum, _colorMixSlider.Maximum);
-        _colorLoadSlider.Value = Math.Clamp(preset.ColorLoad, _colorLoadSlider.Minimum, _colorLoadSlider.Maximum);
+        StylizeToggle(_mixToggle, preset.ColorMix);
         _colorStretchSlider.Value = Math.Clamp(preset.ColorStretch, _colorStretchSlider.Minimum, _colorStretchSlider.Maximum);
         _blurAmountSlider.Value = Math.Clamp(preset.BlurAmount, _blurAmountSlider.Minimum, _blurAmountSlider.Maximum);
         _amountOfPaintSlider.Value = Math.Clamp(preset.AmountOfPaint, _amountOfPaintSlider.Minimum, _amountOfPaintSlider.Maximum);
@@ -1364,6 +1373,7 @@ public sealed class ToolPropertiesWindow : Window
     public void SyncFromToolPreset(ToolPreset preset)
     {
         _syncing = true;
+        _toolPreset = preset;
         // For non-brush tools, rebuild the generic panels with updated values
         if (!_isBrushTool && _genericPanels != null)
         {
@@ -1375,6 +1385,15 @@ public sealed class ToolPropertiesWindow : Window
         }
         Title = $"Tool Properties — {preset.Name}";
         _syncing = false;
+    }
+
+    public bool CanSyncToolPreset(ToolPreset preset)
+    {
+        var isBrushTool = preset.OutputProcess == OutputProcessType.DirectDraw;
+        if (isBrushTool != _isBrushTool) return false;
+        if (_isBrushTool) return true;
+        return preset.InputProcess == _toolPreset.InputProcess
+            && preset.OutputProcess == _toolPreset.OutputProcess;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -1520,16 +1539,40 @@ public sealed class ToolPropertiesWindow : Window
         return row;
     }
 
+    private Control BuildMixToggleRow()
+    {
+        _mixToggle = MkToggleBtn("Color mixing", _brushPreset.ColorMix, () =>
+        {
+            if (_syncing) return;
+            var enabled = !_brushPreset.ColorMix;
+            Commit(p => p with { ColorMix = enabled });
+            StylizeToggle(_mixToggle, enabled);
+        });
+        return new DockPanel
+        {
+            LastChildFill = false,
+            Margin = new Thickness(0, 2, 0, 2),
+            Children =
+            {
+                new TextBlock { Text = "Color mixing", FontSize = 11, Foreground = new SolidColorBrush(Color.Parse(TextSecondary)), Width = 92, VerticalAlignment = VerticalAlignment.Center },
+                _mixToggle
+            }
+        };
+    }
+
     private Control BuildSmudgeModeRow()
     {
-        _blendBtn  = MkToggleBtn("Blend",  _brushPreset.SmudgeMode == SmudgeMode.Blend,  () => SetSmudgeMode(SmudgeMode.Blend));
-        _smearBtn  = MkToggleBtn("Smear",  _brushPreset.SmudgeMode == SmudgeMode.Smear,  () => SetSmudgeMode(SmudgeMode.Smear));
-        _smudgeBtn = MkToggleBtn("Smudge", _brushPreset.SmudgeMode == SmudgeMode.Smudge, () => SetSmudgeMode(SmudgeMode.Smudge));
+        _blendBtn = MkToggleBtn("Blend", _brushPreset.SmudgeMode == SmudgeMode.Blend, () => SetSmudgeMode(SmudgeMode.Blend));
+        _smearBtn = MkToggleBtn("Smear", _brushPreset.SmudgeMode == SmudgeMode.Smear, () => SetSmudgeMode(SmudgeMode.Smear));
+        _smudgeBtn = MkToggleBtn("Running color", _brushPreset.SmudgeMode == SmudgeMode.Smudge, () => SetSmudgeMode(SmudgeMode.Smudge));
         var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
         panel.Children.Add(_blendBtn);
         panel.Children.Add(_smearBtn);
         panel.Children.Add(_smudgeBtn);
-        return new DockPanel { LastChildFill = true, Margin = new Thickness(0, 2, 0, 2),
+        return new DockPanel
+        {
+            LastChildFill = true,
+            Margin = new Thickness(0, 2, 0, 2),
             Children = {
                 new TextBlock { Text = "Mode", FontSize = 11, Foreground = new SolidColorBrush(Color.Parse(TextSecondary)), Width = 72, VerticalAlignment = VerticalAlignment.Center },
                 panel
@@ -1546,8 +1589,8 @@ public sealed class ToolPropertiesWindow : Window
 
     private void UpdateSmudgeModeButtons(SmudgeMode mode)
     {
-        StylizeToggle(_blendBtn,  mode == SmudgeMode.Blend);
-        StylizeToggle(_smearBtn,  mode == SmudgeMode.Smear);
+        StylizeToggle(_blendBtn, mode == SmudgeMode.Blend);
+        StylizeToggle(_smearBtn, mode == SmudgeMode.Smear);
         StylizeToggle(_smudgeBtn, mode == SmudgeMode.Smudge);
     }
 

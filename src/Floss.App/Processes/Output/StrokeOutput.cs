@@ -36,11 +36,23 @@ public sealed class StrokeOutput : IOutputProcess
                 break;
             case RectInput rect:
                 {
-                    float x1 = (float)Math.Min(rect.Start.X, rect.End.X);
-                    float y1 = (float)Math.Min(rect.Start.Y, rect.End.Y);
-                    float x2 = (float)Math.Max(rect.Start.X, rect.End.X);
-                    float y2 = (float)Math.Max(rect.Start.Y, rect.End.Y);
-                    points = shape(ShapeKind, x1, y1, x2, y2);
+                    if (ShapeKind == ShapeKind.Line)
+                    {
+                        // Preserve draw direction — min/max would flip the diagonal
+                        points =
+                        [
+                            new CanvasInputSample((float)rect.Start.X, (float)rect.Start.Y, 0, 0, 0, 0, 0, 0, 0, CanvasInputPhase.Move),
+                            new CanvasInputSample((float)rect.End.X,   (float)rect.End.Y,   0, 0, 0, 0, 0, 0, 0, CanvasInputPhase.Move),
+                        ];
+                    }
+                    else
+                    {
+                        float x1 = (float)Math.Min(rect.Start.X, rect.End.X);
+                        float y1 = (float)Math.Min(rect.Start.Y, rect.End.Y);
+                        float x2 = (float)Math.Max(rect.Start.X, rect.End.X);
+                        float y2 = (float)Math.Max(rect.Start.Y, rect.End.Y);
+                        points = shape(ShapeKind, x1, y1, x2, y2);
+                    }
                 }
                 break;
             default:
@@ -129,8 +141,13 @@ public sealed class StrokeOutput : IOutputProcess
         return kind switch
         {
             ShapeKind.Ellipse => ellipse(x1, y1, x2, y2),
-            ShapeKind.Line => [new CanvasInputSample(x1, y1, 0, 0, 0, 0, 0, 0, 0, CanvasInputPhase.Move), new CanvasInputSample(x2, y2, 0, 0, 0, 0, 0, 0, 0, CanvasInputPhase.Move)],
-            _ => [new CanvasInputSample(x1, y1, 0, 0, 0, 0, 0, 0, 0, CanvasInputPhase.Move), new CanvasInputSample(x2, y1, 0, 0, 0, 0, 0, 0, 0, CanvasInputPhase.Move), new CanvasInputSample(x2, y2, 0, 0, 0, 0, 0, 0, 0, CanvasInputPhase.Move), new CanvasInputSample(x1, y2, 0, 0, 0, 0, 0, 0, 0, CanvasInputPhase.Move)],
+            _ =>
+            [
+                new CanvasInputSample(x1, y1, 0, 0, 0, 0, 0, 0, 0, CanvasInputPhase.Move),
+                new CanvasInputSample(x2, y1, 0, 0, 0, 0, 0, 0, 0, CanvasInputPhase.Move),
+                new CanvasInputSample(x2, y2, 0, 0, 0, 0, 0, 0, 0, CanvasInputPhase.Move),
+                new CanvasInputSample(x1, y2, 0, 0, 0, 0, 0, 0, 0, CanvasInputPhase.Move),
+            ],
         };
     }
 

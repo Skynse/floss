@@ -168,20 +168,20 @@ public sealed class LiquifyOutput : IOutputProcess
                         break;
 
                     case LiquifyMode.Expand:
-                    {
-                        float rInv = r < 0.001f ? 0 : 1f / r;
-                        srcX -= dx * rInv * w;
-                        srcY -= dy * rInv * w;
-                        break;
-                    }
+                        {
+                            float rInv = r < 0.001f ? 0 : 1f / r;
+                            srcX -= dx * rInv * w;
+                            srcY -= dy * rInv * w;
+                            break;
+                        }
 
                     case LiquifyMode.Pinch:
-                    {
-                        float rInv = r < 0.001f ? 0 : 1f / r;
-                        srcX += dx * rInv * w;
-                        srcY += dy * rInv * w;
-                        break;
-                    }
+                        {
+                            float rInv = r < 0.001f ? 0 : 1f / r;
+                            srcX += dx * rInv * w;
+                            srcY += dy * rInv * w;
+                            break;
+                        }
 
                     case LiquifyMode.PushLeft:
                         // Perp-left of stroke direction is (-sdy, sdx).
@@ -196,25 +196,25 @@ public sealed class LiquifyOutput : IOutputProcess
                         break;
 
                     case LiquifyMode.TwirlCW:
-                    {
-                        // Sample from a position rotated CCW by θ so rendered result appears CW.
-                        float angle = weight * strength * MathF.PI * 0.2f;
-                        float cos = MathF.Cos(angle);
-                        float sin = MathF.Sin(angle);
-                        srcX = cx + dx * cos - dy * sin;
-                        srcY = cy + dx * sin + dy * cos;
-                        break;
-                    }
+                        {
+                            // Sample from a position rotated CCW by θ so rendered result appears CW.
+                            float angle = weight * strength * MathF.PI * 0.2f;
+                            float cos = MathF.Cos(angle);
+                            float sin = MathF.Sin(angle);
+                            srcX = cx + dx * cos - dy * sin;
+                            srcY = cy + dx * sin + dy * cos;
+                            break;
+                        }
 
                     case LiquifyMode.TwirlCCW:
-                    {
-                        float angle = weight * strength * MathF.PI * 0.2f;
-                        float cos = MathF.Cos(angle);
-                        float sin = MathF.Sin(angle);
-                        srcX = cx + dx * cos + dy * sin;
-                        srcY = cy - dx * sin + dy * cos;
-                        break;
-                    }
+                        {
+                            float angle = weight * strength * MathF.PI * 0.2f;
+                            float cos = MathF.Cos(angle);
+                            float sin = MathF.Sin(angle);
+                            srcX = cx + dx * cos + dy * sin;
+                            srcY = cy - dx * sin + dy * cos;
+                            break;
+                        }
                 }
 
                 var (b, g, r2, a) = BilinearSample(src, x0, y0, srcW, srcH, srcX, srcY, bufW, bufH);
@@ -242,9 +242,9 @@ public sealed class LiquifyOutput : IOutputProcess
         float fx = lx - ix;
         float fy = ly - iy;
 
-        var c00 = GetPixel(src, srcW, srcH, ix,     iy);
+        var c00 = GetPixel(src, srcW, srcH, ix, iy);
         var c10 = GetPixel(src, srcW, srcH, ix + 1, iy);
-        var c01 = GetPixel(src, srcW, srcH, ix,     iy + 1);
+        var c01 = GetPixel(src, srcW, srcH, ix, iy + 1);
         var c11 = GetPixel(src, srcW, srcH, ix + 1, iy + 1);
 
         return (

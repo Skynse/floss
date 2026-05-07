@@ -21,8 +21,7 @@ public sealed record BrushPreset(
 {
     public BrushDynamics Dynamics { get; init; } = new();
     public double Flow { get; init; } = 1.0;
-    // 0 = pure brush color, 1 = fully samples canvas color per dab
-    public double ColorMix { get; init; } = 0.0;
+    public bool ColorMix { get; init; } = false;
     // How fast the brush reloads with fresh paint. 1 = always fresh, 0 = color accumulates
     public double ColorLoad { get; init; } = 1.0;
     // How aggressively colors are stretched/mixed (0 = gentle, 1 = aggressive)
@@ -128,7 +127,7 @@ public sealed record BrushPreset(
                 Opacity = CurveOption.Pressure(1.0f)
             },
             Flow = 0.58,
-            ColorMix = 1.0,
+            ColorMix = true,
             ColorLoad = 1.0,
             ColorStretch = 0.79,
             BlurAmount = 0.81,
@@ -146,7 +145,7 @@ public sealed record BrushPreset(
                 Opacity = CurveOption.Pressure(1.0f)
             },
             Flow = 0.58,
-            ColorMix = 0.65,
+            ColorMix = true,
             ColorLoad = 1.0,
             ColorStretch = 0.2,
             BlurAmount = 0.81,
@@ -163,7 +162,7 @@ public sealed record BrushPreset(
                 Opacity = CurveOption.Pressure(1.0f)
             },
             Flow = 0.58,
-            ColorMix = 0.65,
+            ColorMix = true,
             ColorLoad = 1.0,
             ColorStretch = 0.6,
             BlurAmount = 0.0,

@@ -163,10 +163,10 @@ public sealed class BrushStrokePreview : Control
                     drawAngle, 0.3f, (float)(t * w),
                     dabIdx, DabHash(dabIdx), strokeRandom);
 
-                var sizeM  = brush.Dynamics.EvalSize(sp);
-                var opacM  = brush.Dynamics.EvalOpacity(sp);
+                var sizeM = brush.Dynamics.EvalSize(sp);
+                var opacM = brush.Dynamics.EvalOpacity(sp);
                 var stampSize = (float)Math.Max(0.5, baseSize * sizeM);
-                var opacity   = (float)Math.Clamp(brush.Opacity * brush.Flow * opacM, 0.0, 1.0);
+                var opacity = (float)Math.Clamp(brush.Opacity * brush.Flow * opacM, 0.0, 1.0);
                 paint.Color = new SKColor(255, 255, 255, (byte)(opacity * 255));
 
                 var scale = stampSize / Math.Max(1, mask.Width);
@@ -212,12 +212,12 @@ public sealed class BrushStrokePreview : Control
         var sw = Math.Min(shape.Width, size);
         var sh = Math.Min(shape.Height, size);
         for (var y = 0; y < size; y++)
-        for (var x = 0; x < size; x++)
-        {
-            var ta = y < th && x < tw ? a[y * aStride + x] : (byte)0;
-            var sa = y < sh && x < sw ? b[y * bStride + x] : (byte)0;
-            dst[y * dStride + x] = (byte)(ta * sa / 255);
-        }
+            for (var x = 0; x < size; x++)
+            {
+                var ta = y < th && x < tw ? a[y * aStride + x] : (byte)0;
+                var sa = y < sh && x < sw ? b[y * bStride + x] : (byte)0;
+                dst[y * dStride + x] = (byte)(ta * sa / 255);
+            }
         return bmp;
     }
 

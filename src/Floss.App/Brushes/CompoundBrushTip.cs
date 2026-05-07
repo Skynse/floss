@@ -14,11 +14,11 @@ public enum StampLayerBlend
 
 public sealed record StampLayer
 {
-    public required IBrushTip Tip   { get; init; }
-    public StampLayerBlend Blend    { get; init; } = StampLayerBlend.Replace;
-    public float Opacity            { get; init; } = 1.0f;
-    public float Scale              { get; init; } = 1.0f;
-    public float Rotation           { get; init; } = 0.0f;
+    public required IBrushTip Tip { get; init; }
+    public StampLayerBlend Blend { get; init; } = StampLayerBlend.Replace;
+    public float Opacity { get; init; } = 1.0f;
+    public float Scale { get; init; } = 1.0f;
+    public float Rotation { get; init; } = 0.0f;
 }
 
 public sealed class CompoundBrushTip : IBrushTip
@@ -43,14 +43,14 @@ public sealed class CompoundBrushTip : IBrushTip
 
         for (var li = 0; li < Layers.Count; li++)
         {
-            var layer  = Layers[li];
-            var first  = li == 0;
-            var lSize  = Math.Max(1, (int)Math.Round(size * layer.Scale));
+            var layer = Layers[li];
+            var first = li == 0;
+            var lSize = Math.Max(1, (int)Math.Round(size * layer.Scale));
             var rawMask = layer.Tip.GenerateMask(lSize, hardness);
-            var src    = (byte*)rawMask.GetPixels().ToPointer();
-            var lw     = rawMask.Width;
-            var lh     = rawMask.Height;
-            var opac   = (int)Math.Clamp(layer.Opacity * 255, 0, 255);
+            var src = (byte*)rawMask.GetPixels().ToPointer();
+            var lw = rawMask.Width;
+            var lh = rawMask.Height;
+            var opac = (int)Math.Clamp(layer.Opacity * 255, 0, 255);
 
             for (var y = 0; y < size; y++)
             {
@@ -58,18 +58,18 @@ public sealed class CompoundBrushTip : IBrushTip
                 var ly = lh > 1 ? (y * lh / size) % lh : 0;
                 for (var x = 0; x < size; x++)
                 {
-                    var lx      = lw > 1 ? (x * lw / size) % lw : 0;
-                    var sa      = src[ly * lw + lx] * opac / 255;
-                    var idx     = y * size + x;
+                    var lx = lw > 1 ? (x * lw / size) % lw : 0;
+                    var sa = src[ly * lw + lx] * opac / 255;
+                    var idx = y * size + x;
                     var existing = (int)dst[idx];
 
                     dst[idx] = (byte)(layer.Blend switch
                     {
-                        StampLayerBlend.Replace  => sa,
-                        StampLayerBlend.Screen   => 255 - (255 - existing) * (255 - sa) / 255,
-                        StampLayerBlend.Add      => Math.Min(255, existing + sa),
-                        _ when first             => sa,               // Multiply on empty = Replace
-                        _                        => existing * sa / 255
+                        StampLayerBlend.Replace => sa,
+                        StampLayerBlend.Screen => 255 - (255 - existing) * (255 - sa) / 255,
+                        StampLayerBlend.Add => Math.Min(255, existing + sa),
+                        _ when first => sa,               // Multiply on empty = Replace
+                        _ => existing * sa / 255
                     });
                 }
             }

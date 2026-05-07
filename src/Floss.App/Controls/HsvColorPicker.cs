@@ -11,7 +11,7 @@ namespace Floss.App;
 public sealed class HsvColorPicker : Control
 {
     private const double HueBarWidth = 18;
-    private const double GapWidth    = 6;
+    private const double GapWidth = 6;
 
     private double _hue;
     private double _sat = 1.0;
@@ -45,7 +45,7 @@ public sealed class HsvColorPicker : Control
         InvalidateVisual();
     }
 
-    private Rect SvRect  => new(0, 0, Math.Max(0, Bounds.Width - HueBarWidth - GapWidth), Bounds.Height);
+    private Rect SvRect => new(0, 0, Math.Max(0, Bounds.Width - HueBarWidth - GapWidth), Bounds.Height);
     private Rect HueRect => new(Bounds.Width - HueBarWidth, 0, HueBarWidth, Bounds.Height);
 
     private void RebuildSvBmp()
@@ -67,7 +67,7 @@ public sealed class HsvColorPicker : Control
                 var v = 1.0 - (double)y / Math.Max(1, h - 1);
                 for (int x = 0; x < w; x++)
                 {
-                    var s   = (double)x / Math.Max(1, w - 1);
+                    var s = (double)x / Math.Max(1, w - 1);
                     var (r, g, b) = HsvToRgb(_hue, s, v);
                     var dst = pixels + y * stride + x * 4;
                     dst[0] = (byte)(b * 255);
@@ -109,7 +109,7 @@ public sealed class HsvColorPicker : Control
     {
         if (_svBmp == null || _hueBmp == null) return;
 
-        var sv  = SvRect;
+        var sv = SvRect;
         var hue = HueRect;
 
         ctx.DrawImage(_svBmp, sv);
@@ -124,11 +124,11 @@ public sealed class HsvColorPicker : Control
         ctx.DrawLine(blackPen, new Point(hue.Left, hy + 1.5), new Point(hue.Right, hy + 1.5));
 
         // SV indicator — double ring (black outer, white inner)
-        var cx = _sat * sv.Width  + sv.Left;
+        var cx = _sat * sv.Width + sv.Left;
         var cy = (1.0 - _val) * sv.Height + sv.Top;
         const double R = 5.5;
-        ctx.DrawEllipse(null, new Pen(new SolidColorBrush(Colors.Black), 2),   new Point(cx, cy), R + 1, R + 1);
-        ctx.DrawEllipse(null, new Pen(new SolidColorBrush(Colors.White), 1.5), new Point(cx, cy), R,     R);
+        ctx.DrawEllipse(null, new Pen(new SolidColorBrush(Colors.Black), 2), new Point(cx, cy), R + 1, R + 1);
+        ctx.DrawEllipse(null, new Pen(new SolidColorBrush(Colors.White), 1.5), new Point(cx, cy), R, R);
     }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
@@ -170,7 +170,7 @@ public sealed class HsvColorPicker : Control
     private void UpdateSv(Point pos)
     {
         var r = SvRect;
-        _sat = Math.Clamp(pos.X / Math.Max(1, r.Width),  0, 1);
+        _sat = Math.Clamp(pos.X / Math.Max(1, r.Width), 0, 1);
         _val = Math.Clamp(1.0 - pos.Y / Math.Max(1, r.Height), 0, 1);
         InvalidateVisual();
         HsvChanged?.Invoke(_hue, _sat, _val);
@@ -189,10 +189,10 @@ public sealed class HsvColorPicker : Control
     {
         if (s == 0) return (v, v, v);
         var hi = (int)(h / 60) % 6;
-        var f  = h / 60 - Math.Floor(h / 60);
-        var p  = v * (1 - s);
-        var q  = v * (1 - f * s);
-        var t  = v * (1 - (1 - f) * s);
+        var f = h / 60 - Math.Floor(h / 60);
+        var p = v * (1 - s);
+        var q = v * (1 - f * s);
+        var t = v * (1 - (1 - f) * s);
         return hi switch
         {
             0 => (v, t, p),

@@ -10,7 +10,7 @@ public struct StrokeState
     public float DistanceLeftover;
     public float NextStampDistance;
     public float TotalDistance;   // cumulative pixels painted in this stroke
-    public int   DabSeqNo;        // dabs placed since stroke start
+    public int DabSeqNo;        // dabs placed since stroke start
     public float DrawingAngle;    // radians, direction of last stroke segment
 
     public StrokeState(float x, float y, float pressure, float tiltX, float tiltY)

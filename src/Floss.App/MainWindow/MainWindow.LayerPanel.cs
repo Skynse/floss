@@ -121,15 +121,15 @@ public partial class MainWindow
         blendOpRow.Children.Add(_layerOpacitySlider);
 
         // ── Layer property toggles (row 3 — above list, like CSP) ───────────────
-        _lockLayerBtn      = SmIconBtn(Icons.LockOutline,        "Lock layer");
-        _alphaLockLayerBtn = SmIconBtn(Icons.AlphaLock,          "Alpha lock");
-        _clipLayerBtn      = SmIconBtn(Icons.ClipToBelow,        "Clipping mask");
-        _refLayerBtn       = SmIconBtn(Icons.Eye,                "Reference layer");
+        _lockLayerBtn = SmIconBtn(Icons.LockOutline, "Lock layer");
+        _alphaLockLayerBtn = SmIconBtn(Icons.AlphaLock, "Alpha lock");
+        _clipLayerBtn = SmIconBtn(Icons.ClipToBelow, "Clipping mask");
+        _refLayerBtn = SmIconBtn(Icons.Eye, "Reference layer");
 
-        _lockLayerBtn.Click      += (_, _) => { _canvas.ToggleLayerLock(_canvas.ActiveLayerIndex);      BuildLayerList(); };
+        _lockLayerBtn.Click += (_, _) => { _canvas.ToggleLayerLock(_canvas.ActiveLayerIndex); BuildLayerList(); };
         _alphaLockLayerBtn.Click += (_, _) => { _canvas.ToggleLayerAlphaLock(_canvas.ActiveLayerIndex); BuildLayerList(); };
-        _clipLayerBtn.Click      += (_, _) => { _canvas.ToggleLayerClipping(_canvas.ActiveLayerIndex);  BuildLayerList(); };
-        _refLayerBtn.Click       += (_, _) => { _canvas.ToggleLayerReference(_canvas.ActiveLayerIndex); BuildLayerList(); };
+        _clipLayerBtn.Click += (_, _) => { _canvas.ToggleLayerClipping(_canvas.ActiveLayerIndex); BuildLayerList(); };
+        _refLayerBtn.Click += (_, _) => { _canvas.ToggleLayerReference(_canvas.ActiveLayerIndex); BuildLayerList(); };
 
         foreach (var btn in new[] { _lockLayerBtn, _alphaLockLayerBtn, _clipLayerBtn, _refLayerBtn })
             btn.Margin = new Thickness(0, 0, 2, 0);
@@ -285,10 +285,10 @@ public partial class MainWindow
     private void RefreshLayerToggleButtons(DrawingLayer layer)
     {
         if (_lockLayerBtn == null) return;
-        SetToggleActive(_lockLayerBtn,       layer.IsLocked);
-        SetToggleActive(_alphaLockLayerBtn,  layer.IsAlphaLocked);
-        SetToggleActive(_clipLayerBtn,       layer.IsClipping);
-        SetToggleActive(_refLayerBtn,        layer.IsReference);
+        SetToggleActive(_lockLayerBtn, layer.IsLocked);
+        SetToggleActive(_alphaLockLayerBtn, layer.IsAlphaLocked);
+        SetToggleActive(_clipLayerBtn, layer.IsClipping);
+        SetToggleActive(_refLayerBtn, layer.IsReference);
     }
 
 

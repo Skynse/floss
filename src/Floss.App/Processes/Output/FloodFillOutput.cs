@@ -100,10 +100,10 @@ public sealed class FloodFillOutput : IOutputProcess
             minX = Math.Min(minX, x); minY = Math.Min(minY, y);
             maxX = Math.Max(maxX, x); maxY = Math.Max(maxY, y);
 
-            if (x + 1 < docW) { int ni = idx + 1;    if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
-            if (x - 1 >= 0)   { int ni = idx - 1;    if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
+            if (x + 1 < docW) { int ni = idx + 1; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
+            if (x - 1 >= 0) { int ni = idx - 1; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
             if (y + 1 < docH) { int ni = idx + docW; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
-            if (y - 1 >= 0)   { int ni = idx - docW; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
+            if (y - 1 >= 0) { int ni = idx - docW; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
         }
 
         if (!changed) return;

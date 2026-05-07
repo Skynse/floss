@@ -106,10 +106,11 @@ public sealed class ToolPreset
     public double? BrushSpacing { get; set; }
     public double? BrushSmoothing { get; set; }
     public double? BrushGrain { get; set; }
-    public double? BrushColorMix { get; set; }
+    public bool? BrushColorMix { get; set; }
     public double? BrushColorLoad { get; set; }
     public double? BrushColorStretch { get; set; }
     public double? BrushBlurAmount { get; set; }
+    public SmudgeMode? BrushSmudgeMode { get; set; }
     public MixingMode? BrushMixingMode { get; set; }
     public double? BrushAmountOfPaint { get; set; }
     public double? BrushDensityOfPaint { get; set; }
@@ -123,7 +124,7 @@ public sealed class ToolPreset
         var needsUpdate = BrushSize.HasValue || BrushOpacity.HasValue || BrushHardness.HasValue ||
             BrushSpacing.HasValue || BrushFlow.HasValue || BrushSmoothing.HasValue ||
             BrushGrain.HasValue || BrushColorMix.HasValue || BrushColorLoad.HasValue ||
-            BrushColorStretch.HasValue || BrushBlurAmount.HasValue || BrushMixingMode.HasValue ||
+            BrushColorStretch.HasValue || BrushBlurAmount.HasValue || BrushSmudgeMode.HasValue || BrushMixingMode.HasValue ||
             BrushAmountOfPaint.HasValue || BrushDensityOfPaint.HasValue || BrushTipDensity.HasValue ||
             BrushBlendMode.HasValue || !string.IsNullOrEmpty(BrushDynamicsJson);
 
@@ -142,6 +143,7 @@ public sealed class ToolPreset
             ColorLoad = BrushColorLoad ?? preset.ColorLoad,
             ColorStretch = BrushColorStretch ?? preset.ColorStretch,
             BlurAmount = BrushBlurAmount ?? preset.BlurAmount,
+            SmudgeMode = BrushSmudgeMode ?? preset.SmudgeMode,
             MixingMode = BrushMixingMode ?? preset.MixingMode,
             AmountOfPaint = BrushAmountOfPaint ?? preset.AmountOfPaint,
             DensityOfPaint = BrushDensityOfPaint ?? preset.DensityOfPaint,
@@ -176,6 +178,7 @@ public sealed class ToolPreset
         BrushColorLoad = preset.ColorLoad;
         BrushColorStretch = preset.ColorStretch;
         BrushBlurAmount = preset.BlurAmount;
+        BrushSmudgeMode = preset.SmudgeMode;
         BrushMixingMode = preset.MixingMode;
         BrushAmountOfPaint = preset.AmountOfPaint;
         BrushDensityOfPaint = preset.DensityOfPaint;
@@ -231,28 +234,28 @@ public sealed class ToolPreset
 
         (InputProcess, OutputProcess) = Engine switch
         {
-            ToolPresetEngine.Brush      => (InputProcessType.BrushStroke, OutputProcessType.DirectDraw),
-            ToolPresetEngine.Eraser     => (InputProcessType.BrushStroke, OutputProcessType.DirectDraw),
-            ToolPresetEngine.Smudge     => (InputProcessType.BrushStroke, OutputProcessType.DirectDraw),
-            ToolPresetEngine.Select     => SelectMode switch
+            ToolPresetEngine.Brush => (InputProcessType.BrushStroke, OutputProcessType.DirectDraw),
+            ToolPresetEngine.Eraser => (InputProcessType.BrushStroke, OutputProcessType.DirectDraw),
+            ToolPresetEngine.Smudge => (InputProcessType.BrushStroke, OutputProcessType.DirectDraw),
+            ToolPresetEngine.Select => SelectMode switch
             {
-                SelectMode.Rect          => (InputProcessType.Rect, OutputProcessType.SelectionArea),
-                SelectMode.Lasso         => (InputProcessType.Lasso, OutputProcessType.SelectionArea),
+                SelectMode.Rect => (InputProcessType.Rect, OutputProcessType.SelectionArea),
+                SelectMode.Lasso => (InputProcessType.Lasso, OutputProcessType.SelectionArea),
                 SelectMode.PolylineLasso => (InputProcessType.Polyline, OutputProcessType.SelectionArea),
-                _                        => (InputProcessType.Rect, OutputProcessType.SelectionArea)
+                _ => (InputProcessType.Rect, OutputProcessType.SelectionArea)
             },
             // MAGIC WAND MIGRATION: Map to MagicWand output (not SelectionArea).
             // SelectionArea only handles PolygonInput/RectInput; ClickInput does nothing.
-            ToolPresetEngine.MagicWand  => (InputProcessType.Click, OutputProcessType.MagicWand),
-            ToolPresetEngine.Fill       => (InputProcessType.Click, OutputProcessType.FloodFill),
-            ToolPresetEngine.LassoFill  => (InputProcessType.Lasso, OutputProcessType.ClosedAreaFill),
-            ToolPresetEngine.Move       => (InputProcessType.Drag, OutputProcessType.MoveLayer),
+            ToolPresetEngine.MagicWand => (InputProcessType.Click, OutputProcessType.MagicWand),
+            ToolPresetEngine.Fill => (InputProcessType.Click, OutputProcessType.FloodFill),
+            ToolPresetEngine.LassoFill => (InputProcessType.Lasso, OutputProcessType.ClosedAreaFill),
+            ToolPresetEngine.Move => (InputProcessType.Drag, OutputProcessType.MoveLayer),
             ToolPresetEngine.Eyedropper => (InputProcessType.Click, OutputProcessType.Eyedropper),
-            ToolPresetEngine.Gradient   => (InputProcessType.Drag, OutputProcessType.Gradient),
-            ToolPresetEngine.Shape      => (InputProcessType.Rect, OutputProcessType.Stroke),
-            ToolPresetEngine.Polyline   => (InputProcessType.Polyline, OutputProcessType.Stroke),
-            ToolPresetEngine.Liquify    => (InputProcessType.Liquify, OutputProcessType.Liquify),
-            _                           => (InputProcessType.BrushStroke, OutputProcessType.DirectDraw)
+            ToolPresetEngine.Gradient => (InputProcessType.Drag, OutputProcessType.Gradient),
+            ToolPresetEngine.Shape => (InputProcessType.Rect, OutputProcessType.Stroke),
+            ToolPresetEngine.Polyline => (InputProcessType.Polyline, OutputProcessType.Stroke),
+            ToolPresetEngine.Liquify => (InputProcessType.Liquify, OutputProcessType.Liquify),
+            _ => (InputProcessType.BrushStroke, OutputProcessType.DirectDraw)
         };
     }
 }
@@ -473,7 +476,7 @@ public sealed class ToolGroupConfig
         WithDefaultCategory(new()
         {
             Name = "Smudge", DefaultEngine = ToolPresetEngine.Smudge, Shortcut = new(Key.U),
-            Presets = [new() { Name = "Smudge", Engine = ToolPresetEngine.Smudge, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw, BrushColorMix = 0.8, BrushColorLoad = 0.0, BrushDensityOfPaint = 0.0 }]
+            Presets = [new() { Name = "Smudge", Engine = ToolPresetEngine.Smudge, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw, BrushColorMix = true, BrushSmudgeMode = SmudgeMode.Smudge, BrushAmountOfPaint = 0.0, BrushDensityOfPaint = 0.0 }]
         }),
         WithDefaultCategory(new()
         {
@@ -524,9 +527,9 @@ public sealed class ToolGroupConfig
             Name = "Shape", DefaultEngine = ToolPresetEngine.Shape,
             Presets =
             [
-                new() { Name = "Rectangle", Engine = ToolPresetEngine.Shape, InputProcess = InputProcessType.Rect, OutputProcess = OutputProcessType.Stroke, ShapeKind = ShapeKind.Rectangle },
-                new() { Name = "Ellipse",   Engine = ToolPresetEngine.Shape, InputProcess = InputProcessType.Rect, OutputProcess = OutputProcessType.Stroke, ShapeKind = ShapeKind.Ellipse },
-                new() { Name = "Line",      Engine = ToolPresetEngine.Shape, InputProcess = InputProcessType.Rect, OutputProcess = OutputProcessType.Stroke, ShapeKind = ShapeKind.Line, ShapeDrawMode = ShapeDrawMode.Stroke },
+                new() { Name = "Rectangle", Engine = ToolPresetEngine.Shape, InputProcess = InputProcessType.Rect, OutputProcess = OutputProcessType.Stroke, ShapeKind = ShapeKind.Rectangle, PolylineClosePath = true },
+                new() { Name = "Ellipse",   Engine = ToolPresetEngine.Shape, InputProcess = InputProcessType.Rect, OutputProcess = OutputProcessType.Stroke, ShapeKind = ShapeKind.Ellipse,   PolylineClosePath = true },
+                new() { Name = "Line",      Engine = ToolPresetEngine.Shape, InputProcess = InputProcessType.Rect, OutputProcess = OutputProcessType.Stroke, ShapeKind = ShapeKind.Line,      ShapeDrawMode = ShapeDrawMode.Stroke },
             ]
         }),
         WithDefaultCategory(new()

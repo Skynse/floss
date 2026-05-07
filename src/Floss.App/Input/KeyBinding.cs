@@ -11,14 +11,14 @@ public sealed class KeyBinding
 {
     public static readonly KeyBinding Empty = new(Key.None, KeyModifiers.None);
 
-    public Key          Key       { get; }
+    public Key Key { get; }
     public KeyModifiers Modifiers { get; }
-    public bool         IsEmpty   => Key == Key.None && Modifiers == KeyModifiers.None;
-    public bool         IsModifierOnly => Key == Key.None && Modifiers != KeyModifiers.None;
+    public bool IsEmpty => Key == Key.None && Modifiers == KeyModifiers.None;
+    public bool IsModifierOnly => Key == Key.None && Modifiers != KeyModifiers.None;
 
     public KeyBinding(Key key, KeyModifiers modifiers = KeyModifiers.None)
     {
-        Key       = key;
+        Key = key;
         Modifiers = modifiers;
     }
 
@@ -53,8 +53,8 @@ public sealed class KeyBinding
         if (IsEmpty) return "";
         var parts = new List<string>(4);
         if (Modifiers.HasFlag(KeyModifiers.Control)) parts.Add("Ctrl");
-        if (Modifiers.HasFlag(KeyModifiers.Alt))     parts.Add("Alt");
-        if (Modifiers.HasFlag(KeyModifiers.Shift))   parts.Add("Shift");
+        if (Modifiers.HasFlag(KeyModifiers.Alt)) parts.Add("Alt");
+        if (Modifiers.HasFlag(KeyModifiers.Shift)) parts.Add("Shift");
         if (Key != Key.None) parts.Add(KeyToString(Key));
         return string.Join("+", parts);
     }
@@ -66,16 +66,16 @@ public sealed class KeyBinding
         if (string.IsNullOrWhiteSpace(s)) return Empty;
 
         var parts = s.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var mods  = KeyModifiers.None;
-        Key? key  = null;
+        var mods = KeyModifiers.None;
+        Key? key = null;
 
         foreach (var part in parts)
         {
             switch (part.ToLowerInvariant())
             {
-                case "ctrl":  mods |= KeyModifiers.Control; break;
-                case "alt":   mods |= KeyModifiers.Alt;     break;
-                case "shift": mods |= KeyModifiers.Shift;   break;
+                case "ctrl": mods |= KeyModifiers.Control; break;
+                case "alt": mods |= KeyModifiers.Alt; break;
+                case "shift": mods |= KeyModifiers.Shift; break;
                 default:
                     key = StringToKey(part);
                     break;
@@ -99,31 +99,38 @@ public sealed class KeyBinding
 
     private static readonly Dictionary<Key, string> FriendlyNames = new()
     {
-        [Key.OemOpenBrackets]  = "[",
+        [Key.OemOpenBrackets] = "[",
         [Key.OemCloseBrackets] = "]",
-        [Key.OemPeriod]        = ".",
-        [Key.OemComma]         = ",",
-        [Key.OemMinus]         = "-",
-        [Key.OemPlus]          = "=",
-        [Key.OemSemicolon]     = ";",
-        [Key.OemQuotes]        = "'",
-        [Key.OemBackslash]     = "\\",
-        [Key.OemTilde]         = "`",
-        [Key.D0] = "0", [Key.D1] = "1", [Key.D2] = "2",
-        [Key.D3] = "3", [Key.D4] = "4", [Key.D5] = "5",
-        [Key.D6] = "6", [Key.D7] = "7", [Key.D8] = "8", [Key.D9] = "9",
-        [Key.Add]      = "NumPlus",
+        [Key.OemPeriod] = ".",
+        [Key.OemComma] = ",",
+        [Key.OemMinus] = "-",
+        [Key.OemPlus] = "=",
+        [Key.OemSemicolon] = ";",
+        [Key.OemQuotes] = "'",
+        [Key.OemBackslash] = "\\",
+        [Key.OemTilde] = "`",
+        [Key.D0] = "0",
+        [Key.D1] = "1",
+        [Key.D2] = "2",
+        [Key.D3] = "3",
+        [Key.D4] = "4",
+        [Key.D5] = "5",
+        [Key.D6] = "6",
+        [Key.D7] = "7",
+        [Key.D8] = "8",
+        [Key.D9] = "9",
+        [Key.Add] = "NumPlus",
         [Key.Subtract] = "NumMinus",
         [Key.Multiply] = "NumMul",
-        [Key.Divide]   = "NumDiv",
-        [Key.Delete]   = "Del",
-        [Key.Return]   = "Enter",
-        [Key.Prior]    = "PageUp",
-        [Key.Next]     = "PageDown",
-        [Key.Back]     = "Backspace",
-        [Key.Space]    = "Space",
-        [Key.Tab]      = "Tab",
-        [Key.Escape]   = "Esc",
+        [Key.Divide] = "NumDiv",
+        [Key.Delete] = "Del",
+        [Key.Return] = "Enter",
+        [Key.Prior] = "PageUp",
+        [Key.Next] = "PageDown",
+        [Key.Back] = "Backspace",
+        [Key.Space] = "Space",
+        [Key.Tab] = "Tab",
+        [Key.Escape] = "Esc",
     };
 
     private static readonly Dictionary<string, Key> ReverseFriendlyNames;

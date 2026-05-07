@@ -9,12 +9,12 @@ public enum SensorCombineMode { Multiply, Add }
 // Disabled or empty → returns 1.0 (no effect on the target parameter).
 public sealed class CurveOption
 {
-    public bool             IsEnabled   { get; set; } = true;
-    public float            Strength    { get; set; } = 1.0f;
-    public float            MinOutput   { get; set; } = 0.0f;
-    public float            MaxOutput   { get; set; } = 1.0f;
+    public bool IsEnabled { get; set; } = true;
+    public float Strength { get; set; } = 1.0f;
+    public float MinOutput { get; set; } = 0.0f;
+    public float MaxOutput { get; set; } = 1.0f;
     public SensorCombineMode CombineMode { get; set; } = SensorCombineMode.Multiply;
-    public List<SensorConfig> Sensors   { get; set; } = [];
+    public List<SensorConfig> Sensors { get; set; } = [];
 
     // Returns a multiplier in approximately [MinOutput, MaxOutput], lerped toward 1.0
     // by (1 - Strength). No sensors / disabled → 1.0.
@@ -43,8 +43,10 @@ public sealed class CurveOption
     {
         var c = new CurveOption
         {
-            IsEnabled = IsEnabled, Strength = Strength,
-            MinOutput = MinOutput, MaxOutput = MaxOutput,
+            IsEnabled = IsEnabled,
+            Strength = Strength,
+            MinOutput = MinOutput,
+            MaxOutput = MaxOutput,
             CombineMode = CombineMode
         };
         foreach (var s in Sensors) c.Sensors.Add(s.Clone());
@@ -67,7 +69,7 @@ public sealed class CurveOption
     {
         var opt = new CurveOption { MinOutput = min, MaxOutput = max };
         opt.Sensors.Add(new SensorConfig { Type = SensorType.Pressure, Curve = GammaCurve(gamma) });
-        opt.Sensors.Add(new SensorConfig { Type = SensorType.Speed,    Curve = InverseSpeedCurve(velStrength) });
+        opt.Sensors.Add(new SensorConfig { Type = SensorType.Speed, Curve = InverseSpeedCurve(velStrength) });
         return opt;
     }
 

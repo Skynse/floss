@@ -591,7 +591,7 @@ public sealed class PresetStore
         public double Angle { get; set; }
         public string DynamicsJson { get; set; } = "";
         public double Flow { get; set; }
-        public double ColorMix { get; set; }
+        public bool ColorMix { get; set; }
         public double ColorLoad { get; set; }
         public double ColorStretch { get; set; }
         public double BlurAmount { get; set; }

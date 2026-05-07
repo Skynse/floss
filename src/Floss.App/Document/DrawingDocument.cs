@@ -93,10 +93,17 @@ public sealed class DrawingDocument
         {
             var nl = new DrawingLayer(layer.Name, newW, newH)
             {
-                IsVisible = layer.IsVisible, IsLocked = layer.IsLocked, Opacity = layer.Opacity,
-                BlendMode = layer.BlendMode, OffsetX = layer.OffsetX, OffsetY = layer.OffsetY,
-                IsGroup = layer.IsGroup, IsOpen = layer.IsOpen, IsClipping = layer.IsClipping,
-                IndentLevel = layer.IndentLevel, IsAlphaLocked = layer.IsAlphaLocked,
+                IsVisible = layer.IsVisible,
+                IsLocked = layer.IsLocked,
+                Opacity = layer.Opacity,
+                BlendMode = layer.BlendMode,
+                OffsetX = layer.OffsetX,
+                OffsetY = layer.OffsetY,
+                IsGroup = layer.IsGroup,
+                IsOpen = layer.IsOpen,
+                IsClipping = layer.IsClipping,
+                IndentLevel = layer.IndentLevel,
+                IsAlphaLocked = layer.IsAlphaLocked,
                 IsReference = layer.IsReference
             };
             if (!layer.IsGroup)

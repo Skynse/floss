@@ -7,6 +7,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Floss.App.Brushes;
 using Floss.App.Processes;
 using Floss.App.Tools;
 
@@ -89,18 +90,18 @@ public partial class MainWindow
                 SliderProp("brush.spacing", "Spacing", false, _spacingSlider, "%"),
                 SliderProp("brush.smoothing", "Smoothing", true, _smoothingSlider, "%"),
                 SliderProp("brush.grain", "Grain", false, _grainSlider, "%"),
-                SliderProp("brush.colorMix", "Color Mix", false,
-                    () => _activePreset?.ColorMix ?? 0, v => UpdateCurrentBrush(p => p with { ColorMix = v }), 0, 1, "%"),
-                SliderProp("brush.colorLoad", "Color Load", false,
-                    () => _activePreset?.ColorLoad ?? 1, v => UpdateCurrentBrush(p => p with { ColorLoad = v }), 0, 1, "%"),
-                SliderProp("brush.colorStretch", "Stretch", false,
-                    () => _activePreset?.ColorStretch ?? 0.5, v => UpdateCurrentBrush(p => p with { ColorStretch = v }), 0, 1, "%"),
-                SliderProp("brush.blurAmount", "Blur Mix", false,
-                    () => _activePreset?.BlurAmount ?? 0, v => UpdateCurrentBrush(p => p with { BlurAmount = v }), 0, 1, "%"),
+                BoolProp("brush.colorMix", "Color Mix", false,
+                    () => _activePreset?.ColorMix ?? false, v => UpdateCurrentBrush(p => p with { ColorMix = v })),
+                EnumProp("brush.smudgeMode", "Mix Mode", false,
+                    () => _activePreset?.SmudgeMode ?? SmudgeMode.Blend, v => UpdateCurrentBrush(p => p with { SmudgeMode = v })),
                 SliderProp("brush.amountOfPaint", "Amount", false,
                     () => _activePreset?.AmountOfPaint ?? 1, v => UpdateCurrentBrush(p => p with { AmountOfPaint = v }), 0, 1, "%"),
                 SliderProp("brush.densityOfPaint", "Density", false,
                     () => _activePreset?.DensityOfPaint ?? 1, v => UpdateCurrentBrush(p => p with { DensityOfPaint = v }), 0, 1, "%"),
+                SliderProp("brush.colorStretch", "Stretch", false,
+                    () => _activePreset?.ColorStretch ?? 0.5, v => UpdateCurrentBrush(p => p with { ColorStretch = v }), 0, 1, "%"),
+                SliderProp("brush.blurAmount", "Blur Mix", false,
+                    () => _activePreset?.BlurAmount ?? 0, v => UpdateCurrentBrush(p => p with { BlurAmount = v }), 0, 1, "%"),
                 SliderProp("brush.angle", "Angle", false,
                     () => _activePreset?.Angle ?? 0, v => UpdateCurrentBrush(p => p with { Angle = v }), 0, 360, "°"),
                 SliderProp("brush.tipDensity", "Tip Density", false,

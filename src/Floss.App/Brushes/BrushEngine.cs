@@ -58,7 +58,7 @@ public sealed class BrushEngine : IDisposable
         var dirty = BuildStamps(stroke, brush, from, to, ensureEndpoint);
         if (dirty.IsEmpty || _stamps.Count == 0) return PixelRegion.Empty;
 
-        if (brush.BlendMode != SKBlendMode.DstOut && (brush.ColorMix > 0.001 || brush.DensityOfPaint < 0.999))
+        if (brush.BlendMode != SKBlendMode.DstOut && brush.ColorMix)
             PrepareStampColors(layer, brush, stroke);
 
         if (dirty.IsEmpty) return PixelRegion.Empty;
@@ -80,7 +80,7 @@ public sealed class BrushEngine : IDisposable
     public PixelRegion RasterizeDab(
         DrawingLayer layer,
         BrushPreset brush,
-       
+
         CanvasInputSample sample,
         double velocity)
     {
@@ -94,7 +94,7 @@ public sealed class BrushEngine : IDisposable
         var stamp = CreateStamp(stroke, brush, sp);
         _stamps.Add(stamp);
 
-        if (brush.BlendMode != SKBlendMode.DstOut && brush.ColorMix > 0.001)
+        if (brush.BlendMode != SKBlendMode.DstOut && brush.ColorMix)
             PrepareStampColors(layer, brush, stroke);
 
         var dirty = StampBounds(stamp);
@@ -255,9 +255,9 @@ public sealed class BrushEngine : IDisposable
         float directionContrib = brush.BaseAngleSource switch
         {
             AngleSource.DirectionOfLine => trajectoryDeg,
-            AngleSource.PenTilt         => MathF.Atan2(sp.TiltX, sp.TiltY) * (180f / MathF.PI),
-            AngleSource.PenTwist        => sp.Twist * (180f / MathF.PI),
-            _                           => 0f
+            AngleSource.PenTilt => MathF.Atan2(sp.TiltX, sp.TiltY) * (180f / MathF.PI),
+            AngleSource.PenTwist => sp.Twist * (180f / MathF.PI),
+            _ => 0f
         };
         var jitter = brush.AngleJitter > 0.001f
             ? (sp.Random * 2f - 1f) * brush.AngleJitter * 180f
@@ -368,16 +368,15 @@ public sealed class BrushEngine : IDisposable
     private void PrepareStampColors(DrawingLayer layer, BrushPreset brush, ActiveStroke stroke)
     {
         _stampColors.Clear();
-        var mixAmt = (float)brush.ColorMix;
+        var mixAmt = 1.0f;
         var blur = (float)brush.BlurAmount;
-        var loadAmt = (float)brush.ColorLoad;
         var paintAmt = (float)brush.AmountOfPaint;
         var stretch = (float)brush.ColorStretch;
 
         // Mode-specific behaviour:
-        // Blend  — pure canvas blur, no brush colour injected at all.
-        // Smudge — running colour: drags what it sampled, never reloads fresh paint.
-        // Smear  — wet paint: samples canvas AND reloads brush colour per dab.
+        // Blend         — blends canvas colour under the stroke.
+        // Running color — carries sampled colour along the stroke, no fresh paint reload.
+        // Smear         — carries sampled colour and reloads brush colour by Amount of paint.
         float effectiveMixAmt;
         float effectiveReload;
         switch (brush.SmudgeMode)
@@ -392,7 +391,7 @@ public sealed class BrushEngine : IDisposable
                 break;
             default: // Smear
                 effectiveMixAmt = mixAmt;
-                effectiveReload = loadAmt * paintAmt;
+                effectiveReload = paintAmt;
                 break;
         }
 
@@ -600,9 +599,9 @@ public sealed class BrushEngine : IDisposable
         float Z = (fz > 0.206897f) ? fz * fz * fz : (fz - 16f / 116f) / 7.787f;
 
         // XYZ to RGB
-        float R = X *  3.2404542f + Y * -1.5371385f + Z * -0.4985314f;
-        float G = X * -0.9692660f + Y *  1.8760108f + Z *  0.0415560f;
-        float B = X *  0.0556434f + Y * -0.2040259f + Z *  1.0572252f;
+        float R = X * 3.2404542f + Y * -1.5371385f + Z * -0.4985314f;
+        float G = X * -0.9692660f + Y * 1.8760108f + Z * 0.0415560f;
+        float B = X * 0.0556434f + Y * -0.2040259f + Z * 1.0572252f;
 
         float r = R > 0.0031308f ? (1.055f * MathF.Pow(R, 1f / 2.4f) - 0.055f) : (12.92f * R);
         float g = G > 0.0031308f ? (1.055f * MathF.Pow(G, 1f / 2.4f) - 0.055f) : (12.92f * G);
@@ -677,7 +676,7 @@ public sealed class BrushEngine : IDisposable
         private const int MaxCachedMasks = 16;
         private readonly Dictionary<int, SKBitmap> _maskCache = new();
         private readonly HashSet<SKBitmap> _ownedMasks = new();
-        
+
         private readonly SKColor _baseColor;
         private SKColor _currentColor;
         private SKColorFilter? _mixedFilter;
@@ -685,7 +684,7 @@ public sealed class BrushEngine : IDisposable
         public ActiveStroke(BrushPreset brush, CanvasInputSample sample)
         {
             _brush = brush;
-            
+
             StrokeRandom = Hash01((int)(sample.X * 997), (int)(sample.Y * 991));
             State = new StrokeState(
                 (float)sample.X, (float)sample.Y,
@@ -832,12 +831,12 @@ public sealed class BrushEngine : IDisposable
             var sw = Math.Min(shape.Width, size);
             var sh = Math.Min(shape.Height, size);
             for (var y = 0; y < size; y++)
-            for (var x = 0; x < size; x++)
-            {
-                var ta = y < th && x < tw ? a[y * aStride + x] : (byte)0;
-                var sa = y < sh && x < sw ? b[y * bStride + x] : (byte)0;
-                dst[y * dStride + x] = (byte)(ta * sa / 255);
-            }
+                for (var x = 0; x < size; x++)
+                {
+                    var ta = y < th && x < tw ? a[y * aStride + x] : (byte)0;
+                    var sa = y < sh && x < sw ? b[y * bStride + x] : (byte)0;
+                    dst[y * dStride + x] = (byte)(ta * sa / 255);
+                }
             return bmp;
         }
 

@@ -13,35 +13,35 @@ namespace Floss.App.Psd;
 
 public sealed class PsdDocument
 {
-    public int Width  { get; init; }
+    public int Width { get; init; }
     public int Height { get; init; }
     public List<PsdNode> Layers { get; } = new();
 }
 
 public abstract class PsdNode
 {
-    public string Name      { get; set; } = "";
-    public bool   IsVisible { get; set; } = true;
-    public byte   Opacity   { get; set; } = 255;
-    public bool   Clipping  { get; set; }
+    public string Name { get; set; } = "";
+    public bool IsVisible { get; set; } = true;
+    public byte Opacity { get; set; } = 255;
+    public bool Clipping { get; set; }
     public string BlendMode { get; set; } = "norm"; // 4-char PSD key
 }
 
 public sealed class PsdLayerNode : PsdNode
 {
-    public int    Top    { get; set; }
-    public int    Left   { get; set; }
-    public int    Bottom { get; set; }
-    public int    Right  { get; set; }
-    public int    Width  => Right - Left;
-    public int    Height => Bottom - Top;
-    public byte[]? Bgra  { get; set; } // null = empty / transparent layer
+    public int Top { get; set; }
+    public int Left { get; set; }
+    public int Bottom { get; set; }
+    public int Right { get; set; }
+    public int Width => Right - Left;
+    public int Height => Bottom - Top;
+    public byte[]? Bgra { get; set; } // null = empty / transparent layer
 }
 
 public sealed class PsdGroupNode : PsdNode
 {
-    public bool          IsOpen   { get; set; } = true;
-    public List<PsdNode> Children { get; }      = new();
+    public bool IsOpen { get; set; } = true;
+    public List<PsdNode> Children { get; } = new();
 }
 
 // ── Reader ───────────────────────────────────────────────────────────────────
@@ -64,9 +64,9 @@ public static class PsdReader
 
         r.Skip(6);                      // reserved
         r.U16();                        // channel count (ignored; we read per-layer)
-        var height    = (int)r.U32();
-        var width     = (int)r.U32();
-        var bitDepth  = r.U16();        // 8, 16, or 32
+        var height = (int)r.U32();
+        var width = (int)r.U32();
+        var bitDepth = r.U16();        // 8, 16, or 32
         var colorMode = r.U16();        // 3 = RGB
 
         // ── Skippable sections ───────────────────────────────────────────────
@@ -99,17 +99,17 @@ public static class PsdReader
         for (int i = 0; i < layerCount; i++)
         {
             var rec = new LayerRecord();
-            rec.Top    = r.I32();
-            rec.Left   = r.I32();
+            rec.Top = r.I32();
+            rec.Left = r.I32();
             rec.Bottom = r.I32();
-            rec.Right  = r.I32();
+            rec.Right = r.I32();
 
             var chanCount = r.U16();
-            rec.ChannelIds      = new short[chanCount];
-            rec.ChannelDataLens = new long [chanCount];
+            rec.ChannelIds = new short[chanCount];
+            rec.ChannelDataLens = new long[chanCount];
             for (int c = 0; c < chanCount; c++)
             {
-                rec.ChannelIds[c]      = r.I16();
+                rec.ChannelIds[c] = r.I16();
                 rec.ChannelDataLens[c] = r.U32(); // 4 bytes for PSD (8 for PSB)
             }
 
@@ -117,9 +117,9 @@ public static class PsdReader
             r.ReadExact(buf4);
             rec.BlendMode = Encoding.ASCII.GetString(buf4);
 
-            rec.Opacity   = r.Byte();
-            rec.Clipping  = r.Byte() != 0;
-            var flags     = r.Byte();
+            rec.Opacity = r.Byte();
+            rec.Clipping = r.Byte() != 0;
+            var flags = r.Byte();
             rec.IsVisible = (flags & 2) == 0; // bit 1: visibility bit (0 = visible)
             r.Skip(1); // filler
 
@@ -132,7 +132,7 @@ public static class PsdReader
             r.Skip((int)r.U32());
 
             // layer name (Pascal string padded to 4-byte boundary)
-            var nameLen  = r.Byte();
+            var nameLen = r.Byte();
             var nameData = new byte[nameLen];
             r.ReadExact(nameData);
             rec.Name = Encoding.UTF8.GetString(nameData);
@@ -176,13 +176,13 @@ public static class PsdReader
         // compressed channel block first, then decode all layers in parallel.
         for (int i = 0; i < layerCount; i++)
         {
-            var rec    = records[i];
-            var layerW = rec.Right  - rec.Left;
+            var rec = records[i];
+            var layerW = rec.Right - rec.Left;
             var layerH = rec.Bottom - rec.Top;
 
             for (int c = 0; c < rec.ChannelIds.Length; c++)
             {
-                var chanId  = rec.ChannelIds[c];
+                var chanId = rec.ChannelIds[c];
                 var chanLen = (int)rec.ChannelDataLens[c];
                 var chanEnd = stream.Position + chanLen;
 
@@ -256,12 +256,12 @@ public static class PsdReader
                 if (stack.Count > 0)
                 {
                     var (group, parent) = stack.Pop();
-                    group.Name      = rec.Name;
+                    group.Name = rec.Name;
                     group.IsVisible = rec.IsVisible;
-                    group.Opacity   = rec.Opacity;
-                    group.Clipping  = rec.Clipping;
+                    group.Opacity = rec.Opacity;
+                    group.Clipping = rec.Clipping;
                     group.BlendMode = string.IsNullOrEmpty(rec.DividerBlendMode) ? rec.BlendMode : rec.DividerBlendMode;
-                    group.IsOpen    = rec.SectionType == 1;
+                    group.IsOpen = rec.SectionType == 1;
                     parent.Add(group);
                     current = parent;
                 }
@@ -270,21 +270,21 @@ public static class PsdReader
             {
                 var layerW = rec.Right - rec.Left;
                 var layerH = rec.Bottom - rec.Top;
-                var bgra   = rec.PrecomputedBgra;
+                var bgra = rec.PrecomputedBgra;
                 rec.PrecomputedBgra = null;
 
                 current.Add(new PsdLayerNode
                 {
-                    Name      = rec.Name,
+                    Name = rec.Name,
                     IsVisible = rec.IsVisible,
-                    Opacity   = rec.Opacity,
-                    Clipping  = rec.Clipping,
+                    Opacity = rec.Opacity,
+                    Clipping = rec.Clipping,
                     BlendMode = rec.BlendMode,
-                    Top       = rec.Top,
-                    Left      = rec.Left,
-                    Bottom    = rec.Bottom,
-                    Right     = rec.Right,
-                    Bgra      = bgra,
+                    Top = rec.Top,
+                    Left = rec.Left,
+                    Bottom = rec.Bottom,
+                    Right = rec.Right,
+                    Bgra = bgra,
                 });
             }
         }
@@ -299,12 +299,12 @@ public static class PsdReader
 
     private static byte[] AssembleBgra(LayerRecord rec, int w, int h)
     {
-        rec.Channels.TryGetValue(0,  out var rPlane);
-        rec.Channels.TryGetValue(1,  out var gPlane);
-        rec.Channels.TryGetValue(2,  out var bPlane);
+        rec.Channels.TryGetValue(0, out var rPlane);
+        rec.Channels.TryGetValue(1, out var gPlane);
+        rec.Channels.TryGetValue(2, out var bPlane);
         rec.Channels.TryGetValue(-1, out var aPlane);
 
-        var bgra   = new byte[w * h * 4];
+        var bgra = new byte[w * h * 4];
         var pixels = w * h;
 
         for (int p = 0; p < pixels; p++)
@@ -351,9 +351,9 @@ public static class PsdReader
 
     private static byte[] DecodePackBits(ReadOnlySpan<byte> span, int w, int h, int bitDepth)
     {
-        var plane      = new byte[w * h];
-        var pixPerRow  = bitDepth == 8 ? w : w * (bitDepth / 8);
-        var rowBuf     = ArrayPool<byte>.Shared.Rent(pixPerRow);
+        var plane = new byte[w * h];
+        var pixPerRow = bitDepth == 8 ? w : w * (bitDepth / 8);
+        var rowBuf = ArrayPool<byte>.Shared.Rent(pixPerRow);
 
         try
         {
@@ -400,7 +400,7 @@ public static class PsdReader
             else if (n != -128)
             {
                 var count = 1 - n;
-                var val   = src[si++];
+                var val = src[si++];
                 while (count-- > 0 && di < dstLen)
                     dst[di++] = val;
             }
@@ -411,7 +411,7 @@ public static class PsdReader
     {
         try
         {
-            using var ms      = new MemoryStream(raw, offset, length, writable: false);
+            using var ms = new MemoryStream(raw, offset, length, writable: false);
             using var deflate = new ZLibStream(ms, CompressionMode.Decompress);
             var bytesPerSample = bitDepth / 8;
             var buf = new byte[w * h * bytesPerSample];
@@ -468,22 +468,22 @@ public static class PsdReader
 
     private sealed class LayerRecord
     {
-        public int    Top, Left, Bottom, Right;
-        public short[] ChannelIds      = [];
-        public long[]  ChannelDataLens = [];
+        public int Top, Left, Bottom, Right;
+        public short[] ChannelIds = [];
+        public long[] ChannelDataLens = [];
         // Raw compressed bytes per channel, buffered during sequential stream read.
         public Dictionary<short, byte[]> ChannelRaw = new();
         // Decoded 8-bit planes, populated during parallel decode pass.
-        public Dictionary<short, byte[]> Channels   = new();
+        public Dictionary<short, byte[]> Channels = new();
         // Pre-assembled BGRA, set during parallel pass so BuildTree just grabs it.
         public byte[]? PrecomputedBgra;
-        public string BlendMode        = "norm";
+        public string BlendMode = "norm";
         public string DividerBlendMode = "";
-        public byte   Opacity          = 255;
-        public bool   Clipping;
-        public bool   IsVisible        = true;
-        public string Name             = "";
-        public int    SectionType;     // 0=normal, 1=openGroup, 2=closedGroup, 3=boundingDivider
+        public byte Opacity = 255;
+        public bool Clipping;
+        public bool IsVisible = true;
+        public string Name = "";
+        public int SectionType;     // 0=normal, 1=openGroup, 2=closedGroup, 3=boundingDivider
     }
 }
 

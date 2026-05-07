@@ -10,6 +10,7 @@ using Avalonia.Media;
 using Floss.App.Brushes;
 using Floss.App.Canvas;
 using Floss.App.Document;
+using Floss.App.Processes;
 
 namespace Floss.App;
 
@@ -43,6 +44,7 @@ public partial class MainWindow
     private readonly List<DocumentTab> _tabs = new();
     private DocumentTab? _activeTab;
     private StackPanel _tabBar = null!;
+    private ScrollViewer _tabBarContainer = null!;
     private Action? _canvasUnwire;
 
     // ── Tab bar UI ────────────────────────────────────────────────────────────
@@ -78,13 +80,15 @@ public partial class MainWindow
         bar.Children.Add(newTabBtn);
         bar.Children.Add(_tabBar);
 
-        return new ScrollViewer
+        _tabBarContainer = new ScrollViewer
         {
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Hidden,
             VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
             Content = bar,
             Background = new SolidColorBrush(Color.Parse(Bg1)),
+            IsVisible = false,
         };
+        return _tabBarContainer;
     }
 
     private void UpdateTabBar()
@@ -92,6 +96,11 @@ public partial class MainWindow
         _tabBar.Children.Clear();
         foreach (var tab in _tabs)
             _tabBar.Children.Add(BuildTabButton(tab));
+
+        var hasTabs = _tabs.Count > 0;
+        _tabBarContainer.IsVisible = hasTabs;
+        if (_checkerboardOverlay != null)
+            _checkerboardOverlay.IsVisible = _activeTab?.HasDocument == true;
     }
 
     private Control BuildTabButton(DocumentTab tab)
@@ -173,6 +182,8 @@ public partial class MainWindow
         // Cancel any in-progress tool operation before leaving
         _canvas?.CancelActiveTool();
 
+        var currentColor = _canvas?.PaintColor;
+
         // Always unwire the current canvas before swapping (safe even on first call)
         UnwireCanvas();
 
@@ -228,6 +239,22 @@ public partial class MainWindow
 
         WireCanvas();
 
+        // Sync paint color so the new canvas uses the same color as the previous one
+        if (currentColor.HasValue)
+            _canvas.SetPaintColor(currentColor.Value);
+
+        // Recreate tool factory so new tools bind to this canvas's document/brush engine
+        _toolFactory = new ToolFactory(_canvas.Document, _canvas.BrushEngine);
+        var activeToolPreset = _activeToolGroup?.ActivePreset;
+        if (activeToolPreset != null)
+        {
+            _canvas.SetActiveTool(_toolFactory.CreateTool(activeToolPreset), activeToolPreset);
+
+            // Push the current user-facing brush onto the new canvas
+            if (_activePreset != null)
+                _canvas.SyncBrushFromContext(_activePreset);
+        }
+
         // Sync UI
         _canvasFrame.IsVisible = tab.HasDocument;
         SetDocumentPanelsVisible(tab.HasDocument);
@@ -271,8 +298,12 @@ public partial class MainWindow
 
         if (_tabs.Count == 0)
         {
-            var newTab = CreateTab();
-            SwitchToTab(newTab);
+            UnwireCanvas();
+            _activeTab = null;
+            _canvasFrame.IsVisible = false;
+            SetDocumentPanelsVisible(false);
+            UpdateTabBar();
+            UpdateTitle();
             return;
         }
 
@@ -292,30 +323,28 @@ public partial class MainWindow
 
     private void WireCanvas()
     {
-        _canvas.StatsChanged       += OnCanvasStatsChanged;
-        _canvas.HistoryChanged     += OnCanvasHistoryChanged;
-        _canvas.SelectionChanged   += OnCanvasSelectionChanged;
-        _canvas.LayersChanged      += OnCanvasLayersChanged;
+        _canvas.StatsChanged += OnCanvasStatsChanged;
+        _canvas.HistoryChanged += OnCanvasHistoryChanged;
+        _canvas.SelectionChanged += OnCanvasSelectionChanged;
+        _canvas.LayersChanged += OnCanvasLayersChanged;
         _canvas.LayerMetadataChanged += OnCanvasLayerMetadataChanged;
-        _canvas.LayersFoundByRect  += ExpandAndScrollToLayers;
-        _canvas.ColorSampled       += OnCanvasColorSampled;
-        _canvas.BrushSettingsRestored += OnBrushSettingsRestored;
-        _canvas.DirtyStateChanged  += OnCanvasDirtyStateChanged;
+        _canvas.LayersFoundByRect += ExpandAndScrollToLayers;
+        _canvas.ColorSampled += OnCanvasColorSampled;
+        _canvas.DirtyStateChanged += OnCanvasDirtyStateChanged;
 
         _canvasUnwire = UnwireCanvas;
     }
 
     private void UnwireCanvas()
     {
-        _canvas.StatsChanged       -= OnCanvasStatsChanged;
-        _canvas.HistoryChanged     -= OnCanvasHistoryChanged;
-        _canvas.SelectionChanged   -= OnCanvasSelectionChanged;
-        _canvas.LayersChanged      -= OnCanvasLayersChanged;
+        _canvas.StatsChanged -= OnCanvasStatsChanged;
+        _canvas.HistoryChanged -= OnCanvasHistoryChanged;
+        _canvas.SelectionChanged -= OnCanvasSelectionChanged;
+        _canvas.LayersChanged -= OnCanvasLayersChanged;
         _canvas.LayerMetadataChanged -= OnCanvasLayerMetadataChanged;
-        _canvas.LayersFoundByRect  -= ExpandAndScrollToLayers;
-        _canvas.ColorSampled       -= OnCanvasColorSampled;
-        _canvas.BrushSettingsRestored -= OnBrushSettingsRestored;
-        _canvas.DirtyStateChanged  -= OnCanvasDirtyStateChanged;
+        _canvas.LayersFoundByRect -= ExpandAndScrollToLayers;
+        _canvas.ColorSampled -= OnCanvasColorSampled;
+        _canvas.DirtyStateChanged -= OnCanvasDirtyStateChanged;
     }
 
     private void OnCanvasStatsChanged(object? s, EventArgs e) => UpdateStatus();
@@ -342,24 +371,6 @@ public partial class MainWindow
 
     private void OnCanvasColorSampled(object? s, Avalonia.Media.Color c) => SetColor(c);
 
-    private void OnBrushSettingsRestored(BrushPreset brush)
-    {
-        if (_suppressBrushSettingsRestored) return;
-        _syncingBrushUi = true;
-        _sizeSlider.Value     = Math.Clamp(brush.Size,      _sizeSlider.Minimum,      _sizeSlider.Maximum);
-        _opacitySlider.Value  = Math.Clamp(brush.Opacity,   _opacitySlider.Minimum,   _opacitySlider.Maximum);
-        _flowSlider.Value     = Math.Clamp(brush.Flow,      _flowSlider.Minimum,      _flowSlider.Maximum);
-        _hardnessSlider.Value = Math.Clamp(brush.Hardness,  _hardnessSlider.Minimum,  _hardnessSlider.Maximum);
-        _spacingSlider.Value  = Math.Clamp(brush.Spacing,   _spacingSlider.Minimum,   _spacingSlider.Maximum);
-        _smoothingSlider.Value = Math.Clamp(brush.Smoothing, _smoothingSlider.Minimum, _smoothingSlider.Maximum);
-        _grainSlider.Value    = Math.Clamp(brush.Grain,     _grainSlider.Minimum,     _grainSlider.Maximum);
-        _syncingBrushUi = false;
-        _activePreset = brush;
-        _strokePreview.Brush = brush;
-        _canvas.SyncBrushFromContext(brush);
-        RefreshToolProperties();
-    }
-
     private void OnCanvasDirtyStateChanged(object? s, EventArgs e)
     {
         UpdateTitle();
@@ -368,7 +379,7 @@ public partial class MainWindow
 
     private void UpdateTitle()
     {
-        if (_activeTab == null) return;
+        if (_activeTab == null) { Title = "Floss Studio"; return; }
         var name = _activeTab.DisplayTitle;
         var star = _canvas.IsDirty ? "*" : "";
         Title = $"Floss Studio — {name}{star}";

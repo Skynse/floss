@@ -32,7 +32,7 @@ public partial class MainWindow
         if (_resizeOverlay == null) BuildResizeOverlay();
 
         _suppressResizeSync = true;
-        _resizeWidthBox!.Value  = _resizeOldW;
+        _resizeWidthBox!.Value = _resizeOldW;
         _resizeHeightBox!.Value = _resizeOldH;
         _resizeAnchorCol = 1;
         _resizeAnchorRow = 1;
@@ -64,9 +64,9 @@ public partial class MainWindow
         _resizeOverlay = new CanvasResizeOverlay(_canvas) { IsVisible = false };
         _workspaceViewport.Children.Add(_resizeOverlay);
 
-        _resizeWidthBox  = new NumericUpDown { Value = 1, Minimum = 1, Maximum = 32000, Increment = 1, Width = 110, FontSize = 11 };
+        _resizeWidthBox = new NumericUpDown { Value = 1, Minimum = 1, Maximum = 32000, Increment = 1, Width = 110, FontSize = 11 };
         _resizeHeightBox = new NumericUpDown { Value = 1, Minimum = 1, Maximum = 32000, Increment = 1, Width = 110, FontSize = 11 };
-        _resizeWidthBox.ValueChanged  += (_, _) => OnResizeInputChanged();
+        _resizeWidthBox.ValueChanged += (_, _) => OnResizeInputChanged();
         _resizeHeightBox.ValueChanged += (_, _) => OnResizeInputChanged();
 
         // Anchor grid 3x3
@@ -104,21 +104,27 @@ public partial class MainWindow
 
         _resizeOkBtn = new Button
         {
-            Content = "Resize", Padding = new Thickness(12, 4), FontSize = 11,
+            Content = "Resize",
+            Padding = new Thickness(12, 4),
+            FontSize = 11,
             Background = new SolidColorBrush(Color.Parse("#1e3a78")),
             Foreground = new SolidColorBrush(Color.Parse("#90baf0")),
             BorderBrush = new SolidColorBrush(Color.Parse("#2a4a98")),
-            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3)
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(3)
         };
         _resizeCancelBtn = new Button
         {
-            Content = "Cancel", Padding = new Thickness(12, 4), FontSize = 11,
+            Content = "Cancel",
+            Padding = new Thickness(12, 4),
+            FontSize = 11,
             Background = new SolidColorBrush(Color.Parse("#1a1c22")),
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3)
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(3)
         };
-        _resizeOkBtn.Click     += (_, _) => _resizeTcs?.TrySetResult(true);
+        _resizeOkBtn.Click += (_, _) => _resizeTcs?.TrySetResult(true);
         _resizeCancelBtn.Click += (_, _) => _resizeTcs?.TrySetResult(false);
 
         var inputGrid = new Grid { RowSpacing = 5, ColumnSpacing = 6, Margin = new Thickness(0, 0, 0, 8) };
@@ -128,10 +134,10 @@ public partial class MainWindow
         inputGrid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         var wLbl = FieldLabel("Width");
         var hLbl = FieldLabel("Height");
-        Grid.SetRow(wLbl, 0);              Grid.SetColumn(wLbl, 0);
-        Grid.SetRow(_resizeWidthBox, 0);   Grid.SetColumn(_resizeWidthBox, 1);
-        Grid.SetRow(hLbl, 1);              Grid.SetColumn(hLbl, 0);
-        Grid.SetRow(_resizeHeightBox, 1);  Grid.SetColumn(_resizeHeightBox, 1);
+        Grid.SetRow(wLbl, 0); Grid.SetColumn(wLbl, 0);
+        Grid.SetRow(_resizeWidthBox, 0); Grid.SetColumn(_resizeWidthBox, 1);
+        Grid.SetRow(hLbl, 1); Grid.SetColumn(hLbl, 0);
+        Grid.SetRow(_resizeHeightBox, 1); Grid.SetColumn(_resizeHeightBox, 1);
         inputGrid.Children.Add(wLbl);
         inputGrid.Children.Add(_resizeWidthBox);
         inputGrid.Children.Add(hLbl);
@@ -139,14 +145,16 @@ public partial class MainWindow
 
         var anchorLabel = new TextBlock
         {
-            Text = "Anchor", FontSize = 9,
+            Text = "Anchor",
+            FontSize = 9,
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
             Margin = new Thickness(0, 0, 0, 3)
         };
 
         var btnRow = new StackPanel
         {
-            Orientation = Orientation.Horizontal, Spacing = 6,
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
             HorizontalAlignment = HorizontalAlignment.Right
         };
         btnRow.Children.Add(_resizeCancelBtn);
@@ -176,7 +184,7 @@ public partial class MainWindow
         _resizeOverlay.PreviewChanged += (w, h, _, _) =>
         {
             _suppressResizeSync = true;
-            _resizeWidthBox.Value  = w;
+            _resizeWidthBox.Value = w;
             _resizeHeightBox.Value = h;
             _suppressResizeSync = false;
         };
@@ -210,8 +218,8 @@ public partial class MainWindow
     private void OnResizeInputChanged()
     {
         if (_suppressResizeSync || _resizeOverlay == null) return;
-        var nw   = (int)(_resizeWidthBox!.Value  ?? _resizeOldW);
-        var nh   = (int)(_resizeHeightBox!.Value ?? _resizeOldH);
+        var nw = (int)(_resizeWidthBox!.Value ?? _resizeOldW);
+        var nh = (int)(_resizeHeightBox!.Value ?? _resizeOldH);
         var offX = (int)Math.Round((nw - _resizeOldW) * _resizeAnchorCol / 2.0);
         var offY = (int)Math.Round((nh - _resizeOldH) * _resizeAnchorRow / 2.0);
         _resizeOverlay.SetPreview(nw, nh, offX, offY);
@@ -224,7 +232,7 @@ public partial class MainWindow
             for (var c = 0; c < 3; c++)
             {
                 var active = r == _resizeAnchorRow && c == _resizeAnchorCol;
-                _resizeAnchorBtns[r, c].Background  = new SolidColorBrush(Color.Parse(active ? "#1e3a78" : Bg3));
+                _resizeAnchorBtns[r, c].Background = new SolidColorBrush(Color.Parse(active ? "#1e3a78" : Bg3));
                 _resizeAnchorBtns[r, c].BorderBrush = new SolidColorBrush(Color.Parse(active ? "#3a5aaa" : Stroke));
             }
     }

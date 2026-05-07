@@ -36,10 +36,10 @@ public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circl
         _cachedHardness = h;
         _cachedMask = Shape switch
         {
-            BrushTipShape.Chalk   => GenerateChalk(size, h),
+            BrushTipShape.Chalk => GenerateChalk(size, h),
             BrushTipShape.Bristle => GenerateBristle(size, h),
             BrushTipShape.Scatter => GenerateScatter(size, h),
-            _                     => GenerateSmooth(size, h),
+            _ => GenerateSmooth(size, h),
         };
         return _cachedMask;
     }
@@ -55,10 +55,10 @@ public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circl
         // cutting off the falloff and making large soft brushes look square).
         if (Shape is BrushTipShape.Circle or BrushTipShape.SoftRound or BrushTipShape.Ellipse)
         {
-            var bmp    = NewAlpha8(size);
+            var bmp = NewAlpha8(size);
             var pixels = bmp.GetPixels();
             if (pixels == IntPtr.Zero) return bmp; // allocation failed; return blank
-            var dst    = (byte*)pixels.ToPointer();
+            var dst = (byte*)pixels.ToPointer();
             var stride = bmp.RowBytes;
             if (maxR < 0.001f) { dst[0] = 255; return bmp; } // degenerate 1px case
 
@@ -69,32 +69,32 @@ public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circl
             bool isSoft = Shape == BrushTipShape.SoftRound;
 
             for (int y = 0; y < size; y++)
-            for (int x = 0; x < size; x++)
-            {
-                float dx = (x + 0.5f - cx) / rx;
-                float dy = (y + 0.5f - cy) / ry;
-                float t  = MathF.Sqrt(dx * dx + dy * dy); // 0=centre, 1=edge
+                for (int x = 0; x < size; x++)
+                {
+                    float dx = (x + 0.5f - cx) / rx;
+                    float dy = (y + 0.5f - cy) / ry;
+                    float t = MathF.Sqrt(dx * dx + dy * dy); // 0=centre, 1=edge
 
-                float alpha;
-                if (t >= 1f)
-                {
-                    alpha = 0f;
-                }
-                else if (t <= hardness)
-                {
-                    alpha = 1f;
-                }
-                else
-                {
-                    var fade = (t - hardness) / (1f - hardness);
-                    // Smoothstep for SoftRound, cosine-ease for Circle.
-                    alpha = isSoft
-                        ? 1f - fade * fade * (3f - 2f * fade)
-                        : (MathF.Cos(fade * MathF.PI) + 1f) * 0.5f;
-                }
+                    float alpha;
+                    if (t >= 1f)
+                    {
+                        alpha = 0f;
+                    }
+                    else if (t <= hardness)
+                    {
+                        alpha = 1f;
+                    }
+                    else
+                    {
+                        var fade = (t - hardness) / (1f - hardness);
+                        // Smoothstep for SoftRound, cosine-ease for Circle.
+                        alpha = isSoft
+                            ? 1f - fade * fade * (3f - 2f * fade)
+                            : (MathF.Cos(fade * MathF.PI) + 1f) * 0.5f;
+                    }
 
-                dst[y * stride + x] = (byte)(alpha * 255f + 0.5f);
-            }
+                    dst[y * stride + x] = (byte)(alpha * 255f + 0.5f);
+                }
             return bmp;
         }
         else

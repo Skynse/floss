@@ -13,25 +13,25 @@ public sealed class CanvasResizeOverlay : Control
     internal DrawingCanvas Canvas { get => _canvas; set => _canvas = value; }
     private DrawingCanvas _canvas;
 
-    public int PreviewW   { get; private set; }
-    public int PreviewH   { get; private set; }
+    public int PreviewW { get; private set; }
+    public int PreviewH { get; private set; }
     public int PreviewOffX { get; private set; }
     public int PreviewOffY { get; private set; }
 
     // Drag state — managed externally by the workspace pointer handlers
-    public int  DragHandle    { get; private set; } = -1;
-    public Point DragStartVp  { get; private set; }
-    public int  DragStartW    { get; private set; }
-    public int  DragStartH    { get; private set; }
-    public int  DragStartOffX { get; private set; }
-    public int  DragStartOffY { get; private set; }
+    public int DragHandle { get; private set; } = -1;
+    public Point DragStartVp { get; private set; }
+    public int DragStartW { get; private set; }
+    public int DragStartH { get; private set; }
+    public int DragStartOffX { get; private set; }
+    public int DragStartOffY { get; private set; }
 
     public event Action<int, int, int, int>? PreviewChanged;
 
-    private const double HitR  = 10.0;
-    private const double HSize =  7.0;
+    private const double HitR = 10.0;
+    private const double HSize = 7.0;
 
-    private static readonly IBrush HandleFill   = new SolidColorBrush(Colors.White);
+    private static readonly IBrush HandleFill = new SolidColorBrush(Colors.White);
     private static readonly IBrush HandleBorder = new SolidColorBrush(Color.FromArgb(200, 30, 30, 30));
 
     public CanvasResizeOverlay(DrawingCanvas canvas)
@@ -43,8 +43,8 @@ public sealed class CanvasResizeOverlay : Control
 
     public void SetPreview(int w, int h, int offX, int offY)
     {
-        PreviewW    = Math.Max(1, w);
-        PreviewH    = Math.Max(1, h);
+        PreviewW = Math.Max(1, w);
+        PreviewH = Math.Max(1, h);
         PreviewOffX = offX;
         PreviewOffY = offY;
         InvalidateVisual();
@@ -66,10 +66,10 @@ public sealed class CanvasResizeOverlay : Control
 
     public void BeginDrag(int handle, Point vpPos)
     {
-        DragHandle    = handle;
-        DragStartVp   = vpPos;
-        DragStartW    = PreviewW;
-        DragStartH    = PreviewH;
+        DragHandle = handle;
+        DragStartVp = vpPos;
+        DragStartW = PreviewW;
+        DragStartH = PreviewH;
         DragStartOffX = PreviewOffX;
         DragStartOffY = PreviewOffY;
     }
@@ -101,7 +101,7 @@ public sealed class CanvasResizeOverlay : Control
         base.Render(ctx);
         if (PreviewW == 0) return;
 
-        var pts     = CornerPoints();
+        var pts = CornerPoints();
         var handles = HandlePoints(pts);
 
         var dash1 = new DashStyle([5, 5], 0);
@@ -119,46 +119,46 @@ public sealed class CanvasResizeOverlay : Control
 
     public (double dx, double dy) VpDeltaToDoc(double dvx, double dvy)
     {
-        var zoom   = _canvas.CanvasZoom;
-        var flipX  = (double)_canvas.FlipX;
-        var flipY  = (double)_canvas.FlipY;
-        var angle  = _canvas.CanvasRotation * Math.PI / 180.0;
-        var cos    = Math.Cos(angle);
-        var sin    = Math.Sin(angle);
-        var unrotX =  dvx * cos + dvy * sin;
+        var zoom = _canvas.CanvasZoom;
+        var flipX = (double)_canvas.FlipX;
+        var flipY = (double)_canvas.FlipY;
+        var angle = _canvas.CanvasRotation * Math.PI / 180.0;
+        var cos = Math.Cos(angle);
+        var sin = Math.Sin(angle);
+        var unrotX = dvx * cos + dvy * sin;
         var unrotY = -dvx * sin + dvy * cos;
         return (unrotX / zoom * flipX, unrotY / zoom * flipY);
     }
 
     private Point DocToVP(double docX, double docY)
     {
-        var vpw   = Bounds.Width;
-        var vph   = Bounds.Height;
-        var docW  = _canvas.Document.Width;
-        var docH  = _canvas.Document.Height;
-        var zoom  = _canvas.CanvasZoom;
+        var vpw = Bounds.Width;
+        var vph = Bounds.Height;
+        var docW = _canvas.Document.Width;
+        var docH = _canvas.Document.Height;
+        var zoom = _canvas.CanvasZoom;
         var flipX = (double)_canvas.FlipX;
         var flipY = (double)_canvas.FlipY;
-        var px    = _canvas.PanOffsetX;
-        var py    = _canvas.PanOffsetY;
+        var px = _canvas.PanOffsetX;
+        var py = _canvas.PanOffsetY;
         var angle = _canvas.CanvasRotation * Math.PI / 180.0;
-        var sw    = docW * zoom;
-        var sh    = docH * zoom;
-        var ox    = flipX == 1 ? (vpw - sw) * 0.5 : (vpw + sw) * 0.5;
-        var oy    = flipY == 1 ? (vph - sh) * 0.5 : (vph + sh) * 0.5;
-        var cos   = Math.Cos(angle);
-        var sin   = Math.Sin(angle);
-        var cx    = ox + docX * zoom * flipX;
-        var cy    = oy + docY * zoom * flipY;
-        var rx    = vpw * 0.5 + (cx - vpw * 0.5) * cos - (cy - vph * 0.5) * sin;
-        var ry    = vph * 0.5 + (cx - vpw * 0.5) * sin + (cy - vph * 0.5) * cos;
+        var sw = docW * zoom;
+        var sh = docH * zoom;
+        var ox = flipX == 1 ? (vpw - sw) * 0.5 : (vpw + sw) * 0.5;
+        var oy = flipY == 1 ? (vph - sh) * 0.5 : (vph + sh) * 0.5;
+        var cos = Math.Cos(angle);
+        var sin = Math.Sin(angle);
+        var cx = ox + docX * zoom * flipX;
+        var cy = oy + docY * zoom * flipY;
+        var rx = vpw * 0.5 + (cx - vpw * 0.5) * cos - (cy - vph * 0.5) * sin;
+        var ry = vph * 0.5 + (cx - vpw * 0.5) * sin + (cy - vph * 0.5) * cos;
         return new Point(rx + px, ry + py);
     }
 
     private Point[] CornerPoints()
     {
         double l = -PreviewOffX, t = -PreviewOffY;
-        double r = l + PreviewW,  b = t + PreviewH;
+        double r = l + PreviewW, b = t + PreviewH;
         return [DocToVP(l, t), DocToVP(r, t), DocToVP(r, b), DocToVP(l, b)];
     }
 
@@ -177,10 +177,10 @@ public sealed class CanvasResizeOverlay : Control
     private static PathGeometry BuildQuadPath(Point a, Point b, Point c, Point d)
     {
         var path = new PathGeometry();
-        var fig  = new PathFigure { StartPoint = a, IsClosed = true };
+        var fig = new PathFigure { StartPoint = a, IsClosed = true };
         fig.Segments!.Add(new LineSegment { Point = b });
-        fig.Segments.Add(new LineSegment  { Point = c });
-        fig.Segments.Add(new LineSegment  { Point = d });
+        fig.Segments.Add(new LineSegment { Point = c });
+        fig.Segments.Add(new LineSegment { Point = d });
         path.Figures!.Add(fig);
         return path;
     }
@@ -190,8 +190,8 @@ public sealed class CanvasResizeOverlay : Control
         int startW, int startH, int startOffX, int startOffY,
         out int newW, out int newH, out int newOffX, out int newOffY)
     {
-        newW    = startW;
-        newH    = startH;
+        newW = startW;
+        newH = startH;
         newOffX = startOffX;
         newOffY = startOffY;
 
@@ -208,9 +208,9 @@ public sealed class CanvasResizeOverlay : Control
         };
 
         var (left, right, top, bottom) = edges[handle];
-        if (left)   { newW = startW - (int)Math.Round(dx); newOffX = startOffX - (int)Math.Round(dx); }
-        if (right)  { newW = startW + (int)Math.Round(dx); }
-        if (top)    { newH = startH - (int)Math.Round(dy); newOffY = startOffY - (int)Math.Round(dy); }
+        if (left) { newW = startW - (int)Math.Round(dx); newOffX = startOffX - (int)Math.Round(dx); }
+        if (right) { newW = startW + (int)Math.Round(dx); }
+        if (top) { newH = startH - (int)Math.Round(dy); newOffY = startOffY - (int)Math.Round(dy); }
         if (bottom) { newH = startH + (int)Math.Round(dy); }
     }
 }

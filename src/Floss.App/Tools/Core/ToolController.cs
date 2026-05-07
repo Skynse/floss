@@ -19,8 +19,6 @@ public readonly record struct ToolInputEvent(ToolInputEventKind Kind, CanvasInpu
 public sealed class ToolController
 {
     private readonly ToolContext _context;
-    private readonly Dictionary<ToolPresetEngine, ToolPreset> _enginePresets = new();
-
     public ToolController(ToolContext context, ITool initialTool)
     {
         _context = context;
@@ -31,8 +29,7 @@ public sealed class ToolController
     public ITool ActiveTool { get; private set; }
     public ToolPresetEngine ActiveEngine { get; private set; } = ToolPresetEngine.Brush;
     public bool HasPendingOperation => ActiveTool.HasPendingOperation;
-    public event Action<BrushPreset>? BrushSettingsChanged;
-    public bool HasSavedSettings(ToolPresetEngine engine) => _enginePresets.ContainsKey(engine);
+    public bool HasSavedSettings(ToolPresetEngine engine) => false;
 
     // Alternate tool runs *on top* of the active tool without switching engines.
     // Used by the viewport-wide eyedropper (Alt key).
@@ -42,40 +39,18 @@ public sealed class ToolController
     {
         if (ActiveTool == tool) return;
 
-        // Save current brush settings into the active engine's preset before switching
-        SaveEnginePreset();
-
         ActiveTool.Deactivate(_context);
         _context.ActivePreset = preset;
 
-        // Determine new engine
         var newEngine = EngineForTool(tool);
         ActiveEngine = newEngine;
 
-        // After Activate() applies the preset overrides, re-apply saved per-engine
-        // settings so the user's last-used slider values survive the switch.
-        if (_enginePresets.TryGetValue(newEngine, out var saved))
-        {
-            ActiveTool = tool;
-            ActiveTool.Activate(_context);
-            _context.Brush = saved.ApplyToBrushPreset(_context.Brush);
-            BrushSettingsChanged?.Invoke(_context.Brush);
-        }
-        else
-        {
-            ActiveTool = tool;
-            ActiveTool.Activate(_context);
-        }
+        ActiveTool = tool;
+        ActiveTool.Activate(_context);
     }
 
     public void SaveEnginePreset()
     {
-        var engine = ActiveEngine;
-        if (engine is not ToolPresetEngine.Brush)
-            return;
-        if (!_enginePresets.ContainsKey(engine))
-            _enginePresets[engine] = new ToolPreset { InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw };
-        _enginePresets[engine].CaptureFromBrushPreset(_context.Brush);
     }
 
     private static ToolPresetEngine EngineForTool(ITool tool) => tool switch

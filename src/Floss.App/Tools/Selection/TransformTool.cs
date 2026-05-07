@@ -347,13 +347,13 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
                 break;
 
             case TransformDragPart.Rotate:
-            {
-                var c = CenterOf(rect);
-                var startAngle = Math.Atan2(_dragStart.Y - c.Y, _dragStart.X - c.X) * 180 / Math.PI;
-                var currentAngle = Math.Atan2(pt.Y - c.Y, pt.X - c.X) * 180 / Math.PI;
-                _angle = _startAngle + (currentAngle - startAngle);
-                break;
-            }
+                {
+                    var c = CenterOf(rect);
+                    var startAngle = Math.Atan2(_dragStart.Y - c.Y, _dragStart.X - c.X) * 180 / Math.PI;
+                    var currentAngle = Math.Atan2(pt.Y - c.Y, pt.X - c.X) * 180 / Math.PI;
+                    _angle = _startAngle + (currentAngle - startAngle);
+                    break;
+                }
 
             default:
                 _rect = ResizeRect(rect, _dragPart, dx, dy);

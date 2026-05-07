@@ -15,19 +15,19 @@ public sealed class CurveGraph : Control
 {
     private readonly List<(float X, float Y)> _points = [(0f, 0f), (1f, 1f)];
     private const double PointRadius = 6;
-    private const double HitRadius  = 10;
+    private const double HitRadius = 10;
     private int _dragIndex = -1;
     private Point _dragOrigin;
     private (float X, float Y) _dragPoint;
 
-    private static readonly IBrush BgBrush      = new SolidColorBrush(Color.Parse("#090b0f"));
-    private static readonly IBrush GridBrush    = new SolidColorBrush(Color.Parse("#181c28"));
-    private static readonly IBrush RefBrush     = new SolidColorBrush(Color.Parse("#222840"));
-    private static readonly IBrush CurveBrush   = new SolidColorBrush(Color.Parse("#4c7ed8"));
-    private static readonly IBrush PtBrush      = new SolidColorBrush(Color.Parse("#80aaee"));
+    private static readonly IBrush BgBrush = new SolidColorBrush(Color.Parse("#090b0f"));
+    private static readonly IBrush GridBrush = new SolidColorBrush(Color.Parse("#181c28"));
+    private static readonly IBrush RefBrush = new SolidColorBrush(Color.Parse("#222840"));
+    private static readonly IBrush CurveBrush = new SolidColorBrush(Color.Parse("#4c7ed8"));
+    private static readonly IBrush PtBrush = new SolidColorBrush(Color.Parse("#80aaee"));
     private static readonly IBrush PtActiveBrush = new SolidColorBrush(Color.Parse("#b0d0ff"));
-    private static readonly IBrush PtOutline    = new SolidColorBrush(Color.Parse("#1a1c22"));
-    private static readonly IBrush LabelBrush   = new SolidColorBrush(Color.Parse("#44506a"));
+    private static readonly IBrush PtOutline = new SolidColorBrush(Color.Parse("#1a1c22"));
+    private static readonly IBrush LabelBrush = new SolidColorBrush(Color.Parse("#44506a"));
 
     public event EventHandler<CurveChangedArgs>? CurveChanged;
 
@@ -76,8 +76,8 @@ public sealed class CurveGraph : Control
         var gp = new Pen(GridBrush, 1);
         for (var i = 1; i < 4; i++)
         {
-            ctx.DrawLine(gp, new Point(w * i / 4.0, 0),        new Point(w * i / 4.0, h));
-            ctx.DrawLine(gp, new Point(0,  h * i / 4.0),       new Point(w, h * i / 4.0));
+            ctx.DrawLine(gp, new Point(w * i / 4.0, 0), new Point(w * i / 4.0, h));
+            ctx.DrawLine(gp, new Point(0, h * i / 4.0), new Point(w, h * i / 4.0));
         }
         ctx.DrawLine(new Pen(RefBrush, 1), new Point(0, h), new Point(w, 0));
     }

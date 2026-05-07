@@ -9,40 +9,40 @@ namespace Floss.App;
 
 public sealed class DynamicsPopupWindow : Window
 {
-    private const string Bg0         = "#0d0f14";
-    private const string Bg1         = "#13151a";
-    private const string Bg2         = "#1a1c22";
-    private const string Stroke      = "#2b303b";
+    private const string Bg0 = "#0d0f14";
+    private const string Bg1 = "#13151a";
+    private const string Bg2 = "#1a1c22";
+    private const string Stroke = "#2b303b";
     private const string TextPrimary = "#d7dde8";
-    private const string TextMuted   = "#6f7888";
-    private const string Accent      = "#3d6fd8";
-    private const string AccentSoft  = "#22355f";
+    private const string TextMuted = "#6f7888";
+    private const string Accent = "#3d6fd8";
+    private const string AccentSoft = "#22355f";
 
-    private readonly CurveGraph _graph  = new() { Height = 150 };
-    private readonly Button     _pressureToggle;
-    private readonly Slider     _minSlider  = MkSlider(0, 1, 0,    "Output at minimum pressure");
-    private readonly Slider     _maxSlider  = MkSlider(0, 1, 1,    "Output at maximum pressure");
-    private readonly Button     _velocityToggle;
-    private readonly Slider     _velStrSlider = MkSlider(0, 1, 0.3, "How much velocity reduces the parameter");
+    private readonly CurveGraph _graph = new() { Height = 150 };
+    private readonly Button _pressureToggle;
+    private readonly Slider _minSlider = MkSlider(0, 1, 0, "Output at minimum pressure");
+    private readonly Slider _maxSlider = MkSlider(0, 1, 1, "Output at maximum pressure");
+    private readonly Button _velocityToggle;
+    private readonly Slider _velStrSlider = MkSlider(0, 1, 0.3, "How much velocity reduces the parameter");
 
-    private ParameterDynamics         _current;
+    private ParameterDynamics _current;
     private readonly Action<ParameterDynamics> _onChange;
     private bool _syncing;
 
     public DynamicsPopupWindow(string paramName, ParameterDynamics dynamics, Action<ParameterDynamics> onChange)
     {
-        _current  = dynamics;
+        _current = dynamics;
         _onChange = onChange;
 
         _pressureToggle = MkToggle("Pressure");
         _velocityToggle = MkToggle("Velocity");
 
-        Width           = 360;
-        SizeToContent   = SizeToContent.Height;
-        CanResize       = false;
-        ShowInTaskbar   = false;
-        Background      = new SolidColorBrush(Color.Parse(Bg1));
-        Title           = $"{paramName} — Dynamics";
+        Width = 360;
+        SizeToContent = SizeToContent.Height;
+        CanResize = false;
+        ShowInTaskbar = false;
+        Background = new SolidColorBrush(Color.Parse(Bg1));
+        Title = $"{paramName} — Dynamics";
 
         Content = BuildContent();
         SyncFromDynamics(dynamics);
@@ -54,7 +54,7 @@ public sealed class DynamicsPopupWindow : Window
         var pressureSection = new StackPanel
         {
             Spacing = 0,
-            Margin  = new Thickness(0, 4, 0, 0),
+            Margin = new Thickness(0, 4, 0, 0),
             Children =
             {
                 _pressureToggle,
@@ -77,7 +77,7 @@ public sealed class DynamicsPopupWindow : Window
         var velocitySection = new StackPanel
         {
             Spacing = 0,
-            Margin  = new Thickness(0, 8, 0, 0),
+            Margin = new Thickness(0, 8, 0, 0),
             Children =
             {
                 _velocityToggle,
@@ -91,8 +91,8 @@ public sealed class DynamicsPopupWindow : Window
 
         return new StackPanel
         {
-            Margin   = new Thickness(16, 12, 16, 16),
-            Spacing  = 0,
+            Margin = new Thickness(16, 12, 16, 16),
+            Spacing = 0,
             Children = { _graph, pressureSection, velocitySection }
         };
     }
@@ -104,8 +104,8 @@ public sealed class DynamicsPopupWindow : Window
         _pressureToggle.Click += (_, _) => Commit(d => d with { PressureEnabled = !d.PressureEnabled });
         _velocityToggle.Click += (_, _) => Commit(d => d with { VelocityEnabled = !d.VelocityEnabled });
 
-        WireSlider(_minSlider,    v => Commit(d => d with { Min              = (float)v }));
-        WireSlider(_maxSlider,    v => Commit(d => d with { Max              = (float)v }));
+        WireSlider(_minSlider, v => Commit(d => d with { Min = (float)v }));
+        WireSlider(_maxSlider, v => Commit(d => d with { Max = (float)v }));
         WireSlider(_velStrSlider, v => Commit(d => d with { VelocityStrength = (float)v }));
     }
 
@@ -124,8 +124,8 @@ public sealed class DynamicsPopupWindow : Window
 
         _graph.CurvePoints = d.CurveData;
 
-        _minSlider.Value    = Math.Clamp(d.Min,              0, 1);
-        _maxSlider.Value    = Math.Clamp(d.Max,              0, 1);
+        _minSlider.Value = Math.Clamp(d.Min, 0, 1);
+        _maxSlider.Value = Math.Clamp(d.Max, 0, 1);
         _velStrSlider.Value = Math.Clamp(d.VelocityStrength, 0, 1);
 
         _syncing = false;
@@ -140,30 +140,30 @@ public sealed class DynamicsPopupWindow : Window
 
     private static void SetActive(Button btn, bool active)
     {
-        btn.Background  = new SolidColorBrush(Color.Parse(active ? AccentSoft : Bg2));
-        btn.BorderBrush = new SolidColorBrush(Color.Parse(active ? Accent     : Stroke));
-        btn.Foreground  = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted));
+        btn.Background = new SolidColorBrush(Color.Parse(active ? AccentSoft : Bg2));
+        btn.BorderBrush = new SolidColorBrush(Color.Parse(active ? Accent : Stroke));
+        btn.Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted));
     }
 
     private static Control LabelSlider(string label, Slider slider)
     {
         var lbl = new TextBlock
         {
-            Text              = label,
-            FontSize          = 10,
-            Width             = 54,
-            Foreground        = new SolidColorBrush(Color.Parse(TextMuted)),
+            Text = label,
+            FontSize = 10,
+            Width = 54,
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
             VerticalAlignment = VerticalAlignment.Center
         };
         var val = new TextBlock
         {
-            Text              = $"{slider.Value * 100:0}%",
-            FontSize          = 10,
-            Width             = 34,
-            TextAlignment     = Avalonia.Media.TextAlignment.Right,
-            Foreground        = new SolidColorBrush(Color.Parse(TextMuted)),
+            Text = $"{slider.Value * 100:0}%",
+            FontSize = 10,
+            Width = 34,
+            TextAlignment = Avalonia.Media.TextAlignment.Right,
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
             VerticalAlignment = VerticalAlignment.Center,
-            FontFamily        = new FontFamily("Consolas, Courier New, monospace")
+            FontFamily = new FontFamily("Consolas, Courier New, monospace")
         };
         slider.PropertyChanged += (_, e) =>
         {
@@ -180,17 +180,17 @@ public sealed class DynamicsPopupWindow : Window
 
     private static Button MkToggle(string label) => new()
     {
-        Content         = label,
-        Height          = 24,
-        Padding         = new Thickness(8, 0),
-        FontSize        = 10,
+        Content = label,
+        Height = 24,
+        Padding = new Thickness(8, 0),
+        FontSize = 10,
         HorizontalContentAlignment = HorizontalAlignment.Left,
-        VerticalContentAlignment   = VerticalAlignment.Center,
-        Background      = new SolidColorBrush(Color.Parse(Bg2)),
-        Foreground      = new SolidColorBrush(Color.Parse(TextMuted)),
-        BorderBrush     = new SolidColorBrush(Color.Parse(Stroke)),
+        VerticalContentAlignment = VerticalAlignment.Center,
+        Background = new SolidColorBrush(Color.Parse(Bg2)),
+        Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+        BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
         BorderThickness = new Thickness(1),
-        CornerRadius    = new CornerRadius(3)
+        CornerRadius = new CornerRadius(3)
     };
 
     private static Slider MkSlider(double min, double max, double value, string tip)

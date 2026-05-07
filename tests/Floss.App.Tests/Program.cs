@@ -13,6 +13,7 @@ using Floss.App.Brushes;
 using Floss.App.Document;
 using Floss.App.Input;
 using Floss.App.Psd;
+using Floss.App.Tools;
 using Microsoft.Data.Sqlite;
 using SkiaSharp;
 using AppKeyBinding = Floss.App.Input.KeyBinding;
@@ -53,7 +54,9 @@ internal static class Program
         ("BrushDynamics serializes and handles invalid JSON", BrushTests.BrushDynamics_SerializesAndFallsBack),
         ("BrushPreset legacy dynamics bridge preserves settings", BrushTests.BrushPreset_LegacyDynamicsBridge),
         ("Brush engine reuses masks during large strokes", BrushTests.BrushEngine_ReusesMasksDuringLargeStrokes),
+        ("Brush engine treats color mix as a master switch", BrushTests.BrushEngine_ColorMixOffIgnoresWetPaintFields),
         ("Brush engine does not dispose tip-owned cached masks", BrushTests.BrushEngine_DoesNotDisposeTipOwnedCachedMasks),
+        ("Tool controller does not restore stale engine brush state", BrushTests.ToolController_DoesNotOverridePresetBrushState),
         ("Image brush tips preserve source aspect ratio", BrushTests.ImageBrushTip_PreservesAspectRatio),
         ("ABR preset mapping keeps usable brush dynamics", BrushTests.AbrPresetMapping_KeepsDynamics),
         ("ABR mask cleanup inverts dark-on-light stamps", BrushTests.AbrMaskCleanup_InvertsDarkOnLightMasks),
@@ -157,6 +160,10 @@ internal static class PresetStoreTests
                 BrushSize = 31,
                 BrushOpacity = 0.72,
                 BrushFlow = 0.44,
+                BrushColorMix = true,
+                BrushSmudgeMode = SmudgeMode.Smear,
+                BrushAmountOfPaint = 0.33,
+                BrushDensityOfPaint = 0.66,
                 PresetIcon = Icons.BrushOutline
             };
             var fillPreset = new ToolPreset
@@ -194,6 +201,9 @@ internal static class PresetStoreTests
             AssertEx.Equal(OutputProcessType.DirectDraw, groups[0].Presets[0].OutputProcess);
             AssertEx.Equal("brush-asset", groups[0].Presets[0].BrushId);
             AssertEx.Near(31, groups[0].Presets[0].BrushSize!.Value);
+            AssertEx.Equal(SmudgeMode.Smear, groups[0].Presets[0].BrushSmudgeMode!.Value);
+            AssertEx.Near(0.33, groups[0].Presets[0].BrushAmountOfPaint!.Value);
+            AssertEx.Near(0.66, groups[0].Presets[0].BrushDensityOfPaint!.Value);
             AssertEx.Equal(FillReferenceMode.ReferenceLayers, groups[0].Presets[1].FillReference);
             AssertEx.False(groups[0].Presets[1].ContiguousFill);
             AssertEx.SequenceEqual([fillPreset.Id, brushPreset.Id], groups[0].Categories[0].PresetIds);
@@ -224,7 +234,7 @@ internal static class PresetStoreTests
                     Rotation = CurveOption.Pressure(0.3f)
                 },
                 Flow = 0.42,
-                ColorMix = 0.51,
+                ColorMix = true,
                 ColorLoad = 0.62,
                 ColorStretch = 0.73,
                 BlurAmount = 0.21,
@@ -801,6 +811,27 @@ internal static class BrushTests
         AssertEx.Equal(1, tip.GenerateCount, "Large strokes should reuse the stroke mask instead of regenerating it per stamp.");
     }
 
+    public static void BrushEngine_ColorMixOffIgnoresWetPaintFields()
+    {
+        using var engine = new BrushEngine();
+        var brush = new BrushPreset("Dry", BrushKind.Ink, 30, 1, 1, 0.1, Colors.Black, 0)
+        {
+            ColorMix = false,
+            DensityOfPaint = 0.0,
+            AmountOfPaint = 0.0,
+            Tip = new CountingBrushTip(),
+            Shape = null
+        };
+        var layer = new DrawingLayer("Layer", 120, 120);
+        var sample = Sample(60, 60, 0);
+
+        var dirty = engine.RasterizeDab(layer, brush, sample, velocity: 0);
+
+        AssertEx.False(dirty.IsEmpty);
+        layer.Pixels.GetPixel(60, 60, out _, out _, out _, out var alpha);
+        AssertEx.True(alpha > 0, "Disabling color mix should make wet-paint fields inert, not make the brush invisible.");
+    }
+
     public static void BrushEngine_DoesNotDisposeTipOwnedCachedMasks()
     {
         var tip = new CachedCountingBrushTip();
@@ -828,6 +859,37 @@ internal static class BrushTests
 
         AssertEx.False(tip.CachedMaskDisposed, "BrushEngine must not dispose masks owned by the brush tip cache.");
         tip.Dispose();
+    }
+
+    public static void ToolController_DoesNotOverridePresetBrushState()
+    {
+        var document = new DrawingDocument();
+        var context = new ToolContext(document)
+        {
+            Brush = new BrushPreset("Source", BrushKind.Ink, 10, 1, 1, 0.1, Colors.Black, 0)
+        };
+        var first = new PresetApplyingTool();
+        var second = new PresetApplyingTool();
+        var controller = new ToolController(context, first);
+        var targetPreset = new ToolPreset
+        {
+            Name = "Smudge",
+            InputProcess = InputProcessType.BrushStroke,
+            OutputProcess = OutputProcessType.DirectDraw,
+            BrushSize = 80,
+            BrushColorMix = true,
+            BrushSmudgeMode = SmudgeMode.Smear,
+            BrushAmountOfPaint = 0.25,
+            BrushDensityOfPaint = 0
+        };
+
+        controller.SetActiveTool(second, targetPreset);
+
+        AssertEx.Near(80, context.Brush.Size);
+        AssertEx.True(context.Brush.ColorMix);
+        AssertEx.Equal(SmudgeMode.Smear, context.Brush.SmudgeMode);
+        AssertEx.Near(0.25, context.Brush.AmountOfPaint);
+        AssertEx.Near(0, context.Brush.DensityOfPaint);
     }
 
     private sealed class CountingBrushTip : IBrushTip
@@ -859,6 +921,21 @@ internal static class BrushTests
         }
 
         public void Dispose() => _cached?.Dispose();
+    }
+
+    private sealed class PresetApplyingTool : ITool
+    {
+        public void PointerDown(ToolContext ctx, CanvasInputSample s) { }
+        public void PointerMove(ToolContext ctx, CanvasInputSample s) { }
+        public void PointerUp(ToolContext ctx, CanvasInputSample s) { }
+        public void Cancel(ToolContext ctx) { }
+        public void RenderOverlay(Avalonia.Media.DrawingContext dc, ToolContext ctx, double zoom) { }
+
+        public void Activate(ToolContext ctx)
+        {
+            if (ctx.ActivePreset != null)
+                ctx.Brush = ctx.ActivePreset.ApplyToBrushPreset(ctx.Brush);
+        }
     }
 
     private static CanvasInputSample Sample(double x, double y, long timeMicros)

@@ -77,7 +77,7 @@ public static class AbrImporter
 
     private static void ReadV10(Stream stream, List<BrushAsset> results, ref int errors)
     {
-        var hdr    = new byte[8];
+        var hdr = new byte[8];
         var lenBuf = new byte[4];
         byte[]? sampData = null;
         byte[]? descData = null;
@@ -89,7 +89,7 @@ public static class AbrImporter
 
             if (stream.Read(lenBuf, 0, 4) < 4) break;
             var blockLen = (long)(((uint)lenBuf[0] << 24) | ((uint)lenBuf[1] << 16) |
-                                  ((uint)lenBuf[2] << 8)  |  lenBuf[3]);
+                                  ((uint)lenBuf[2] << 8) | lenBuf[3]);
 
             var blockStart = stream.Position;
             var tag = Encoding.ASCII.GetString(hdr, 4, 4);
@@ -105,7 +105,7 @@ public static class AbrImporter
                     n += read;
                 }
                 if (tag == "samp") sampData = buf;
-                else               descData = buf;
+                else descData = buf;
             }
 
             if (stream.CanSeek)
@@ -142,27 +142,27 @@ public static class AbrImporter
 
         // Brush tip shape — sampled brushes don't have Hrdn in desc
         public bool HasDiameter; public double Diameter;   // pixels (#Pxl)
-        public bool HasHardness;  public double Hardness;  // percent (#Prc)
-        public bool HasAngle;     public double Angle;     // degrees (#Ang)
+        public bool HasHardness; public double Hardness;  // percent (#Prc)
+        public bool HasAngle; public double Angle;     // degrees (#Ang)
         public bool HasRoundness; public double Roundness; // percent (#Prc)
-        public bool HasSpacing;   public double Spacing;   // percent (#Prc)
+        public bool HasSpacing; public double Spacing;   // percent (#Prc)
 
         // Dynamics per property: bVTy=jitter control type, jitter=random%, Mnm=minimum%
-        public VrParams SizeDyn     = new();
-        public VrParams AngleDyn    = new();
-        public VrParams RoundnessDyn= new();
-        public VrParams FlowDyn     = new(); // prVr = flow/opacity-jitter in PS
-        public VrParams OpacityDyn  = new(); // opVr
-        public VrParams ScatterDyn  = new();
-        public VrParams SpacingDyn  = new();
-        public VrParams WetDyn      = new(); // wtVr = wet-edges dynamics
-        public VrParams MixDyn      = new(); // mxVr = mix/airbrush
+        public VrParams SizeDyn = new();
+        public VrParams AngleDyn = new();
+        public VrParams RoundnessDyn = new();
+        public VrParams FlowDyn = new(); // prVr = flow/opacity-jitter in PS
+        public VrParams OpacityDyn = new(); // opVr
+        public VrParams ScatterDyn = new();
+        public VrParams SpacingDyn = new();
+        public VrParams WetDyn = new(); // wtVr = wet-edges dynamics
+        public VrParams MixDyn = new(); // mxVr = mix/airbrush
 
         // Scatter
         public bool UseScatter;
-        public double ScatterCount  = 1;
+        public double ScatterCount = 1;
         public bool ScatterBothAxes = true;
-        public double ScatterDist   = 0;   // scatterDynamics.jitter
+        public double ScatterDist = 0;   // scatterDynamics.jitter
 
         // Color dynamics
         public bool UseColorDynamics;
@@ -172,9 +172,9 @@ public static class AbrImporter
         public double Purity;          // center saturation
 
         // Tool options
-        public bool HasFlow;      public double Flow;        // 0-100 long
+        public bool HasFlow; public double Flow;        // 0-100 long
         public bool HasSmoothing; public double Smoothing;   // Smoo: 0-100 long
-        public bool HasOpacity;   public double Opacity;     // Opct: 0-100 long
+        public bool HasOpacity; public double Opacity;     // Opct: 0-100 long
         public string BlendMode = "Nrml";
         public double SmoothingValue; // doubl from smoothing group
 
@@ -227,8 +227,8 @@ public static class AbrImporter
             else if (MatchesAt(desc, pos, "long"u8) && pos + 8 <= L)
             {
                 var key = ReadKeyNameBackward(desc, pos);
-                var val = (long)((uint)desc[pos+4] << 24 | (uint)desc[pos+5] << 16 |
-                                 (uint)desc[pos+6] << 8  | desc[pos+7]);
+                var val = (long)((uint)desc[pos + 4] << 24 | (uint)desc[pos + 5] << 16 |
+                                 (uint)desc[pos + 6] << 8 | desc[pos + 7]);
                 SetParam(ref current, key, val, context);
                 pos += 8;
             }
@@ -241,8 +241,8 @@ public static class AbrImporter
             else if (MatchesAt(desc, pos, "TEXT"u8) && pos + 8 <= L)
             {
                 var key = ReadKeyNameBackward(desc, pos);
-                var charCount = (int)((uint)desc[pos+4] << 24 | (uint)desc[pos+5] << 16 |
-                                      (uint)desc[pos+6] << 8  | desc[pos+7]);
+                var charCount = (int)((uint)desc[pos + 4] << 24 | (uint)desc[pos + 5] << 16 |
+                                      (uint)desc[pos + 6] << 8 | desc[pos + 7]);
                 if (charCount > 0 && charCount <= 512 && pos + 8 + charCount * 2 <= L)
                 {
                     string val;
@@ -272,7 +272,7 @@ public static class AbrImporter
             {
                 var key = ReadKeyNameBackward(desc, pos);
                 var enumType = Encoding.ASCII.GetString(desc, pos + 4, 4).TrimEnd('\0', ' ');
-                var enumVal  = Encoding.ASCII.GetString(desc, pos + 8, 4).TrimEnd('\0', ' ');
+                var enumVal = Encoding.ASCII.GetString(desc, pos + 8, 4).TrimEnd('\0', ' ');
                 SetParam(ref current, key, $"{enumType}.{enumVal}", context);
                 pos += 12;
                 while (pos < L && desc[pos] == 0) pos++;
@@ -281,7 +281,7 @@ public static class AbrImporter
             {
                 var objcKey = ReadKeyNameBackward(desc, pos);
                 pos += 4;
-                if (pos + 9 <= L && desc[pos+0] == 0 && desc[pos+4] == 0 && desc[pos+8] < 64)
+                if (pos + 9 <= L && desc[pos + 0] == 0 && desc[pos + 4] == 0 && desc[pos + 8] < 64)
                     pos += 9;
                 else
                     while (pos < L && desc[pos] == 0) pos++;
@@ -347,37 +347,37 @@ public static class AbrImporter
     {
         switch (key)
         {
-            case "Nm":    if (val is string s && !s.StartsWith("Sampled ", StringComparison.OrdinalIgnoreCase)) p.Name = s; break;
-            case "Brsh":  p.BrushType = val is string bs ? bs : ""; break;
-            case "Dmtr":  { p.HasDiameter = true; p.Diameter = (double)val; } break;
-            case "Hrdn":  { p.HasHardness = true; p.Hardness = (double)val; } break;
-            case "Angl":  { p.HasAngle = true; p.Angle = (double)val; } break;
-            case "Rndn":  { p.HasRoundness = true; p.Roundness = (double)val; } break;
-            case "Spcn":  { p.HasSpacing = true; p.Spacing = (double)val; } break;
+            case "Nm": if (val is string s && !s.StartsWith("Sampled ", StringComparison.OrdinalIgnoreCase)) p.Name = s; break;
+            case "Brsh": p.BrushType = val is string bs ? bs : ""; break;
+            case "Dmtr": { p.HasDiameter = true; p.Diameter = (double)val; } break;
+            case "Hrdn": { p.HasHardness = true; p.Hardness = (double)val; } break;
+            case "Angl": { p.HasAngle = true; p.Angle = (double)val; } break;
+            case "Rndn": { p.HasRoundness = true; p.Roundness = (double)val; } break;
+            case "Spcn": { p.HasSpacing = true; p.Spacing = (double)val; } break;
             case "sampledData": if (val is string sd) p.SampledDataGuid = sd; break;
 
-            case "Intr":  p.Interpolation = ConvBool(val); break;
+            case "Intr": p.Interpolation = ConvBool(val); break;
             case "flipX": p.FlipX = ConvBool(val); break;
             case "flipY": p.FlipY = ConvBool(val); break;
-            case "minimumDiameter":  p.MinimumDiameter = (double)val; break;
+            case "minimumDiameter": p.MinimumDiameter = (double)val; break;
             case "minimumRoundness": p.MinimumRoundness = (double)val; break;
-            case "tiltScale":        p.TiltScale = (double)val; break;
+            case "tiltScale": p.TiltScale = (double)val; break;
 
-            case "useScatter":        p.UseScatter = ConvBool(val); break;
-            case "Cnt":               p.ScatterCount = (double)val; break;
-            case "bothAxes":          p.ScatterBothAxes = ConvBool(val); break;
-            case "useColorDynamics":  p.UseColorDynamics = ConvBool(val); break;
-            case "H":                 p.HueJitter = (double)val; break;
-            case "Strt":              p.SaturationJitter = (double)val; break;
-            case "Brgh":              p.BrightnessJitter = (double)val; break;
-            case "purity":            p.Purity = (double)val; break;
+            case "useScatter": p.UseScatter = ConvBool(val); break;
+            case "Cnt": p.ScatterCount = (double)val; break;
+            case "bothAxes": p.ScatterBothAxes = ConvBool(val); break;
+            case "useColorDynamics": p.UseColorDynamics = ConvBool(val); break;
+            case "H": p.HueJitter = (double)val; break;
+            case "Strt": p.SaturationJitter = (double)val; break;
+            case "Brgh": p.BrightnessJitter = (double)val; break;
+            case "purity": p.Purity = (double)val; break;
 
-            case "flow":   { p.HasFlow = true; p.Flow = val is long lv ? (double)lv : p.Flow; } break;
-            case "Smoo":   { p.HasSmoothing = true; p.Smoothing = val is long lv ? (double)lv : p.Smoothing; } break;
-            case "Opct":   { p.HasOpacity = true; p.Opacity = val is double dv ? dv : (val is long lv2 ? (double)lv2 : p.Opacity); } break;
-            case "Md":     if (val is string md) p.BlendMode = md; break;
+            case "flow": { p.HasFlow = true; p.Flow = val is long lv ? (double)lv : p.Flow; } break;
+            case "Smoo": { p.HasSmoothing = true; p.Smoothing = val is long lv ? (double)lv : p.Smoothing; } break;
+            case "Opct": { p.HasOpacity = true; p.Opacity = val is double dv ? dv : (val is long lv2 ? (double)lv2 : p.Opacity); } break;
+            case "Md": if (val is string md) p.BlendMode = md; break;
             case "smoothingValue": p.SmoothingValue = (double)val; break;
-            case "ErsB":   p.IsEraser = ConvBool(val) || (val is long l && l == 1); break;
+            case "ErsB": p.IsEraser = ConvBool(val) || (val is long l && l == 1); break;
 
             // Dynamics control values (flat in the desc, not nested)
             case "bVTy":
@@ -489,7 +489,7 @@ public static class AbrImporter
         while (pos + 4 <= samp.Length)
         {
             var brushSize = (samp[pos] << 24) | (samp[pos + 1] << 16) |
-                            (samp[pos + 2] << 8)  |  samp[pos + 3];
+                            (samp[pos + 2] << 8) | samp[pos + 3];
             pos += 4;
 
             if (brushSize <= 0 || pos + brushSize > samp.Length) break;
@@ -535,16 +535,16 @@ public static class AbrImporter
             var ds = entryStart + 38;
             if (ds + 283 <= entryStart + entrySize)
             {
-                var top   = (samp[ds + 13] << 8) | samp[ds + 14];
-                var left  = (samp[ds + 17] << 8) | samp[ds + 18];
-                var bot   = (samp[ds + 21] << 8) | samp[ds + 22];
+                var top = (samp[ds + 13] << 8) | samp[ds + 14];
+                var left = (samp[ds + 17] << 8) | samp[ds + 18];
+                var bot = (samp[ds + 21] << 8) | samp[ds + 22];
                 var right = (samp[ds + 25] << 8) | samp[ds + 26];
                 var depth = samp[ds + 280];
-                var comp  = samp[ds + 281];
+                var comp = samp[ds + 281];
 
                 if (depth == 8 && bot > top && right > left &&
                     (right - left) is >= 1 and <= 5000 &&
-                    (bot   - top)  is >= 1 and <= 5000)
+                    (bot - top) is >= 1 and <= 5000)
                 {
                     return DecodeBrushPixels(samp, ds + 282, name,
                         topCrop: top, leftCrop: left,
@@ -556,16 +556,16 @@ public static class AbrImporter
         for (var offset = 0; offset + 19 <= entrySize; offset += 4)
         {
             var px = entryStart + offset;
-            var top   = (int)(((uint)samp[px]     << 24) | ((uint)samp[px + 1]  << 16) | ((uint)samp[px + 2]  << 8) | samp[px + 3]);
-            var left  = (int)(((uint)samp[px + 4] << 24) | ((uint)samp[px + 5]  << 16) | ((uint)samp[px + 6]  << 8) | samp[px + 7]);
-            var bot   = (int)(((uint)samp[px + 8] << 24) | ((uint)samp[px + 9]  << 16) | ((uint)samp[px + 10] << 8) | samp[px + 11]);
-            var right = (int)(((uint)samp[px + 12]<< 24) | ((uint)samp[px + 13] << 16) | ((uint)samp[px + 14] << 8) | samp[px + 15]);
+            var top = (int)(((uint)samp[px] << 24) | ((uint)samp[px + 1] << 16) | ((uint)samp[px + 2] << 8) | samp[px + 3]);
+            var left = (int)(((uint)samp[px + 4] << 24) | ((uint)samp[px + 5] << 16) | ((uint)samp[px + 6] << 8) | samp[px + 7]);
+            var bot = (int)(((uint)samp[px + 8] << 24) | ((uint)samp[px + 9] << 16) | ((uint)samp[px + 10] << 8) | samp[px + 11]);
+            var right = (int)(((uint)samp[px + 12] << 24) | ((uint)samp[px + 13] << 16) | ((uint)samp[px + 14] << 8) | samp[px + 15]);
             var depth = (samp[px + 16] << 8) | samp[px + 17];
-            var comp  = samp[px + 18];
+            var comp = samp[px + 18];
 
-            if (top  >= 0 && left >= 0 && bot > top && right > left &&
+            if (top >= 0 && left >= 0 && bot > top && right > left &&
                 (right - left) is >= 1 and <= 5000 &&
-                (bot   - top)  is >= 1 and <= 5000 &&
+                (bot - top) is >= 1 and <= 5000 &&
                 depth is 8 or 16 or 32 && comp is 0 or 1)
             {
                 return DecodeBrushPixels(samp, px + 19, name,
@@ -580,14 +580,14 @@ public static class AbrImporter
     private static bool IsV10Guid(byte[] data, int pos)
     {
         if (pos + 38 > data.Length) return false;
-        if (data[pos]      != '$') return false;
-        if (data[pos + 9]  != '-') return false;
+        if (data[pos] != '$') return false;
+        if (data[pos + 9] != '-') return false;
         if (data[pos + 14] != '-') return false;
         if (data[pos + 19] != '-') return false;
         if (data[pos + 24] != '-') return false;
-        if (data[pos + 37] != 0)   return false;
+        if (data[pos + 37] != 0) return false;
 
-        for (var i = 1;  i <= 8;  i++) if (!IsHexByte(data[pos + i])) return false;
+        for (var i = 1; i <= 8; i++) if (!IsHexByte(data[pos + i])) return false;
         for (var i = 10; i <= 13; i++) if (!IsHexByte(data[pos + i])) return false;
         for (var i = 15; i <= 18; i++) if (!IsHexByte(data[pos + i])) return false;
         for (var i = 20; i <= 23; i++) if (!IsHexByte(data[pos + i])) return false;
@@ -920,11 +920,11 @@ public static class AbrImporter
         var count = 0;
 
         for (var y = top; y < bottom; y++)
-        for (var x = left; x < right; x++)
-        {
-            sum += pixels[y * w + x];
-            count++;
-        }
+            for (var x = left; x < right; x++)
+            {
+                sum += pixels[y * w + x];
+                count++;
+            }
 
         return count == 0 ? 0 : sum / (double)count;
     }
@@ -937,14 +937,14 @@ public static class AbrImporter
         var maxY = -1;
 
         for (var y = 0; y < h; y++)
-        for (var x = 0; x < w; x++)
-        {
-            if (pixels[y * w + x] <= threshold) continue;
-            minX = Math.Min(minX, x);
-            minY = Math.Min(minY, y);
-            maxX = Math.Max(maxX, x);
-            maxY = Math.Max(maxY, y);
-        }
+            for (var x = 0; x < w; x++)
+            {
+                if (pixels[y * w + x] <= threshold) continue;
+                minX = Math.Min(minX, x);
+                minY = Math.Min(minY, y);
+                maxX = Math.Max(maxX, x);
+                maxY = Math.Max(maxY, y);
+            }
 
         if (maxX < minX || maxY < minY)
             return (pixels, w, h);
@@ -1125,11 +1125,11 @@ public static class AbrImporter
         var d = new BrushDynamics();
         if (p == null) return d;
 
-        d.Size     = FromVrParams(p.SizeDyn);
-        d.Opacity  = FromVrParams(p.OpacityDyn);
-        d.Flow     = FromVrParams(p.FlowDyn);
+        d.Size = FromVrParams(p.SizeDyn);
+        d.Opacity = FromVrParams(p.OpacityDyn);
+        d.Flow = FromVrParams(p.FlowDyn);
         d.Hardness = CurveOption.Off();
-        d.Spacing  = FromVrParams(p.SpacingDyn);
+        d.Spacing = FromVrParams(p.SpacingDyn);
 
         if (p.UseScatter || p.ScatterDist > 0 || p.ScatterDyn.Jitter > 0)
         {

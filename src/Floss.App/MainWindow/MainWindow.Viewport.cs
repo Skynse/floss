@@ -180,27 +180,27 @@ public partial class MainWindow
                 SetZoom(_zoom * Math.Pow(sc.GestureZoomSensitivity, axisDelta), _gestureStartPoint);
                 break;
             case GestureMode.Rotate:
-            {
-                // Arc-based rotation around the viewport center.
-                // Using viewport center (not gesture start) as pivot avoids the
-                // cursor ever passing through the pivot and flipping the angle.
-                var vpCenter = new Point(
-                    _workspaceViewport.Bounds.Width  * 0.5,
-                    _workspaceViewport.Bounds.Height * 0.5);
-                var prevPt  = pt - d;
-                var fromVec = prevPt - vpCenter;
-                var toVec   = pt    - vpCenter;
-                var fromDistSq = fromVec.X * fromVec.X + fromVec.Y * fromVec.Y;
-                var toDistSq   = toVec.X   * toVec.X   + toVec.Y   * toVec.Y;
-                if (fromDistSq > 400 && toDistSq > 400) // >20 px from center
                 {
-                    var deltaRad = Math.Atan2(toVec.Y, toVec.X) - Math.Atan2(fromVec.Y, fromVec.X);
-                    if (deltaRad >  Math.PI) deltaRad -= 2 * Math.PI;
-                    if (deltaRad < -Math.PI) deltaRad += 2 * Math.PI;
-                    SetRotation(_rotation + deltaRad * 180.0 / Math.PI);
+                    // Arc-based rotation around the viewport center.
+                    // Using viewport center (not gesture start) as pivot avoids the
+                    // cursor ever passing through the pivot and flipping the angle.
+                    var vpCenter = new Point(
+                        _workspaceViewport.Bounds.Width * 0.5,
+                        _workspaceViewport.Bounds.Height * 0.5);
+                    var prevPt = pt - d;
+                    var fromVec = prevPt - vpCenter;
+                    var toVec = pt - vpCenter;
+                    var fromDistSq = fromVec.X * fromVec.X + fromVec.Y * fromVec.Y;
+                    var toDistSq = toVec.X * toVec.X + toVec.Y * toVec.Y;
+                    if (fromDistSq > 400 && toDistSq > 400) // >20 px from center
+                    {
+                        var deltaRad = Math.Atan2(toVec.Y, toVec.X) - Math.Atan2(fromVec.Y, fromVec.X);
+                        if (deltaRad > Math.PI) deltaRad -= 2 * Math.PI;
+                        if (deltaRad < -Math.PI) deltaRad += 2 * Math.PI;
+                        SetRotation(_rotation + deltaRad * 180.0 / Math.PI);
+                    }
+                    break;
                 }
-                break;
-            }
         }
         e.Handled = true;
     }

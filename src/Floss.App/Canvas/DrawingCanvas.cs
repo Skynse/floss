@@ -84,7 +84,6 @@ public sealed class DrawingCanvas : Control
         _brushTool = new CompositeTool(new BrushStrokeInputProcess(), new DirectDrawOutput(BrushEngine, _document));
         _eraserTool = new CompositeTool(new BrushStrokeInputProcess(), new DirectDrawOutput(BrushEngine, _document));
         _toolController = new ToolController(_ctx, _brushTool);
-    _toolController.BrushSettingsChanged += brush => BrushSettingsRestored?.Invoke(brush);
 
         _document.Changed += (_, e) =>
         {
@@ -111,7 +110,6 @@ public sealed class DrawingCanvas : Control
     public event EventHandler<Color>? ColorSampled;
     public event EventHandler? DirtyStateChanged;
     public event EventHandler? SelectionChanged;
-    public event Action<BrushPreset>? BrushSettingsRestored;
 
     public int ActiveSampleCount => _toolController.ActiveTool.HasPendingOperation ? 1 : 0;
     public int CommittedStrokeCount => _document.CommittedStrokeCount;
@@ -795,7 +793,7 @@ public sealed class DrawingCanvas : Control
             var dash1 = new Avalonia.Media.DashStyle([4 / CanvasZoom, 4 / CanvasZoom], 0);
             var dash2 = new Avalonia.Media.DashStyle([4 / CanvasZoom, 4 / CanvasZoom], 4 / CanvasZoom);
             context.DrawRectangle(null, new Pen(CursorOuterBrush, t * 2, dash1), new Rect(rx, ry, rw, rh));
-            context.DrawRectangle(null, new Pen(CursorInnerBrush, t,     dash2), new Rect(rx, ry, rw, rh));
+            context.DrawRectangle(null, new Pen(CursorInnerBrush, t, dash2), new Rect(rx, ry, rw, rh));
         }
 
         if ((_isPointerOver || _isCursorPreviewLocked) && !IsPaintBlockedByLock)

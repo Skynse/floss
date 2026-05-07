@@ -33,7 +33,7 @@ public sealed class ToolFactory
             InputProcessType.Liquify => new LiquifyInputProcess(),
             InputProcessType.Lasso => new LassoInputProcess { Stabilization = preset.Stabilization > 0.001 ? preset.Stabilization : 0.3 },
             InputProcessType.Polyline => new PolylineInputProcess { ClosePath = preset.PolylineClosePath },
-            InputProcessType.Rect => new RectInputProcess(),
+            InputProcessType.Rect => new RectInputProcess { ShapeKind = preset.ShapeKind },
             InputProcessType.Click => new ClickInputProcess(),
             InputProcessType.Drag => new DragInputProcess(),
             _ => new BrushStrokeInputProcess()

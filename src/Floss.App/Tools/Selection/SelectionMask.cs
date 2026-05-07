@@ -150,9 +150,9 @@ public sealed class SelectionMask
         region.SetPath(path, new SKRegion(new SKRectI(0, 0, _docW, _docH)));
 
         var bounds = path.Bounds;
-        int x1 = Math.Clamp((int)bounds.Left,         0, _docW - 1);
-        int y1 = Math.Clamp((int)bounds.Top,          0, _docH - 1);
-        int x2 = Math.Clamp((int)Math.Ceiling(bounds.Right),  0, _docW - 1);
+        int x1 = Math.Clamp((int)bounds.Left, 0, _docW - 1);
+        int y1 = Math.Clamp((int)bounds.Top, 0, _docH - 1);
+        int x2 = Math.Clamp((int)Math.Ceiling(bounds.Right), 0, _docW - 1);
         int y2 = Math.Clamp((int)Math.Ceiling(bounds.Bottom), 0, _docH - 1);
 
         var next = CreateBaseMask(op);
@@ -211,10 +211,10 @@ public sealed class SelectionMask
 
             Apply(next, docX, docY, op, true);
 
-            if (docX + 1 < _docW) { int ni = idx + 1;     if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
-            if (docX - 1 >= 0)    { int ni = idx - 1;     if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
+            if (docX + 1 < _docW) { int ni = idx + 1; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
+            if (docX - 1 >= 0) { int ni = idx - 1; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
             if (docY + 1 < _docH) { int ni = idx + _docW; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
-            if (docY - 1 >= 0)    { int ni = idx - _docW; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
+            if (docY - 1 >= 0) { int ni = idx - _docW; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
         }
 
         CommitMask(next);
@@ -396,9 +396,9 @@ public sealed class SelectionMask
         bool cur = mask[idx] > 0;
         mask[idx] = (op switch
         {
-            SelectOp.Add      => cur || inside,
+            SelectOp.Add => cur || inside,
             SelectOp.Subtract => cur && !inside,
-            _                 => inside,
+            _ => inside,
         }) ? (byte)255 : (byte)0;
     }
 }

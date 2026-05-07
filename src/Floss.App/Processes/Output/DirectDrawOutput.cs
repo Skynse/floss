@@ -12,7 +12,6 @@ public sealed class DirectDrawOutput : IOutputProcess
 {
     public bool IsPaintOutput => true;
     private readonly BrushEngine _brushEngine;
-    private readonly DrawingDocument _document;
 
     public bool Antialiasing { get; set; } = true;
 
@@ -23,10 +22,9 @@ public sealed class DirectDrawOutput : IOutputProcess
     private DrawingLayer? _currentLayer;
     private bool _strokeActive;
 
-    public DirectDrawOutput(BrushEngine brushEngine, DrawingDocument document)
+    public DirectDrawOutput(BrushEngine brushEngine, DrawingDocument _)
     {
         _brushEngine = brushEngine;
-        _document = document;
     }
 
     public void Preview(ToolContext ctx, IProcessedInput input)
@@ -71,7 +69,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         if (!_dirtyRegion.IsEmpty)
         {
             layer.MarkThumbnailDirty();
-            _document.NotifyChanged(_dirtyRegion, ctx.ActiveLayerIndex);
+            ctx.Document.NotifyChanged(_dirtyRegion, ctx.ActiveLayerIndex);
             _dirtyRegion = PixelRegion.Empty; // Reset after notifying
         }
     }
@@ -102,12 +100,12 @@ public sealed class DirectDrawOutput : IOutputProcess
             if (!tileDirty.IsEmpty)
             {
                 layer.MarkThumbnailDirty();
-                _document.CommitLayerTileMutation(ctx.ActiveLayerIndex, _beforeTiles, tileDirty);
-                _document.NotifyChanged(tileDirty, ctx.ActiveLayerIndex);
+                ctx.Document.CommitLayerTileMutation(ctx.ActiveLayerIndex, _beforeTiles, tileDirty);
+                ctx.Document.NotifyChanged(tileDirty, ctx.ActiveLayerIndex);
             }
         }
 
-        _document.CommitStroke();
+        ctx.Document.CommitStroke();
         Cleanup();
     }
 
