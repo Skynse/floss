@@ -14,6 +14,104 @@ public static class FilterEngine
         ApplySkiaFilter(layer, filter, sel);
     }
 
+    public static void ApplyChromaticAbberation(DrawingLayer layer, float intensity, bool is_radial, float angle = 0f, SelectionMask? sel = null)
+    {
+        var w = layer.Width;
+        var h = layer.Height;
+        var orig = layer.CapturePixels();
+        var result = new byte[orig.Length];
+
+        // 1. Pre-calculate values to avoid doing it inside the loop
+        float cx = w / 2f;
+        float cy = h / 2f;
+        float maxDist = (float)Math.Sqrt(cx * cx + cy * cy);
+
+        float latShiftX = 0f;
+        float latShiftY = 0f;
+
+        if (!is_radial)
+        {
+            // Convert angle from degrees to radians for Math.Sin/Cos
+            float rad = angle * (float)(Math.PI / 180.0);
+            latShiftX = (float)Math.Cos(rad) * intensity;
+            latShiftY = (float)Math.Sin(rad) * intensity;
+        }
+
+        for (var y = 0; y < h; y++)
+        {
+            for (var x = 0; x < w; x++)
+            {
+                var i = (y * w + x) * 4;
+
+                if (sel != null && sel.HasSelection && !sel.IsSelected(x, y))
+                {
+                    result[i] = orig[i];         // B
+                    result[i + 1] = orig[i + 1]; // G
+                    result[i + 2] = orig[i + 2]; // R
+                    result[i + 3] = orig[i + 3]; // A
+                    continue;
+                }
+
+                float shiftXRed, shiftYRed, shiftXBlue, shiftYBlue;
+
+                if (is_radial)
+                {
+                    // Calculate distance from center
+                    float dx = x - cx;
+                    float dy = y - cy;
+                    float dist = (float)Math.Sqrt(dx * dx + dy * dy);
+
+                    if (dist == 0)
+                    {
+                        shiftXRed = shiftYRed = shiftXBlue = shiftYBlue = 0;
+                    }
+                    else
+                    {
+                        // Scale intensity based on distance from center
+                        float currentIntensity = intensity * (dist / maxDist);
+
+                        // Normalize the direction vector
+                        float ux = dx / dist;
+                        float uy = dy / dist;
+
+                        shiftXRed = ux * currentIntensity;
+                        shiftYRed = uy * currentIntensity;
+
+                        // Blue shifts in the exact opposite direction
+                        shiftXBlue = -shiftXRed;
+                        shiftYBlue = -shiftYRed;
+                    }
+                }
+                else
+                {
+                    // Lateral shift uses the pre-calculated angle components
+                    shiftXRed = latShiftX;
+                    shiftYRed = latShiftY;
+                    shiftXBlue = -latShiftX;
+                    shiftYBlue = -latShiftY;
+                }
+
+                // 2. Apply offsets and clamp to image boundaries
+                int rx = Math.Clamp((int)(x + shiftXRed), 0, w - 1);
+                int ry = Math.Clamp((int)(y + shiftYRed), 0, h - 1);
+
+                int bx = Math.Clamp((int)(x + shiftXBlue), 0, w - 1);
+                int by = Math.Clamp((int)(y + shiftYBlue), 0, h - 1);
+
+                int iRed = (ry * w + rx) * 4;
+                int iBlue = (by * w + bx) * 4;
+
+                // 3. Construct the new pixel (BGRA format)
+                result[i] = orig[iBlue];           // B from shifted coordinate
+                result[i + 1] = orig[i + 1];       // G from current coordinate (anchored)
+                result[i + 2] = orig[iRed + 2];    // R from shifted coordinate
+                result[i + 3] = orig[i + 3];       // A from current coordinate
+            }
+        }
+
+        WriteBytes(layer, result, w, h);
+    }
+
     public static void ApplySharpen(DrawingLayer layer, float amount, SelectionMask? sel = null)
     {
         var w = layer.Width;
@@ -131,7 +229,7 @@ public static class FilterEngine
                     if (!sel.IsSelected(x, y))
                     {
                         var i = (y * w + x) * 4;
-                        result[i]     = original[i];
+                        result[i] = original[i];
                         result[i + 1] = original[i + 1];
                         result[i + 2] = original[i + 2];
                         result[i + 3] = original[i + 3];
