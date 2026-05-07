@@ -10,7 +10,8 @@ namespace Floss.App.Canvas;
 // which call BeginDrag / UpdateDrag / EndDrag directly.
 public sealed class CanvasResizeOverlay : Control
 {
-    private readonly DrawingCanvas _canvas;
+    internal DrawingCanvas Canvas { get => _canvas; set => _canvas = value; }
+    private DrawingCanvas _canvas;
 
     public int PreviewW   { get; private set; }
     public int PreviewH   { get; private set; }

@@ -274,20 +274,17 @@ public partial class MainWindow : Window
         LoadBrushAssets();
         SelectInitialBrush();
         SetColor(Color.Parse(App.Config.LastColor));
-        // Hide canvas frame until user creates a document via the startup dialog
         _canvasFrame.IsVisible = false;
-        if (_canvas.Layers.Count > 0) _selectedLayerIndices.Add(_canvas.ActiveLayerIndex);
+        SetDocumentPanelsVisible(false);
         BuildLayerList();
         UpdateStatus();
         Closing += (_, _) => SaveToConfig();
         Deactivated += (_, _) => ResetTransientInputState();
         LostFocus += (_, _) => ResetTransientInputState();
-        Loaded += async (_, _) => await NewDocumentAsync();
-        _canvas.DirtyStateChanged += (_, _) =>
+        Loaded += (_, _) =>
         {
-            string fileName = _currentFilePath == null ? "Untitled" : Path.GetFileName(_currentFilePath);
-            string dirtyStar = _canvas.IsDirty ? "*" : "";
-            Title = $"Floss Studio - {fileName}{dirtyStar}";
+            var tab = CreateTab();
+            SwitchToTab(tab);
         };
     }
 
@@ -356,10 +353,13 @@ public partial class MainWindow : Window
             Child = _footerStatusText
         };
 
-        var centerArea = new Grid { RowDefinitions = new RowDefinitions("26,*,22") };
-        Grid.SetRow(statusBar, 0);
-        Grid.SetRow(_workspaceViewport, 1);
-        Grid.SetRow(footer, 2);
+        var tabBarContainer = BuildTabBar();
+        var centerArea = new Grid { RowDefinitions = new RowDefinitions("28,26,*,22") };
+        Grid.SetRow(tabBarContainer, 0);
+        Grid.SetRow(statusBar, 1);
+        Grid.SetRow(_workspaceViewport, 2);
+        Grid.SetRow(footer, 3);
+        centerArea.Children.Add(tabBarContainer);
         centerArea.Children.Add(statusBar);
         centerArea.Children.Add(_workspaceViewport);
         centerArea.Children.Add(footer);
@@ -426,6 +426,14 @@ public partial class MainWindow : Window
 
         Content = shell;
         AddHandler(PointerPressedEvent, WindowPointerPressed, RoutingStrategies.Tunnel);
+    }
+
+    private void SetDocumentPanelsVisible(bool enabled)
+    {
+        if (_leftRail     != null) _leftRail.IsEnabled     = enabled;
+        if (_rightPanel   != null) _rightPanel.IsEnabled   = enabled;
+        if (_shellToolbar != null) _shellToolbar.IsEnabled = enabled;
+        if (_statusBar    != null) _statusBar.IsEnabled    = enabled;
     }
 
     private static TextBlock MiniText() => new()
@@ -1921,40 +1929,7 @@ public partial class MainWindow : Window
         _workspaceViewport.PointerMoved += Workspace_OnPointerMoved;
         _workspaceViewport.PointerReleased += Workspace_OnPointerReleased;
 
-        _canvas.StatsChanged += (_, _) => UpdateStatus();
-        _canvas.HistoryChanged += (_, _) => UpdateStatus();
-        _canvas.SelectionChanged += (_, _) => UpdateSelectionActionBar();
-        _canvas.LayersChanged += (_, _) =>
-        {
-            _selectedLayerIndices.Clear();
-            if (_canvas.Layers.Count > 0)
-                _selectedLayerIndices.Add(_canvas.ActiveLayerIndex);
-            SyncCanvasFrameToDocument(fitToViewport: false);
-            _rulerOverlay?.InvalidateVisual();
-            BuildLayerList();
-            UpdateStatus();
-            UpdateSelectionActionBar();
-        };
-        _canvas.LayerMetadataChanged += (_, e) => { UpdateLayerRow(e.LayerIndex); UpdateStatus(); };
-        _canvas.LayersFoundByRect += ExpandAndScrollToLayers;
-        _canvas.ColorSampled += (_, c) => SetColor(c);
-        _canvas.BrushSettingsRestored += brush =>
-        {
-            if (_suppressBrushSettingsRestored) return;
-            _syncingBrushUi = true;
-            _sizeSlider.Value = Math.Clamp(brush.Size, _sizeSlider.Minimum, _sizeSlider.Maximum);
-            _opacitySlider.Value = Math.Clamp(brush.Opacity, _opacitySlider.Minimum, _opacitySlider.Maximum);
-            _flowSlider.Value = Math.Clamp(brush.Flow, _flowSlider.Minimum, _flowSlider.Maximum);
-            _hardnessSlider.Value = Math.Clamp(brush.Hardness, _hardnessSlider.Minimum, _hardnessSlider.Maximum);
-            _spacingSlider.Value = Math.Clamp(brush.Spacing, _spacingSlider.Minimum, _spacingSlider.Maximum);
-            _smoothingSlider.Value = Math.Clamp(brush.Smoothing, _smoothingSlider.Minimum, _smoothingSlider.Maximum);
-            _grainSlider.Value = Math.Clamp(brush.Grain, _grainSlider.Minimum, _grainSlider.Maximum);
-            _syncingBrushUi = false;
-            _activePreset = brush;
-            _strokePreview.Brush = brush;
-            _canvas.SyncBrushFromContext(brush);
-            RefreshToolProperties();
-        };
+        WireCanvas();
 
         SliderChanged(_sizeSlider, v => UpdateCurrentBrush(p => p with { Size = v }));
         SliderChanged(_opacitySlider, v => UpdateCurrentBrush(p => p with { Opacity = v }));
@@ -2154,9 +2129,10 @@ public partial class MainWindow : Window
 
 internal sealed class RulerOverlay : Control
 {
-    private readonly DrawingCanvas _canvas;
+    private DrawingCanvas _canvas;
     private const double RulerThickness = 20;
 
+    internal DrawingCanvas Canvas { get => _canvas; set => _canvas = value; }
     public RulerOverlay(DrawingCanvas canvas) { _canvas = canvas; IsHitTestVisible = false; }
 
     public override void Render(DrawingContext ctx)

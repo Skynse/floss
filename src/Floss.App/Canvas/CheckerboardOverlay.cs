@@ -7,7 +7,8 @@ namespace Floss.App.Canvas;
 
 internal sealed class CheckerboardOverlay : Control
 {
-    private readonly DrawingCanvas _canvas;
+    internal DrawingCanvas Canvas { get; set; }
+    private DrawingCanvas _canvas => Canvas;
     private static readonly IBrush CheckerBrush = new DrawingBrush
     {
         TileMode = TileMode.Tile,
@@ -28,7 +29,7 @@ internal sealed class CheckerboardOverlay : Control
 
     public CheckerboardOverlay(DrawingCanvas canvas)
     {
-        _canvas = canvas;
+        Canvas = canvas;
         IsHitTestVisible = false;
     }
 

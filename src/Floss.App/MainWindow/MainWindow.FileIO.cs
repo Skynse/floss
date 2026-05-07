@@ -72,27 +72,24 @@ public partial class MainWindow
 
     private async System.Threading.Tasks.Task NewDocumentAsync()
     {
-        // 1. Check for unsaved changes FIRST
-        if (_canvas.Document.IsDirty)
+        // Reuse the current tab only if it has never had a document loaded into it.
+        bool reuseCurrentTab = _activeTab != null && !_activeTab.HasDocument;
+
+        if (!reuseCurrentTab)
         {
-            // NOTE: A proper save prompt should return a bool? (Yes = true, No = false, Cancel = null).
-            // If the user clicks "Cancel" or closes the window, you must abort the New Document process.
-            var wantsToSave = await new UnsavedChangesDialog().ShowDialog<bool?>(this);
-
-            if (wantsToSave == null)
+            // Dirty check before opening a new tab
+            if (_canvas.Document.IsDirty)
             {
-                return; // User canceled the operation entirely
+                var wantsToSave = await new UnsavedChangesDialog().ShowDialog<bool?>(this);
+                if (wantsToSave == null) return;
+                if (wantsToSave == true)
+                {
+                    await SaveDocumentAsync();
+                    if (_canvas.Document.IsDirty) return;
+                }
             }
 
-            if (wantsToSave == true)
-            {
-                await SaveDocumentAsync();
-
-                // Safety check: If they clicked "Save" but then canceled out of the
-                // "Save As" file picker, the document is STILL dirty. Abort.
-                if (_canvas.Document.IsDirty) return;
-            }
-            // If wantsToSave == false, they clicked "Don't Save". We just continue and discard.
+            await NewTabAsync();
         }
 
         // 2. Show the New Document Wizard
@@ -129,13 +126,17 @@ public partial class MainWindow
         // 4. Swap it in and reset session state
         _canvas.Document.ReplaceWith(newDoc);
         _currentFilePath = null;
+        if (_activeTab != null) { _activeTab.FilePath = null; _activeTab.HasDocument = true; }
         _canvas.Document.MarkAsSaved(); // Force IsDirty to false for the fresh canvas
 
         // 5. Sync the UI
         _canvasFrame.IsVisible = true;
+        SetDocumentPanelsVisible(true);
         SyncCanvasFrameToDocument(fitToViewport: true);
         BuildLayerList();
-        UpdateStatus(); // This will trigger your title bar update
+        UpdateStatus();
+        UpdateTitle();
+        UpdateTabBar();
 
         _footerStatusText.Text = $"Created '{result.FileName}'";
     }
@@ -160,6 +161,7 @@ public partial class MainWindow
             var path = files[0].Path.LocalPath;
             await using var stream = await files[0].OpenReadAsync();
             var imported = await System.Threading.Tasks.Task.Run(() => LoadDocumentFromStream(stream, path));
+            await NewTabAsync();
             ApplyOpenedDocument(imported, path);
         }
         catch (Exception ex)
@@ -181,6 +183,7 @@ public partial class MainWindow
 
             await using var stream = File.OpenRead(path);
             var imported = await System.Threading.Tasks.Task.Run(() => LoadDocumentFromStream(stream, path));
+            await NewTabAsync();
             ApplyOpenedDocument(imported, path);
         }
         catch (Exception ex)
@@ -199,11 +202,15 @@ public partial class MainWindow
     {
         _canvas.Document.ReplaceWith(imported);
         _canvasFrame.IsVisible = true;
+        SetDocumentPanelsVisible(true);
         App.Config.AddRecentFile(path);
         _currentFilePath = CanSaveInPlace(path) ? path : null;
+        if (_activeTab != null) { _activeTab.FilePath = _currentFilePath; _activeTab.HasDocument = true; }
         SyncCanvasFrameToDocument(fitToViewport: true);
         BuildLayerList();
         UpdateStatus();
+        UpdateTitle();
+        UpdateTabBar();
         _footerStatusText.Text =
             $"Opened {_canvas.Document.Width}x{_canvas.Document.Height}  {Path.GetFileName(path)}";
     }
@@ -264,7 +271,8 @@ public partial class MainWindow
             await using var stream = File.Open(path, FileMode.Create, FileAccess.Write);
             FlossFileFormat.Save(stream, _canvas.Document);
 
-            _currentFilePath = path; // Update universal state
+            _currentFilePath = path;
+            if (_activeTab != null) _activeTab.FilePath = path;
             App.Config.AddRecentFile(path);
             _canvas.Document.MarkAsSaved(); // Clears IsDirty
             _footerStatusText.Text = $"Saved {Path.GetFileName(path)}";
@@ -292,6 +300,7 @@ public partial class MainWindow
             }
 
             _currentFilePath = path;
+            if (_activeTab != null) _activeTab.FilePath = path;
             App.Config.AddRecentFile(path);
             _canvas.Document.MarkAsSaved(); // Clears IsDirty
             _footerStatusText.Text = $"Saved PSD {Path.GetFileName(path)}";
