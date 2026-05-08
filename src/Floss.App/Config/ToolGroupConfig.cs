@@ -16,13 +16,22 @@ namespace Floss.App;
 public enum InputProcessType
 {
     None = 0,
-    BrushStroke,    // Freehand stroke with stabilization
-    Lasso,          // Freehand polygon with stabilization
-    Polyline,       // Click-to-add vertices
-    Rect,           // Drag rectangle
-    Click,          // Single click
-    Drag,           // Drag start-to-end
-    Liquify         // Direct raw positions, no stabilization
+    Pen = 1,        // Fine-line freehand stroke (tight, hard-edge cursor)
+    Brush = 2,      // Stamp-based freehand stroke (tip-shape cursor)
+    Eraser = 3,     // Erasing freehand stroke (eraser cursor)
+    Smudge = 4,     // Smear/blend freehand stroke
+    Lasso = 5,      // Freehand polygon with stabilization
+    Polyline = 6,   // Click-to-add vertices
+    Rect = 7,       // Drag rectangle
+    Click = 8,      // Single click
+    Drag = 9,       // Drag start-to-end
+    Liquify = 10    // Direct raw positions, no stabilization
+}
+
+public static class InputProcessTypeExtensions
+{
+    public static bool IsBrushFamily(this InputProcessType t)
+        => t is InputProcessType.Pen or InputProcessType.Brush or InputProcessType.Eraser or InputProcessType.Smudge;
 }
 
 // Output process determines what the tool's input produces (CSP-style).
@@ -241,9 +250,9 @@ public sealed class ToolPreset
 
         (InputProcess, OutputProcess) = Engine switch
         {
-            ToolPresetEngine.Brush => (InputProcessType.BrushStroke, OutputProcessType.DirectDraw),
-            ToolPresetEngine.Eraser => (InputProcessType.BrushStroke, OutputProcessType.DirectDraw),
-            ToolPresetEngine.Smudge => (InputProcessType.BrushStroke, OutputProcessType.DirectDraw),
+            ToolPresetEngine.Brush => (InputProcessType.Brush, OutputProcessType.DirectDraw),
+            ToolPresetEngine.Eraser => (InputProcessType.Eraser, OutputProcessType.DirectDraw),
+            ToolPresetEngine.Smudge => (InputProcessType.Smudge, OutputProcessType.DirectDraw),
             ToolPresetEngine.Select => SelectMode switch
             {
                 SelectMode.Rect => (InputProcessType.Rect, OutputProcessType.SelectionArea),
@@ -262,7 +271,7 @@ public sealed class ToolPreset
             ToolPresetEngine.Shape => (InputProcessType.Rect, OutputProcessType.Stroke),
             ToolPresetEngine.Polyline => (InputProcessType.Polyline, OutputProcessType.Stroke),
             ToolPresetEngine.Liquify => (InputProcessType.Liquify, OutputProcessType.Liquify),
-            _ => (InputProcessType.BrushStroke, OutputProcessType.DirectDraw)
+            _ => (InputProcessType.Brush, OutputProcessType.DirectDraw)
         };
     }
 }
@@ -388,7 +397,7 @@ public sealed class ToolGroupConfig
                 var preset = new ToolPreset
                 {
                     Name = asset.Preset.Name,
-                    InputProcess = InputProcessType.BrushStroke,
+                    InputProcess = InputProcessType.Eraser,
                     OutputProcess = OutputProcessType.DirectDraw,
                     BrushId = asset.Id,
                     BrushBlendMode = SkiaSharp.SKBlendMode.DstOut
@@ -402,7 +411,7 @@ public sealed class ToolGroupConfig
                 var preset = new ToolPreset
                 {
                     Name = asset.Preset.Name,
-                    InputProcess = InputProcessType.BrushStroke,
+                    InputProcess = InputProcessType.Brush,
                     OutputProcess = OutputProcessType.DirectDraw,
                     BrushId = asset.Id
                 };
@@ -472,13 +481,13 @@ public sealed class ToolGroupConfig
     internal static List<ToolGroup> Defaults() =>
     [
         WithDefaultCategory(new() { Name = "Brush",  DefaultEngine = ToolPresetEngine.Brush,  Shortcut = new(Key.B),
-            Presets = [new() { Name = "Brush",  Engine = ToolPresetEngine.Brush, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw }] }),
+            Presets = [new() { Name = "Brush",  Engine = ToolPresetEngine.Brush, InputProcess = InputProcessType.Brush, OutputProcess = OutputProcessType.DirectDraw }] }),
         WithDefaultCategory(new() { Name = "Eraser", DefaultEngine = ToolPresetEngine.Eraser, Shortcut = new(Key.E),
-            Presets = [new() { Name = "Eraser", InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw, BrushBlendMode = SkiaSharp.SKBlendMode.DstOut }] }),
+            Presets = [new() { Name = "Eraser", InputProcess = InputProcessType.Eraser, OutputProcess = OutputProcessType.DirectDraw, BrushBlendMode = SkiaSharp.SKBlendMode.DstOut }] }),
         WithDefaultCategory(new()
         {
             Name = "Smudge", DefaultEngine = ToolPresetEngine.Smudge, Shortcut = new(Key.U),
-            Presets = [new() { Name = "Smudge", Engine = ToolPresetEngine.Smudge, InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw, BrushColorMix = true, BrushSmudgeMode = SmudgeMode.Smudge, BrushAmountOfPaint = 0.0, BrushDensityOfPaint = 0.0 }]
+            Presets = [new() { Name = "Smudge", Engine = ToolPresetEngine.Smudge, InputProcess = InputProcessType.Smudge, OutputProcess = OutputProcessType.DirectDraw, BrushColorMix = true, BrushSmudgeMode = SmudgeMode.Smudge, BrushAmountOfPaint = 0.0, BrushDensityOfPaint = 0.0 }]
         }),
         WithDefaultCategory(new()
         {

@@ -138,6 +138,7 @@ public sealed class ShortcutsConfig
     public KeyBinding FilterColorCurves { get; set; } = new(Key.None);
     public KeyBinding FilterChromaticAberration { get; set; } = new(Key.None);
     public KeyBinding FilterBaseColorMask { get; set; } = new(Key.None);
+    public KeyBinding FilterRemoveDust { get; set; } = new(Key.None);
 
     // ── Pen gestures — hold key + drag pen ───────────────────────────────────
     // Pan  : held key + any pen drag → translate canvas

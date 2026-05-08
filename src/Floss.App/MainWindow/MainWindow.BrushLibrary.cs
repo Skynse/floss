@@ -208,7 +208,7 @@ public partial class MainWindow : Window
         {
             var isActive = group.LastActivePresetId == preset.Id;
 
-            if (preset.InputProcess == InputProcessType.BrushStroke && preset.OutputProcess == OutputProcessType.DirectDraw)
+            if (preset.InputProcess.IsBrushFamily() && preset.OutputProcess == OutputProcessType.DirectDraw)
             {
                 BrushPreset? brushPreset = null;
                 if (preset.BrushId != null)
@@ -468,7 +468,7 @@ public partial class MainWindow : Window
     private void SyncActivePresetToCanvas()
     {
         var active = _activeToolGroup?.ActivePreset;
-        if (active == null || active.InputProcess != InputProcessType.BrushStroke || active.OutputProcess != OutputProcessType.DirectDraw) return;
+        if (active == null || !active.InputProcess.IsBrushFamily() || active.OutputProcess != OutputProcessType.DirectDraw) return;
 
         BrushPreset? basePreset = null;
         if (active.BrushId != null)
@@ -679,8 +679,8 @@ public partial class MainWindow : Window
         {
             Name = preset.Name + " Copy",
             Engine = preset.Engine,
+            InputProcess = preset.InputProcess,
             OutputProcess = preset.OutputProcess,
-            BrushId = preset.BrushId,
             BrushSize = preset.BrushSize,
             BrushOpacity = preset.BrushOpacity,
             BrushFlow = preset.BrushFlow,
@@ -698,9 +698,40 @@ public partial class MainWindow : Window
             PolylineClosePath = preset.PolylineClosePath,
             PolylineStrokeWidth = preset.PolylineStrokeWidth
         };
+
+        if (preset.BrushId != null)
+        {
+            var sourceAsset = _brushAssets.FirstOrDefault(a => a.Id == preset.BrushId);
+            if (sourceAsset != null)
+            {
+                var assetCopy = sourceAsset.CloneForSaveAs(copy.Name);
+                _brushLibrary.Save(assetCopy);
+                _brushAssets = [.._brushAssets, assetCopy];
+                copy.BrushId = assetCopy.Id;
+            }
+            else
+            {
+                copy.BrushId = preset.BrushId;
+            }
+        }
+
         group.Presets.Add(copy);
-        App.ToolGroups.Save();
-        RefreshGroupPresets();
+
+        // Place the copy in the same category as the source
+        var sourceCat = group.Categories.FirstOrDefault(c => c.PresetIds.Contains(preset.Id));
+        if (sourceCat != null && !sourceCat.PresetIds.Contains(copy.Id))
+        {
+            var sourceIdx = sourceCat.PresetIds.IndexOf(preset.Id);
+            sourceCat.PresetIds.Insert(sourceIdx + 1, copy.Id);
+        }
+        else if (_selectedCategory != null)
+        {
+            var cat = group.Categories.FirstOrDefault(c => c.Name == _selectedCategory);
+            if (cat != null && !cat.PresetIds.Contains(copy.Id))
+                cat.PresetIds.Add(copy.Id);
+        }
+
+        ActivatePreset(group, copy);
     }
 
     private void DeletePreset(ToolGroup group, ToolPreset preset)
@@ -1491,7 +1522,7 @@ public partial class MainWindow : Window
         var updated = update(_activePreset);
         _activePreset = updated;
         var activeToolPreset = _activeToolGroup?.ActivePreset;
-        if (activeToolPreset?.InputProcess == InputProcessType.BrushStroke &&
+        if (activeToolPreset?.InputProcess.IsBrushFamily() == true &&
             activeToolPreset.OutputProcess == OutputProcessType.DirectDraw)
         {
             activeToolPreset.CaptureFromBrushPreset(updated);
@@ -1513,7 +1544,7 @@ public partial class MainWindow : Window
         var updated = update(_activePreset);
         _activePreset = updated;
         var activeToolPreset = _activeToolGroup?.ActivePreset;
-        if (activeToolPreset?.InputProcess == InputProcessType.BrushStroke &&
+        if (activeToolPreset?.InputProcess.IsBrushFamily() == true &&
             activeToolPreset.OutputProcess == OutputProcessType.DirectDraw)
         {
             activeToolPreset.CaptureFromBrushPreset(updated);
@@ -1592,13 +1623,10 @@ public partial class MainWindow : Window
 
     private void DuplicateActiveBrush()
     {
-        if (_activeBrushAsset == null) return;
-        var copy = _activeBrushAsset.CloneForSaveAs(_activeBrushAsset.Preset.Name + " Copy");
-        copy.WithPreset(CurrentBrushFromUi() with { Name = copy.Preset.Name });
-        _brushLibrary.Save(copy);
-        LoadBrushAssets();
-        var saved = _brushAssets.FirstOrDefault(b => b.Id == copy.Id);
-        if (saved != null) ApplyBrushAsset(saved);
+        var group = _activeToolGroup;
+        var preset = group?.ActivePreset;
+        if (group == null || preset == null) return;
+        DuplicatePreset(group, preset);
     }
 
     private async System.Threading.Tasks.Task ImportBrushTipPngAsync()

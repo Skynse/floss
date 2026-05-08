@@ -183,9 +183,15 @@ public sealed class SettingsWindow : Window
         content.Children.Add(RowSlider("Opacity step", _sc.BrushOpacityStep, 0.01, 0.2,
             v => { _sc.BrushOpacityStep = v; App.Shortcuts.Save(); }, "f2"));
 
-        content.Children.Add(GroupHeader("Brush Cursor"));
-        content.Children.Add(RowBrushCursorPicker("Cursor style",
+        content.Children.Add(GroupHeader("Cursor Shape"));
+        content.Children.Add(RowBrushCursorPicker("Brush",
             _cfg.BrushCursorMode, v => { _cfg.BrushCursorMode = v; App.Config.Save(); }));
+        content.Children.Add(RowBrushCursorPicker("Pen",
+            _cfg.PenCursorMode, v => { _cfg.PenCursorMode = v; App.Config.Save(); }));
+        content.Children.Add(RowBrushCursorPicker("Eraser",
+            _cfg.EraserCursorMode, v => { _cfg.EraserCursorMode = v; App.Config.Save(); }));
+        content.Children.Add(RowBrushCursorPicker("Smudge",
+            _cfg.SmudgeCursorMode, v => { _cfg.SmudgeCursorMode = v; App.Config.Save(); }));
 
         content.Children.Add(GroupHeader("Pen Gesture Sensitivity"));
         content.Children.Add(RowAxisPicker("Zoom axis",
@@ -279,6 +285,7 @@ public sealed class SettingsWindow : Window
             new("Color Curves",           "Filters",          () => sc.FilterColorCurves,      v => sc.FilterColorCurves = v),
             new("Chromatic Aberration",   "Filters",          () => sc.FilterChromaticAberration, v => sc.FilterChromaticAberration = v),
             new("Base Color Masks",       "Filters",          () => sc.FilterBaseColorMask,    v => sc.FilterBaseColorMask = v),
+            new("Remove Dust",            "Filters",          () => sc.FilterRemoveDust,       v => sc.FilterRemoveDust = v),
             // Misc
             new("Open settings",          "Misc",             () => sc.OpenSettings,           v => sc.OpenSettings = v),
             new("Open brush editor",      "Misc",             () => sc.OpenBrushEditor,        v => sc.OpenBrushEditor = v),
@@ -704,7 +711,8 @@ public sealed class SettingsWindow : Window
             {
                 MkBtn(BrushCursorMode.Outline, "Size"),
                 MkBtn(BrushCursorMode.Dot, "Dot"),
-                MkBtn(BrushCursorMode.DotAndOutline, "Dot + size")
+                MkBtn(BrushCursorMode.DotAndOutline, "Dot + size"),
+                MkBtn(BrushCursorMode.None, "None")
             }
         };
         return SettingRow(label, picker);

@@ -114,7 +114,7 @@ public partial class MainWindow
         }
 
         // ── Input process properties ──
-        if (preset.InputProcess == InputProcessType.BrushStroke ||
+        if (preset.InputProcess.IsBrushFamily() ||
             preset.InputProcess == InputProcessType.Lasso)
         {
             if (output != OutputProcessType.DirectDraw) // brush already shows smoothing above

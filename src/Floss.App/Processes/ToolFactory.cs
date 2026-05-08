@@ -29,7 +29,8 @@ public sealed class ToolFactory
     {
         return preset.InputProcess switch
         {
-            InputProcessType.BrushStroke => new BrushStrokeInputProcess { Stabilization = preset.Stabilization > 0.001 ? preset.Stabilization : 0.3 },
+            InputProcessType.Pen or InputProcessType.Brush or InputProcessType.Eraser or InputProcessType.Smudge
+                => new BrushStrokeInputProcess { Stabilization = preset.Stabilization > 0.001 ? preset.Stabilization : 0.3 },
             InputProcessType.Liquify => new LiquifyInputProcess(),
             InputProcessType.Lasso => new LassoInputProcess { Stabilization = preset.Stabilization > 0.001 ? preset.Stabilization : 0.3 },
             InputProcessType.Polyline => new PolylineInputProcess { ClosePath = preset.PolylineClosePath },

@@ -1366,8 +1366,7 @@ public sealed class ToolPropertiesWindow : Window
         _brushPreset = update(_brushPreset);
         _preview.Brush = _brushPreset;
         _preview.InvalidateBitmap();
-        var targetPreset = _toolPreset;
-        Avalonia.Threading.Dispatcher.UIThread.Post(() => _onChange(targetPreset, _isBrushTool ? update : null), Avalonia.Threading.DispatcherPriority.Background);
+        _onChange(_toolPreset, _isBrushTool ? update : null);
     }
 
     private void CommitMainTip(IBrushTip tip)
@@ -1473,6 +1472,7 @@ public sealed class ToolPropertiesWindow : Window
         return preset.InputProcess == _toolPreset.InputProcess
             && preset.OutputProcess == _toolPreset.OutputProcess;
     }
+
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 

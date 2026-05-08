@@ -451,6 +451,7 @@ public sealed class PresetStore
     private sealed class BrushAssetDocument
     {
         public string Id { get; set; } = "";
+        public string? Category { get; set; }
         public BrushPresetDocument Preset { get; set; } = new();
         public BrushTipDocument Tip { get; set; } = new();
         public BrushTipDocument? ShapeData { get; set; }
@@ -471,6 +472,7 @@ public sealed class PresetStore
             return new BrushAssetDocument
             {
                 Id = asset.Id,
+                Category = asset.Category,
                 Preset = BrushPresetDocument.FromPreset(asset.Preset),
                 Tip = BrushTipDocument.FromTipData(BrushTipData.FromTip(asset.Preset.Tip), $"{asset.Id}:tip", resources),
                 ShapeData = shapeData == null ? null : BrushTipDocument.FromTipData(shapeData, $"{asset.Id}:shape", resources)
@@ -485,6 +487,7 @@ public sealed class PresetStore
             {
                 Id = Id,
                 FilePath = "",
+                Category = Category,
                 Tip = tip,
                 ShapeData = shapeData
             };

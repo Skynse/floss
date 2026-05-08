@@ -897,7 +897,7 @@ public sealed class DrawingCanvas : Control
 
         if ((_isPointerOver || _isCursorPreviewLocked) && !IsPaintBlockedByLock)
         {
-            var mode = App.Config.BrushCursorMode;
+            var mode = ActiveCursorMode();
             var pos = _isCursorPreviewLocked ? _lockedPointerPos : _pointerPos;
             var t = Math.Max(0.5, 1.5 / CanvasZoom);
             bool isBrushLike = _toolController.ActiveTool is CompositeTool ct && ct.Input.HasBrushCursor;
@@ -925,6 +925,18 @@ public sealed class DrawingCanvas : Control
                 context.DrawEllipse(null, new Pen(CursorInnerBrush, t), swatchPos, swatchR, swatchR);
             }
         }
+    }
+
+    private BrushCursorMode ActiveCursorMode()
+    {
+        var cfg = App.Config;
+        return _ctx.ActivePreset?.InputProcess switch
+        {
+            InputProcessType.Pen => cfg.PenCursorMode,
+            InputProcessType.Eraser => cfg.EraserCursorMode,
+            InputProcessType.Smudge => cfg.SmudgeCursorMode,
+            _ => cfg.BrushCursorMode
+        };
     }
 
     private double ActiveToolCursorSize()

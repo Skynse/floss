@@ -635,6 +635,7 @@ public partial class MainWindow : Window
                 MenuAction("Chromatic _Aberration...", async () => await ApplyChromaticAberrationFilter()),
                 new Separator(),
                 MenuAction("_Base Color Masks from Sketch...", async () => await RunBaseColorMaskGenerator()),
+                MenuAction("Remove _Dust...", async () => await ApplyRemoveDustFilter()),
             }
         };
 
@@ -2045,14 +2046,19 @@ public partial class MainWindow : Window
         // Now load the brush asset and sync the tool-property panel.
         // This runs after ActivateTool so that SetActiveTool's per-engine
         // save correctly recorded the *previous* brush.
-        if (preset.InputProcess == InputProcessType.BrushStroke && preset.OutputProcess == OutputProcessType.DirectDraw)
+        if (preset.InputProcess.IsBrushFamily() && preset.OutputProcess == OutputProcessType.DirectDraw)
         {
             BrushPreset? assetPreset = null;
+            _activeBrushAsset = null;
 
             if (preset.BrushId != null)
             {
                 var asset = _brushAssets.FirstOrDefault(a => a.Id == preset.BrushId);
-                if (asset != null) assetPreset = asset.ToPreset();
+                if (asset != null)
+                {
+                    _activeBrushAsset = asset;
+                    assetPreset = asset.ToPreset();
+                }
             }
 
             if (assetPreset != null)
@@ -2062,6 +2068,11 @@ public partial class MainWindow : Window
                 _canvas.SyncBrushFromContext(overridden);
                 _activeBrushLabel.Text = assetPreset.Name;
                 _strokePreview.Brush = overridden;
+                if (_toolPropsWindow?.CanSyncToolPreset(preset) == true)
+                {
+                    _toolPropsWindow.SyncFromToolPreset(preset);
+                    _toolPropsWindow.SyncFromPreset(overridden);
+                }
                 _syncingBrushUi = true;
                 _sizeSlider.Value = Math.Clamp(overridden.Size, _sizeSlider.Minimum, _sizeSlider.Maximum);
                 _opacitySlider.Value = Math.Clamp(overridden.Opacity, _opacitySlider.Minimum, _opacitySlider.Maximum);
@@ -2079,10 +2090,16 @@ public partial class MainWindow : Window
                 _canvas.SyncBrushFromContext(overridden);
                 _activeBrushLabel.Text = preset.Name;
                 _strokePreview.Brush = overridden;
+                if (_toolPropsWindow?.CanSyncToolPreset(preset) == true)
+                {
+                    _toolPropsWindow.SyncFromToolPreset(preset);
+                    _toolPropsWindow.SyncFromPreset(overridden);
+                }
             }
         }
         else
         {
+            _activeBrushAsset = null;
             _activePreset = null;
             _strokePreview.Brush = null;
             _activeBrushLabel.Text = preset.Name;
@@ -2101,7 +2118,7 @@ public partial class MainWindow : Window
         if (_activeToolGroup == null) return;
         var active = _activeToolGroup.ActivePreset;
         if (active == null || _activePreset == null) return;
-        if (active.InputProcess != InputProcessType.BrushStroke || active.OutputProcess != OutputProcessType.DirectDraw) return;
+        if (!active.InputProcess.IsBrushFamily() || active.OutputProcess != OutputProcessType.DirectDraw) return;
         active.CaptureFromBrushPreset(_activePreset);
     }
 

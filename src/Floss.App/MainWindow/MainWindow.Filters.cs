@@ -203,6 +203,53 @@ public partial class MainWindow
         BuildLayerList();
     }
 
+    internal async Task ApplyRemoveDustFilter()
+    {
+        var preview = new PreviewHandle();
+
+        var sizeLabel = FilterValueLabel("50 px");
+        var sizeSlider = new Slider { Minimum = 1, Maximum = 500, Value = 50, Width = 240, Margin = new Thickness(0, 4, 0, 0) };
+        sizeSlider.PropertyChanged += (_, e) =>
+        {
+            if (e.Property.Name == nameof(Slider.Value))
+            {
+                sizeLabel.Text = $"{(int)sizeSlider.Value} px";
+                preview.Schedule();
+            }
+        };
+
+        var opacLabel = FilterValueLabel("5%");
+        var opacSlider = new Slider { Minimum = 1, Maximum = 100, Value = 5, Width = 240, Margin = new Thickness(0, 4, 0, 0) };
+        opacSlider.PropertyChanged += (_, e) =>
+        {
+            if (e.Property.Name == nameof(Slider.Value))
+            {
+                opacLabel.Text = $"{(int)opacSlider.Value}%";
+                preview.Schedule();
+            }
+        };
+
+        var sel = _canvas.Selection;
+        Func<Action<DrawingLayer>> buildPreview = () =>
+        {
+            var sz = (int)sizeSlider.Value;
+            var threshold = (byte)Math.Clamp((int)(opacSlider.Value / 100.0 * 255), 1, 255);
+            return l => FilterEngine.RemoveDust(l, sz, threshold, sel);
+        };
+
+        var panel = new StackPanel { Spacing = 0 };
+        panel.Children.Add(FilterRow(FilterLabel("Max size"), sizeSlider, sizeLabel));
+        panel.Children.Add(FilterRow(FilterLabel("Min opacity"), opacSlider, opacLabel));
+
+        var ok = await ShowFilterDialog("Remove Dust", panel, LayerSelectionLabel(), buildPreview, preview);
+        if (!ok) return;
+
+        var maxSize = (int)sizeSlider.Value;
+        var alphaThreshold = (byte)Math.Clamp((int)(opacSlider.Value / 100.0 * 255), 1, 255);
+        _canvas.ApplyFilter(EffectiveLayerSelection(), l => FilterEngine.RemoveDust(l, maxSize, alphaThreshold, sel));
+        BuildLayerList();
+    }
+
     internal async Task RunBaseColorMaskGenerator()
     {
         var slider = new Slider { Minimum = 2, Maximum = 20, Value = 5, Width = 240, Margin = new Thickness(0, 4, 0, 0) };

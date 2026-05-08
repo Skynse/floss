@@ -246,6 +246,73 @@ public static class FilterEngine
         return bmp;
     }
 
+    // Erases connected ink regions whose pixel count is <= maxSpeckSize.
+    // "Ink" = any pixel whose alpha channel >= alphaThreshold.
+    // Uses 8-connectivity BFS so diagonal neighbours count as connected.
+    public static void RemoveDust(DrawingLayer layer, int maxSpeckSize, byte alphaThreshold = 1, SelectionMask? sel = null)
+    {
+        var w = layer.Width;
+        var h = layer.Height;
+        var n = w * h;
+        var pixels = layer.CapturePixels();
+
+        // Build ink mask
+        var isInk = new bool[n];
+        for (var i = 0; i < n; i++)
+            isInk[i] = pixels[i * 4 + 3] >= alphaThreshold;
+
+        // BFS label pass — 0 means unlabeled/transparent
+        var labels = new int[n];
+        var sizes = new System.Collections.Generic.List<int> { 0 }; // 1-indexed
+        var queue = new System.Collections.Generic.Queue<int>(1024);
+        var labelId = 0;
+
+        for (var idx = 0; idx < n; idx++)
+        {
+            if (!isInk[idx] || labels[idx] != 0) continue;
+            labelId++;
+            sizes.Add(0);
+            labels[idx] = labelId;
+            queue.Enqueue(idx);
+
+            while (queue.Count > 0)
+            {
+                var cur = queue.Dequeue();
+                sizes[labelId]++;
+                var cx = cur % w;
+                var cy = cur / w;
+                for (var dy = -1; dy <= 1; dy++)
+                {
+                    for (var dx = -1; dx <= 1; dx++)
+                    {
+                        if (dx == 0 && dy == 0) continue;
+                        var nx = cx + dx;
+                        var ny = cy + dy;
+                        if ((uint)nx >= (uint)w || (uint)ny >= (uint)h) continue;
+                        var ni = ny * w + nx;
+                        if (!isInk[ni] || labels[ni] != 0) continue;
+                        labels[ni] = labelId;
+                        queue.Enqueue(ni);
+                    }
+                }
+            }
+        }
+
+        // Erase pixels whose component is too small
+        var changed = false;
+        for (var i = 0; i < n; i++)
+        {
+            var lbl = labels[i];
+            if (lbl == 0 || sizes[lbl] > maxSpeckSize) continue;
+            if (sel != null && sel.HasSelection && !sel.IsSelected(i % w, i / w)) continue;
+            pixels[i * 4 + 3] = 0;
+            changed = true;
+        }
+
+        if (changed)
+            WriteBytes(layer, pixels, w, h);
+    }
+
     private static void WriteBytes(DrawingLayer layer, byte[] pixels, int w, int h)
     {
         layer.Pixels.Clear();

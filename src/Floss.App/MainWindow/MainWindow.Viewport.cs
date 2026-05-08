@@ -650,6 +650,7 @@ public partial class MainWindow
         else if (sc.FilterColorCurves.Matches(key, mods)) { _ = ApplyColorCurvesFilter(); e.Handled = true; }
         else if (sc.FilterChromaticAberration.Matches(key, mods)) { _ = ApplyChromaticAberrationFilter(); e.Handled = true; }
         else if (sc.FilterBaseColorMask.Matches(key, mods)) { _ = RunBaseColorMaskGenerator(); e.Handled = true; }
+        else if (sc.FilterRemoveDust.Matches(key, mods)) { _ = ApplyRemoveDustFilter(); e.Handled = true; }
 
         if (!e.Handled)
         {

@@ -9,7 +9,8 @@ public enum BrushCursorMode
 {
     Outline,
     Dot,
-    DotAndOutline
+    DotAndOutline,
+    None
 }
 
 public sealed class AppConfig
@@ -26,6 +27,9 @@ public sealed class AppConfig
     public double LastBrushHardness { get; set; } = 0.95;
     public double LastBrushSpacing { get; set; } = 0.10;
     public BrushCursorMode BrushCursorMode { get; set; } = BrushCursorMode.Outline;
+    public BrushCursorMode PenCursorMode { get; set; } = BrushCursorMode.Outline;
+    public BrushCursorMode EraserCursorMode { get; set; } = BrushCursorMode.Outline;
+    public BrushCursorMode SmudgeCursorMode { get; set; } = BrushCursorMode.Outline;
     public bool ShowRulers { get; set; }
     public Dictionary<string, bool> ToolPropertyDockerVisibility { get; set; } = new();
     public WorkspaceLayoutConfig WorkspaceLayout { get; set; } = WorkspaceLayoutConfig.Default();

@@ -129,6 +129,7 @@ public sealed class BrushAsset
         => new()
         {
             Id = Guid.NewGuid().ToString("N"),
+            Category = Category,
             Preset = Preset with { Name = name },
             Tip = Tip.DeepClone(),
             ShapeData = ShapeData == null ? null : new BrushTipData { Kind = BrushTipStorageKind.Procedural, Shape = ShapeData.Shape, AspectRatio = ShapeData.AspectRatio }

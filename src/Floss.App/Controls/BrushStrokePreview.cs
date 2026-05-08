@@ -43,7 +43,6 @@ public sealed class BrushStrokePreview : Control
     private void OnDebounceTick(object? sender, EventArgs e)
     {
         _debounceTimer?.Stop();
-        _bitmap?.Dispose();
         _bitmap = null;
         InvalidateVisual();
     }
