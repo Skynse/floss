@@ -8,8 +8,15 @@ using Floss.App.Document;
 
 namespace Floss.App.Canvas;
 
-public sealed class LayerCompositor
+public sealed class LayerCompositor : IDisposable
 {
+    public void Dispose()
+    {
+        _composited?.Dispose();
+        _composited = null;
+        _groupCaches.Clear();
+    }
+
     private WriteableBitmap? _composited;
     private int _width;
     private int _height;

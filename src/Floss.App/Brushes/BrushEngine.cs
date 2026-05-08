@@ -17,8 +17,8 @@ public sealed class BrushEngine : IDisposable
     private readonly List<StampSample> _stamps = new(InitialStampCapacity);
     private readonly List<SKColor> _stampColors = new(InitialStampCapacity);
     private ActiveStroke? _activeStroke;
-    // Scratch bitmap for intra-segment wet-layer compositing (prevents opacity compounding).
     private SKBitmap? _scratch;
+    private readonly SKPaint _scratchCompositePaint = new() { BlendMode = SKBlendMode.SrcOver };
 
     public delegate void PixelSampler(int x, int y, out byte b, out byte g, out byte r, out byte a);
 
@@ -138,6 +138,7 @@ public sealed class BrushEngine : IDisposable
         EndStroke();
         _scratch?.Dispose();
         _scratch = null;
+        _scratchCompositePaint.Dispose();
     }
 
     private void EnsureStroke(BrushPreset brush, CanvasInputSample sample)
@@ -303,10 +304,9 @@ public sealed class BrushEngine : IDisposable
         var w = dirty.Width;
         var h = dirty.Height;
 
-        // Grow scratch bitmap on demand; never shrink to avoid churn.
+        // Grow scratch bitmap on demand; shrink if grossly oversized.
         if (_scratch == null || _scratch.Width < w || _scratch.Height < h)
         {
-            // Cache old dimensions BEFORE disposing so we can take the max.
             var oldW = _scratch?.Width ?? 0;
             var oldH = _scratch?.Height ?? 0;
             _scratch?.Dispose();
@@ -314,6 +314,11 @@ public sealed class BrushEngine : IDisposable
                 Math.Max(w, oldW),
                 Math.Max(h, oldH),
                 SKColorType.Bgra8888, SKAlphaType.Unpremul));
+        }
+        else if (_scratch.Width > w * 4 || _scratch.Height > h * 4)
+        {
+            _scratch.Dispose();
+            _scratch = new SKBitmap(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Unpremul));
         }
 
         // Clear then render stamps into the scratch with Lighten blend so that
@@ -344,8 +349,7 @@ public sealed class BrushEngine : IDisposable
         var sampling = new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None);
         layer.Pixels.RenderWithSkia(dirty, canvas =>
         {
-            using var paint = new SKPaint { BlendMode = SKBlendMode.SrcOver };
-            canvas.DrawImage(scratchImage, srcRect, dstRect, sampling, paint);
+            canvas.DrawImage(scratchImage, srcRect, dstRect, sampling, _scratchCompositePaint);
         });
     }
 
@@ -703,13 +707,8 @@ public sealed class BrushEngine : IDisposable
 
             BaseMaskSize = Math.Max(1, (int)Math.Ceiling(brush.Size));
             Mask = brush.Tip.GenerateMask(BaseMaskSize, (float)brush.Hardness);
-            if (brush.Tip is CompoundBrushTip)
-                _ownedMasks.Add(Mask);
             _baseColor = ToSkColor(brush.Color);
             _currentColor = _baseColor;
-            // Initial smudge colour: DensityOfPaint determines how much brush
-            // colour the stroke starts with.  0 = empty (canvas-only smudge),
-            // 1 = fully loaded with brush colour.
             var initDensity = (float)brush.DensityOfPaint;
             CarriedColor = SKColors.Transparent;
             Paint = new SKPaint
@@ -778,7 +777,10 @@ public sealed class BrushEngine : IDisposable
             var tipMask = key == QuantizeHardness((float)_brush.Hardness)
                 ? Mask
                 : _brush.Tip.GenerateMask(BaseMaskSize, normalizedHardness);
-            if (_brush.Tip is CompoundBrushTip && !ReferenceEquals(tipMask, Mask))
+
+            // CompoundBrushTip allocates a fresh bitmap each call; caller owns it.
+            // Procedural/ImageBrushTip return their internal cache; tip owns it.
+            if (!ReferenceEquals(tipMask, Mask) && _brush.Tip is CompoundBrushTip)
                 _ownedMasks.Add(tipMask);
 
             if (_brush.Shape == null)
@@ -786,26 +788,25 @@ public sealed class BrushEngine : IDisposable
 
             var shapeMask = _brush.Shape.GenerateMask(BaseMaskSize, normalizedHardness);
             var combined = MultiplyMasks(tipMask, shapeMask, BaseMaskSize);
-            DisposeOwnedTemporary(tipMask);
             _ownedMasks.Add(combined);
+            // shapeMask is ProceduralBrushTip-owned; tip holds it internally, never dispose
+            DisposeTemporary(tipMask);
             return CacheOrReturnTemporary(key, combined);
         }
 
         public void ReleaseMask(SKBitmap mask)
         {
-            if (_ownedMasks.Contains(mask) && !_maskCache.ContainsValue(mask))
-            {
-                _ownedMasks.Remove(mask);
+            if (_maskCache.ContainsValue(mask)) return;
+            if (_ownedMasks.Remove(mask))
                 mask.Dispose();
-            }
         }
 
-        private void DisposeOwnedTemporary(SKBitmap mask)
+        private void DisposeTemporary(SKBitmap mask)
         {
-            if (ReferenceEquals(mask, Mask) || !_ownedMasks.Remove(mask))
-                return;
-
-            mask.Dispose();
+            if (ReferenceEquals(mask, Mask)) return;
+            if (_maskCache.ContainsValue(mask)) return;
+            if (_ownedMasks.Remove(mask))
+                mask.Dispose();
         }
 
         private SKBitmap CacheOrReturnTemporary(int key, SKBitmap mask)
@@ -846,16 +847,15 @@ public sealed class BrushEngine : IDisposable
         public void Dispose()
         {
             foreach (var mask in _maskCache.Values)
-            {
-                if (_ownedMasks.Contains(mask))
+                if (_ownedMasks.Remove(mask))
                     mask.Dispose();
-            }
+            foreach (var mask in _ownedMasks)
+                mask.Dispose();
             _maskCache.Clear();
             _ownedMasks.Clear();
-            // _mixedFilter is assigned to Paint.ColorFilter; Paint.Dispose()
-            // releases the paint and its filter reference. Disposing the
-            // filter separately here would double-dispose the same native
-            // Skia object, which is undefined behavior.
+            // Mask is caller-owned only when Tip is CompoundBrushTip (creates fresh each call)
+            if (_brush.Tip is CompoundBrushTip)
+                Mask.Dispose();
             Paint.Dispose();
         }
 

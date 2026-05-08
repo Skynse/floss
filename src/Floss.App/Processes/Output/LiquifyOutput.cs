@@ -290,4 +290,6 @@ public sealed class LiquifyOutput : IOutputProcess
         _distAccum = 0;
         _lastSdx = _lastSdy = 0;
     }
+
+    public void Cancel() => Cleanup();
 }

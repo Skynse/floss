@@ -435,8 +435,9 @@ public static class PsdReader
                 plane[i] = buf[i * bytesPerSample]; // high byte
             return plane;
         }
-        catch
+        catch (Exception ex)
         {
+            Console.Error.WriteLine($"[Floss] PSD Zlib decompression failed: {ex.Message}");
             return null;
         }
     }

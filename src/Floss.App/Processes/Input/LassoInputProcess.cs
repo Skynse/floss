@@ -98,7 +98,8 @@ public sealed class LassoInputProcess : IInputProcess
     private CanvasInputSample ApplyStabilization(CanvasInputSample raw)
     {
         if (Stabilization <= 0) return raw;
-        var alpha = 1.0 - Stabilization;
+        var s = Math.Clamp(Stabilization, 0, 0.99);
+        var alpha = 1.0 - s;
         return raw.WithPosition(
             _lastSmoothed.X + (raw.X - _lastSmoothed.X) * alpha,
             _lastSmoothed.Y + (raw.Y - _lastSmoothed.Y) * alpha,

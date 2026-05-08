@@ -147,6 +147,12 @@ public sealed class DirectDrawOutput : IOutputProcess
         _currentLayer = null;
     }
 
+    public void Cancel()
+    {
+        _brushEngine.EndStroke();
+        Cleanup();
+    }
+
     private static PixelRegion ComputeTileDirtyRegion(System.Collections.Generic.Dictionary<(int, int), byte[]?> tiles)
     {
         if (tiles.Count == 0) return PixelRegion.Empty;

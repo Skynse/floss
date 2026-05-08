@@ -21,7 +21,7 @@ using SkiaSharp;
 
 namespace Floss.App.Canvas;
 
-public sealed class DrawingCanvas : Control
+public sealed class DrawingCanvas : Control, IDisposable
 {
     private const double PenPressureThreshold = 0.02;
 
@@ -110,6 +110,15 @@ public sealed class DrawingCanvas : Control
         };
         _document.LayerRemoved += (_, layer) => _compositor.RemoveGroupCache(layer);
         _document.LayerMetadataChanged += (_, e) => LayerMetadataChanged?.Invoke(this, e);
+    }
+
+    public void Dispose()
+    {
+        BrushEngine.Dispose();
+        _compositor.Dispose();
+        _document.Dispose();
+        _layerClipboard = null;
+        _clipboardPixels = null;
     }
 
     public event EventHandler? StatsChanged;

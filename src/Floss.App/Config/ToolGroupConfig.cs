@@ -339,8 +339,9 @@ public sealed class ToolGroupConfig
             cfg.Save();
             return cfg;
         }
-        catch
+        catch (Exception ex)
         {
+            Console.Error.WriteLine($"[Floss] Failed to load tool group config: {ex.Message}");
             var cfg = new ToolGroupConfig();
             cfg.EnsureDefaultPresets();
             return cfg;
@@ -368,7 +369,7 @@ public sealed class ToolGroupConfig
     public void Save()
     {
         try { (Store ??= PresetStore.OpenDefault()).SaveToolGroups(Groups); }
-        catch { }
+        catch (Exception ex) { Console.Error.WriteLine($"[Floss] Failed to save tool group config: {ex.Message}"); }
     }
 
     // ── Sync with brush assets ────────────────────────────────────────────────

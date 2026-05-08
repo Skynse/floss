@@ -8,8 +8,18 @@ namespace Floss.App.Document;
 
 public enum LayerDropPlacement { Above, Below, Into }
 
-public sealed class DrawingDocument
+public sealed class DrawingDocument : IDisposable
 {
+    public void Dispose()
+    {
+        _layers.Clear();
+        _undo.Clear();
+        _redo.Clear();
+        _undoIds.Clear();
+        _redoIds.Clear();
+        Selection.Clear();
+    }
+
     // --- History & State Tracking ---
     private readonly Stack<IHistoryState> _undo = new();
     private readonly Stack<IHistoryState> _redo = new();
@@ -390,7 +400,7 @@ public sealed class DrawingDocument
         // Snapshot references before moving; MoveLayer shifts _layers so saved indices become stale
         var layersToMove = sorted
             .Select(i => _layers[i])
-            .Where(l => l != group && !l.IsGroup)
+            .Where(l => l != group)
             .ToList();
         foreach (var layer in layersToMove)
         {

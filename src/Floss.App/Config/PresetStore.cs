@@ -180,9 +180,9 @@ public sealed class PresetStore
                 var doc = JsonSerializer.Deserialize<BrushAssetDocument>(json, JsonOpts);
                 if (doc != null) assets.Add(doc.ToAsset(LoadResources(connection, id)));
             }
-            catch
+            catch (Exception ex)
             {
-                // One damaged preset should not make the whole brush shelf unloadable.
+                Console.Error.WriteLine($"[Floss] Failed to deserialize brush preset '{id}': {ex.Message}");
             }
         }
         return assets;

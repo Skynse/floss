@@ -73,4 +73,6 @@ public sealed class MoveLayerOutput : IOutputProcess
         ctx.Document.NotifyChanged(dirty, ctx.ActiveLayerIndex);
         _hasPreview = false;
     }
+
+    public void Cancel() => _hasPreview = false;
 }

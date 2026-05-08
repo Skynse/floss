@@ -53,8 +53,17 @@ public sealed class FloodFillOutput : IOutputProcess
         var toleranceSq = (int)(Tolerance * 255 * Tolerance * 255 * 4);
 
         var beforeTiles = layer.Pixels.CaptureTiles(layer.Pixels.Bounds);
-        var visited = new bool[docW * docH];
-        var queue = new System.Collections.Generic.Queue<int>(docW * docH / 4);
+
+        // Cap total flood-fill pixels to avoid OOM on huge canvases.
+        // 64M pixels (8k×8k) is ~256MB for visited array + queue.
+        const int maxPixels = 64_000_000;
+        var totalPixels = (long)docW * docH;
+        if (totalPixels > maxPixels)
+            return;
+
+        var pixelCount = docW * docH;
+        var visited = new bool[pixelCount];
+        var queue = new System.Collections.Generic.Queue<int>(pixelCount / 4);
         int startIdx = cy * docW + cx;
         visited[startIdx] = true;
         queue.Enqueue(startIdx);

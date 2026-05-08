@@ -53,6 +53,7 @@ public sealed class CompositeTool : ITool
     public void Cancel(ToolContext ctx)
     {
         Input.Cancel();
+        Output.Cancel();
     }
 
     public bool HasPendingOperation => Input.IsActive;

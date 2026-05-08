@@ -304,6 +304,9 @@ public partial class MainWindow
             SetDocumentPanelsVisible(false);
             UpdateTabBar();
             UpdateTitle();
+            tab.Canvas.Dispose();
+            BuildLayerList();
+            ScheduleDocumentGc();
             return;
         }
 
@@ -316,6 +319,23 @@ public partial class MainWindow
         {
             UpdateTabBar();
         }
+
+        tab.Canvas.Dispose();
+        ScheduleDocumentGc();
+    }
+
+    private static void ScheduleDocumentGc()
+    {
+        System.Threading.Tasks.Task.Run(() =>
+        {
+            // Compact the LOH so freed tile/history byte[] arrays actually return to the OS.
+            // Without compaction the committed pages stay reserved even after collection.
+            System.Runtime.GCSettings.LargeObjectHeapCompactionMode =
+                System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
+            GC.WaitForPendingFinalizers();
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
+        });
     }
 
     // ── Canvas event wiring ───────────────────────────────────────────────────

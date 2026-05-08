@@ -14,6 +14,10 @@ public interface IOutputProcess
     // Called when input completes to finalize and commit undo mutation.
     void Execute(ToolContext ctx, IProcessedInput input);
 
+    // Called when the tool is deactivated or the stroke is cancelled.
+    // Must release any intermediate state held across Preview calls.
+    void Cancel() { }
+
     // True when this output writes pixels to a layer (paint, fill, gradient).
     // Used by the canvas to block input on locked/invisible/group layers.
     bool IsPaintOutput => false;

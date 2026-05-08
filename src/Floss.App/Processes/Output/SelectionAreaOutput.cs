@@ -16,6 +16,7 @@ public sealed class SelectionAreaOutput : IOutputProcess
 
     public void Execute(ToolContext ctx, IProcessedInput input)
     {
+        if (ctx.Selection == null) return;
         var before = ctx.Selection.CaptureSnapshot();
         switch (input)
         {
