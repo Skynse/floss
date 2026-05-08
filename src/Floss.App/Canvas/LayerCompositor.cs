@@ -1,5 +1,7 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
@@ -169,20 +171,45 @@ public sealed class LayerCompositor : IDisposable
             if (l.Parent == null) rootLayers.Add(l);
 
         _tilesToPrune.Clear();
+
+        // Pre-ensure all tiles (single-threaded, dictionary not thread-safe)
         for (var ty = firstTY; ty <= lastTY; ty++)
-        {
             for (var tx = firstTX; tx <= lastTX; tx++)
             {
-                var tileRect = new PixelRegion(tx * CmpTileSize, ty * CmpTileSize, CmpTileSize, CmpTileSize).Intersect(clip);
-                if (tileRect.IsEmpty) continue;
-
-                var tile = EnsureTile(tx, ty);
-                var originX = tx * CmpTileSize;
-                var originY = ty * CmpTileSize;
-
-                CompositeTile(tile, tileRect, rootLayers, originX, originY);
-                _tilesToPrune.Add((tx, ty));
+                if (new PixelRegion(tx * CmpTileSize, ty * CmpTileSize, CmpTileSize, CmpTileSize).Intersect(clip).IsEmpty) continue;
+                EnsureTile(tx, ty);
             }
+
+        // Check if Skia fast path can handle all layers (no groups, clipping, or custom blend modes)
+        var useSkia = CanAllUseSkia(FlattenForRender(rootLayers));
+
+        if (useSkia)
+        {
+            System.Threading.Tasks.Parallel.For(firstTY, lastTY + 1, ty =>
+            {
+                for (var tx = firstTX; tx <= lastTX; tx++)
+                {
+                    var tileRect = new PixelRegion(tx * CmpTileSize, ty * CmpTileSize, CmpTileSize, CmpTileSize).Intersect(clip);
+                    if (tileRect.IsEmpty) continue;
+                    var originX = tx * CmpTileSize;
+                    var originY = ty * CmpTileSize;
+                    CompositeTileSkia(_compTiles[(tx, ty)], tileRect, rootLayers, originX, originY);
+                    lock (_tilesToPrune) _tilesToPrune.Add((tx, ty));
+                }
+            });
+        }
+        else
+        {
+            for (var ty = firstTY; ty <= lastTY; ty++)
+                for (var tx = firstTX; tx <= lastTX; tx++)
+                {
+                    var tileRect = new PixelRegion(tx * CmpTileSize, ty * CmpTileSize, CmpTileSize, CmpTileSize).Intersect(clip);
+                    if (tileRect.IsEmpty) continue;
+                    var originX = tx * CmpTileSize;
+                    var originY = ty * CmpTileSize;
+                    CompositeTileCpu(_compTiles[(tx, ty)], tileRect, rootLayers, originX, originY);
+                    _tilesToPrune.Add((tx, ty));
+                }
         }
 
         PruneTransparentTiles();
@@ -239,35 +266,36 @@ public sealed class LayerCompositor : IDisposable
         return true;
     }
 
-    private unsafe void CompositeTile(WriteableBitmap tile, PixelRegion tileRect,
+    private unsafe void CompositeTileSkia(WriteableBitmap tile, PixelRegion tileRect,
         IReadOnlyList<DrawingLayer> rootLayers, int originX, int originY)
     {
         var tw = tile.PixelSize.Width;
         var th = tile.PixelSize.Height;
-
         var renderList = FlattenForRender(rootLayers);
-
         using var frame = tile.Lock();
-        if (CanAllUseSkia(renderList))
-        {
-            var info = new SKImageInfo(tw, th, SKColorType.Bgra8888, SKAlphaType.Unpremul);
-            using var surface = SKSurface.Create(info, frame.Address, frame.RowBytes);
-            var canvas = surface.Canvas;
-            var clearRect = new SKRect(
-                tileRect.X - originX, tileRect.Y - originY,
-                tileRect.Right - originX, tileRect.Bottom - originY);
-            using var clearPaint = new SKPaint { BlendMode = SKBlendMode.Src, Color = SKColors.Transparent };
-            canvas.DrawRect(clearRect, clearPaint);
-            DrawRenderListSkia(canvas, tileRect, renderList, 1.0, originX, originY);
-            surface.Flush();
-        }
-        else
-        {
-            var dst = (byte*)frame.Address;
-            var stride = frame.RowBytes;
-            ClearTile(dst, stride, tileRect, originX, originY);
-            CompositeRenderList(dst, stride, tw, th, renderList, 1.0, tileRect, originX, originY);
-        }
+        var info = new SKImageInfo(tw, th, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+        using var surface = SKSurface.Create(info, frame.Address, frame.RowBytes);
+        var canvas = surface.Canvas;
+        var clearRect = new SKRect(
+            tileRect.X - originX, tileRect.Y - originY,
+            tileRect.Right - originX, tileRect.Bottom - originY);
+        using var clearPaint = new SKPaint { BlendMode = SKBlendMode.Src, Color = SKColors.Transparent };
+        canvas.DrawRect(clearRect, clearPaint);
+        DrawRenderListSkia(canvas, tileRect, renderList, 1.0, originX, originY);
+        surface.Flush();
+    }
+
+    private unsafe void CompositeTileCpu(WriteableBitmap tile, PixelRegion tileRect,
+        IReadOnlyList<DrawingLayer> rootLayers, int originX, int originY)
+    {
+        var tw = tile.PixelSize.Width;
+        var th = tile.PixelSize.Height;
+        var renderList = FlattenForRender(rootLayers);
+        using var frame = tile.Lock();
+        var dst = (byte*)frame.Address;
+        var stride = frame.RowBytes;
+        ClearTile(dst, stride, tileRect, originX, originY);
+        CompositeRenderList(dst, stride, tw, th, renderList, 1.0, tileRect, originX, originY);
     }
 
     private unsafe void DrawRenderListSkia(SKCanvas canvas, PixelRegion clip,
@@ -356,7 +384,9 @@ public sealed class LayerCompositor : IDisposable
 
                 if (needsPreprocess)
                 {
-                    var processed = PreprocessTile(tile, ts, clipLeft, clipTop, clipRight, clipBottom,
+                    var rentSize = tileW * tileH * 4;
+                    var processed = ArrayPool<byte>.Shared.Rent(rentSize);
+                    PreprocessTile(tile, processed, ts, clipLeft, clipTop, clipRight, clipBottom,
                         tx, ty, hasLayerColor, layer.LayerColor, expressionMode);
                     fixed (byte* pp = processed)
                     {
@@ -368,6 +398,7 @@ public sealed class LayerCompositor : IDisposable
                         canvas.DrawBitmap(tileBmp, destX, destY, paint);
                         if (grayFilter != null) paint.ColorFilter = null;
                     }
+                    ArrayPool<byte>.Shared.Return(processed);
                 }
                 else
                 {
@@ -388,7 +419,7 @@ public sealed class LayerCompositor : IDisposable
         }
     }
 
-    private static unsafe byte[] PreprocessTile(byte[] tile, int ts,
+    private static unsafe void PreprocessTile(byte[] tile, byte[] result, int ts,
         int clipLeft, int clipTop, int clipRight, int clipBottom,
         int tx, int ty, bool hasLayerColor, Avalonia.Media.Color? layerColor,
         ExpressionColorMode expressionMode)
@@ -397,7 +428,6 @@ public sealed class LayerCompositor : IDisposable
         var tileH = clipBottom - clipTop;
         var srcX = clipLeft - tx * ts;
         var srcY = clipTop - ty * ts;
-        var result = new byte[tileW * tileH * 4];
 
         fixed (byte* src = tile)
         fixed (byte* dst = result)
@@ -438,8 +468,8 @@ public sealed class LayerCompositor : IDisposable
                 }
             }
         }
-        return result;
     }
+
 
     // ── CPU fallback compositing ─────────────────────────────────────────────
 
@@ -640,13 +670,16 @@ public sealed class LayerCompositor : IDisposable
         if (!dirty.IsEmpty)
         {
             cache.Buffer.Clear(dirty);
-            var temp = new byte[dirty.Width * dirty.Height * 4];
+            var tempLen = dirty.Width * dirty.Height * 4;
+            var temp = ArrayPool<byte>.Shared.Rent(tempLen);
+            Array.Clear(temp, 0, tempLen);
             fixed (byte* tempPtr = temp)
             {
                 CompositeLayerList(tempPtr, dirty.Width * 4, dirty.Width, dirty.Height, group.Children, opacityScale: 1.0, dirty, dirty.X, dirty.Y);
             }
             cache.Buffer.CopyFromBgra(dirty, temp, dirty.Width * 4);
             cache.Buffer.CompressTiles();
+            ArrayPool<byte>.Shared.Return(temp);
         }
 
         return cache.Buffer;
@@ -937,11 +970,11 @@ public sealed class LayerCompositor : IDisposable
         var groupOpacity = group.Opacity * opacityScale;
         if (groupOpacity <= 0 || group.Children.Count == 0) return;
 
-        var temp = new byte[clip.Width * clip.Height * 4];
+        var tempLen = clip.Width * clip.Height * 4;
+        var temp = ArrayPool<byte>.Shared.Rent(tempLen);
+        Array.Clear(temp, 0, tempLen);
         fixed (byte* tempPtr = temp)
         {
-            for (int i = 0; i < temp.Length; i++) tempPtr[i] = 0;
-
             if (group.BlendMode == "PassThrough")
                 CompositeLayerList(tempPtr, clip.Width * 4, clip.Width, clip.Height, group.Children, groupOpacity, clip, clip.X, clip.Y);
             else
@@ -949,6 +982,7 @@ public sealed class LayerCompositor : IDisposable
 
             CompositeClippedBuffer(dst, dstStride, width, height, tempPtr, clip.Width * 4, baseLayer, group.BlendMode, clip, originX, originY);
         }
+        ArrayPool<byte>.Shared.Return(temp);
     }
 
     private static unsafe void CompositeClippedBuffer(
@@ -1026,30 +1060,92 @@ public sealed class LayerCompositor : IDisposable
         }
     }
 
-    private static unsafe void CompositeLayer(
-        byte* dst,
-        int dstStride,
-        int width,
-        int height,
-        DrawingLayer layer,
-        double opacityScale,
-        PixelRegion clip,
-        int originX,
-        int originY)
+    // ── Blend LUTs ─────────────────────────────────────────────────────────--
+    private static readonly byte[] LUT_Overlay = BuildLUT((s, d) => Overlay(s, d));
+    private static readonly byte[] LUT_SoftLight = BuildLUT((s, d) => SoftLight(s, d));
+    private static readonly byte[] LUT_HardLight = BuildLUT((s, d) => HardLight(s, d));
+    private static readonly byte[] LUT_ColorDodge = BuildLUT((s, d) => ColorDodge(s, d));
+    private static readonly byte[] LUT_ColorBurn = BuildLUT((s, d) => ColorBurn(s, d));
+    private static readonly byte[] LUT_LinearBurn = BuildLUT((s, d) => Math.Max(0, d + s - 1));
+    private static readonly byte[] LUT_LinearDodge = BuildLUT((s, d) => Math.Min(1, d + s));
+    private static readonly byte[] LUT_VividLight = BuildLUT((s, d) => VividLight(s, d));
+    private static readonly byte[] LUT_LinearLight = BuildLUT((s, d) => LinearLight(s, d));
+    private static readonly byte[] LUT_PinLight = BuildLUT((s, d) => PinLight(s, d));
+    private static readonly byte[] LUT_HardMix = BuildLUT((s, d) => HardMix(s, d));
+    private static readonly byte[] LUT_Subtract = BuildLUT((s, d) => Math.Max(0, d - s));
+    private static readonly byte[] LUT_Divide = BuildLUT((s, d) => s <= 0 ? 1.0 : Math.Min(1.0, d / s));
+
+    private static byte[] BuildLUT(Func<double, double, double> fn)
+    {
+        var lut = new byte[65536];
+        for (int s = 0; s < 256; s++)
+            for (int d = 0; d < 256; d++)
+                lut[(s << 8) | d] = (byte)Math.Clamp(Math.Round(fn(s / 255.0, d / 255.0) * 255), 0, 255);
+        return lut;
+    }
+
+    private static byte[] GetLut(string mode) => mode switch
+    {
+        "Overlay" => LUT_Overlay,
+        "SoftLight" => LUT_SoftLight,
+        "HardLight" => LUT_HardLight,
+        "ColorDodge" => LUT_ColorDodge,
+        "ColorBurn" => LUT_ColorBurn,
+        "LinearBurn" => LUT_LinearBurn,
+        "LinearDodge" => LUT_LinearDodge,
+        "VividLight" => LUT_VividLight,
+        "LinearLight" => LUT_LinearLight,
+        "PinLight" => LUT_PinLight,
+        "HardMix" => LUT_HardMix,
+        "Subtract" => LUT_Subtract,
+        "Divide" => LUT_Divide,
+        _ => null!
+    };
+
+    private static bool HasLut(string mode) => mode switch
+    {
+        "Overlay" or "SoftLight" or "HardLight" or "ColorDodge" or "ColorBurn"
+        or "LinearBurn" or "LinearDodge" or "VividLight" or "LinearLight"
+        or "PinLight" or "HardMix" or "Subtract" or "Divide" => true,
+        _ => false
+    };
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe void BlendPixelInt(byte* dst,
+        uint srcR, uint srcG, uint srcB, uint srcA,
+        uint dstR, uint dstG, uint dstB, uint dstA)
+    {
+        if (srcA == 0) return;
+        if (dstA == 0)
+        {
+            dst[0] = (byte)((srcB * srcA + 127) / 255);
+            dst[1] = (byte)((srcG * srcA + 127) / 255);
+            dst[2] = (byte)((srcR * srcA + 127) / 255);
+            dst[3] = (byte)srcA;
+            return;
+        }
+        uint outA = srcA + ((dstA * (255 - srcA)) >> 8);
+        if (outA == 0) return;
+        uint half = outA >> 1;
+        uint dstCont = (dstA * (255 - srcA)) >> 8;
+        dst[0] = (byte)((srcB * srcA + dstB * dstCont + half) / outA);
+        dst[1] = (byte)((srcG * srcA + dstG * dstCont + half) / outA);
+        dst[2] = (byte)((srcR * srcA + dstR * dstCont + half) / outA);
+        dst[3] = (byte)outA;
+    }
+
+    private static unsafe void CompositeLayer(byte* dst, int dstStride, int width, int height,
+        DrawingLayer layer, double opacityScale, PixelRegion clip, int originX, int originY)
     {
         var opacity = layer.Opacity * opacityScale;
         if (opacity <= 0) return;
-
         var offsetX = layer.OffsetX;
         var offsetY = layer.OffsetY;
-
         var docLeft = Math.Max(Math.Max(clip.X, offsetX + layer.MinX), 0);
         var docTop = Math.Max(Math.Max(clip.Y, offsetY + layer.MinY), 0);
         var docRight = Math.Min(Math.Min(clip.Right, offsetX + layer.MaxX), width + originX);
         var docBottom = Math.Min(Math.Min(clip.Bottom, offsetY + layer.MaxY), height + originY);
-
         if (docLeft >= docRight || docTop >= docBottom) return;
-
         var sourceRegion = new PixelRegion(docLeft - offsetX, docTop - offsetY, docRight - docLeft, docBottom - docTop);
         if (!layer.Pixels.HasContentTiles(sourceRegion)) return;
 
@@ -1058,39 +1154,28 @@ public sealed class LayerCompositor : IDisposable
         var hasLayerColor = layerColor.HasValue;
         var expressionColor = layer.ExpressionColor;
         byte lcR = 255, lcG = 255, lcB = 255;
-        if (layerColor is { } lc)
-        {
-            lcR = lc.R;
-            lcG = lc.G;
-            lcB = lc.B;
-        }
+        if (layerColor is { } lc) { lcR = lc.R; lcG = lc.G; lcB = lc.B; }
         const int ts = TiledPixelBuffer.TileSize;
-
         var firstTileX = FloorDiv(sourceRegion.X, ts);
         var firstTileY = FloorDiv(sourceRegion.Y, ts);
         var lastTileX = FloorDiv(sourceRegion.Right - 1, ts);
         var lastTileY = FloorDiv(sourceRegion.Bottom - 1, ts);
-
         var applyExpr = expressionColor != ExpressionColorMode.Color;
 
-        // Integer fast path for Normal blend — avoids all float conversions.
+        // Integer fast path for Normal blend
         if (blendMode == "Normal")
         {
             var opacityByte = (uint)Math.Round(opacity * 255);
             var fullOpacity = opacityByte == 255;
-
             for (var ty = firstTileY; ty <= lastTileY; ty++)
-            {
                 for (var tx = firstTileX; tx <= lastTileX; tx++)
                 {
                     var tile = layer.Pixels.GetTileOrNull(tx, ty);
                     if (tile == null) continue;
-
                     var clipLeft = Math.Max(sourceRegion.X, tx * ts);
                     var clipTop = Math.Max(sourceRegion.Y, ty * ts);
                     var clipRight = Math.Min(sourceRegion.Right, tx * ts + ts);
                     var clipBottom = Math.Min(sourceRegion.Bottom, ty * ts + ts);
-
                     for (int srcY = clipTop; srcY < clipBottom; srcY++)
                     {
                         var tileLocalY = srcY - ty * ts;
@@ -1098,18 +1183,14 @@ public sealed class LayerCompositor : IDisposable
                         var tileRowBase = (tileLocalY * ts + tileLocalX0) * 4;
                         var docY = srcY + offsetY;
                         var dstRow = dst + (docY - originY) * dstStride;
-
                         for (int j = 0, srcX = clipLeft; srcX < clipRight; srcX++, j++)
                         {
                             var tileOffset = tileRowBase + j * 4;
                             uint rawA = tile[tileOffset + 3];
                             if (rawA == 0) continue;
-
                             uint srcA = fullOpacity ? rawA : (rawA * opacityByte + 127) / 255;
                             var docX = srcX + offsetX;
                             var dstPtr = dstRow + (docX - originX) * 4;
-
-                            // CSP-style layer color: dark pixels → layer color, light → white
                             byte srcB, srcG, srcR;
                             if (hasLayerColor)
                             {
@@ -1119,38 +1200,18 @@ public sealed class LayerCompositor : IDisposable
                                 srcG = (byte)(lum + (lcG * ink) / 255);
                                 srcR = (byte)(lum + (lcR * ink) / 255);
                             }
-                            else
-                            {
-                                srcB = tile[tileOffset + 0];
-                                srcG = tile[tileOffset + 1];
-                                srcR = tile[tileOffset + 2];
-                            }
-
-                            // Expression color: transform source pixel before blending (never touches other layers).
+                            else { srcB = tile[tileOffset + 0]; srcG = tile[tileOffset + 1]; srcR = tile[tileOffset + 2]; }
                             if (applyExpr)
                             {
                                 var lum = (srcR * 299 + srcG * 587 + srcB * 114) / 1000;
-                                byte gray = expressionColor == ExpressionColorMode.Gray
-                                    ? (byte)lum
-                                    : lum >= 128 ? (byte)255 : (byte)0;
+                                byte gray = expressionColor == ExpressionColorMode.Gray ? (byte)lum : lum >= 128 ? (byte)255 : (byte)0;
                                 srcB = srcG = srcR = gray;
                             }
-
-                            if (srcA == 255)
-                            {
-                                dstPtr[0] = srcB;
-                                dstPtr[1] = srcG;
-                                dstPtr[2] = srcR;
-                                dstPtr[3] = 255;
-                                continue;
-                            }
-
-                            uint invSrcA = 255 - srcA;
-                            uint dstA = dstPtr[3];
-                            uint dstCont = (dstA * invSrcA + 127) / 255;
+                            if (srcA == 255) { dstPtr[0] = srcB; dstPtr[1] = srcG; dstPtr[2] = srcR; dstPtr[3] = 255; continue; }
+                            uint invSrcA = 255 - srcA, ddA = dstPtr[3];
+                            uint dstCont = (ddA * invSrcA + 127) / 255;
                             uint outA = srcA + dstCont;
                             if (outA == 0) continue;
-
                             uint halfOutA = outA >> 1;
                             dstPtr[0] = (byte)((srcB * srcA + dstPtr[0] * dstCont + halfOutA) / outA);
                             dstPtr[1] = (byte)((srcG * srcA + dstPtr[1] * dstCont + halfOutA) / outA);
@@ -1159,22 +1220,75 @@ public sealed class LayerCompositor : IDisposable
                         }
                     }
                 }
-            }
             return;
         }
 
-        for (var ty = firstTileY; ty <= lastTileY; ty++)
+        // LUT path for standard per-channel blend modes
+        if (HasLut(blendMode))
         {
+            var lut = GetLut(blendMode);
+            var opacityByte = (uint)Math.Round(opacity * 255);
+            for (var ty = firstTileY; ty <= lastTileY; ty++)
+                for (var tx = firstTileX; tx <= lastTileX; tx++)
+                {
+                    var tile = layer.Pixels.GetTileOrNull(tx, ty);
+                    if (tile == null) continue;
+                    var clipLeft = Math.Max(sourceRegion.X, tx * ts);
+                    var clipTop = Math.Max(sourceRegion.Y, ty * ts);
+                    var clipRight = Math.Min(sourceRegion.Right, tx * ts + ts);
+                    var clipBottom = Math.Min(sourceRegion.Bottom, ty * ts + ts);
+                    for (int srcY = clipTop; srcY < clipBottom; srcY++)
+                    {
+                        var tileLocalY = srcY - ty * ts;
+                        var tileLocalX0 = clipLeft - tx * ts;
+                        var tileRowBase = (tileLocalY * ts + tileLocalX0) * 4;
+                        var docY = srcY + offsetY;
+                        var dstRow = dst + (docY - originY) * dstStride;
+                        for (int j = 0, srcX = clipLeft; srcX < clipRight; srcX++, j++)
+                        {
+                            var tileOffset = tileRowBase + j * 4;
+                            uint rawA = tile[tileOffset + 3];
+                            if (rawA == 0) continue;
+                            uint srcA = (rawA * opacityByte + 127) / 255;
+                            if (srcA == 0) continue;
+                            var docX = srcX + offsetX;
+                            var dstPtr = dstRow + (docX - originX) * 4;
+                            byte sb = tile[tileOffset + 0], sg = tile[tileOffset + 1], sr = tile[tileOffset + 2];
+                            // layer color & expression
+                            if (hasLayerColor)
+                            {
+                                var lum = (sr * 299 + sg * 587 + sb * 114) / 1000;
+                                var ink = 255 - lum;
+                                sb = (byte)(lum + (lcB * ink) / 255);
+                                sg = (byte)(lum + (lcG * ink) / 255);
+                                sr = (byte)(lum + (lcR * ink) / 255);
+                            }
+                            if (applyExpr)
+                            {
+                                var lum = (sr * 299 + sg * 587 + sb * 114) / 1000;
+                                byte gray = expressionColor == ExpressionColorMode.Gray ? (byte)lum : lum >= 128 ? (byte)255 : (byte)0;
+                                sb = sg = sr = gray;
+                            }
+                            uint db = dstPtr[0], dg = dstPtr[1], dr = dstPtr[2], da = dstPtr[3];
+                            BlendPixelInt(dstPtr,
+                                lut[((uint)sr << 8) | dr], lut[((uint)sg << 8) | dg], lut[((uint)sb << 8) | db], srcA,
+                                dr, dg, db, da);
+                        }
+                    }
+                }
+            return;
+        }
+
+        // Double fallback for HSL / luminance-based modes
+        for (var ty = firstTileY; ty <= lastTileY; ty++)
             for (var tx = firstTileX; tx <= lastTileX; tx++)
             {
                 var tile = layer.Pixels.GetTileOrNull(tx, ty);
                 if (tile == null) continue;
-
                 var clipLeft = Math.Max(sourceRegion.X, tx * ts);
                 var clipTop = Math.Max(sourceRegion.Y, ty * ts);
                 var clipRight = Math.Min(sourceRegion.Right, tx * ts + ts);
                 var clipBottom = Math.Min(sourceRegion.Bottom, ty * ts + ts);
-
                 for (int srcY = clipTop; srcY < clipBottom; srcY++)
                 {
                     var tileLocalY = srcY - ty * ts;
@@ -1182,59 +1296,26 @@ public sealed class LayerCompositor : IDisposable
                     var tileRowBase = (tileLocalY * ts + tileLocalX0) * 4;
                     var docY = srcY + offsetY;
                     var dstRow = dst + (docY - originY) * dstStride;
-
                     for (int j = 0, srcX = clipLeft; srcX < clipRight; srcX++, j++)
                     {
                         var tileOffset = tileRowBase + j * 4;
                         var rawA = tile[tileOffset + 3];
                         if (rawA == 0) continue;
-
                         var srcA = rawA / 255.0 * opacity;
                         var docX = srcX + offsetX;
                         var dstIdx = (docX - originX) * 4;
-
-                        // CSP-style layer color: dark pixels → layer color, light → white
                         byte tintedB, tintedG, tintedR;
-                        if (hasLayerColor)
-                        {
-                            var lum = (tile[tileOffset + 2] * 299 + tile[tileOffset + 1] * 587 + tile[tileOffset + 0] * 114) / 1000;
-                            var ink = 255 - lum;
-                            tintedB = (byte)(lum + (lcB * ink) / 255);
-                            tintedG = (byte)(lum + (lcG * ink) / 255);
-                            tintedR = (byte)(lum + (lcR * ink) / 255);
-                        }
-                        else
-                        {
-                            tintedB = tile[tileOffset + 0];
-                            tintedG = tile[tileOffset + 1];
-                            tintedR = tile[tileOffset + 2];
-                        }
-
-                        // Expression color: transform source pixel before blending.
-                        if (applyExpr)
-                        {
-                            var lum = (tintedR * 299 + tintedG * 587 + tintedB * 114) / 1000;
-                            byte gray = expressionColor == ExpressionColorMode.Gray
-                                ? (byte)lum
-                                : lum >= 128 ? (byte)255 : (byte)0;
-                            tintedB = tintedG = tintedR = gray;
-                        }
-
-                        var srcB = tintedB / 255.0;
-                        var srcG = tintedG / 255.0;
-                        var srcR = tintedR / 255.0;
-                        var dstB = dstRow[dstIdx + 0] / 255.0;
-                        var dstG = dstRow[dstIdx + 1] / 255.0;
-                        var dstR = dstRow[dstIdx + 2] / 255.0;
-                        var dstA = dstRow[dstIdx + 3] / 255.0;
-
-                        var (blendR, blendG, blendB) = ApplyBlendMode(srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendMode);
-                        BlendPixel(dstRow + dstIdx, srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendR, blendG, blendB);
+                        if (hasLayerColor) { var lum = (tile[tileOffset + 2] * 299 + tile[tileOffset + 1] * 587 + tile[tileOffset + 0] * 114) / 1000; var ink = 255 - lum; tintedB = (byte)(lum + (lcB * ink) / 255); tintedG = (byte)(lum + (lcG * ink) / 255); tintedR = (byte)(lum + (lcR * ink) / 255); }
+                        else { tintedB = tile[tileOffset + 0]; tintedG = tile[tileOffset + 1]; tintedR = tile[tileOffset + 2]; }
+                        if (applyExpr) { var lum = (tintedR * 299 + tintedG * 587 + tintedB * 114) / 1000; byte gray = expressionColor == ExpressionColorMode.Gray ? (byte)lum : lum >= 128 ? (byte)255 : (byte)0; tintedB = tintedG = tintedR = gray; }
+                        var sB = tintedB / 255.0; var sG = tintedG / 255.0; var sR = tintedR / 255.0;
+                        var dB = dstRow[dstIdx + 0] / 255.0; var dG = dstRow[dstIdx + 1] / 255.0; var dR = dstRow[dstIdx + 2] / 255.0; var dA = dstRow[dstIdx + 3] / 255.0;
+                        var (blendR, blendG, blendB) = ApplyBlendMode(sR, sG, sB, srcA, dR, dG, dB, dA, blendMode);
+                        BlendPixel(dstRow + dstIdx, sR, sG, sB, srcA, dR, dG, dB, dA, blendR, blendG, blendB);
                     }
                 }
             }
         }
-    }
 
     private static unsafe void ApplyExpressionColor(
         byte* dst, int dstStride,
