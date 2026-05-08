@@ -1959,8 +1959,10 @@ public partial class MainWindow : Window
         _workspaceViewport.PointerPressed += Workspace_OnPointerPressed;
         _workspaceViewport.PointerMoved += Workspace_OnPointerMoved;
         _workspaceViewport.PointerReleased += Workspace_OnPointerReleased;
+        _workspaceViewport.SizeChanged += (_, _) => SyncCanvasViewport();
 
         WireCanvas();
+        SyncCanvasViewport();
 
         SliderChanged(_sizeSlider, v => UpdateCurrentBrush(p => p with { Size = v }));
         SliderChanged(_opacitySlider, v => UpdateCurrentBrush(p => p with { Opacity = v }));

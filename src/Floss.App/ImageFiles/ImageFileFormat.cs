@@ -111,21 +111,14 @@ public static class DocumentRasterizer
     {
         var width = Math.Max(1, document.Width);
         var height = Math.Max(1, document.Height);
-        var compositor = new LayerCompositor();
-        compositor.Composite(document.Layers, width, height);
+
+        var bgra = new LayerCompositor().CompositeToBgra(document.Layers, width, height);
 
         var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Unpremul));
-        using var frame = compositor.Bitmap.Lock();
-        var src = (byte*)frame.Address;
-        var dst = (byte*)bitmap.GetPixels().ToPointer();
-
-        for (var y = 0; y < height; y++)
+        fixed (byte* src = bgra)
         {
-            Buffer.MemoryCopy(
-                src + y * frame.RowBytes,
-                dst + y * bitmap.RowBytes,
-                bitmap.RowBytes,
-                width * 4);
+            var dst = (byte*)bitmap.GetPixels().ToPointer();
+            Buffer.MemoryCopy(src, dst, bgra.Length, bgra.Length);
         }
 
         return bitmap;

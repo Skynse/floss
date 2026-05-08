@@ -157,6 +157,8 @@ public sealed class DrawingCanvas : Control, IDisposable
     public int FlipX { get; set; } = 1;
     public int FlipY { get; set; } = 1;
     public double CanvasRotation { get; set; }
+    public double ViewportWidth { get; set; }
+    public double ViewportHeight { get; set; }
 
     public void SetActiveTool(ITool tool, ToolPreset? preset = null)
     {
@@ -872,6 +874,41 @@ public sealed class DrawingCanvas : Control, IDisposable
 
     private static bool IsPaintTool(ITool? tool) => tool is CompositeTool ct && ct.Output.IsPaintOutput;
 
+    private static bool HasAnyLayerContent(IReadOnlyList<DrawingLayer> layers)
+    {
+        foreach (var l in layers)
+        {
+            if (!l.IsVisible) continue;
+            if (l.Pixels.TileCount > 0) return true;
+            if (l.IsGroup && HasAnyLayerContent(l.Children)) return true;
+        }
+        return false;
+    }
+
+    private PixelRegion? ComputeVisibleViewport()
+    {
+        if (ViewportWidth <= 0 || ViewportHeight <= 0 || CanvasZoom <= 0)
+            return null;
+
+        var zoom = CanvasZoom;
+        var docW = _document.Width;
+        var docH = _document.Height;
+
+        var docLeft = (-PanOffsetX) / zoom - ViewportWidth / (2 * zoom) + docW / 2.0;
+        var docTop = (-PanOffsetY) / zoom - ViewportHeight / (2 * zoom) + docH / 2.0;
+        var docRight = ViewportWidth / (2 * zoom) - PanOffsetX / zoom + docW / 2.0;
+        var docBottom = ViewportHeight / (2 * zoom) - PanOffsetY / zoom + docH / 2.0;
+
+        var left = (int)Math.Max(0, docLeft);
+        var top = (int)Math.Max(0, docTop);
+        var right = (int)Math.Min(docW, docRight);
+        var bottom = (int)Math.Min(docH, docBottom);
+        var w = Math.Max(1, right - left);
+        var h = Math.Max(1, bottom - top);
+
+        return new PixelRegion(left, top, w, h);
+    }
+
     public override void Render(DrawingContext context)
     {
         base.Render(context);
@@ -880,16 +917,22 @@ public sealed class DrawingCanvas : Control, IDisposable
         if (_isPointerOver && !(_toolController.ActiveTool is TransformTool { HasPendingOperation: true }))
             Cursor = IsPaintBlockedByLock ? CursorNo : CursorNone;
 
-        _compositor.Composite(_document.Layers, _document.Width, _document.Height);
-        var target = new Rect(Bounds.Size);
-        using (context.PushClip(new RoundedRect(target)))
-        using (context.PushRenderOptions(new RenderOptions
+        // Skip compositing on empty-canvas documents — avoids allocating a
+        // full-canvas WriteableBitmap (900MB+ for 15k²) when nothing is drawn.
+        if (HasAnyLayerContent(_document.Layers))
         {
-            BitmapInterpolationMode = BitmapInterpolationMode.None,
-            EdgeMode = EdgeMode.Aliased
-        }))
-        {
-            context.DrawImage(_compositor.Bitmap, target);
+            _compositor.Composite(_document.Layers, _document.Width, _document.Height);
+            var target = new Rect(Bounds.Size);
+            using (context.PushClip(new RoundedRect(target)))
+            using (context.PushRenderOptions(new RenderOptions
+            {
+                BitmapInterpolationMode = BitmapInterpolationMode.None,
+                EdgeMode = EdgeMode.Aliased
+            }))
+            {
+                var viewport = ComputeVisibleViewport();
+                _compositor.DrawTiles(context, target, viewport);
+            }
         }
 
         _toolController.RenderOverlay(context, CanvasZoom);

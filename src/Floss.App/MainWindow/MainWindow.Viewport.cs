@@ -17,6 +17,13 @@ namespace Floss.App;
 public partial class MainWindow
 {
     // ── Viewport ──────────────────────────────────────────────────────────────
+    private void SyncCanvasViewport()
+    {
+        if (_canvas == null || _workspaceViewport == null) return;
+        _canvas.ViewportWidth = _workspaceViewport.Bounds.Width;
+        _canvas.ViewportHeight = _workspaceViewport.Bounds.Height;
+    }
+
     private void SyncCanvasFrameToDocument(bool fitToViewport)
     {
         var w = Math.Max(1, _canvas.Document.Width);

@@ -705,7 +705,7 @@ public sealed class BrushEngine : IDisposable
                 * Math.Max(0.01f, (float)brush.Spacing)
                 * Math.Clamp(initSpacingMul, 0.05f, 4f));
 
-            BaseMaskSize = Math.Max(1, (int)Math.Ceiling(brush.Size));
+            BaseMaskSize = Math.Max(1, Math.Min(256, (int)Math.Ceiling(brush.Size)));
             Mask = brush.Tip.GenerateMask(BaseMaskSize, (float)brush.Hardness);
             _baseColor = ToSkColor(brush.Color);
             _currentColor = _baseColor;

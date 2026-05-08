@@ -12,17 +12,18 @@ public sealed class LayerCompositor : IDisposable
 {
     public void Dispose()
     {
-        _composited?.Dispose();
-        _composited = null;
+        ClearAllTiles();
         _groupCaches.Clear();
     }
 
-    private WriteableBitmap? _composited;
+    private const int CmpTileSize = 1024;
+    private readonly Dictionary<(int X, int Y), WriteableBitmap> _compTiles = [];
     private int _width;
     private int _height;
     private bool _dirty = true;
     private bool _fullDirty = true;
     private PixelRegion? _dirtyRegion;
+    private readonly HashSet<(int X, int Y)> _tilesToPrune = [];
     private readonly Dictionary<DrawingLayer, GroupProjectionCache> _groupCaches = new();
 
     public void RemoveGroupCache(DrawingLayer group)
@@ -32,28 +33,74 @@ public sealed class LayerCompositor : IDisposable
 
     public void SetSize(int width, int height)
     {
-        if (_width == width && _height == height && _composited != null) return;
+        if (_width == width && _height == height) return;
         _width = width;
         _height = height;
-        _composited?.Dispose();
-        _composited = new WriteableBitmap(
-            new PixelSize(width, height),
-            new Vector(96, 96),
-            PixelFormat.Bgra8888,
-            AlphaFormat.Unpremul);
+        ClearAllTiles();
         _dirty = true;
         _fullDirty = true;
         _dirtyRegion = null;
         _groupCaches.Clear();
     }
 
-    public WriteableBitmap Bitmap
+    public void ClearAllTiles()
+    {
+        foreach (var t in _compTiles.Values) t.Dispose();
+        _compTiles.Clear();
+    }
+
+    public unsafe WriteableBitmap Bitmap
     {
         get
         {
-            if (_composited == null)
-                SetSize(2048, 2048);
-            return _composited!;
+            // Assemble tiles into a single bitmap (export/compat path).
+            // WARNING: For large canvases (>= 8k), this allocates 256MB+.
+            // Use CompositeToBgra() instead for memory-safe export.
+            if (_compTiles.Count == 0)
+                return new WriteableBitmap(new PixelSize(1, 1), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Unpremul);
+
+            if (_width * _height > 64_000_000)
+                throw new InvalidOperationException(
+                    $"Canvas is too large ({_width}x{_height}) for monolithic Bitmap assembly. Use CompositeToBgra instead.");
+
+            var result = new WriteableBitmap(new PixelSize(_width, _height), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Unpremul);
+            using var dstFrame = result.Lock();
+            var dst = (byte*)dstFrame.Address;
+
+            foreach (var ((tx, ty), srcBmp) in _compTiles)
+            {
+                using var srcFrame = srcBmp.Lock();
+                var src = (byte*)srcFrame.Address;
+                int tw = srcBmp.PixelSize.Width;
+                int th = srcBmp.PixelSize.Height;
+                int dx = tx * CmpTileSize;
+                int dy = ty * CmpTileSize;
+                for (int y = 0; y < th; y++)
+                    Buffer.MemoryCopy(src + y * srcFrame.RowBytes, dst + (dy + y) * dstFrame.RowBytes + dx * 4, tw * 4, tw * 4);
+            }
+            return result;
+        }
+    }
+
+    public void DrawTiles(DrawingContext context, Rect target, PixelRegion? visibleViewport = null)
+    {
+        foreach (var ((tx, ty), bmp) in _compTiles)
+        {
+            var tileLeft = tx * CmpTileSize;
+            var tileTop = ty * CmpTileSize;
+            var tileRight = tileLeft + bmp.PixelSize.Width;
+            var tileBottom = tileTop + bmp.PixelSize.Height;
+
+            if (visibleViewport.HasValue)
+            {
+                var v = visibleViewport.Value;
+                if (tileRight <= v.X || tileBottom <= v.Y || tileLeft >= v.Right || tileTop >= v.Bottom)
+                    continue;
+            }
+
+            var src = new Rect(0, 0, bmp.PixelSize.Width, bmp.PixelSize.Height);
+            var dest = new Rect(tileLeft, tileTop, bmp.PixelSize.Width, bmp.PixelSize.Height);
+            context.DrawImage(bmp, src, dest);
         }
     }
 
@@ -82,30 +129,96 @@ public sealed class LayerCompositor : IDisposable
         if (!_dirty) return;
         _dirty = false;
 
-        using var frame = _composited!.Lock();
-        var dst = (byte*)frame.Address;
-        var stride = frame.RowBytes;
-
         var clip = (_fullDirty ? new PixelRegion(0, 0, width, height) : _dirtyRegion ?? PixelRegion.Empty).ClipTo(width, height);
         if (clip.IsEmpty) return;
         _fullDirty = false;
         _dirtyRegion = null;
 
-        ClearBuffer(dst, stride, width, height, clip);
+        var firstTX = floorDiv(clip.X, CmpTileSize);
+        var firstTY = floorDiv(clip.Y, CmpTileSize);
+        var lastTX = floorDiv(clip.Right - 1, CmpTileSize);
+        var lastTY = floorDiv(clip.Bottom - 1, CmpTileSize);
 
-        // Only process root-level layers; group children are composited inside CompositeGroup.
         var rootLayers = new System.Collections.Generic.List<DrawingLayer>(layers.Count);
         foreach (var l in layers)
             if (l.Parent == null) rootLayers.Add(l);
 
-        CompositeLayerList(dst, stride, width, height, rootLayers, opacityScale: 1.0, clip, originX: 0, originY: 0);
+        _tilesToPrune.Clear();
+        for (var ty = firstTY; ty <= lastTY; ty++)
+        {
+            for (var tx = firstTX; tx <= lastTX; tx++)
+            {
+                var tileRect = new PixelRegion(tx * CmpTileSize, ty * CmpTileSize, CmpTileSize, CmpTileSize).Intersect(clip);
+                if (tileRect.IsEmpty) continue;
+
+                var tile = EnsureTile(tx, ty);
+                using var frame = tile.Lock();
+                var dst = (byte*)frame.Address;
+                var stride = frame.RowBytes;
+                var tw = tile.PixelSize.Width;
+                var th = tile.PixelSize.Height;
+
+                ClearTile(dst, stride, tileRect, tx * CmpTileSize, ty * CmpTileSize);
+                CompositeLayerList(dst, stride, tw, th, rootLayers, 1.0, tileRect, tx * CmpTileSize, ty * CmpTileSize);
+                _tilesToPrune.Add((tx, ty));
+            }
+        }
+
+        PruneTransparentTiles();
+
+        static int floorDiv(int v, int d) { var r = v / d; if ((v ^ d) < 0 && v % d != 0) r--; return r; }
     }
 
-    private static unsafe void ClearBuffer(byte* dst, int stride, int width, int height, PixelRegion clip)
+    private WriteableBitmap EnsureTile(int tx, int ty)
+    {
+        if (_compTiles.TryGetValue((tx, ty), out var t))
+            return t;
+        var w = Math.Min(CmpTileSize, _width - tx * CmpTileSize);
+        var h = Math.Min(CmpTileSize, _height - ty * CmpTileSize);
+        if (w <= 0 || h <= 0) w = h = 1;
+        t = new WriteableBitmap(new PixelSize(w, h), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Unpremul);
+        _compTiles[(tx, ty)] = t;
+        return t;
+    }
+
+    private void PruneTransparentTiles()
+    {
+        if (_tilesToPrune.Count > 16) return;
+        foreach (var key in _tilesToPrune)
+        {
+            if (_compTiles.TryGetValue(key, out var bmp) && IsWriteableBitmapTransparent(bmp))
+            {
+                bmp.Dispose();
+                _compTiles.Remove(key);
+            }
+        }
+    }
+
+    private static unsafe bool IsWriteableBitmapTransparent(WriteableBitmap bmp)
+    {
+        using var frame = bmp.Lock();
+        var ptr = (byte*)frame.Address;
+        var w = bmp.PixelSize.Width;
+        var h = bmp.PixelSize.Height;
+        var stride = frame.RowBytes;
+        for (int y = 0; y < h; y++)
+        {
+            var row = (uint*)(ptr + y * stride);
+            for (int x = 0; x < w; x++)
+                if ((row[x] & 0xFF000000) != 0) return false;
+        }
+        return true;
+    }
+
+    private static unsafe void ClearTile(byte* dst, int stride, PixelRegion clip, int originX, int originY)
     {
         for (int y = clip.Y; y < clip.Bottom; y++)
         {
-            var row = (uint*)(dst + y * stride + clip.X * 4);
+            var localY = y - originY;
+            if (localY < 0) continue;
+            var localX = clip.X - originX;
+            if (localX < 0) continue;
+            var row = (uint*)(dst + localY * stride + localX * 4);
             for (int x = 0; x < clip.Width; x++)
                 row[x] = 0u;
         }
