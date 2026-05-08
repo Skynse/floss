@@ -1096,6 +1096,32 @@ public static class AbrImporter
         else if (p?.RoundnessDyn.Jitter > 0)
             angleJitter = (float)Math.Clamp(p.RoundnessDyn.Jitter / 300.0, 0.0, 0.25);
 
+        // ── Color mixing / wet paint ──────────────────────────────────────────
+        var hasWet = p?.WetDyn is { ControlType: > 0 } or { Jitter: > 0 };
+        var hasMix = p?.MixDyn is { ControlType: > 0 } or { Jitter: > 0 };
+        var colorMix = hasWet || hasMix;
+        var amountOfPaint = 1.0;
+        var densityOfPaint = 1.0;
+        var colorStretch = 0.5;
+        var blurAmount = 0.0;
+        var smudgeMode = SmudgeMode.Blend;
+        if (hasMix)
+        {
+            smudgeMode = SmudgeMode.Smudge;
+            amountOfPaint = Math.Clamp(p!.MixDyn.Jitter / 100.0 * 0.6 + 0.2, 0.0, 1.0);
+            densityOfPaint = Math.Clamp(p.MixDyn.Minimum / 100.0, 0.0, 1.0);
+            colorStretch = Math.Clamp(p.MixDyn.Jitter / 100.0 * 0.5 + 0.1, 0.0, 1.0);
+        }
+        if (hasWet)
+        {
+            blurAmount = Math.Clamp(p!.WetDyn.Jitter / 100.0 * 0.8, 0.0, 1.0);
+            if (!hasMix)
+            {
+                amountOfPaint = Math.Clamp(p.WetDyn.Jitter / 100.0 * 0.5 + 0.3, 0.0, 1.0);
+                densityOfPaint = Math.Clamp(p.WetDyn.Minimum / 100.0 * 0.7 + 0.3, 0.0, 1.0);
+            }
+        }
+
         preset = new BrushPreset(cleanName, size, opacity, hardness, spacing,
             Color.Parse("#111111"), angle)
         {
@@ -1112,7 +1138,13 @@ public static class AbrImporter
             TipDirection = BrushTipDirection.Horizontal,
             Grain = p?.UseColorDynamics == true
                 ? Math.Clamp((Math.Abs(p.HueJitter) + Math.Abs(p.SaturationJitter) + Math.Abs(p.BrightnessJitter)) / 300.0, 0.0, 1.0)
-                : 0.0
+                : 0.0,
+            ColorMix = colorMix,
+            AmountOfPaint = amountOfPaint,
+            DensityOfPaint = densityOfPaint,
+            ColorStretch = colorStretch,
+            BlurAmount = blurAmount,
+            SmudgeMode = smudgeMode
         };
     }
 

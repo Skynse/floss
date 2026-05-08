@@ -166,6 +166,14 @@ public sealed class BrushLibrary
                 Smoothing = 0.45,
                 Tip = new ProceduralBrushTip(BrushTipShape.Circle)
             }, category: "Mixing");
+
+        yield return BrushAsset.FromPreset(
+            new BrushPreset("Eraser", 40, 1.0, 0.9, 0.10, Color.Parse("#000000"), 0)
+            {
+                BlendMode = SkiaSharp.SKBlendMode.DstOut,
+                Smoothing = 0.3,
+                Tip = new ProceduralBrushTip(BrushTipShape.Circle)
+            }, category: "Erasers");
     }
 
 }

@@ -2087,7 +2087,10 @@ public partial class MainWindow : Window
             }
             else
             {
-                var overridden = preset.ApplyToBrushPreset(_canvas.Brush);
+                // No brush asset — start from a clean default, never from
+                // the previous tool's live state (_canvas.Brush).
+                var basePreset = BrushPreset.Defaults[0];
+                var overridden = preset.ApplyToBrushPreset(basePreset);
                 _activePreset = overridden;
                 _canvas.SyncBrushFromContext(overridden);
                 _activeBrushLabel.Text = preset.Name;

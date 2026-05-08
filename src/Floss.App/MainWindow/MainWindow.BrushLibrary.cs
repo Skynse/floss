@@ -337,6 +337,9 @@ public partial class MainWindow : Window
     {
         var menu = new ContextMenu();
 
+        var createItem = new MenuItem { Header = "Create Custom Tool…" };
+        createItem.Click += async (_, _) => await CreateCustomToolAsync(group, preset);
+
         var propertiesItem = new MenuItem { Header = "Tool Properties…" };
         propertiesItem.Click += (_, _) => ShowPresetPropertiesDialog(group, preset);
 
@@ -368,6 +371,8 @@ public partial class MainWindow : Window
         var deleteItem = new MenuItem { Header = "Delete" };
         deleteItem.Click += (_, _) => DeletePreset(group, preset);
 
+        menu.Items.Add(createItem);
+        menu.Items.Add(new Separator());
         menu.Items.Add(propertiesItem);
         menu.Items.Add(renameItem);
         menu.Items.Add(setAltInvocationItem);
@@ -737,22 +742,115 @@ public partial class MainWindow : Window
 
     private void DeletePreset(ToolGroup group, ToolPreset preset)
     {
-        if (group.Presets.Count <= 1) return;
         if (preset.BrushId != null)
         {
             var asset = _brushAssets.FirstOrDefault(a => a.Id == preset.BrushId);
             if (asset != null) _brushLibrary.Delete(asset);
         }
+        // Save category info before removing preset from it
+        var deletedCat = group.Categories.FirstOrDefault(c => c.PresetIds.Contains(preset.Id));
+        var deletedCatIdx = deletedCat?.PresetIds.IndexOf(preset.Id) ?? -1;
         group.Presets.Remove(preset);
-        if (group.LastActivePresetId == preset.Id)
-            group.LastActivePresetId = group.Presets.FirstOrDefault()?.Id;
+        deletedCat?.PresetIds.Remove(preset.Id);
+
+        if (group.Presets.Count == 0)
+        {
+            App.ToolGroups.Groups.Remove(group);
+            BuildToolRail();
+            if (_activeToolGroup == group)
+            {
+                var next = App.ToolGroups.Groups.FirstOrDefault();
+                if (next != null)
+                {
+                    var fallback = next.ActivePreset ?? next.Presets.FirstOrDefault();
+                    if (fallback != null) ActivatePreset(next, fallback);
+                }
+            }
+        }
+        else
+        {
+            if (group.LastActivePresetId == preset.Id)
+            {
+                // Activate the next preset in the same category
+                if (deletedCat != null && deletedCatIdx >= 0 && deletedCat.PresetIds.Count > 0)
+                {
+                    var nextId = deletedCatIdx < deletedCat.PresetIds.Count
+                        ? deletedCat.PresetIds[deletedCatIdx]
+                        : deletedCat.PresetIds[^1];
+                    group.LastActivePresetId = nextId;
+                }
+                else
+                {
+                    // Category is now empty — move to the first non-empty category
+                    group.LastActivePresetId = null;
+                    var nextCat = group.Categories.FirstOrDefault(c => c.PresetIds.Count > 0);
+                    group.LastActiveCategoryName = nextCat?.Name;
+                }
+            }
+            if (_activeToolGroup == group)
+            {
+                var active = group.ActivePreset ?? group.Presets.FirstOrDefault();
+                if (active != null) ActivatePreset(group, active);
+            }
+        }
         App.ToolGroups.Save();
         RefreshGroupPresets();
-        if (_activeToolGroup == group)
+    }
+
+    private async System.Threading.Tasks.Task CreateCustomToolAsync(ToolGroup group, ToolPreset preset)
+    {
+        var tcs = new System.Threading.Tasks.TaskCompletionSource<string?>();
+        var dialog = new Window
         {
-            var active = group.ActivePreset ?? group.Presets.FirstOrDefault();
-            if (active != null) ActivatePreset(group, active);
-        }
+            Title = "Create Custom Tool",
+            Width = 300,
+            Height = 140,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = new SolidColorBrush(Color.Parse(Bg0))
+        };
+        var tb = new TextBox { Margin = new Thickness(12), Text = "Custom Tool" };
+        var ok = new Button { Content = "Create", Margin = new Thickness(12, 0, 12, 12) };
+        ok.Click += (_, _) => { tcs.TrySetResult(tb.Text); dialog.Close(); };
+        tb.KeyDown += (_, e) => { if (e.Key == Key.Enter) { tcs.TrySetResult(tb.Text); dialog.Close(); } };
+        dialog.Closed += (_, _) => tcs.TrySetResult(null);
+        dialog.Content = new StackPanel { Children = { tb, ok } };
+        await dialog.ShowDialog(this);
+
+        var name = (await tcs.Task)?.Trim();
+        if (string.IsNullOrWhiteSpace(name)) return;
+
+        CaptureActiveBrushToPreset();
+
+        var brushPreset = new BrushPreset(name, 40, 1.0, 0.9, 0.10, Colors.Black, 0)
+        {
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Smoothing = 0.3
+        };
+        if (preset.BrushBlendMode == SkiaSharp.SKBlendMode.DstOut)
+            brushPreset = brushPreset with { BlendMode = SkiaSharp.SKBlendMode.DstOut };
+
+        var asset = BrushAsset.FromPreset(brushPreset, category: _selectedCategory);
+        _brushLibrary.Save(asset);
+        _brushAssets = [.._brushAssets, asset];
+
+        var newPreset = new ToolPreset
+        {
+            Name = name,
+            InputProcess = InputProcessType.Brush,
+            OutputProcess = OutputProcessType.DirectDraw,
+            BrushId = asset.Id,
+            BrushBlendMode = preset.BrushBlendMode
+        };
+
+        group.Presets.Add(newPreset);
+
+        var cat = group.Categories.FirstOrDefault(c => c.Name == _selectedCategory);
+        if (cat != null && !cat.PresetIds.Contains(newPreset.Id))
+            cat.PresetIds.Add(newPreset.Id);
+
+        App.ToolGroups.Save();
+        RefreshGroupPresets();
+        ActivatePreset(group, newPreset);
     }
 
     // ── Drag-and-drop helpers ─────────────────────────────────────────────────

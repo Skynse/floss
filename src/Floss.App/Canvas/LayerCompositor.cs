@@ -4,7 +4,9 @@ using Avalonia;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
+using Avalonia.Rendering.SceneGraph;
 using Floss.App.Document;
+using SkiaSharp;
 
 namespace Floss.App.Canvas;
 
@@ -25,6 +27,24 @@ public sealed class LayerCompositor : IDisposable
     private PixelRegion? _dirtyRegion;
     private readonly HashSet<(int X, int Y)> _tilesToPrune = [];
     private readonly Dictionary<DrawingLayer, GroupProjectionCache> _groupCaches = new();
+
+    private static readonly Dictionary<string, SKBlendMode> SkiaBlendModes = new()
+    {
+        ["Normal"] = SKBlendMode.SrcOver,
+        ["PassThrough"] = SKBlendMode.SrcOver,
+        ["Multiply"] = SKBlendMode.Multiply,
+        ["Screen"] = SKBlendMode.Screen,
+        ["Overlay"] = SKBlendMode.Overlay,
+        ["SoftLight"] = SKBlendMode.SoftLight,
+        ["HardLight"] = SKBlendMode.HardLight,
+        ["ColorDodge"] = SKBlendMode.ColorDodge,
+        ["ColorBurn"] = SKBlendMode.ColorBurn,
+        ["Darken"] = SKBlendMode.Darken,
+        ["Lighten"] = SKBlendMode.Lighten,
+        ["Difference"] = SKBlendMode.Difference,
+        ["Exclusion"] = SKBlendMode.Exclusion,
+        ["LinearDodge"] = SKBlendMode.Plus,
+    };
 
     public void RemoveGroupCache(DrawingLayer group)
     {
@@ -53,9 +73,6 @@ public sealed class LayerCompositor : IDisposable
     {
         get
         {
-            // Assemble tiles into a single bitmap (export/compat path).
-            // WARNING: For large canvases (>= 8k), this allocates 256MB+.
-            // Use CompositeToBgra() instead for memory-safe export.
             if (_compTiles.Count == 0)
                 return new WriteableBitmap(new PixelSize(1, 1), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Unpremul);
 
@@ -69,14 +86,19 @@ public sealed class LayerCompositor : IDisposable
 
             foreach (var ((tx, ty), srcBmp) in _compTiles)
             {
-                using var srcFrame = srcBmp.Lock();
-                var src = (byte*)srcFrame.Address;
-                int tw = srcBmp.PixelSize.Width;
-                int th = srcBmp.PixelSize.Height;
+                int tw = Math.Min(CmpTileSize, _width - tx * CmpTileSize);
+                int th = Math.Min(CmpTileSize, _height - ty * CmpTileSize);
                 int dx = tx * CmpTileSize;
                 int dy = ty * CmpTileSize;
+
+                if (tw <= 0 || th <= 0) { tw = 1; th = 1; }
+
+                using var srcFrame = srcBmp.Lock();
+                var src = (byte*)srcFrame.Address;
+                var rowBytes = srcFrame.RowBytes;
+
                 for (int y = 0; y < th; y++)
-                    Buffer.MemoryCopy(src + y * srcFrame.RowBytes, dst + (dy + y) * dstFrame.RowBytes + dx * 4, tw * 4, tw * 4);
+                    Buffer.MemoryCopy(src + y * rowBytes, dst + (dy + y) * dstFrame.RowBytes + dx * 4, tw * 4, tw * 4);
             }
             return result;
         }
@@ -88,8 +110,11 @@ public sealed class LayerCompositor : IDisposable
         {
             var tileLeft = tx * CmpTileSize;
             var tileTop = ty * CmpTileSize;
-            var tileRight = tileLeft + bmp.PixelSize.Width;
-            var tileBottom = tileTop + bmp.PixelSize.Height;
+            var tw = Math.Min(CmpTileSize, _width - tx * CmpTileSize);
+            var th = Math.Min(CmpTileSize, _height - ty * CmpTileSize);
+            if (tw <= 0 || th <= 0) { tw = 1; th = 1; }
+            var tileRight = tileLeft + tw;
+            var tileBottom = tileTop + th;
 
             if (visibleViewport.HasValue)
             {
@@ -98,8 +123,8 @@ public sealed class LayerCompositor : IDisposable
                     continue;
             }
 
-            var src = new Rect(0, 0, bmp.PixelSize.Width, bmp.PixelSize.Height);
-            var dest = new Rect(tileLeft, tileTop, bmp.PixelSize.Width, bmp.PixelSize.Height);
+            var src = new Rect(0, 0, tw, th);
+            var dest = new Rect(tileLeft, tileTop, tw, th);
             context.DrawImage(bmp, src, dest);
         }
     }
@@ -152,14 +177,10 @@ public sealed class LayerCompositor : IDisposable
                 if (tileRect.IsEmpty) continue;
 
                 var tile = EnsureTile(tx, ty);
-                using var frame = tile.Lock();
-                var dst = (byte*)frame.Address;
-                var stride = frame.RowBytes;
-                var tw = tile.PixelSize.Width;
-                var th = tile.PixelSize.Height;
+                var originX = tx * CmpTileSize;
+                var originY = ty * CmpTileSize;
 
-                ClearTile(dst, stride, tileRect, tx * CmpTileSize, ty * CmpTileSize);
-                CompositeLayerList(dst, stride, tw, th, rootLayers, 1.0, tileRect, tx * CmpTileSize, ty * CmpTileSize);
+                CompositeTile(tile, tileRect, rootLayers, originX, originY);
                 _tilesToPrune.Add((tx, ty));
             }
         }
@@ -190,6 +211,264 @@ public sealed class LayerCompositor : IDisposable
             {
                 bmp.Dispose();
                 _compTiles.Remove(key);
+            }
+        }
+    }
+
+    // ── Skia compositing ─────────────────────────────────────────────────────
+
+    private static bool CanLayerUseSkia(DrawingLayer layer)
+    {
+        if (!layer.IsVisible) return true;
+        if (layer.IsClipping) return false;
+        if (!SkiaBlendModes.ContainsKey(layer.BlendMode)) return false;
+
+        if (layer.IsGroup)
+        {
+            if (layer.BlendMode != "PassThrough") return false;
+            foreach (var child in layer.Children)
+                if (!CanLayerUseSkia(child)) return false;
+        }
+        return true;
+    }
+
+    private bool CanAllUseSkia(IReadOnlyList<RenderItem> renderList)
+    {
+        foreach (var item in renderList)
+            if (!CanLayerUseSkia(item.Layer)) return false;
+        return true;
+    }
+
+    private unsafe void CompositeTile(WriteableBitmap tile, PixelRegion tileRect,
+        IReadOnlyList<DrawingLayer> rootLayers, int originX, int originY)
+    {
+        var tw = tile.PixelSize.Width;
+        var th = tile.PixelSize.Height;
+
+        var renderList = FlattenForRender(rootLayers);
+
+        using var frame = tile.Lock();
+        if (CanAllUseSkia(renderList))
+        {
+            var info = new SKImageInfo(tw, th, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+            using var surface = SKSurface.Create(info, frame.Address, frame.RowBytes);
+            var canvas = surface.Canvas;
+            var clearRect = new SKRect(
+                tileRect.X - originX, tileRect.Y - originY,
+                tileRect.Right - originX, tileRect.Bottom - originY);
+            using var clearPaint = new SKPaint { BlendMode = SKBlendMode.Src, Color = SKColors.Transparent };
+            canvas.DrawRect(clearRect, clearPaint);
+            DrawRenderListSkia(canvas, tileRect, renderList, 1.0, originX, originY);
+            surface.Flush();
+        }
+        else
+        {
+            var dst = (byte*)frame.Address;
+            var stride = frame.RowBytes;
+            ClearTile(dst, stride, tileRect, originX, originY);
+            CompositeRenderList(dst, stride, tw, th, renderList, 1.0, tileRect, originX, originY);
+        }
+    }
+
+    private unsafe void DrawRenderListSkia(SKCanvas canvas, PixelRegion clip,
+        IReadOnlyList<RenderItem> renderList, double opacityScale, int originX, int originY)
+    {
+        for (int i = 0; i < renderList.Count; i++)
+        {
+            var item = renderList[i];
+            if (!item.Layer.IsVisible) continue;
+            DrawLayerSkia(canvas, clip, item.Layer, opacityScale, originX, originY);
+        }
+    }
+
+    private unsafe void DrawLayerSkia(SKCanvas canvas, PixelRegion clip,
+        DrawingLayer layer, double opacityScale, int originX, int originY)
+    {
+        if (layer.IsGroup)
+        {
+            foreach (var child in layer.Children)
+                DrawLayerSkia(canvas, clip, child, opacityScale, originX, originY);
+            return;
+        }
+
+        var opacity = layer.Opacity * opacityScale;
+        if (opacity <= 0) return;
+
+        var offsetX = layer.OffsetX;
+        var offsetY = layer.OffsetY;
+
+        var docLeft = Math.Max(clip.X, offsetX + layer.MinX);
+        var docTop = Math.Max(clip.Y, offsetY + layer.MinY);
+        var docRight = Math.Min(clip.Right, offsetX + layer.MaxX);
+        var docBottom = Math.Min(clip.Bottom, offsetY + layer.MaxY);
+        if (docLeft >= docRight || docTop >= docBottom) return;
+
+        var sourceRegion = new PixelRegion(docLeft - offsetX, docTop - offsetY, docRight - docLeft, docBottom - docTop);
+        if (!layer.Pixels.HasContentTiles(sourceRegion)) return;
+
+        var blendMode = SkiaBlendModes[layer.BlendMode];
+        var opacityByte = (byte)Math.Round(Math.Clamp(opacity * 255, 0, 255));
+        var hasLayerColor = layer.LayerColor.HasValue;
+        var expressionMode = layer.ExpressionColor;
+        var needsPreprocess = hasLayerColor || expressionMode == ExpressionColorMode.Monochrome;
+        var needsGrayFilter = expressionMode == ExpressionColorMode.Gray;
+        const int ts = TiledPixelBuffer.TileSize;
+
+        var firstTileX = FloorDiv(sourceRegion.X, ts);
+        var firstTileY = FloorDiv(sourceRegion.Y, ts);
+        var lastTileX = FloorDiv(sourceRegion.Right - 1, ts);
+        var lastTileY = FloorDiv(sourceRegion.Bottom - 1, ts);
+
+        using var paint = new SKPaint();
+        paint.BlendMode = blendMode;
+
+        SKColorFilter? grayFilter = null;
+        if (needsGrayFilter)
+        {
+            grayFilter = SKColorFilter.CreateColorMatrix(new float[]
+            {
+                0.299f, 0.587f, 0.114f, 0, 0,
+                0.299f, 0.587f, 0.114f, 0, 0,
+                0.299f, 0.587f, 0.114f, 0, 0,
+                0, 0, 0, 1, 0
+            });
+        }
+
+        for (var ty = firstTileY; ty <= lastTileY; ty++)
+        {
+            for (var tx = firstTileX; tx <= lastTileX; tx++)
+            {
+                var tile = layer.Pixels.GetTileOrNull(tx, ty);
+                if (tile == null) continue;
+
+                var clipLeft = Math.Max(sourceRegion.X, tx * ts);
+                var clipTop = Math.Max(sourceRegion.Y, ty * ts);
+                var clipRight = Math.Min(sourceRegion.Right, tx * ts + ts);
+                var clipBottom = Math.Min(sourceRegion.Bottom, ty * ts + ts);
+                var tileW = clipRight - clipLeft;
+                var tileH = clipBottom - clipTop;
+                if (tileW <= 0 || tileH <= 0) continue;
+
+                var srcX = clipLeft - tx * ts;
+                var srcY = clipTop - ty * ts;
+                var destX = clipLeft + offsetX - originX;
+                var destY = clipTop + offsetY - originY;
+
+                if (needsPreprocess)
+                {
+                    var processed = PreprocessTile(tile, ts, clipLeft, clipTop, clipRight, clipBottom,
+                        tx, ty, hasLayerColor, layer.LayerColor, expressionMode);
+                    fixed (byte* pp = processed)
+                    {
+                        var info = new SKImageInfo(tileW, tileH, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+                        using var tileBmp = new SKBitmap();
+                        tileBmp.InstallPixels(info, (IntPtr)pp, tileW * 4);
+                        paint.Color = new SKColor(255, 255, 255, opacityByte);
+                        if (grayFilter != null) paint.ColorFilter = grayFilter;
+                        canvas.DrawBitmap(tileBmp, destX, destY, paint);
+                        if (grayFilter != null) paint.ColorFilter = null;
+                    }
+                }
+                else
+                {
+                    fixed (byte* pixels = tile)
+                    {
+                        var rowBytes = ts * 4;
+                        var srcOffset = (srcY * ts + srcX) * 4;
+                        var info = new SKImageInfo(tileW, tileH, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+                        using var tileBmp = new SKBitmap();
+                        tileBmp.InstallPixels(info, (IntPtr)(pixels + srcOffset), rowBytes);
+                        paint.Color = new SKColor(255, 255, 255, opacityByte);
+                        if (grayFilter != null) paint.ColorFilter = grayFilter;
+                        canvas.DrawBitmap(tileBmp, destX, destY, paint);
+                        if (grayFilter != null) paint.ColorFilter = null;
+                    }
+                }
+            }
+        }
+    }
+
+    private static unsafe byte[] PreprocessTile(byte[] tile, int ts,
+        int clipLeft, int clipTop, int clipRight, int clipBottom,
+        int tx, int ty, bool hasLayerColor, Avalonia.Media.Color? layerColor,
+        ExpressionColorMode expressionMode)
+    {
+        var tileW = clipRight - clipLeft;
+        var tileH = clipBottom - clipTop;
+        var srcX = clipLeft - tx * ts;
+        var srcY = clipTop - ty * ts;
+        var result = new byte[tileW * tileH * 4];
+
+        fixed (byte* src = tile)
+        fixed (byte* dst = result)
+        {
+            for (int y = 0; y < tileH; y++)
+            {
+                var sRow = src + ((srcY + y) * ts + srcX) * 4;
+                var dRow = dst + y * tileW * 4;
+                for (int x = 0; x < tileW; x++)
+                {
+                    byte b = sRow[x * 4];
+                    byte g = sRow[x * 4 + 1];
+                    byte r = sRow[x * 4 + 2];
+                    byte a = sRow[x * 4 + 3];
+
+                    if (a == 0) continue;
+
+                    if (hasLayerColor && layerColor is { } lc)
+                    {
+                        var lum = (r * 299 + g * 587 + b * 114) / 1000;
+                        var ink = 255 - lum;
+                        b = (byte)(lum + (lc.B * ink) / 255);
+                        g = (byte)(lum + (lc.G * ink) / 255);
+                        r = (byte)(lum + (lc.R * ink) / 255);
+                    }
+
+                    if (expressionMode == ExpressionColorMode.Monochrome)
+                    {
+                        var lum = (r * 299 + g * 587 + b * 114) / 1000;
+                        byte gray = lum >= 128 ? (byte)255 : (byte)0;
+                        b = g = r = gray;
+                    }
+
+                    dRow[x * 4] = b;
+                    dRow[x * 4 + 1] = g;
+                    dRow[x * 4 + 2] = r;
+                    dRow[x * 4 + 3] = a;
+                }
+            }
+        }
+        return result;
+    }
+
+    // ── CPU fallback compositing ─────────────────────────────────────────────
+
+    private unsafe void CompositeRenderList(byte* dst, int dstStride, int width, int height,
+        IReadOnlyList<RenderItem> renderList, double opacityScale, PixelRegion clip, int originX, int originY)
+    {
+        if (opacityScale <= 0) return;
+
+        for (int i = 0; i < renderList.Count; i++)
+        {
+            var item = renderList[i];
+            if (!item.Layer.IsVisible) continue;
+
+            if (item.IsClipped && item.BaseLayerIndex >= 0)
+            {
+                var baseLayer = renderList[item.BaseLayerIndex].Layer;
+                if (!baseLayer.IsVisible) continue;
+                if (item.Layer.IsGroup)
+                    CompositeClippedGroup(dst, dstStride, width, height, item.Layer, baseLayer, opacityScale, clip, originX, originY);
+                else
+                    CompositeClippedLayer(dst, dstStride, width, height, item.Layer, baseLayer, opacityScale, clip, originX, originY);
+            }
+            else if (item.Layer.IsGroup)
+            {
+                CompositeGroup(dst, dstStride, width, height, item.Layer, opacityScale, clip, originX, originY);
+            }
+            else
+            {
+                CompositeLayer(dst, dstStride, width, height, item.Layer, opacityScale, clip, originX, originY);
             }
         }
     }

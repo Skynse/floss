@@ -433,6 +433,15 @@ public sealed class ToolGroupConfig
                 AddToCategory(group, preset.Id, asset.Category);
             }
         }
+
+        // Remove placeholder presets from brush-engine groups that now have
+        // asset-backed presets superseding them.
+        foreach (var group in Groups)
+        {
+            if (!group.Presets.Any(p => p.BrushId != null)) continue;
+            group.Presets.RemoveAll(p => p.BrushId == null
+                && p.OutputProcess == OutputProcessType.DirectDraw);
+        }
     }
 
     private static void AddToCategory(ToolGroup group, string presetId, string categoryName)
