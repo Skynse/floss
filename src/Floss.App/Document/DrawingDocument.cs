@@ -12,6 +12,7 @@ public sealed class DrawingDocument : IDisposable
 {
     public void Dispose()
     {
+        foreach (var l in _layers) l.Dispose();
         _layers.Clear();
         _undo.Clear();
         _redo.Clear();
@@ -161,6 +162,7 @@ public sealed class DrawingDocument : IDisposable
 
     public void ClearForImport()
     {
+        NotifyLayerRemovedRecursive(_layers);
         foreach (var l in _layers) l.Dispose();
         _layers.Clear();
         _undo.Clear();
@@ -173,6 +175,16 @@ public sealed class DrawingDocument : IDisposable
         CommittedStrokeCount = 0;
         Selection.Resize(Width, Height);
         Selection.Clear();
+    }
+
+    private void NotifyLayerRemovedRecursive(List<DrawingLayer> layers)
+    {
+        foreach (var l in layers)
+        {
+            LayerRemoved?.Invoke(this, l);
+            if (l.Children.Count > 0)
+                NotifyLayerRemovedRecursive(l.Children);
+        }
     }
 
     public void ReplaceWith(DrawingDocument source)

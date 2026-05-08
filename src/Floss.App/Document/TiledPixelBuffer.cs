@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.IO.Compression;
 using SkiaSharp;
 
 namespace Floss.App.Document;
@@ -8,8 +10,12 @@ public sealed class TiledPixelBuffer
 {
     public const int TileSize = 64;
     private const int BytesPerPixel = 4;
+    private const int TileBytes = TileSize * TileSize * BytesPerPixel;
 
+    // Hot raw tiles — currently in active use.
     private readonly Dictionary<(int X, int Y), byte[]> _tiles = [];
+    // Cold compressed tiles — swapped out to reduce memory.
+    private readonly Dictionary<(int X, int Y), byte[]> _compressed = [];
 
     public TiledPixelBuffer(int width, int height)
     {
@@ -21,10 +27,13 @@ public sealed class TiledPixelBuffer
 
     public int Width => Math.Max(1, MaxX - MinX);
     public int Height => Math.Max(1, MaxY - MinY);
+    public PixelRegion Bounds => new(MinX, MinY, Width, Height);
     public int MinX { get; private set; }
     public int MinY { get; private set; }
     public int MaxX { get; private set; }
     public int MaxY { get; private set; }
+
+    public int TileCount => _tiles.Count + _compressed.Count;
 
     public void Resize(int width, int height)
     {
@@ -33,6 +42,7 @@ public sealed class TiledPixelBuffer
         MaxX = Math.Max(1, width);
         MaxY = Math.Max(1, height);
         _tiles.Clear();
+        _compressed.Clear();
     }
 
     private void ExtendBounds(int left, int top, int right, int bottom)
@@ -43,48 +53,58 @@ public sealed class TiledPixelBuffer
         if (bottom > MaxY) MaxY = bottom;
     }
 
-    public PixelRegion Bounds => new(MinX, MinY, Width, Height);
+    // ── Compression ────────────────────────────────────────────────────────────
 
-    public PixelRegion ContentTileBounds
+    public void CompressTiles()
     {
-        get
+        if (_tiles.Count == 0) return;
+
+        var toCompress = new List<((int X, int Y) Key, byte[] Tile)>(_tiles.Count);
+        foreach (var (key, tile) in _tiles)
+            toCompress.Add((key, tile));
+        _tiles.Clear();
+
+        foreach (var (key, tile) in toCompress)
         {
-            if (_tiles.Count == 0) return PixelRegion.Empty;
-
-            var first = true;
-            var minX = 0;
-            var minY = 0;
-            var maxX = 0;
-            var maxY = 0;
-
-            foreach (var key in _tiles.Keys)
-            {
-                var x = key.X * TileSize;
-                var y = key.Y * TileSize;
-                if (first)
-                {
-                    minX = x;
-                    minY = y;
-                    maxX = x + TileSize;
-                    maxY = y + TileSize;
-                    first = false;
-                }
-                else
-                {
-                    minX = Math.Min(minX, x);
-                    minY = Math.Min(minY, y);
-                    maxX = Math.Max(maxX, x + TileSize);
-                    maxY = Math.Max(maxY, y + TileSize);
-                }
-            }
-
-            return new PixelRegion(minX, minY, maxX - minX, maxY - minY);
+            var compressed = Deflate(tile);
+            _compressed[key] = compressed.Length < tile.Length ? compressed : tile;
         }
     }
+
+    private byte[] EnsureRaw((int X, int Y) key)
+    {
+        if (_tiles.TryGetValue(key, out var raw))
+            return raw;
+
+        if (!_compressed.Remove(key, out var compressed))
+            return null!;
+
+        raw = IsProbablyDeflated(compressed) ? Inflate(compressed) : compressed;
+        _tiles[key] = raw;
+        return raw;
+    }
+
+    private static bool IsProbablyDeflated(byte[] data)
+        => data.Length != TileBytes;
+
+    // ── Tile lookup ────────────────────────────────────────────────────────────
+
+    public byte[]? GetTileOrNull(int tileX, int tileY)
+    {
+        var key = (tileX, tileY);
+        if (_tiles.TryGetValue(key, out var raw))
+            return raw;
+        if (_compressed.ContainsKey(key))
+            return EnsureRaw(key);
+        return null;
+    }
+
+    // ── Clear ──────────────────────────────────────────────────────────────────
 
     public void Clear()
     {
         _tiles.Clear();
+        _compressed.Clear();
     }
 
     public void Clear(PixelRegion region)
@@ -102,6 +122,8 @@ public sealed class TiledPixelBuffer
 
         PruneTransparentTiles(region);
     }
+
+    // ── Capture / Restore ──────────────────────────────────────────────────────
 
     public byte[] Capture(PixelRegion region)
     {
@@ -145,17 +167,29 @@ public sealed class TiledPixelBuffer
             {
                 var key = (tx, ty);
                 if (target.ContainsKey(key)) continue;
-                target.Add(key, CaptureTile(tx, ty));
+
+                var raw = EnsureRaw(key);
+                if (raw == null)
+                {
+                    target.Add(key, null);
+                    continue;
+                }
+
+                var copy = new byte[raw.Length];
+                Buffer.BlockCopy(raw, 0, copy, 0, raw.Length);
+                target.Add(key, copy);
             }
         }
     }
 
     public byte[]? CaptureTile(int tileX, int tileY)
     {
-        if (!_tiles.TryGetValue((tileX, tileY), out var tile)) return null;
+        var key = (tileX, tileY);
+        var raw = EnsureRaw(key);
+        if (raw == null) return null;
 
-        var copy = new byte[tile.Length];
-        Buffer.BlockCopy(tile, 0, copy, 0, tile.Length);
+        var copy = new byte[raw.Length];
+        Buffer.BlockCopy(raw, 0, copy, 0, raw.Length);
         return copy;
     }
 
@@ -163,15 +197,9 @@ public sealed class TiledPixelBuffer
     {
         if (region.IsEmpty || bytes.Length == 0) return;
 
-        // Defensive: unbounded painting can expand Pixels.Bounds after Capture.
-        // If the caller passes a region larger than the byte array, clamp so we
-        // never read past the end of the array.
         var expected = region.Width * region.Height * BytesPerPixel;
         if (bytes.Length != expected)
         {
-            // The captured region was smaller/larger than what the caller asked
-            // to restore.  Clamp to the intersection of the requested region and
-            // the region the byte array actually represents.
             var actualHeight = bytes.Length / (region.Width * BytesPerPixel);
             if (actualHeight <= 0) return;
             region = new PixelRegion(region.X, region.Y, region.Width, Math.Min(region.Height, actualHeight));
@@ -199,18 +227,22 @@ public sealed class TiledPixelBuffer
         if (bytes == null || IsTransparent(bytes))
         {
             _tiles.Remove(key);
+            _compressed.Remove(key);
             return;
         }
 
-        // Reuse the existing tile array if present — avoids 16 KB allocation per undo tile.
-        if (!_tiles.TryGetValue(key, out var tile) || tile.Length != bytes.Length)
+        var raw = EnsureRaw(key);
+        if (raw == null || raw.Length != bytes.Length)
         {
-            tile = new byte[bytes.Length];
-            _tiles[key] = tile;
+            raw = new byte[bytes.Length];
+            _tiles[key] = raw;
+            _compressed.Remove(key);
             ExtendBounds(tileX * TileSize, tileY * TileSize, (tileX + 1) * TileSize, (tileY + 1) * TileSize);
         }
-        Buffer.BlockCopy(bytes, 0, tile, 0, bytes.Length);
+        Buffer.BlockCopy(bytes, 0, raw, 0, bytes.Length);
     }
+
+    // ── Bulk copy ──────────────────────────────────────────────────────────────
 
     public void CopyFromBgra(byte[] src, int srcWidth, int srcHeight)
     {
@@ -231,7 +263,7 @@ public sealed class TiledPixelBuffer
                 var tileW = Math.Min(TileSize, copyW - tileX);
                 if (!HasAnyAlpha(src, srcWidth, tileX, tileY, tileW, tileH)) continue;
 
-                var tile = new byte[TileSize * TileSize * BytesPerPixel];
+                var tile = new byte[TileBytes];
                 for (var y = 0; y < tileH; y++)
                 {
                     var srcOffset = ((tileY + y) * srcWidth + tileX) * BytesPerPixel;
@@ -240,6 +272,7 @@ public sealed class TiledPixelBuffer
                 }
 
                 _tiles[(tx, ty)] = tile;
+                _compressed.Remove((tx, ty));
             }
         }
     }
@@ -260,6 +293,8 @@ public sealed class TiledPixelBuffer
 
         PruneTransparentTiles(region);
     }
+
+    // ── Skia rendering ─────────────────────────────────────────────────────────
 
     public unsafe void RenderWithSkia(PixelRegion region, Action<SKCanvas> render)
     {
@@ -285,10 +320,13 @@ public sealed class TiledPixelBuffer
         PruneTransparentTiles(region);
     }
 
+    // ── Pixel access ───────────────────────────────────────────────────────────
+
     public void ReadPixel(int x, int y, byte[] dst, int dstOffset)
     {
         var tileKey = ToTileKey(x, y);
-        if (!_tiles.TryGetValue(tileKey, out var tile))
+        var tile = EnsureRaw(tileKey);
+        if (tile == null)
         {
             dst[dstOffset + 0] = 0;
             dst[dstOffset + 1] = 0;
@@ -326,7 +364,8 @@ public sealed class TiledPixelBuffer
 
     public void GetPixel(int x, int y, out byte b, out byte g, out byte r, out byte a)
     {
-        if (!_tiles.TryGetValue(ToTileKey(x, y), out var tile))
+        var tile = EnsureRaw(ToTileKey(x, y));
+        if (tile == null)
         {
             b = g = r = a = 0;
             return;
@@ -338,6 +377,8 @@ public sealed class TiledPixelBuffer
         r = tile[offset + 2];
         a = tile[offset + 3];
     }
+
+    // ── Queries ────────────────────────────────────────────────────────────────
 
     public bool HasNonTransparentPixels(PixelRegion region)
     {
@@ -363,9 +404,38 @@ public sealed class TiledPixelBuffer
         return found;
     }
 
+    public PixelRegion ContentTileBounds
+    {
+        get
+        {
+            var total = TileCount;
+            if (total == 0) return PixelRegion.Empty;
+
+            var first = true;
+            var minX = 0;
+            var minY = 0;
+            var maxX = 0;
+            var maxY = 0;
+
+            void Visit(int tx, int ty)
+            {
+                var x = tx * TileSize;
+                var y = ty * TileSize;
+                if (first) { minX = x; minY = y; maxX = x + TileSize; maxY = y + TileSize; first = false; }
+                else { minX = Math.Min(minX, x); minY = Math.Min(minY, y); maxX = Math.Max(maxX, x + TileSize); maxY = Math.Max(maxY, y + TileSize); }
+            }
+
+            foreach (var key in _tiles.Keys) Visit(key.X, key.Y);
+            foreach (var key in _compressed.Keys) Visit(key.X, key.Y);
+
+            return new PixelRegion(minX, minY, maxX - minX, maxY - minY);
+        }
+    }
+
     public PixelRegion ComputeContentBounds()
     {
-        if (_tiles.Count == 0) return PixelRegion.Empty;
+        var total = TileCount;
+        if (total == 0) return PixelRegion.Empty;
 
         var minX = int.MaxValue;
         var minY = int.MaxValue;
@@ -373,22 +443,18 @@ public sealed class TiledPixelBuffer
         var maxY = int.MinValue;
         var found = false;
 
-        foreach (var (key, tile) in _tiles)
+        void CheckTile(int tx, int ty, byte[] tileData)
         {
-            var tileBaseX = key.X * TileSize;
-            var tileBaseY = key.Y * TileSize;
-
+            var tileBaseX = tx * TileSize;
+            var tileBaseY = ty * TileSize;
             for (var y = 0; y < TileSize; y++)
             {
                 var py = tileBaseY + y;
-
                 for (var x = 0; x < TileSize; x++)
                 {
-                    var px = tileBaseX + x;
-
                     var offset = (y * TileSize + x) * BytesPerPixel + 3;
-                    if (tile[offset] == 0) continue;
-
+                    if (tileData[offset] == 0) continue;
+                    var px = tileBaseX + x;
                     if (px < minX) minX = px;
                     if (py < minY) minY = py;
                     if (px > maxX) maxX = px;
@@ -398,12 +464,23 @@ public sealed class TiledPixelBuffer
             }
         }
 
+        // Decompress on demand for bounds check — this is cheap (called rarely).
+        foreach (var (key, tile) in _tiles)
+            CheckTile(key.X, key.Y, tile);
+        foreach (var (key, compressed) in _compressed)
+        {
+            var raw = IsProbablyDeflated(compressed) ? Inflate(compressed) : compressed;
+            CheckTile(key.X, key.Y, raw);
+            _tiles[key] = raw;
+            _compressed.Remove(key);
+        }
+
         return found ? new PixelRegion(minX, minY, maxX - minX + 1, maxY - minY + 1) : PixelRegion.Empty;
     }
 
     public bool HasContentTiles(PixelRegion region)
     {
-        if (region.IsEmpty || _tiles.Count == 0) return false;
+        if (region.IsEmpty || TileCount == 0) return false;
 
         var firstTileX = FloorDiv(region.X, TileSize);
         var firstTileY = FloorDiv(region.Y, TileSize);
@@ -414,60 +491,83 @@ public sealed class TiledPixelBuffer
         {
             for (var tx = firstTileX; tx <= lastTileX; tx++)
             {
-                if (_tiles.ContainsKey((tx, ty))) return true;
+                var key = (tx, ty);
+                if (_tiles.ContainsKey(key) || _compressed.ContainsKey(key))
+                    return true;
             }
         }
 
         return false;
     }
 
-    public byte[]? GetTileOrNull(int tileX, int tileY)
-        => _tiles.TryGetValue((tileX, tileY), out var tile) ? tile : null;
+    // ── Blend onto flat buffer ─────────────────────────────────────────────────
 
-    // SrcOver-blend this buffer's pixels into a pre-allocated flat BGRA array.
-    // Intended for building a cheap composite reference before a flood fill.
     public void BlendOnto(byte[] dst, int dstWidth, int dstHeight, double opacity)
     {
         if (opacity <= 0) return;
         int opInt = (int)(opacity * 255 + 0.5);
+
         foreach (var ((tx, ty), tile) in _tiles)
+            BlendTileOnto(tx, ty, tile, dst, dstWidth, dstHeight, opInt);
+
+        foreach (var ((tx, ty), compressed) in _compressed)
         {
-            int ox = tx * TileSize;
-            int oy = ty * TileSize;
-            for (int py = 0; py < TileSize; py++)
+            var raw = IsProbablyDeflated(compressed) ? Inflate(compressed) : compressed;
+            BlendTileOnto(tx, ty, raw, dst, dstWidth, dstHeight, opInt);
+            _tiles[(tx, ty)] = raw;
+            _compressed.Remove((tx, ty));
+        }
+    }
+
+    private static void BlendTileOnto(int tx, int ty, byte[] tile, byte[] dst, int dstWidth, int dstHeight, int opInt)
+    {
+        int ox = tx * TileSize;
+        int oy = ty * TileSize;
+        for (int py = 0; py < TileSize; py++)
+        {
+            int docY = oy + py;
+            if ((uint)docY >= (uint)dstHeight) continue;
+            int rowBase = docY * dstWidth;
+            int srcRow = py * TileSize;
+            for (int px = 0; px < TileSize; px++)
             {
-                int docY = oy + py;
-                if ((uint)docY >= (uint)dstHeight) continue;
-                int rowBase = docY * dstWidth;
-                int srcRow = py * TileSize;
-                for (int px = 0; px < TileSize; px++)
-                {
-                    int docX = ox + px;
-                    if ((uint)docX >= (uint)dstWidth) continue;
-                    int srcOff = (srcRow + px) * BytesPerPixel;
-                    int srcA = tile[srcOff + 3] * opInt / 255;
-                    if (srcA == 0) continue;
-                    int dstOff = (rowBase + docX) * BytesPerPixel;
-                    int dstA = dst[dstOff + 3];
-                    int outA = srcA + dstA * (255 - srcA) / 255;
-                    if (outA == 0) continue;
-                    dst[dstOff + 0] = (byte)((tile[srcOff + 0] * srcA + dst[dstOff + 0] * dstA * (255 - srcA) / 255) / outA);
-                    dst[dstOff + 1] = (byte)((tile[srcOff + 1] * srcA + dst[dstOff + 1] * dstA * (255 - srcA) / 255) / outA);
-                    dst[dstOff + 2] = (byte)((tile[srcOff + 2] * srcA + dst[dstOff + 2] * dstA * (255 - srcA) / 255) / outA);
-                    dst[dstOff + 3] = (byte)outA;
-                }
+                int docX = ox + px;
+                if ((uint)docX >= (uint)dstWidth) continue;
+                int srcOff = (srcRow + px) * BytesPerPixel;
+                int srcA = tile[srcOff + 3] * opInt / 255;
+                if (srcA == 0) continue;
+                int dstOff = (rowBase + docX) * BytesPerPixel;
+                int dstA = dst[dstOff + 3];
+                int outA = srcA + dstA * (255 - srcA) / 255;
+                if (outA == 0) continue;
+                dst[dstOff + 0] = (byte)((tile[srcOff + 0] * srcA + dst[dstOff + 0] * dstA * (255 - srcA) / 255) / outA);
+                dst[dstOff + 1] = (byte)((tile[srcOff + 1] * srcA + dst[dstOff + 1] * dstA * (255 - srcA) / 255) / outA);
+                dst[dstOff + 2] = (byte)((tile[srcOff + 2] * srcA + dst[dstOff + 2] * dstA * (255 - srcA) / 255) / outA);
+                dst[dstOff + 3] = (byte)outA;
             }
         }
     }
 
+    // ── Bulk capture/restore (file I/O, layer snapshots) ───────────────────────
+
     public Dictionary<(int X, int Y), byte[]> CaptureTiles()
     {
-        var result = new Dictionary<(int X, int Y), byte[]>(_tiles.Count);
+        var total = TileCount;
+        var result = new Dictionary<(int X, int Y), byte[]>(total);
         foreach (var (key, tile) in _tiles)
         {
             var copy = new byte[tile.Length];
             Buffer.BlockCopy(tile, 0, copy, 0, tile.Length);
             result[key] = copy;
+        }
+        foreach (var (key, compressed) in _compressed)
+        {
+            var raw = IsProbablyDeflated(compressed) ? Inflate(compressed) : compressed;
+            var copy = new byte[raw.Length];
+            Buffer.BlockCopy(raw, 0, copy, 0, raw.Length);
+            result[key] = copy;
+            _tiles[key] = raw;
+            _compressed.Remove(key);
         }
         return result;
     }
@@ -475,6 +575,7 @@ public sealed class TiledPixelBuffer
     public void RestoreTiles(Dictionary<(int X, int Y), byte[]> tiles)
     {
         _tiles.Clear();
+        _compressed.Clear();
         foreach (var (key, tile) in tiles)
         {
             var copy = new byte[tile.Length];
@@ -483,17 +584,19 @@ public sealed class TiledPixelBuffer
         }
     }
 
+    // ── Internal tile management ───────────────────────────────────────────────
+
     private byte[] GetOrCreateTile(int x, int y)
     {
         var key = ToTileKey(x, y);
-        if (!_tiles.TryGetValue(key, out var tile))
-        {
-            tile = new byte[TileSize * TileSize * BytesPerPixel];
-            _tiles.Add(key, tile);
-            ExtendBounds(key.X * TileSize, key.Y * TileSize, key.X * TileSize + TileSize, key.Y * TileSize + TileSize);
-        }
+        var raw = EnsureRaw(key);
+        if (raw != null) return raw;
 
-        return tile;
+        raw = new byte[TileBytes];
+        _tiles.Add(key, raw);
+        _compressed.Remove(key);
+        ExtendBounds(key.X * TileSize, key.Y * TileSize, key.X * TileSize + TileSize, key.Y * TileSize + TileSize);
+        return raw;
     }
 
     private void ForEachTile(PixelRegion region, Action<int, int, byte[], PixelRegion> action, bool create)
@@ -508,16 +611,18 @@ public sealed class TiledPixelBuffer
             for (var tx = firstTileX; tx <= lastTileX; tx++)
             {
                 var key = (tx, ty);
-                if (!_tiles.TryGetValue(key, out var tile))
+                var raw = EnsureRaw(key);
+                if (raw == null)
                 {
                     if (!create) continue;
-                    tile = new byte[TileSize * TileSize * BytesPerPixel];
-                    _tiles.Add(key, tile);
+                    raw = new byte[TileBytes];
+                    _tiles.Add(key, raw);
+                    _compressed.Remove(key);
                     ExtendBounds(tx * TileSize, ty * TileSize, (tx + 1) * TileSize, (ty + 1) * TileSize);
                 }
 
                 var tileRegion = new PixelRegion(tx * TileSize, ty * TileSize, TileSize, TileSize).Intersect(region);
-                if (!tileRegion.IsEmpty) action(tx, ty, tile, tileRegion);
+                if (!tileRegion.IsEmpty) action(tx, ty, raw, tileRegion);
             }
         }
     }
@@ -534,18 +639,44 @@ public sealed class TiledPixelBuffer
             for (var tx = firstTileX; tx <= lastTileX; tx++)
             {
                 var key = (tx, ty);
-                if (_tiles.TryGetValue(key, out var tile) && IsTransparent(tile))
-                {
+                if (_tiles.TryGetValue(key, out var raw) && IsTransparent(raw))
                     _tiles.Remove(key);
+                else if (_compressed.TryGetValue(key, out var compressed))
+                {
+                    var decomp = IsProbablyDeflated(compressed) ? Inflate(compressed) : compressed;
+                    if (IsTransparent(decomp))
+                        _compressed.Remove(key);
+                    else
+                    {
+                        _tiles[key] = decomp;
+                        _compressed.Remove(key);
+                    }
                 }
             }
         }
     }
 
+    // ── Compression primitives ─────────────────────────────────────────────────
+
+    private static byte[] Deflate(byte[] raw)
+    {
+        using var output = new MemoryStream(raw.Length / 4);
+        using (var deflate = new DeflateStream(output, CompressionLevel.Fastest, leaveOpen: true))
+            deflate.Write(raw, 0, raw.Length);
+        return output.ToArray();
+    }
+
+    private static byte[] Inflate(byte[] compressed)
+    {
+        using var input = new MemoryStream(compressed, writable: false);
+        using var deflate = new DeflateStream(input, CompressionMode.Decompress);
+        using var output = new MemoryStream(TileBytes);
+        deflate.CopyTo(output);
+        return output.ToArray();
+    }
+
     private static unsafe bool IsTransparent(byte[] tile)
     {
-        // Read as uint (BGRA little-endian) — alpha is the top byte.
-        // Checks 4 bytes at a time instead of every 4th byte individually.
         fixed (byte* p = tile)
         {
             var up = (uint*)p;

@@ -254,6 +254,7 @@ public sealed class LayerCompositor : IDisposable
                 CompositeLayerList(tempPtr, dirty.Width * 4, dirty.Width, dirty.Height, group.Children, opacityScale: 1.0, dirty, dirty.X, dirty.Y);
             }
             cache.Buffer.CopyFromBgra(dirty, temp, dirty.Width * 4);
+            cache.Buffer.CompressTiles();
         }
 
         return cache.Buffer;
