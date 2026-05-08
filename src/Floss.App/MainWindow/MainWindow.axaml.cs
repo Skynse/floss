@@ -2111,6 +2111,7 @@ public partial class MainWindow : Window
         RefreshGroupPresets();
         App.ToolGroups.Save();
         SaveActiveToolSelection();
+        RefreshToolProperties();
     }
 
     private void CaptureActiveBrushToPreset()

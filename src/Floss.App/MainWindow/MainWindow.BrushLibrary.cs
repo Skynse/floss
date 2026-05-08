@@ -504,6 +504,7 @@ public partial class MainWindow : Window
         }
 
         UpdateStatus();
+        RefreshToolProperties();
     }
 
     private void ShowPresetPropertiesDialog(ToolGroup group, ToolPreset preset)
