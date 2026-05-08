@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using SkiaSharp;
 
 namespace Floss.App.Brushes;
@@ -17,9 +18,7 @@ public enum BrushTipShape
 
 public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circle, float aspectRatio = 1.0f) : IBrushTip
 {
-    private SKBitmap? _cachedMask;
-    private int _cachedSize;
-    private float _cachedHardness;
+    private readonly Dictionary<(int Size, int Hardness), SKBitmap> _maskCache = [];
 
     public BrushTipShape Shape { get; } = shape;
     public float AspectRatio { get; } = aspectRatio;
@@ -28,21 +27,23 @@ public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circl
     {
         var size = Math.Max(1, baseSize);
         var h = Math.Clamp(hardness, 0.001f, 1.0f);
-        if (_cachedMask != null && _cachedSize == size && MathF.Abs(_cachedHardness - h) < 0.0001f)
-            return _cachedMask;
+        var key = (size, QuantizeHardness(h));
+        if (_maskCache.TryGetValue(key, out var cached))
+            return cached;
 
-        _cachedMask?.Dispose();
-        _cachedSize = size;
-        _cachedHardness = h;
-        _cachedMask = Shape switch
+        var mask = Shape switch
         {
             BrushTipShape.Chalk => GenerateChalk(size, h),
             BrushTipShape.Bristle => GenerateBristle(size, h),
             BrushTipShape.Scatter => GenerateScatter(size, h),
             _ => GenerateSmooth(size, h),
         };
-        return _cachedMask;
+        _maskCache[key] = mask;
+        return mask;
     }
+
+    private static int QuantizeHardness(float hardness)
+        => Math.Clamp((int)MathF.Round(Math.Clamp(hardness, 0.001f, 1f) * 255f), 0, 255);
 
     private unsafe SKBitmap GenerateSmooth(int size, float hardness)
     {

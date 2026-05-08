@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using SkiaSharp;
@@ -10,9 +11,7 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
     private readonly byte[] _pngBytes;
     private readonly SKBitmap _source;
     private readonly bool _sourceHasUsefulAlpha;
-    private SKBitmap? _cachedMask;
-    private int _cachedSize;
-    private float _cachedHardness;
+    private readonly Dictionary<(int Size, int Hardness), SKBitmap> _maskCache = [];
 
     public ImageBrushTip(string pngPath)
         : this(File.ReadAllBytes(pngPath))
@@ -32,14 +31,10 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
     {
         var size = Math.Max(1, baseSize);
         var clampedHardness = Math.Clamp(hardness, 0.001f, 1.0f);
+        var key = (size, QuantizeHardness(clampedHardness));
 
-        if (_cachedMask != null && _cachedSize == size
-            && Math.Abs(_cachedHardness - clampedHardness) < 0.0001f)
-            return _cachedMask;
-
-        _cachedMask?.Dispose();
-        _cachedSize = size;
-        _cachedHardness = clampedHardness;
+        if (_maskCache.TryGetValue(key, out var cached))
+            return cached;
 
         // Step 1: scale source to target size with optional blur for hardness.
         // Preserve the source aspect ratio; sampled brush tips are often not square.
@@ -68,14 +63,14 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
         }
 
         // Step 2: extract alpha into Alpha8
-        _cachedMask = new SKBitmap(new SKImageInfo(size, size, SKColorType.Alpha8, SKAlphaType.Unpremul));
+        var mask = new SKBitmap(new SKImageInfo(size, size, SKColorType.Alpha8, SKAlphaType.Unpremul));
 
         unsafe
         {
             var srcPtr = (byte*)scaled.GetPixels().ToPointer();
-            var dstPtr = (byte*)_cachedMask.GetPixels().ToPointer();
+            var dstPtr = (byte*)mask.GetPixels().ToPointer();
             var srcRowBytes = scaled.RowBytes;
-            var dstRowBytes = _cachedMask.RowBytes;
+            var dstRowBytes = mask.RowBytes;
 
             for (var y = 0; y < size; y++)
             {
@@ -106,14 +101,20 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
             }
         }
 
-        return _cachedMask;
+        _maskCache[key] = mask;
+        return mask;
     }
 
     public void Dispose()
     {
         _source.Dispose();
-        _cachedMask?.Dispose();
+        foreach (var mask in _maskCache.Values)
+            mask.Dispose();
+        _maskCache.Clear();
     }
+
+    private static int QuantizeHardness(float hardness)
+        => Math.Clamp((int)MathF.Round(Math.Clamp(hardness, 0.001f, 1f) * 255f), 0, 255);
 
     private static unsafe bool DetectUsefulAlpha(SKBitmap bitmap)
     {

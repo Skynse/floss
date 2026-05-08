@@ -65,6 +65,7 @@ internal static class Program
         ("Brush engine does not dispose tip-owned cached masks", BrushTests.BrushEngine_DoesNotDisposeTipOwnedCachedMasks),
         ("Tool controller does not restore stale engine brush state", BrushTests.ToolController_DoesNotOverridePresetBrushState),
         ("Image brush tips preserve source aspect ratio", BrushTests.ImageBrushTip_PreservesAspectRatio),
+        ("Image brush tips keep cached masks stable across sizes", BrushTests.ImageBrushTip_MasksRemainStableAcrossSizes),
         ("ABR preset mapping keeps usable brush dynamics", BrushTests.AbrPresetMapping_KeepsDynamics),
         ("ABR mask cleanup inverts dark-on-light stamps", BrushTests.AbrMaskCleanup_InvertsDarkOnLightMasks),
         ("Preset store round-trips tool groups", PresetStoreTests.ToolGroups_RoundTrip),
@@ -163,7 +164,7 @@ internal static class PresetStoreTests
                 Id = "brush-preset",
                 Name = "Portable Ink",
                 Engine = ToolPresetEngine.Brush,
-                InputProcess = InputProcessType.BrushStroke,
+                InputProcess = InputProcessType.Brush,
                 OutputProcess = OutputProcessType.DirectDraw,
                 BrushId = "brush-asset",
                 AlternateInvocation = new AppKeyBinding(Key.I, KeyModifiers.Alt),
@@ -376,7 +377,7 @@ internal static class PresetStoreTests
                 Id = "preset-one",
                 Name = "Package Brush",
                 Engine = ToolPresetEngine.Brush,
-                InputProcess = InputProcessType.BrushStroke,
+                InputProcess = InputProcessType.Brush,
                 OutputProcess = OutputProcessType.DirectDraw,
                 BrushId = asset.Id,
                 BrushSize = 42
@@ -428,8 +429,8 @@ internal static class PresetStoreTests
                 DefaultEngine = ToolPresetEngine.Brush,
                 Presets =
                 [
-                    new ToolPreset { Id = "preset-one", Name = "One", InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw, BrushId = assetOne.Id },
-                    new ToolPreset { Id = "preset-two", Name = "Two", InputProcess = InputProcessType.BrushStroke, OutputProcess = OutputProcessType.DirectDraw, BrushId = assetTwo.Id },
+                    new ToolPreset { Id = "preset-one", Name = "One", InputProcess = InputProcessType.Brush, OutputProcess = OutputProcessType.DirectDraw, BrushId = assetOne.Id },
+                    new ToolPreset { Id = "preset-two", Name = "Two", InputProcess = InputProcessType.Brush, OutputProcess = OutputProcessType.DirectDraw, BrushId = assetTwo.Id },
                     new ToolPreset { Id = "fill", Name = "Fill", InputProcess = InputProcessType.Click, OutputProcess = OutputProcessType.FloodFill }
                 ],
                 Categories = [new ToolCategory { Name = "All", PresetIds = ["preset-one", "preset-two", "fill"] }]
@@ -1163,7 +1164,7 @@ internal static class BrushTests
         var targetPreset = new ToolPreset
         {
             Name = "Smudge",
-            InputProcess = InputProcessType.BrushStroke,
+            InputProcess = InputProcessType.Brush,
             OutputProcess = OutputProcessType.DirectDraw,
             BrushSize = 80,
             BrushColorMix = true,
@@ -1277,6 +1278,29 @@ internal static class BrushTests
         AssertEx.Equal((byte)0, maskPtr[0 * mask.RowBytes + 4]);
         AssertEx.Equal((byte)255, maskPtr[4 * mask.RowBytes + 4]);
         AssertEx.Equal((byte)0, maskPtr[7 * mask.RowBytes + 4]);
+    }
+
+    public static void ImageBrushTip_MasksRemainStableAcrossSizes()
+    {
+        using var bitmap = new SKBitmap(new SKImageInfo(3, 2, SKColorType.Bgra8888, SKAlphaType.Premul));
+        bitmap.Erase(SKColors.Transparent);
+        bitmap.SetPixel(1, 0, SKColors.White);
+        bitmap.SetPixel(1, 1, SKColors.White);
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        using var tip = new ImageBrushTip(data.ToArray());
+        var first = tip.GenerateMask(24, 1.0f);
+        var firstHandle = first.Handle;
+
+        var second = tip.GenerateMask(64, 1.0f);
+        var third = tip.GenerateMask(24, 0.5f);
+        var firstAgain = tip.GenerateMask(24, 1.0f);
+
+        AssertEx.True(firstHandle != IntPtr.Zero);
+        AssertEx.True(second.Handle != IntPtr.Zero);
+        AssertEx.True(third.Handle != IntPtr.Zero);
+        AssertEx.Equal(firstHandle, first.Handle, "Requesting a different cursor/preview mask must not dispose an active stroke mask.");
+        AssertEx.Equal(firstHandle, firstAgain.Handle, "The original mask should remain cached for its size/hardness key.");
     }
 
     public static void AbrPresetMapping_KeepsDynamics()

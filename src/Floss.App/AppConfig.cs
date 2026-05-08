@@ -10,7 +10,8 @@ public enum BrushCursorMode
     Outline,
     Dot,
     DotAndOutline,
-    None
+    None,
+    BrushShape
 }
 
 public sealed class AppConfig

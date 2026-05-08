@@ -709,6 +709,7 @@ public sealed class SettingsWindow : Window
             Spacing = 4,
             Children =
             {
+                MkBtn(BrushCursorMode.BrushShape, "Brush shape"),
                 MkBtn(BrushCursorMode.Outline, "Size"),
                 MkBtn(BrushCursorMode.Dot, "Dot"),
                 MkBtn(BrushCursorMode.DotAndOutline, "Dot + size"),

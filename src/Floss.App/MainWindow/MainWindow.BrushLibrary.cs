@@ -1532,9 +1532,18 @@ public partial class MainWindow : Window
         {
             _activeBrushAsset.Preset = updated;
             _activeBrushAsset.Tip = BrushTipData.FromTip(updated.Tip);
+            _activeBrushAsset.ShapeData = updated.Shape == null
+                ? null
+                : new BrushTipData
+                {
+                    Kind = BrushTipStorageKind.Procedural,
+                    Shape = updated.Shape.Shape,
+                    AspectRatio = updated.Shape.AspectRatio
+                };
             _dirtyBrushAssetIds.Add(_activeBrushAsset.Id);
         }
         ApplyBrushSettings(updated, syncSliders: false);
+        RefreshGroupPresets();
     }
 
     private void UpdateCurrentBrushFromToolProperties(Func<BrushPreset, BrushPreset> update)
@@ -1554,9 +1563,18 @@ public partial class MainWindow : Window
         {
             _activeBrushAsset.Preset = updated;
             _activeBrushAsset.Tip = BrushTipData.FromTip(updated.Tip);
+            _activeBrushAsset.ShapeData = updated.Shape == null
+                ? null
+                : new BrushTipData
+                {
+                    Kind = BrushTipStorageKind.Procedural,
+                    Shape = updated.Shape.Shape,
+                    AspectRatio = updated.Shape.AspectRatio
+                };
             _dirtyBrushAssetIds.Add(_activeBrushAsset.Id);
         }
         ApplyBrushSettings(updated, syncSliders: false, syncToolPropertiesWindow: false);
+        RefreshGroupPresets();
     }
 
     private void OpenToolProperties()

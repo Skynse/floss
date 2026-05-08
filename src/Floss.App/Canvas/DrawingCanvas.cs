@@ -12,6 +12,7 @@ using Avalonia.Media.Imaging;
 using Floss.App.Brushes;
 using Floss.App.Document;
 using Floss.App.Input;
+using Avalonia.Rendering.SceneGraph;
 using Floss.App.Processes;
 using Floss.App.Processes.Input;
 using Floss.App.Processes.Output;
@@ -37,6 +38,10 @@ public sealed class DrawingCanvas : Control
     private Color _paintColor = Color.Parse("#111111");
     private long _activePointerId = -1;
     private Point _pointerPos;
+    private Point _prevPointerPos;
+    private float _pointerTiltX;
+    private float _pointerTiltY;
+    private float _pointerTwist;
     private Point _lockedPointerPos;
     private bool _isPointerOver;
     private bool _isCursorPreviewLocked;
@@ -901,12 +906,15 @@ public sealed class DrawingCanvas : Control
             var pos = _isCursorPreviewLocked ? _lockedPointerPos : _pointerPos;
             var t = Math.Max(0.5, 1.5 / CanvasZoom);
             bool isBrushLike = _toolController.ActiveTool is CompositeTool ct && ct.Input.HasBrushCursor;
-            if (_forceBrushOutlineCursor || (isBrushLike && mode is BrushCursorMode.Outline or BrushCursorMode.DotAndOutline))
+            if ((_forceBrushOutlineCursor && mode != BrushCursorMode.BrushShape) || (isBrushLike && mode is BrushCursorMode.Outline or BrushCursorMode.DotAndOutline))
             {
                 var r = ActiveToolCursorSize() * 0.5;
                 context.DrawEllipse(null, new Pen(CursorOuterBrush, t * 3), pos, r, r);
                 context.DrawEllipse(null, new Pen(CursorInnerBrush, t), pos, r, r);
             }
+
+            if (isBrushLike && mode == BrushCursorMode.BrushShape)
+                DrawBrushShapeCursor(context, pos, t);
 
             if (!isBrushLike || mode is BrushCursorMode.Dot or BrushCursorMode.DotAndOutline)
             {
@@ -945,6 +953,218 @@ public sealed class DrawingCanvas : Control
             OutputProcessType.Liquify => _ctx.ActivePreset.LiquifySize,
             _ => _brush.Size
         };
+
+    private void DrawBrushShapeCursor(DrawingContext context, Point pos, double t)
+    {
+        var r = ActiveToolCursorSize() * 0.5;
+        if (r < 0.5) return;
+        var tip = _brush.Tip;
+        if (tip is CompoundBrushTip compound)
+            tip = compound.Layers.Count > 0 ? compound.Layers[0].Tip : tip;
+
+        SKBitmap? tipBitmap = null;
+        if (tip is ImageBrushTip img)
+        {
+            var bmpSize = Math.Clamp((int)(r * 2), 4, 256);
+            tipBitmap = OutlineBitmapFromMask(img.GenerateMask(bmpSize, 1.0f));
+        }
+
+        var angle = ComputeLiveCursorAngle();
+        _cursorAngle = angle;
+
+        context.Custom(new BrushShapeInvertOp(
+            pos, r, t, tip, tipBitmap,
+            Math.Clamp((float)_brush.TipThickness, 0.01f, 1f),
+            _brush.TipDirection,
+            angle));
+    }
+
+    private float _cursorAngle;
+
+    private float ComputeLiveCursorAngle()
+    {
+        var directionContrib = _brush.BaseAngleSource switch
+        {
+            BrushDynamics.AngleSource.DirectionOfLine => DirectionDeg(),
+            BrushDynamics.AngleSource.PenTilt => MathF.Atan2(_pointerTiltX, _pointerTiltY) * (180f / MathF.PI),
+            BrushDynamics.AngleSource.PenTwist => _pointerTwist * (180f / MathF.PI),
+            _ => 0f
+        };
+
+        var target = (float)_brush.Angle + directionContrib;
+        _cursorAngle = LerpAngleDeg(_cursorAngle, target, 0.5f);
+        return _cursorAngle;
+    }
+
+    private float DirectionDeg()
+    {
+        var dx = _pointerPos.X - _prevPointerPos.X;
+        var dy = _pointerPos.Y - _prevPointerPos.Y;
+        if (Math.Abs(dx) < 0.001 && Math.Abs(dy) < 0.001) return _cursorAngle;
+        return MathF.Atan2((float)dy, (float)dx) * (180f / MathF.PI);
+    }
+
+    private static float LerpAngleDeg(float a, float b, float t)
+    {
+        var delta = b - a;
+        if (delta > 180f) delta -= 360f;
+        else if (delta < -180f) delta += 360f;
+        return a + delta * t;
+    }
+
+    private static unsafe SKBitmap OutlineBitmapFromMask(SKBitmap mask)
+    {
+        var w = mask.Width;
+        var h = mask.Height;
+        var bmp = new SKBitmap(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+        var src = (byte*)mask.GetPixels().ToPointer();
+        var dst = (byte*)bmp.GetPixels().ToPointer();
+        const byte threshold = 20;
+
+        for (var y = 0; y < h; y++)
+        {
+            var sRow = src + y * mask.RowBytes;
+            var dRow = dst + y * bmp.RowBytes;
+            for (var x = 0; x < w; x++)
+            {
+                if (sRow[x] <= threshold)
+                {
+                    dRow[x * 4 + 3] = 0;
+                    continue;
+                }
+
+                var isEdge = false;
+                for (var dy = -1; dy <= 1 && !isEdge; dy++)
+                {
+                    var ny = y + dy;
+                    if (ny < 0 || ny >= h) { isEdge = true; continue; }
+                    var nsRow = src + ny * mask.RowBytes;
+                    for (var dx = -1; dx <= 1 && !isEdge; dx++)
+                    {
+                        if (dx == 0 && dy == 0) continue;
+                        var nx = x + dx;
+                        if (nx < 0 || nx >= w) { isEdge = true; break; }
+                        if (nsRow[nx] <= threshold) { isEdge = true; break; }
+                    }
+                }
+
+                if (isEdge)
+                {
+                    dRow[x * 4 + 0] = 255;
+                    dRow[x * 4 + 1] = 255;
+                    dRow[x * 4 + 2] = 255;
+                    dRow[x * 4 + 3] = 255;
+                }
+                else
+                {
+                    dRow[x * 4 + 3] = 0;
+                }
+            }
+        }
+        return bmp;
+    }
+
+    private sealed class BrushShapeInvertOp : ICustomDrawOperation
+    {
+        private readonly Point _pos;
+        private readonly float _r;
+        private readonly float _t;
+        private readonly IBrushTip _tip;
+        private readonly SKBitmap? _bitmap;
+        private readonly float _thickness;
+        private readonly BrushTipDirection _direction;
+        private readonly float _angle;
+
+        public Rect Bounds { get; }
+
+        public BrushShapeInvertOp(
+            Point pos,
+            double r,
+            double t,
+            IBrushTip tip,
+            SKBitmap? bitmap,
+            float thickness,
+            BrushTipDirection direction,
+            float angle)
+        {
+            _pos = pos;
+            _r = (float)r;
+            _t = (float)t;
+            _tip = tip;
+            _bitmap = bitmap;
+            _thickness = thickness;
+            _direction = direction;
+            _angle = angle;
+            var pad = r + t * 2;
+            Bounds = new Rect(pos.X - pad, pos.Y - pad, pad * 2, pad * 2);
+        }
+
+        public bool HitTest(Point p) => false;
+        public bool Equals(ICustomDrawOperation? other) => false;
+        public void Dispose() => _bitmap?.Dispose();
+
+        public void Render(ImmediateDrawingContext context)
+        {
+            var lease = context.TryGetFeature<Avalonia.Skia.ISkiaSharpApiLeaseFeature>()?.Lease();
+            if (lease == null) return;
+            using (lease)
+            {
+                if (_r < 0.5f) return;
+                var canvas = lease.SkCanvas;
+                using var paint = new SKPaint
+                {
+                    Color = SKColors.White,
+                    BlendMode = SKBlendMode.Difference,
+                    IsAntialias = true,
+                    Style = SKPaintStyle.Stroke,
+                    StrokeWidth = _t
+                };
+
+                var cx = (float)_pos.X;
+                var cy = (float)_pos.Y;
+                var scaleX = _direction == BrushTipDirection.Vertical ? _thickness : 1f;
+                var scaleY = _direction == BrushTipDirection.Horizontal ? _thickness : 1f;
+
+                canvas.Save();
+                canvas.Translate(cx, cy);
+                if (Math.Abs(_angle) > 0.001f)
+                    canvas.RotateDegrees(_angle);
+                canvas.Scale(scaleX, scaleY);
+
+                if (_bitmap != null)
+                {
+                    paint.Style = SKPaintStyle.Fill;
+                    canvas.DrawBitmap(_bitmap, new SKRect(-_r, -_r, _r, _r), paint);
+                    canvas.Restore();
+                    return;
+                }
+
+                switch (_tip)
+                {
+                    case ProceduralBrushTip { Shape: BrushTipShape.Ellipse } proc:
+                    {
+                        var asp = Math.Clamp(proc.AspectRatio, 0.05f, 20f);
+                        var rx = asp >= 1 ? _r : _r * asp;
+                        var ry = asp >= 1 ? _r / asp : _r;
+                        canvas.DrawOval(0, 0, rx, ry, paint);
+                        break;
+                    }
+                    case ProceduralBrushTip { Shape: BrushTipShape.Flat or BrushTipShape.Rectangle } proc:
+                    {
+                        var asp = proc.Shape == BrushTipShape.Flat ? 4f : Math.Clamp(proc.AspectRatio, 0.05f, 20f);
+                        var rw = asp >= 1 ? _r : _r * asp;
+                        var rh = asp >= 1 ? _r / asp : _r;
+                        canvas.DrawRect(-rw, -rh, rw * 2, rh * 2, paint);
+                        break;
+                    }
+                    default:
+                        canvas.DrawCircle(0, 0, _r, paint);
+                        break;
+                }
+                canvas.Restore();
+            }
+        }
+    }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
@@ -1007,7 +1227,12 @@ public sealed class DrawingCanvas : Control
         base.OnPointerEntered(e);
         _isPointerOver = true;
         Cursor = IsPaintBlockedByLock ? CursorNo : CursorNone;
-        _pointerPos = e.GetCurrentPoint(this).Position;
+        var pt = e.GetCurrentPoint(this);
+        _pointerPos = pt.Position;
+        _prevPointerPos = pt.Position;
+        _pointerTiltX = (float)pt.Properties.XTilt;
+        _pointerTiltY = (float)pt.Properties.YTilt;
+        _pointerTwist = (float)pt.Properties.Twist;
         InvalidateVisual();
     }
 
@@ -1024,7 +1249,13 @@ public sealed class DrawingCanvas : Control
         base.OnPointerMoved(e);
         var point = e.GetCurrentPoint(this);
         if (!_isCursorPreviewLocked)
+        {
+            _prevPointerPos = _pointerPos;
             _pointerPos = point.Position;
+        }
+        _pointerTiltX = (float)point.Properties.XTilt;
+        _pointerTiltY = (float)point.Properties.YTilt;
+        _pointerTwist = (float)point.Properties.Twist;
 
         if (_isLayerPickDrag)
         {
