@@ -195,6 +195,12 @@ public sealed class DrawingLayer : IDisposable
         MarkThumbnailDirty();
     }
 
+    public void FillSolid(PixelRegion region, Avalonia.Media.Color color)
+    {
+        Pixels.FillSolid(region, color.B, color.G, color.R, color.A);
+        MarkThumbnailDirty();
+    }
+
     public void RestoreTile(int tileX, int tileY, byte[]? bytes)
     {
         Pixels.RestoreTile(tileX, tileY, bytes);

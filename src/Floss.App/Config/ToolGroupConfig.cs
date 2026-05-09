@@ -203,6 +203,30 @@ public sealed class ToolPreset
         BrushDynamicsJson = preset.Dynamics.Serialize();
     }
 
+    public void ClearBrushOverrides()
+    {
+        BrushSize = null;
+        BrushOpacity = null;
+        BrushFlow = null;
+        BrushHardness = null;
+        BrushSpacing = null;
+        BrushSmoothing = null;
+        BrushGrain = null;
+        BrushColorMix = null;
+        BrushColorLoad = null;
+        BrushColorStretch = null;
+        BrushBlurAmount = null;
+        BrushSmudgeMode = null;
+        BrushMixingMode = null;
+        BrushAmountOfPaint = null;
+        BrushDensityOfPaint = null;
+        BrushTipDensity = null;
+        BrushTipThickness = null;
+        BrushTipDirection = null;
+        BrushBlendMode = null;
+        BrushDynamicsJson = null;
+    }
+
     // Brush/Eraser/Smudge — references a BrushAsset on disk; null = use current brush
     public string? BrushId { get; set; }
 

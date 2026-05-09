@@ -547,7 +547,7 @@ public partial class MainWindow
         else if (sc.LayerMerge.Matches(key, mods)) { _canvas.MergeDown(_selectedLayerIndices.Count > 1 ? _selectedLayerIndices.OrderBy(x => x).ToList() : null); e.Handled = true; }
         else if (sc.LayerGroup.Matches(key, mods))
         {
-            if (_selectedLayerIndices.Count > 1)
+            if (_selectedLayerIndices.Count >= 1)
             {
                 var sorted = _selectedLayerIndices.OrderBy(x => x).ToList();
                 _canvas.GroupSelectedLayers(sorted);

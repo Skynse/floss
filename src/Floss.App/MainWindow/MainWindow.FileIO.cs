@@ -105,18 +105,7 @@ public partial class MainWindow
             var bgColor = result.BackgroundColor.ToAvalonia();
             var paperLayer = new DrawingLayer("Paper", result.Width, result.Height);
             paperLayer.IsLocked = true;
-
-            var pixelCount = result.Width * result.Height;
-            var pixels = new byte[pixelCount * 4];
-            for (var i = 0; i < pixelCount; i++)
-            {
-                var off = i * 4;
-                pixels[off] = bgColor.B;
-                pixels[off + 1] = bgColor.G;
-                pixels[off + 2] = bgColor.R;
-                pixels[off + 3] = 255;
-            }
-            paperLayer.RestorePixels(pixels);
+            paperLayer.FillSolid(paperLayer.Pixels.Bounds, bgColor);
             newDoc.InsertLayerNear(paperLayer, newDoc.Layers[0], LayerDropPlacement.Below);
         }
 

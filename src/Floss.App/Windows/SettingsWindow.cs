@@ -162,8 +162,8 @@ public sealed class SettingsWindow : Window
         content.Children.Add(PageHeader("General"));
 
         content.Children.Add(GroupHeader("New Canvas"));
-        content.Children.Add(RowNudger("Width (px)", _cfg.NewCanvasWidth, 1, 16384, v => { _cfg.NewCanvasWidth = (int)v; App.Config.Save(); }));
-        content.Children.Add(RowNudger("Height (px)", _cfg.NewCanvasHeight, 1, 16384, v => { _cfg.NewCanvasHeight = (int)v; App.Config.Save(); }));
+        content.Children.Add(RowNudger("Width (px)", _cfg.NewCanvasWidth, 1, 50001, v => { _cfg.NewCanvasWidth = (int)v; App.Config.Save(); }));
+        content.Children.Add(RowNudger("Height (px)", _cfg.NewCanvasHeight, 1, 50001, v => { _cfg.NewCanvasHeight = (int)v; App.Config.Save(); }));
 
         content.Children.Add(GroupHeader("Zoom"));
         content.Children.Add(RowSlider("Scroll wheel factor", _sc.ZoomScrollFactor, 1.01, 1.5,

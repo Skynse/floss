@@ -112,6 +112,8 @@ public sealed class DrawingCanvas : Control, IDisposable
         _document.LayerMetadataChanged += (_, e) => LayerMetadataChanged?.Invoke(this, e);
     }
 
+    public void InvalidateCompositor() => _compositor.Invalidate(null);
+
     public void Dispose()
     {
         BrushEngine.Dispose();
@@ -894,15 +896,24 @@ public sealed class DrawingCanvas : Control, IDisposable
         var docW = _document.Width;
         var docH = _document.Height;
 
-        var docLeft = (-PanOffsetX) / zoom - ViewportWidth / (2 * zoom) + docW / 2.0;
-        var docTop = (-PanOffsetY) / zoom - ViewportHeight / (2 * zoom) + docH / 2.0;
-        var docRight = ViewportWidth / (2 * zoom) - PanOffsetX / zoom + docW / 2.0;
-        var docBottom = ViewportHeight / (2 * zoom) - PanOffsetY / zoom + docH / 2.0;
+        var angle = CanvasRotation * Math.PI / 180.0;
+        var absCos = Math.Abs(Math.Cos(angle));
+        var absSin = Math.Abs(Math.Sin(angle));
+        var halfVpW = (ViewportWidth * absCos + ViewportHeight * absSin) / (2.0 * zoom);
+        var halfVpH = (ViewportWidth * absSin + ViewportHeight * absCos) / (2.0 * zoom);
+
+        var docCenterX = -PanOffsetX / zoom + docW / 2.0;
+        var docCenterY = -PanOffsetY / zoom + docH / 2.0;
+
+        var docLeft = docCenterX - halfVpW;
+        var docTop = docCenterY - halfVpH;
+        var docRight = docCenterX + halfVpW;
+        var docBottom = docCenterY + halfVpH;
 
         var left = (int)Math.Max(0, docLeft);
         var top = (int)Math.Max(0, docTop);
-        var right = (int)Math.Min(docW, docRight);
-        var bottom = (int)Math.Min(docH, docBottom);
+        var right = (int)Math.Min(docW, Math.Ceiling(docRight));
+        var bottom = (int)Math.Min(docH, Math.Ceiling(docBottom));
         var w = Math.Max(1, right - left);
         var h = Math.Max(1, bottom - top);
 
@@ -919,9 +930,10 @@ public sealed class DrawingCanvas : Control, IDisposable
 
         // Skip compositing on empty-canvas documents — avoids allocating a
         // full-canvas WriteableBitmap (900MB+ for 15k²) when nothing is drawn.
+        var viewport = ComputeVisibleViewport();
         if (HasAnyLayerContent(_document.Layers))
         {
-            _compositor.Composite(_document.Layers, _document.Width, _document.Height);
+            _compositor.Composite(_document.Layers, _document.Width, _document.Height, viewport, CanvasZoom);
             var target = new Rect(Bounds.Size);
             using (context.PushClip(new RoundedRect(target)))
             using (context.PushRenderOptions(new RenderOptions
@@ -930,7 +942,6 @@ public sealed class DrawingCanvas : Control, IDisposable
                 EdgeMode = EdgeMode.Aliased
             }))
             {
-                var viewport = ComputeVisibleViewport();
                 _compositor.DrawTiles(context, target, viewport);
             }
         }

@@ -370,18 +370,7 @@ public sealed class DrawingDocument : IDisposable
         BeginDocumentMutation();
         var bg = new DrawingLayer("Background", Width, Height);
         bg.IsLocked = true;
-
-        var pixelCount = Width * Height;
-        var pixels = new byte[pixelCount * 4];
-        for (var i = 0; i < pixelCount; i++)
-        {
-            var off = i * 4;
-            pixels[off] = 255;     // B
-            pixels[off + 1] = 255; // G
-            pixels[off + 2] = 255; // R
-            pixels[off + 3] = 255; // A
-        }
-        bg.RestorePixels(pixels);
+        bg.FillSolid(bg.Pixels.Bounds, Avalonia.Media.Colors.White);
 
         // Insert at the very bottom
         var bottom = _layers[^1];
@@ -398,7 +387,6 @@ public sealed class DrawingDocument : IDisposable
 
         BeginDocumentMutation();
 
-        // Create the group layer above the topmost selected layer
         var topIndex = sorted[^1];
         var topLayer = _layers[topIndex];
         var group = new DrawingLayer($"Folder {_layers.Count(l => l.IsGroup) + 1}", Width, Height)
@@ -409,18 +397,15 @@ public sealed class DrawingDocument : IDisposable
         InsertLayerNear(group, topLayer, LayerDropPlacement.Above);
         RebuildFlatLayerOrder();
 
-        // Snapshot references before moving; MoveLayer shifts _layers so saved indices become stale
         var layersToMove = sorted
             .Select(i => _layers[i])
             .Where(l => l != group)
             .ToList();
         foreach (var layer in layersToMove)
         {
-            var currentIndex = _layers.IndexOf(layer);
-            var groupIndex = _layers.IndexOf(group);
-            if (currentIndex >= 0 && groupIndex >= 0)
-                MoveLayer(currentIndex, groupIndex, LayerDropPlacement.Into);
+            InsertLayerNear(layer, group, LayerDropPlacement.Into);
         }
+        group.IsOpen = true;
 
         RebuildFlatLayerOrder();
         ActiveLayerIndex = _layers.IndexOf(group);

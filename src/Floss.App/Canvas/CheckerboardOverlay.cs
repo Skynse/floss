@@ -52,6 +52,22 @@ internal sealed class CheckerboardOverlay : Control
         var sw = docW * zoom;
         var sh = docH * zoom;
 
+        // Common case: unrotated canvas. Avoid building geometry and just clip/fill
+        // the visible paper rect directly.
+        var normalizedRotation = _canvas.CanvasRotation % 360.0;
+        if (Math.Abs(normalizedRotation) < 0.001 || Math.Abs(Math.Abs(normalizedRotation) - 360.0) < 0.001)
+        {
+            var left = (vpw - sw) * 0.5 + px;
+            var top = (vph - sh) * 0.5 + py;
+            var rect = new Rect(left, top, sw, sh).Intersect(new Rect(0, 0, vpw, vph));
+            if (rect.Width > 0 && rect.Height > 0)
+            {
+                using var clip = ctx.PushClip(new RoundedRect(rect));
+                ctx.FillRectangle(CheckerBrush, rect);
+            }
+            return;
+        }
+
         // Canvas rect in viewport space (before rotation), centered.
         // When flipped, the canvas origin (0,0) is at the far edge, so shift
         // the anchor so the checkerboard stays aligned with the flipped canvas.

@@ -189,6 +189,28 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, int> _dockerSectionColumns = new();
     private readonly Dictionary<string, Window> _floatingDockers = new();
     private MenuItem? _workspaceLoadMenu;
+    private MenuItem? _saveMenuItem;
+    private MenuItem? _saveAsMenuItem;
+    private MenuItem? _exportMenu;
+    private MenuItem? _resetViewMenuItem;
+    private MenuItem? _undoMenuItem;
+    private MenuItem? _redoMenuItem;
+    private MenuItem? _copyMenuItem;
+    private MenuItem? _pasteMenuItem;
+    private MenuItem? _editDeleteMenuItem;
+    private MenuItem? _mirrorHMenuItem;
+    private MenuItem? _mirrorVMenuItem;
+    private MenuItem? _showCanvasOnlyMenuItem;
+    private MenuItem? _showRulersMenuItem;
+    private MenuItem? _imageMenu;
+    private MenuItem? _addLayerMenuItem;
+    private MenuItem? _duplicateLayerMenuItem;
+    private MenuItem? _deleteLayerMenuItem;
+    private MenuItem? _mergeDownMenuItem;
+    private MenuItem? _moveUpMenuItem;
+    private MenuItem? _moveDownMenuItem;
+    private MenuItem? _addBackgroundMenuItem;
+    private MenuItem? _filterMenu;
     private bool _suppressFloatingDockerClosed;
     private bool _suppressFloatingDockerSnap;
     private Grid? _dockerHostGrid;
@@ -506,6 +528,23 @@ public partial class MainWindow : Window
 
     private Control BuildMenuBar()
     {
+        _saveMenuItem = MenuAction("_Save", new KeyGesture(Key.S, KeyModifiers.Control), async () => await SaveDocumentAsync());
+        _saveAsMenuItem = MenuAction("Save _As...", new KeyGesture(Key.S, KeyModifiers.Control | KeyModifiers.Shift), async () => await SaveDocumentAsAsync());
+        _exportMenu = new MenuItem
+        {
+            Header = "_Export",
+            ItemsSource = new object[]
+            {
+                MenuAction(".bmp (BMP)...", async () => await ExportImageAsync(".bmp")),
+                MenuAction(".jpg (JPEG)...", async () => await ExportImageAsync(".jpg")),
+                MenuAction(".png (PNG)...", async () => await ExportImageAsync(".png")),
+                MenuAction(".tif (TIFF)...", async () => await ExportImageAsync(".tif")),
+                MenuAction(".webp (WebP)...", async () => await ExportImageAsync(".webp")),
+                MenuAction(".psd (Photoshop Document)...", async () => await ExportPsdAsync())
+            }
+        };
+        _resetViewMenuItem = MenuAction("_Reset View", ResetView);
+
         var fileMenu = new MenuItem
         {
             Header = "_File",
@@ -513,70 +552,69 @@ public partial class MainWindow : Window
             {
                 MenuAction("_New...", new KeyGesture(Key.N, KeyModifiers.Control), async () => await NewDocumentAsync()),
                 MenuAction("_Open...", new KeyGesture(Key.O, KeyModifiers.Control), async () => await OpenDocumentAsync()),
-                MenuAction("_Save", new KeyGesture(Key.S, KeyModifiers.Control), async () => await SaveDocumentAsync()),
-                MenuAction("Save _As...", new KeyGesture(Key.S, KeyModifiers.Control | KeyModifiers.Shift), async () => await SaveDocumentAsAsync()),
+                _saveMenuItem,
+                _saveAsMenuItem,
                 new Separator(),
-                new MenuItem
-                {
-                    Header = "_Export",
-                    ItemsSource = new object[]
-                    {
-                        MenuAction(".bmp (BMP)...", async () => await ExportImageAsync(".bmp")),
-                        MenuAction(".jpg (JPEG)...", async () => await ExportImageAsync(".jpg")),
-                        MenuAction(".png (PNG)...", async () => await ExportImageAsync(".png")),
-                        MenuAction(".tif (TIFF)...", async () => await ExportImageAsync(".tif")),
-                        MenuAction(".webp (WebP)...", async () => await ExportImageAsync(".webp")),
-                        MenuAction(".psd (Photoshop Document)...", async () => await ExportPsdAsync())
-                    }
-                },
+                _exportMenu,
                 new Separator(),
-                MenuAction("_Reset View", ResetView),
+                _resetViewMenuItem,
                 new Separator(),
                 MenuAction("_Settings...", OpenSettings)
             }
         };
+
+        _undoMenuItem = MenuAction("_Undo", new KeyGesture(Key.Z, KeyModifiers.Control), () => _canvas.Undo());
+        _redoMenuItem = MenuAction("_Redo", new KeyGesture(Key.Z, KeyModifiers.Control | KeyModifiers.Shift), () => _canvas.Redo());
+        _copyMenuItem = MenuAction("_Copy", new KeyGesture(Key.C, KeyModifiers.Control), () => _canvas.CopyToClipboard());
+        _pasteMenuItem = MenuAction("_Paste", new KeyGesture(Key.V, KeyModifiers.Control), () => _ = _canvas.PasteFromOSClipboardAsync());
+        _editDeleteMenuItem = MenuAction("_Delete", () => _canvas.ClearSelectionContent());
 
         var editMenu = new MenuItem
         {
             Header = "_Edit",
             ItemsSource = new object[]
             {
-                MenuAction("_Undo", new KeyGesture(Key.Z, KeyModifiers.Control), () => _canvas.Undo()),
-                MenuAction("_Redo", new KeyGesture(Key.Z, KeyModifiers.Control | KeyModifiers.Shift), () => _canvas.Redo()),
+                _undoMenuItem,
+                _redoMenuItem,
                 new Separator(),
-                MenuAction("_Copy", new KeyGesture(Key.C, KeyModifiers.Control), () => _canvas.CopyToClipboard()),
-                MenuAction("_Paste", new KeyGesture(Key.V, KeyModifiers.Control), () => _ = _canvas.PasteFromOSClipboardAsync()),
+                _copyMenuItem,
+                _pasteMenuItem,
                 new Separator(),
-                MenuAction("_Delete", () => _canvas.ClearSelectionContent())
+                _editDeleteMenuItem
             }
         };
+
+        _mirrorHMenuItem = MenuAction("_Mirror Horizontal", () =>
+                {
+                    _canvasFlip.ScaleX = -_canvasFlip.ScaleX;
+                    _canvas.FlipX = (int)_canvasFlip.ScaleX;
+                    _rulerOverlay?.InvalidateVisual();
+                    ClampCanvasPan(); UpdateStatus();
+                });
+        _mirrorVMenuItem = MenuAction("Mirror _Vertical", () =>
+                {
+                    _canvasFlip.ScaleY = -_canvasFlip.ScaleY;
+                    _canvas.FlipY = (int)_canvasFlip.ScaleY;
+                    _rulerOverlay?.InvalidateVisual();
+                    ClampCanvasPan(); UpdateStatus();
+                });
+        _showCanvasOnlyMenuItem = MenuAction("_Show Canvas Only", ToggleCanvasOnly);
+        _showRulersMenuItem = MenuAction("Show _Rulers", ToggleRulers);
 
         var viewMenu = new MenuItem
         {
             Header = "_View",
             ItemsSource = new object[]
             {
-                MenuAction("_Mirror Horizontal", () =>
-                {
-                    _canvasFlip.ScaleX = -_canvasFlip.ScaleX;
-                    _canvas.FlipX = (int)_canvasFlip.ScaleX;
-                    _rulerOverlay?.InvalidateVisual();
-                    ClampCanvasPan(); UpdateStatus();
-                }),
-                MenuAction("Mirror _Vertical", () =>
-                {
-                    _canvasFlip.ScaleY = -_canvasFlip.ScaleY;
-                    _canvas.FlipY = (int)_canvasFlip.ScaleY;
-                    _rulerOverlay?.InvalidateVisual();
-                    ClampCanvasPan(); UpdateStatus();
-                }),
+                _mirrorHMenuItem,
+                _mirrorVMenuItem,
                 new Separator(),
-                MenuAction("_Show Canvas Only", ToggleCanvasOnly),
-                MenuAction("Show _Rulers", ToggleRulers),
+                _showCanvasOnlyMenuItem,
+                _showRulersMenuItem,
             }
         };
 
-        var imageMenu = new MenuItem
+        _imageMenu = new MenuItem
         {
             Header = "_Image",
             ItemsSource = new object[]
@@ -592,21 +630,29 @@ public partial class MainWindow : Window
             }
         };
 
+        _addLayerMenuItem = MenuAction("_Add Layer", new KeyGesture(Key.N, KeyModifiers.Control | KeyModifiers.Shift), () => _canvas.AddLayer());
+        _duplicateLayerMenuItem = MenuAction("_Duplicate Layer", new KeyGesture(Key.J, KeyModifiers.Control), () => _canvas.DuplicateLayer());
+        _deleteLayerMenuItem = MenuAction("_Delete Layer", new KeyGesture(Key.Delete, KeyModifiers.Control), () => _canvas.DeleteLayer());
+        _mergeDownMenuItem = MenuAction("_Merge Down", new KeyGesture(Key.E, KeyModifiers.Control), () => _canvas.MergeDown());
+        _moveUpMenuItem = MenuAction("Move Layer _Up", () => _canvas.MoveActiveLayer(1));
+        _moveDownMenuItem = MenuAction("Move Layer _Down", () => _canvas.MoveActiveLayer(-1));
+        _addBackgroundMenuItem = MenuAction("Add _Background", AddBackgroundLayer);
+
         var layerMenu = new MenuItem
         {
             Header = "_Layer",
             ItemsSource = new object[]
             {
-                MenuAction("_Add Layer", new KeyGesture(Key.N, KeyModifiers.Control | KeyModifiers.Shift), () => _canvas.AddLayer()),
-                MenuAction("_Duplicate Layer", new KeyGesture(Key.J, KeyModifiers.Control), () => _canvas.DuplicateLayer()),
-                MenuAction("_Delete Layer", new KeyGesture(Key.Delete, KeyModifiers.Control), () => _canvas.DeleteLayer()),
+                _addLayerMenuItem,
+                _duplicateLayerMenuItem,
+                _deleteLayerMenuItem,
                 new Separator(),
-                MenuAction("_Merge Down", new KeyGesture(Key.E, KeyModifiers.Control), () => _canvas.MergeDown()),
+                _mergeDownMenuItem,
                 new Separator(),
-                MenuAction("Move Layer _Up", () => _canvas.MoveActiveLayer(1)),
-                MenuAction("Move Layer _Down", () => _canvas.MoveActiveLayer(-1)),
+                _moveUpMenuItem,
+                _moveDownMenuItem,
                 new Separator(),
-                MenuAction("Add _Background", AddBackgroundLayer),
+                _addBackgroundMenuItem,
             }
         };
 
@@ -622,7 +668,7 @@ public partial class MainWindow : Window
             }
         };
 
-        var filterMenu = new MenuItem
+        _filterMenu = new MenuItem
         {
             Header = "F_ilter",
             ItemsSource = new object[]
@@ -659,7 +705,7 @@ public partial class MainWindow : Window
             {
                 Background = Avalonia.Media.Brushes.Transparent,
                 Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-                ItemsSource = new[] { fileMenu, editMenu, viewMenu, imageMenu, layerMenu, brushMenu, filterMenu, windowMenu }
+                ItemsSource = new[] { fileMenu, editMenu, viewMenu, _imageMenu, layerMenu, brushMenu, _filterMenu, windowMenu }
             }
         };
     }
@@ -2147,8 +2193,13 @@ public partial class MainWindow : Window
     // ── Status ────────────────────────────────────────────────────────────────
     private void UpdateStatus()
     {
+        var hasDocument = _canvasFrame.IsVisible;
         var layers = _canvas.Layers;
-        if (layers.Count == 0) return;
+
+        UpdateMenuState(hasDocument, layers);
+
+        if (layers.Count == 0 || !hasDocument) return;
+
         var activeIdx = _canvas.ActiveLayerIndex;
         var layer = layers[activeIdx];
         _canvasStatusText.Text =
@@ -2167,6 +2218,41 @@ public partial class MainWindow : Window
             layer.RefreshThumbnail();
             refs.PreviewImage.Source = layer.GetThumbnail(26);
         }
+    }
+
+    private void UpdateMenuState(bool hasDocument, IReadOnlyList<DrawingLayer> layers)
+    {
+        var activeIdx = hasDocument && layers.Count > 0 ? _canvas.ActiveLayerIndex : -1;
+        var canModifyActive = hasDocument && _canvas.Document.CanModifyActiveLayer;
+        var canDeleteLayer = hasDocument && _canvas.CanDeleteLayer;
+
+        if (_saveMenuItem != null) _saveMenuItem.IsEnabled = hasDocument;
+        if (_saveAsMenuItem != null) _saveAsMenuItem.IsEnabled = hasDocument;
+        if (_exportMenu != null) _exportMenu.IsEnabled = hasDocument;
+        if (_resetViewMenuItem != null) _resetViewMenuItem.IsEnabled = hasDocument;
+
+        if (_undoMenuItem != null) _undoMenuItem.IsEnabled = hasDocument && _canvas.CanUndo;
+        if (_redoMenuItem != null) _redoMenuItem.IsEnabled = hasDocument && _canvas.CanRedo;
+        if (_copyMenuItem != null) _copyMenuItem.IsEnabled = hasDocument;
+        if (_pasteMenuItem != null) _pasteMenuItem.IsEnabled = hasDocument;
+        if (_editDeleteMenuItem != null) _editDeleteMenuItem.IsEnabled = hasDocument;
+
+        if (_mirrorHMenuItem != null) _mirrorHMenuItem.IsEnabled = hasDocument;
+        if (_mirrorVMenuItem != null) _mirrorVMenuItem.IsEnabled = hasDocument;
+        if (_showCanvasOnlyMenuItem != null) _showCanvasOnlyMenuItem.IsEnabled = hasDocument;
+        if (_showRulersMenuItem != null) _showRulersMenuItem.IsEnabled = hasDocument;
+
+        if (_imageMenu != null) _imageMenu.IsEnabled = hasDocument;
+
+        if (_addLayerMenuItem != null) _addLayerMenuItem.IsEnabled = hasDocument;
+        if (_duplicateLayerMenuItem != null) _duplicateLayerMenuItem.IsEnabled = hasDocument && canModifyActive;
+        if (_deleteLayerMenuItem != null) _deleteLayerMenuItem.IsEnabled = hasDocument && canDeleteLayer;
+        if (_mergeDownMenuItem != null) _mergeDownMenuItem.IsEnabled = hasDocument && canModifyActive && activeIdx > 0;
+        if (_moveUpMenuItem != null) _moveUpMenuItem.IsEnabled = hasDocument && activeIdx < layers.Count - 1;
+        if (_moveDownMenuItem != null) _moveDownMenuItem.IsEnabled = hasDocument && activeIdx > 0;
+        if (_addBackgroundMenuItem != null) _addBackgroundMenuItem.IsEnabled = hasDocument;
+
+        if (_filterMenu != null) _filterMenu.IsEnabled = hasDocument && canModifyActive;
     }
 }
 

@@ -11,6 +11,8 @@ public sealed class TiledPixelBuffer
     public const int TileSize = 64;
     private const int BytesPerPixel = 4;
     private const int TileBytes = TileSize * TileSize * BytesPerPixel;
+    private static readonly object SolidTileTemplateLock = new();
+    private static readonly Dictionary<uint, byte[]> SolidTileTemplates = [];
 
     // Hot raw tiles — currently in active use.
     private readonly Dictionary<(int X, int Y), byte[]> _tiles = [];
@@ -87,6 +89,29 @@ public sealed class TiledPixelBuffer
     private static bool IsProbablyDeflated(byte[] data)
         => data.Length != TileBytes;
 
+    private static byte[] GetSolidTileTemplate(byte b, byte g, byte r, byte a)
+    {
+        var key = (uint)(b | (g << 8) | (r << 16) | (a << 24));
+        lock (SolidTileTemplateLock)
+        {
+            if (SolidTileTemplates.TryGetValue(key, out var template))
+                return template;
+
+            var raw = new byte[TileBytes];
+            for (var offset = 0; offset < raw.Length; offset += BytesPerPixel)
+            {
+                raw[offset + 0] = b;
+                raw[offset + 1] = g;
+                raw[offset + 2] = r;
+                raw[offset + 3] = a;
+            }
+
+            template = Deflate(raw);
+            SolidTileTemplates[key] = template;
+            return template;
+        }
+    }
+
     // ── Tile lookup ────────────────────────────────────────────────────────────
 
     public byte[]? GetTileOrNull(int tileX, int tileY)
@@ -97,6 +122,27 @@ public sealed class TiledPixelBuffer
         if (_compressed.ContainsKey(key))
             return EnsureRaw(key);
         return null;
+    }
+
+    public void PrimeTiles(PixelRegion region)
+    {
+        if (region.IsEmpty) return;
+
+        var firstTileX = FloorDiv(region.X, TileSize);
+        var firstTileY = FloorDiv(region.Y, TileSize);
+        var lastTileX = FloorDiv(region.Right - 1, TileSize);
+        var lastTileY = FloorDiv(region.Bottom - 1, TileSize);
+
+        for (var ty = firstTileY; ty <= lastTileY; ty++)
+        {
+            for (var tx = firstTileX; tx <= lastTileX; tx++)
+            {
+                var key = (tx, ty);
+                if (_tiles.ContainsKey(key)) continue;
+                if (_compressed.ContainsKey(key))
+                    EnsureRaw(key);
+            }
+        }
     }
 
     // ── Clear ──────────────────────────────────────────────────────────────────
@@ -121,6 +167,62 @@ public sealed class TiledPixelBuffer
         }, create: false);
 
         PruneTransparentTiles(region);
+    }
+
+    public void FillSolid(PixelRegion region, byte b, byte g, byte r, byte a)
+    {
+        if (region.IsEmpty) return;
+        if (a == 0)
+        {
+            Clear(region);
+            return;
+        }
+
+        var firstTileX = FloorDiv(region.X, TileSize);
+        var firstTileY = FloorDiv(region.Y, TileSize);
+        var lastTileX = FloorDiv(region.Right - 1, TileSize);
+        var lastTileY = FloorDiv(region.Bottom - 1, TileSize);
+        var fullTileTemplate = GetSolidTileTemplate(b, g, r, a);
+
+        for (var ty = firstTileY; ty <= lastTileY; ty++)
+        {
+            for (var tx = firstTileX; tx <= lastTileX; tx++)
+            {
+                var key = (tx, ty);
+                var tileRegion = new PixelRegion(tx * TileSize, ty * TileSize, TileSize, TileSize).Intersect(region);
+                if (tileRegion.IsEmpty) continue;
+
+                if (tileRegion.Width == TileSize && tileRegion.Height == TileSize)
+                {
+                    _tiles.Remove(key);
+                    _compressed[key] = fullTileTemplate;
+                    ExtendBounds(tx * TileSize, ty * TileSize, (tx + 1) * TileSize, (ty + 1) * TileSize);
+                    continue;
+                }
+
+                var raw = EnsureRaw(key);
+                if (raw == null)
+                {
+                    raw = new byte[TileBytes];
+                    _tiles[key] = raw;
+                    _compressed.Remove(key);
+                    ExtendBounds(tx * TileSize, ty * TileSize, (tx + 1) * TileSize, (ty + 1) * TileSize);
+                }
+
+                for (var y = tileRegion.Y; y < tileRegion.Bottom; y++)
+                {
+                    var offset = (y - ty * TileSize) * TileSize * BytesPerPixel
+                               + (tileRegion.X - tx * TileSize) * BytesPerPixel;
+                    for (var x = 0; x < tileRegion.Width; x++, offset += BytesPerPixel)
+                    {
+                        raw[offset + 0] = b;
+                        raw[offset + 1] = g;
+                        raw[offset + 2] = r;
+                        raw[offset + 3] = a;
+                    }
+                }
+            }
+        }
     }
 
     // ── Capture / Restore ──────────────────────────────────────────────────────

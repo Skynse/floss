@@ -422,20 +422,16 @@ public partial class MainWindow : Window
     {
         if (preset.BrushId == null) return;
 
-        preset.BrushSize = null;
-        preset.BrushOpacity = null;
-        preset.BrushFlow = null;
-        preset.BrushHardness = null;
-        preset.BrushSpacing = null;
-        preset.BrushSmoothing = null;
-        preset.BrushGrain = null;
-        preset.BrushDynamicsJson = null;
+        preset.ClearBrushOverrides();
         App.ToolGroups.Save();
+
+        // Live brush editing mutates the in-memory BrushAsset before the user chooses
+        // to save defaults. Reload persisted assets here so "restore default" truly
+        // means restore the stored brush asset, not the dirty in-memory copy.
+        LoadBrushAssets();
 
         if (_activeToolGroup == group && group.ActivePreset == preset)
             SyncActivePresetToCanvas();
-
-        RefreshGroupPresets();
         _footerStatusText.Text = $"Restored {preset.Name} to defaults";
     }
 
@@ -456,15 +452,12 @@ public partial class MainWindow : Window
             _footerStatusText.Text = $"Saved {preset.Name} as new default";
         }
 
-        preset.BrushSize = null;
-        preset.BrushOpacity = null;
-        preset.BrushFlow = null;
-        preset.BrushHardness = null;
-        preset.BrushSpacing = null;
-        preset.BrushSmoothing = null;
-        preset.BrushGrain = null;
-        preset.BrushDynamicsJson = null;
+        preset.ClearBrushOverrides();
         App.ToolGroups.Save();
+
+        // Rehydrate from storage so the asset list, active asset, and canvas all
+        // converge on the persisted default state instead of any stale in-memory copy.
+        LoadBrushAssets();
 
         SyncActivePresetToCanvas();
         RefreshGroupPresets();

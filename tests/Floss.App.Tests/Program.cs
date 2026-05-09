@@ -40,6 +40,7 @@ internal static class Program
         ("TiledPixelBuffer captures tiles as defensive copies", TiledPixelBufferTests.CaptureTiles_ReturnsDefensiveCopies),
         ("TiledPixelBuffer computes tight content bounds", TiledPixelBufferTests.ComputeContentBounds_ReturnsNonTransparentExtents),
         ("TiledPixelBuffer restores truncated byte arrays defensively", TiledPixelBufferTests.Restore_TruncatedBytesDoesNotThrowOrOverread),
+        ("TiledPixelBuffer solid fills isolate tile mutations", TiledPixelBufferTests.FillSolid_SharedTemplatesDoNotLeakMutations),
 
         ("KeyBinding parses friendly names and modifiers", KeyBindingTests.Parse_HandlesFriendlyNamesAndModifiers),
         ("KeyBinding formats and displays shortcuts", KeyBindingTests.ToStringAndDisplay_ReturnExpectedText),
@@ -75,6 +76,7 @@ internal static class Program
         ("Preset store round-trips all brush fields via Capture/Apply", PresetStoreTests.BrushPresetOverride_RoundTrip),
         ("Preset store isolates overrides between presets", PresetStoreTests.BrushPresetOverride_Isolation),
         ("Preset store does not override Tip/Angle/Kind from Capture", PresetStoreTests.BrushPresetOverride_PreservesTipAndAngle),
+        ("ToolPreset clears all brush overrides", PresetStoreTests.BrushPresetOverride_ClearBrushOverrides),
         ("Preset packages export sub tools with brush assets", PresetStoreTests.Packages_ExportSubTool),
         ("Preset packages export sub tool groups with brush assets", PresetStoreTests.Packages_ExportSubToolGroup),
 
@@ -90,6 +92,7 @@ internal static class Program
         ("DrawingDocument grouping keeps children and can undo", DrawingDocumentTests.GroupSelectedLayers_CreatesGroupAndUndoRestores),
         ("DrawingDocument import lifecycle resets state", DrawingDocumentTests.ImportLifecycle_ReplacesDocumentState),
         ("DrawingLayer clones tile state through duplicate", DrawingDocumentTests.DuplicateActiveLayer_CopiesPixels),
+        ("DrawingDocument background layer fills white without cross-tile bleed", DrawingDocumentTests.AddBackgroundLayer_FillsWhiteAndTilesStayIndependent),
         ("ToolFactory maps eyedropper sampling options", DrawingDocumentTests.ToolFactory_EyedropperOptions),
 
         ("PSD exporter writes parseable layer records", PsdExporterTests.Export_CanBeReadBack),
@@ -621,6 +624,57 @@ internal static class PresetStoreTests
         AssertEx.True(restored.Tip is ProceduralBrushTip, "Tip should come from base");
         AssertEx.True(restored.Shape is null, "Shape should come from base");
     }
+
+    public static void BrushPresetOverride_ClearBrushOverrides()
+    {
+        var preset = new ToolPreset();
+        preset.CaptureFromBrushPreset(new BrushPreset("Custom", 15, 0.9, 0.6, 0.2, Color.Parse("#112233"), 45)
+        {
+            Dynamics = new BrushDynamics
+            {
+                Size = CurveOption.Pressure(1.0f),
+                Opacity = CurveOption.Pressure(0.5f)
+            },
+            Flow = 0.7,
+            Grain = 0.4,
+            Smoothing = 0.3,
+            ColorMix = true,
+            ColorLoad = 0.2,
+            ColorStretch = 0.8,
+            BlurAmount = 0.1,
+            SmudgeMode = SmudgeMode.Smear,
+            MixingMode = MixingMode.Perceptual,
+            AmountOfPaint = 0.55,
+            DensityOfPaint = 0.66,
+            TipDensity = 0.77,
+            TipThickness = 0.88,
+            TipDirection = BrushTipDirection.Vertical,
+            BlendMode = SKBlendMode.Multiply
+        });
+
+        preset.ClearBrushOverrides();
+
+        AssertEx.True(preset.BrushSize is null);
+        AssertEx.True(preset.BrushOpacity is null);
+        AssertEx.True(preset.BrushFlow is null);
+        AssertEx.True(preset.BrushHardness is null);
+        AssertEx.True(preset.BrushSpacing is null);
+        AssertEx.True(preset.BrushSmoothing is null);
+        AssertEx.True(preset.BrushGrain is null);
+        AssertEx.True(preset.BrushColorMix is null);
+        AssertEx.True(preset.BrushColorLoad is null);
+        AssertEx.True(preset.BrushColorStretch is null);
+        AssertEx.True(preset.BrushBlurAmount is null);
+        AssertEx.True(preset.BrushSmudgeMode is null);
+        AssertEx.True(preset.BrushMixingMode is null);
+        AssertEx.True(preset.BrushAmountOfPaint is null);
+        AssertEx.True(preset.BrushDensityOfPaint is null);
+        AssertEx.True(preset.BrushTipDensity is null);
+        AssertEx.True(preset.BrushTipThickness is null);
+        AssertEx.True(preset.BrushTipDirection is null);
+        AssertEx.True(preset.BrushBlendMode is null);
+        AssertEx.True(preset.BrushDynamicsJson is null);
+    }
 }
 
 internal static class PixelRegionTests
@@ -763,6 +817,19 @@ internal static class TiledPixelBufferTests
         AssertEx.Equal((byte)6, b2);
         AssertEx.Equal((byte)255, a2);
         AssertEx.Equal((byte)0, missingAlpha);
+    }
+
+    public static void FillSolid_SharedTemplatesDoNotLeakMutations()
+    {
+        var pixels = new TiledPixelBuffer(128, 64);
+        pixels.FillSolid(new PixelRegion(0, 0, 128, 64), 10, 20, 30, 255);
+
+        pixels.Clear(new PixelRegion(0, 0, 1, 1));
+
+        pixels.GetPixel(0, 0, out _, out _, out _, out var clearedAlpha);
+        pixels.GetPixel(64, 0, out var b, out var g, out var r, out var a);
+        AssertEx.Equal((byte)0, clearedAlpha);
+        AssertEx.SequenceEqual(new byte[] { 10, 20, 30, 255 }, [b, g, r, a]);
     }
 }
 
@@ -1609,6 +1676,24 @@ internal static class DrawingDocumentTests
         document.Layers[0].Pixels.SetPixel(2, 2, 0, 0, 0, 0);
         document.ActiveLayer.Pixels.GetPixel(2, 2, out _, out _, out _, out var duplicateAlpha);
         AssertEx.Equal((byte)255, duplicateAlpha);
+    }
+
+    public static void AddBackgroundLayer_FillsWhiteAndTilesStayIndependent()
+    {
+        var document = new DrawingDocument(128, 64);
+        document.AddBackgroundLayer();
+
+        var background = document.Layers[0];
+        background.Pixels.GetPixel(0, 0, out var b1, out var g1, out var r1, out var a1);
+        background.Pixels.GetPixel(64, 0, out var b2, out var g2, out var r2, out var a2);
+        AssertEx.SequenceEqual(new byte[] { 255, 255, 255, 255 }, [b1, g1, r1, a1]);
+        AssertEx.SequenceEqual(new byte[] { 255, 255, 255, 255 }, [b2, g2, r2, a2]);
+
+        background.Pixels.Clear(new PixelRegion(0, 0, 1, 1));
+        background.Pixels.GetPixel(0, 0, out _, out _, out _, out var clearedAlpha);
+        background.Pixels.GetPixel(64, 0, out b2, out g2, out r2, out a2);
+        AssertEx.Equal((byte)0, clearedAlpha);
+        AssertEx.SequenceEqual(new byte[] { 255, 255, 255, 255 }, [b2, g2, r2, a2]);
     }
 
     public static void ToolFactory_EyedropperOptions()
