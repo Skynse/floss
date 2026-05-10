@@ -10,11 +10,13 @@ public sealed class CompositeTool : ITool
 {
     public IInputProcess Input { get; }
     public IOutputProcess Output { get; }
+    public ITool? Alternate { get; }
 
-    public CompositeTool(IInputProcess input, IOutputProcess output)
+    public CompositeTool(IInputProcess input, IOutputProcess output, ITool? alternate = null)
     {
         Input = input;
         Output = output;
+        Alternate = alternate;
     }
 
     public void Activate(ToolContext ctx) { }
@@ -22,6 +24,9 @@ public sealed class CompositeTool : ITool
 
     public void PointerDown(ToolContext ctx, CanvasInputSample s)
     {
+        Input.ToolAuxMode = ctx.ToolAuxMode;
+        if (Input is RectInputProcess rip)
+            rip.Constrain = rip.ConsumesModifier(ctx.CurrentModifiers);
         Input.PointerDown(s);
         if (Input.IsActive && Input.GetPreview() is { } preview)
         {
@@ -32,6 +37,7 @@ public sealed class CompositeTool : ITool
 
     public void PointerMove(ToolContext ctx, CanvasInputSample s)
     {
+        Input.ToolAuxMode = ctx.ToolAuxMode;
         Input.PointerMove(s);
         if (Input.IsActive && Input.GetPreview() is { } preview)
         {
@@ -64,6 +70,8 @@ public sealed class CompositeTool : ITool
     }
 
     public bool CanCommitFromClick => Input is PolylineInputProcess;
+
+    public bool ConsumesModifier(Avalonia.Input.KeyModifiers mods) => Input.ConsumesModifier(mods);
 
     public void Commit(ToolContext ctx)
     {

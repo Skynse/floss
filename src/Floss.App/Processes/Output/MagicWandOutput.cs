@@ -12,6 +12,7 @@ public sealed class MagicWandOutput : IOutputProcess
     public bool Antialiasing { get; set; } = false;
     public double Tolerance { get; set; } = 0.1;
     public SelectOp Operation { get; set; } = SelectOp.Replace;
+    public FillReferenceMode FillReference { get; set; } = FillReferenceMode.CurrentLayer;
 
     public void Preview(ToolContext ctx, IProcessedInput input) { }
 
@@ -22,14 +23,35 @@ public sealed class MagicWandOutput : IOutputProcess
         var layer = ctx.ActiveLayer;
         if (layer == null || layer.IsGroup) return;
 
-        var cx = (int)click.Point.X - layer.OffsetX;
-        var cy = (int)click.Point.Y - layer.OffsetY;
-
-        layer.Pixels.GetPixel(cx, cy, out byte refB, out byte refG, out byte refR, out byte refA);
-
-        // Create a mask-based selection (single flood fill in SetFromFloodFill).
+        var docX = (int)click.Point.X;
+        var docY = (int)click.Point.Y;
         var before = ctx.Selection.CaptureSnapshot();
-        ctx.Selection.SetFromFloodFill(layer.Pixels, cx, cy, layer.OffsetX, layer.OffsetY, Tolerance, Operation);
+
+        if (FillReference != FillReferenceMode.CurrentLayer)
+        {
+            var buf = BuildReferenceBuffer(ctx, FillReference);
+            ctx.Selection.SetFromFloodFillBuffer(buf, docX, docY, Tolerance, Operation);
+        }
+        else
+        {
+            ctx.Selection.SetFromFloodFill(layer.Pixels,
+                docX - layer.OffsetX, docY - layer.OffsetY,
+                layer.OffsetX, layer.OffsetY, Tolerance, Operation);
+        }
+
         ctx.CommitSelectionMutation(before);
+    }
+
+    private static byte[] BuildReferenceBuffer(ToolContext ctx, FillReferenceMode mode)
+    {
+        int w = ctx.Document.Width, h = ctx.Document.Height;
+        var buf = new byte[w * h * 4];
+        foreach (var l in ctx.Document.Layers)
+        {
+            if (!l.IsVisible || l.IsGroup) continue;
+            if (mode == FillReferenceMode.ReferenceLayers && !l.IsReference) continue;
+            l.Pixels.BlendOnto(buf, w, h, l.Opacity);
+        }
+        return buf;
     }
 }

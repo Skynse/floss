@@ -25,7 +25,12 @@ public enum InputProcessType
     Rect = 7,       // Drag rectangle
     Click = 8,      // Single click
     Drag = 9,       // Drag start-to-end
-    Liquify = 10    // Direct raw positions, no stabilization
+    Liquify = 10,   // Direct raw positions, no stabilization
+    Hand = 11,      // Pan canvas (drag)
+    Rotate = 12,    // Rotate canvas (drag)
+    Zoom = 13,      // Zoom canvas in (drag)
+    ZoomOut = 14,   // Zoom canvas out (drag)
+    MoveLayer = 15, // Translate layer (drag)
 }
 
 public static class InputProcessTypeExtensions
@@ -46,8 +51,10 @@ public enum OutputProcessType
     Eyedropper,      // Sample color
     MoveLayer,       // Move layer offset
     Stroke,          // Stroke a path
-    Zoom,            // Zoom canvas
+    Zoom,            // Zoom canvas in (drag)
+    ZoomOut,         // Zoom canvas out (drag)
     Pan,             // Pan canvas
+    Rotate,          // Rotate canvas
     MagicWand,       // Magic wand selection
     Liquify,         // Warp/distort pixels
 }
@@ -82,7 +89,7 @@ public enum ToolPresetEngine
     Brush, Eraser, Smudge,
     Select, MagicWand,
     Fill, LassoFill,
-    Eyedropper, Move,
+    Eyedropper, Move, MoveLayer,
     Gradient, Shape, Polyline,
     Liquify
 }
@@ -289,7 +296,7 @@ public sealed class ToolPreset
             ToolPresetEngine.MagicWand => (InputProcessType.Click, OutputProcessType.MagicWand),
             ToolPresetEngine.Fill => (InputProcessType.Click, OutputProcessType.FloodFill),
             ToolPresetEngine.LassoFill => (InputProcessType.Lasso, OutputProcessType.ClosedAreaFill),
-            ToolPresetEngine.Move => (InputProcessType.Drag, OutputProcessType.MoveLayer),
+            ToolPresetEngine.Move or ToolPresetEngine.MoveLayer => (InputProcessType.MoveLayer, OutputProcessType.MoveLayer),
             ToolPresetEngine.Eyedropper => (InputProcessType.Click, OutputProcessType.Eyedropper),
             ToolPresetEngine.Gradient => (InputProcessType.Drag, OutputProcessType.Gradient),
             ToolPresetEngine.Shape => (InputProcessType.Rect, OutputProcessType.Stroke),
@@ -510,6 +517,12 @@ public sealed class ToolGroupConfig
 
     public static string DefaultIcon(ToolPresetEngine engine) => Icons.DefaultIcon(engine);
 
+    // ── Stable IDs for built-in view presets (referenced by modifier key defaults) ──
+    internal const string ViewHandPresetId    = "builtin-hand";
+    internal const string ViewRotatePresetId  = "builtin-rotate";
+    internal const string ViewZoomInPresetId  = "builtin-zoomin";
+    internal const string ViewZoomOutPresetId = "builtin-zoomout";
+
     // ── Factory defaults ──────────────────────────────────────────────────────
 
     internal static List<ToolGroup> Defaults() =>
@@ -541,17 +554,26 @@ public sealed class ToolGroupConfig
         WithDefaultCategory(new()
         {
             Name = "Fill", DefaultEngine = ToolPresetEngine.Fill, Shortcut = new(Key.G),
-            Presets = [new() { Name = "Fill", Engine = ToolPresetEngine.Fill, InputProcess = InputProcessType.Click, OutputProcess = OutputProcessType.FloodFill }]
+            Presets = [
+                new() { Name = "Fill", Engine = ToolPresetEngine.Fill, InputProcess = InputProcessType.Click, OutputProcess = OutputProcessType.FloodFill },
+                new() { Name = "Lasso Fill", Engine = ToolPresetEngine.LassoFill, InputProcess = InputProcessType.Lasso, OutputProcess = OutputProcessType.ClosedAreaFill, Stabilization = 0.3, Antialiasing = true }]
+        }),
+
+        WithDefaultCategory(new()
+        {
+            Name = "Operation", DefaultEngine = ToolPresetEngine.MoveLayer, Shortcut = new(Key.V),
+            Presets = [new() { Name = "Move Layer", Engine = ToolPresetEngine.MoveLayer, InputProcess = InputProcessType.MoveLayer, OutputProcess = OutputProcessType.MoveLayer }]
         }),
         WithDefaultCategory(new()
         {
-            Name = "Lasso Fill", DefaultEngine = ToolPresetEngine.LassoFill, Shortcut = new(Key.L),
-            Presets = [new() { Name = "Lasso Fill", Engine = ToolPresetEngine.LassoFill, InputProcess = InputProcessType.Lasso, OutputProcess = OutputProcessType.ClosedAreaFill, Stabilization = 0.3, Antialiasing = true }]
-        }),
-        WithDefaultCategory(new()
-        {
-            Name = "Move", DefaultEngine = ToolPresetEngine.Move, Shortcut = new(Key.V),
-            Presets = [new() { Name = "Move", Engine = ToolPresetEngine.Move, InputProcess = InputProcessType.Drag, OutputProcess = OutputProcessType.MoveLayer }]
+            Name = "View", DefaultEngine = ToolPresetEngine.Move,
+            Presets =
+            [
+                new() { Id = ViewHandPresetId,    Name = "Hand",     InputProcess = InputProcessType.Hand,    OutputProcess = OutputProcessType.Pan },
+                new() { Id = ViewRotatePresetId,  Name = "Rotate",   InputProcess = InputProcessType.Rotate,  OutputProcess = OutputProcessType.Rotate },
+                new() { Id = ViewZoomInPresetId,  Name = "Zoom In",  InputProcess = InputProcessType.Zoom,    OutputProcess = OutputProcessType.Zoom },
+                new() { Id = ViewZoomOutPresetId, Name = "Zoom Out", InputProcess = InputProcessType.ZoomOut, OutputProcess = OutputProcessType.ZoomOut },
+            ]
         }),
         WithDefaultCategory(new()
         {
@@ -582,8 +604,7 @@ public sealed class ToolGroupConfig
             Name = "Polyline", DefaultEngine = ToolPresetEngine.Polyline,
             Presets =
             [
-                new() { Name = "Open",   Engine = ToolPresetEngine.Polyline, InputProcess = InputProcessType.Polyline, OutputProcess = OutputProcessType.Stroke, PolylineClosePath = false },
-                new() { Name = "Closed", Engine = ToolPresetEngine.Polyline, InputProcess = InputProcessType.Polyline, OutputProcess = OutputProcessType.Stroke, PolylineClosePath = true },
+                new() { Name = "PolyLine",   Engine = ToolPresetEngine.Polyline, InputProcess = InputProcessType.Polyline, OutputProcess = OutputProcessType.Stroke, PolylineClosePath = false },
             ]
         }),
         WithDefaultCategory(new()
@@ -591,13 +612,8 @@ public sealed class ToolGroupConfig
             Name = "Liquify", DefaultEngine = ToolPresetEngine.Liquify,
             Presets =
             [
-                new() { Name = "Push",      Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.Liquify, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.Push,      LiquifySize = 80,  LiquifyStrength = 0.3 },
-                new() { Name = "Expand",    Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.Liquify, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.Expand,    LiquifySize = 60,  LiquifyStrength = 0.4 },
-                new() { Name = "Pinch",     Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.Liquify, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.Pinch,     LiquifySize = 60,  LiquifyStrength = 0.4 },
-                new() { Name = "Push Left", Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.Liquify, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.PushLeft,  LiquifySize = 80,  LiquifyStrength = 0.3 },
-                new() { Name = "Push Right",Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.Liquify, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.PushRight, LiquifySize = 80,  LiquifyStrength = 0.3 },
-                new() { Name = "Twirl CW",  Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.Liquify, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.TwirlCW,   LiquifySize = 80,  LiquifyStrength = 0.5 },
-                new() { Name = "Twirl CCW", Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.Liquify, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.TwirlCCW,  LiquifySize = 80,  LiquifyStrength = 0.5 },
+                new() { Name = "Liquify",      Engine = ToolPresetEngine.Liquify, InputProcess = InputProcessType.Liquify, OutputProcess = OutputProcessType.Liquify, LiquifyMode = LiquifyMode.Push,      LiquifySize = 80,  LiquifyStrength = 0.3 },
+
             ]
         }),
     ];

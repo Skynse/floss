@@ -34,6 +34,9 @@ public static class AppPaths
     public static string PresetsDatabasePath { get; } =
         Path.Combine(AppDirectory, "presets.flbr");
 
+    public static string ModifierKeySettingsPath { get; } =
+        Path.Combine(AppDirectory, "modifier-keys.json");
+
     public static void EnsureDirectories()
     {
         Directory.CreateDirectory(AppDirectory);

@@ -11,6 +11,7 @@ public sealed class ClickInputProcess : IInputProcess
     private bool _isActive;
 
     public bool IsActive => _isActive;
+    public ToolAuxOperationType ToolAuxMode { get; set; }
     public double Stabilization { get; set; }
 
     public void PointerDown(CanvasInputSample s)

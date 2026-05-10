@@ -12,6 +12,7 @@ public sealed class LiquifyInputProcess : IInputProcess
 
     public bool HasBrushCursor => true;
     public bool IsActive => _active;
+    public ToolAuxOperationType ToolAuxMode { get; set; }
     public double Stabilization { get; set; }
 
     public void PointerDown(CanvasInputSample s)

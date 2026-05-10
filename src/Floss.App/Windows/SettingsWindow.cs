@@ -289,7 +289,6 @@ public sealed class SettingsWindow : Window
             // Misc
             new("Open settings",          "Misc",             () => sc.OpenSettings,           v => sc.OpenSettings = v),
             new("Open brush editor",      "Misc",             () => sc.OpenBrushEditor,        v => sc.OpenBrushEditor = v),
-            new("Alternate invocation",   "Misc",             () => sc.AlternateInvocation,    v => sc.AlternateInvocation = v),
             // Pen Gestures
             new("Pan canvas",             "Pen Gestures  (hold key + drag pen)", () => sc.GesturePan,       v => sc.GesturePan = v,       IsGesture: true),
             new("Zoom  (drag ↑↓)",        "Pen Gestures  (hold key + drag pen)", () => sc.GestureZoom,      v => sc.GestureZoom = v,      IsGesture: true),
@@ -318,32 +317,6 @@ public sealed class SettingsWindow : Window
             content.Children.Add(GroupHeader(group.Key));
             foreach (var d in group)
                 content.Children.Add(BindingRow(d.Label, d.Get, d.Set, gesture: d.IsGesture));
-        }
-
-        // ── Tool-group alternate invocation ─────────────────────────────────
-        var toolGroups = App.ToolGroups.Groups;
-        if (toolGroups.Count > 0)
-        {
-            content.Children.Add(GroupHeader("Tool Groups  (alt invocation per preset)"));
-            foreach (var group in toolGroups)
-            {
-                var groupLabel = string.IsNullOrEmpty(group.Shortcut.IsEmpty ? "" : group.Shortcut.Display())
-                    ? group.Name
-                    : $"{group.Name}  [{group.Shortcut.Display()}]";
-                content.Children.Add(SubGroupHeader(groupLabel));
-                foreach (var preset in group.Presets)
-                {
-                    var label = $"    {preset.Name}";
-                    content.Children.Add(PresetBindingRow(
-                        label,
-                        preset.AlternateInvocation,
-                        v =>
-                        {
-                            preset.AlternateInvocation = v;
-                            App.ToolGroups.Save();
-                        }));
-                }
-            }
         }
 
         return new ScrollViewer
@@ -456,104 +429,6 @@ public sealed class SettingsWindow : Window
                 setter(v);
                 keyDisplay.Text = v.Display();
                 keyDisplay.Foreground = new SolidColorBrush(Color.Parse(v.IsEmpty ? TextMuted : TextPrimary));
-            }, label);
-        };
-
-        return rowBorder;
-    }
-
-    private Border PresetBindingRow(string label, KeyBinding altInvocation, Action<KeyBinding> altSetter)
-    {
-        var labelText = new TextBlock
-        {
-            Text = label,
-            FontSize = 11,
-            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            VerticalAlignment = VerticalAlignment.Center,
-            MinWidth = 200,
-            TextTrimming = TextTrimming.CharacterEllipsis
-        };
-
-        var altDisplay = new TextBlock
-        {
-            Text = altInvocation.IsEmpty ? "—" : altInvocation.Display(),
-            FontSize = 11,
-            Width = 130,
-            FontFamily = new FontFamily("Consolas, Courier New, monospace"),
-            Foreground = new SolidColorBrush(Color.Parse(altInvocation.IsEmpty ? TextMuted : TextPrimary)),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-
-        var recordBtn = new Button
-        {
-            Content = "Record",
-            Height = 22,
-            Padding = new Thickness(8, 0),
-            FontSize = 10,
-            HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
-        };
-
-        var clearBtn = new Button
-        {
-            Content = MaterialIcon(Icons.Close, 13),
-            Width = 22,
-            Height = 22,
-            Padding = new Thickness(0),
-            HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
-        };
-
-        var row = new DockPanel { LastChildFill = false };
-        DockPanel.SetDock(labelText, Dock.Left);
-        DockPanel.SetDock(altDisplay, Dock.Left);
-        DockPanel.SetDock(clearBtn, Dock.Right);
-        DockPanel.SetDock(recordBtn, Dock.Right);
-        row.Children.Add(labelText);
-        row.Children.Add(altDisplay);
-        row.Children.Add(clearBtn);
-        row.Children.Add(new Border { Width = 4 });
-        row.Children.Add(recordBtn);
-
-        var rowBorder = new Border
-        {
-            Padding = new Thickness(8, 5),
-            BorderThickness = new Thickness(0, 0, 0, 1),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            Child = row
-        };
-
-        clearBtn.Click += (_, _) =>
-        {
-            StopRecording();
-            altSetter(KeyBinding.Empty);
-            altDisplay.Text = "—";
-            altDisplay.Foreground = new SolidColorBrush(Color.Parse(TextMuted));
-        };
-
-        recordBtn.Click += (_, _) =>
-        {
-            if (_isRecording && _recordingSetter != null && ReferenceEquals(_recordingRow, rowBorder))
-            {
-                StopRecording();
-                return;
-            }
-            StopRecording();
-            StartRecording(rowBorder, altDisplay, false, v =>
-            {
-                altSetter(v);
-                altDisplay.Text = v.IsEmpty ? "—" : v.Display();
-                altDisplay.Foreground = new SolidColorBrush(Color.Parse(v.IsEmpty ? TextMuted : TextPrimary));
             }, label);
         };
 
@@ -1006,20 +881,6 @@ public sealed class SettingsWindow : Window
             FontWeight = FontWeight.SemiBold,
             Foreground = new SolidColorBrush(Color.Parse("#6f7888")),
             LetterSpacing = 1.0
-        }
-    };
-
-    private static Control SubGroupHeader(string text) => new Border
-    {
-        Margin = new Thickness(0, 6, 0, 0),
-        Padding = new Thickness(12, 3),
-        Background = new SolidColorBrush(Color.Parse("#12141a")),
-        Child = new TextBlock
-        {
-            Text = text,
-            FontSize = 10,
-            FontWeight = FontWeight.Normal,
-            Foreground = new SolidColorBrush(Color.Parse("#8891a0")),
         }
     };
 

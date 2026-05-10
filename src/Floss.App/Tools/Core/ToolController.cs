@@ -19,6 +19,8 @@ public readonly record struct ToolInputEvent(ToolInputEventKind Kind, CanvasInpu
 public sealed class ToolController
 {
     private readonly ToolContext _context;
+    private bool _isAlternateActive;
+
     public ToolController(ToolContext context, ITool initialTool)
     {
         _context = context;
@@ -27,13 +29,18 @@ public sealed class ToolController
     }
 
     public ITool ActiveTool { get; private set; }
+    public bool IsAlternateActive => _isAlternateActive && ActiveTool.Alternate != null;
     public ToolPresetEngine ActiveEngine { get; private set; } = ToolPresetEngine.Brush;
-    public bool HasPendingOperation => ActiveTool.HasPendingOperation;
+    public bool HasPendingOperation => Current.HasPendingOperation;
     public bool HasSavedSettings(ToolPresetEngine engine) => false;
 
-    // Alternate tool runs *on top* of the active tool without switching engines.
-    // Used by the viewport-wide eyedropper (Alt key).
-    public ITool? AlternateTool { get; set; }
+    private ITool Current => _isAlternateActive ? ActiveTool.Alternate ?? ActiveTool : ActiveTool;
+
+    public void SetAlternateActive(bool active)
+    {
+        if (_isAlternateActive == active) return;
+        _isAlternateActive = active && ActiveTool.Alternate != null;
+    }
 
     public void SetActiveTool(ITool tool, ToolPreset? preset = null)
     {
@@ -41,6 +48,7 @@ public sealed class ToolController
 
         ActiveTool.Deactivate(_context);
         _context.ActivePreset = preset;
+        _isAlternateActive = false;
 
         var newEngine = EngineForTool(tool);
         ActiveEngine = newEngine;
@@ -61,7 +69,7 @@ public sealed class ToolController
 
     public void Dispatch(ToolInputEvent input)
     {
-        var tool = AlternateTool ?? ActiveTool;
+        var tool = Current;
         switch (input.Kind)
         {
             case ToolInputEventKind.Down:
@@ -78,12 +86,12 @@ public sealed class ToolController
 
     public bool Cancel()
     {
-        var tool = AlternateTool ?? ActiveTool;
+        var tool = Current;
         var hadPendingOperation = tool.HasPendingOperation;
         tool.Cancel(_context);
         return hadPendingOperation;
     }
 
     public void RenderOverlay(DrawingContext dc, double zoom)
-        => (AlternateTool ?? ActiveTool).RenderOverlay(dc, _context, zoom);
+        => Current.RenderOverlay(dc, _context, zoom);
 }

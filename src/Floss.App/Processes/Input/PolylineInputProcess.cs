@@ -14,8 +14,10 @@ public sealed class PolylineInputProcess : IInputProcess
     private bool _committed;
 
     public bool IsActive => _active;
+    public ToolAuxOperationType ToolAuxMode { get; set; }
     public double Stabilization { get; set; }
     public bool ClosePath { get; set; }
+
 
     public void PointerDown(CanvasInputSample s)
     {

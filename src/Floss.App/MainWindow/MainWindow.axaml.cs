@@ -231,6 +231,8 @@ public partial class MainWindow : Window
     private readonly List<Button> _toolButtons = [];
     private readonly List<(ToolGroup Group, Button Button)> _toolGroupButtons = [];
     private ToolGroup? _activeToolGroup;
+    private ToolPreset? _savedPresetTemp;
+    private bool _temporaryPresetActive;
     private ToolGroup? _recordingToolGroup;
     private Button? _recordingToolGroupButton;
     private ToolPreset? _recordingPresetAltInvocation;
@@ -252,11 +254,230 @@ public partial class MainWindow : Window
     private double _brushSizeLastDirY;
     private bool _brushSizeHasLastDir;
     private SettingsWindow? _settingsWindow;
+    private Floss.App.Windows.ModifierKeySettingsWindow? _modifierKeySettingsWindow;
+
+    // ── Avalonia KeyBinding shortcut registration ──────────────────────────
+    private sealed class DelegateCommand : System.Windows.Input.ICommand
+    {
+        private readonly Action _execute;
+        private readonly Func<bool>? _canExecute;
+        public event EventHandler? CanExecuteChanged { add { } remove { } }
+        public DelegateCommand(Action execute, Func<bool>? canExecute = null)
+        { _execute = execute; _canExecute = canExecute; }
+        public bool CanExecute(object? parameter) => _canExecute?.Invoke() ?? true;
+        public void Execute(object? parameter) => _execute();
+    }
+
+    private void AddShortcut(Input.KeyBinding shortcut, Action action, Func<bool>? canExecute = null)
+    {
+        if (shortcut.IsEmpty || shortcut.Key == Key.None) return;
+        KeyBindings.Add(new Avalonia.Input.KeyBinding
+        {
+            Gesture = new KeyGesture(shortcut.Key, shortcut.Modifiers),
+            Command = new DelegateCommand(action, canExecute)
+        });
+    }
+
+    private void RegisterShortcuts()
+    {
+        var s = App.Shortcuts;
+
+        // File
+        AddShortcut(s.FileNew, () => _ = NewDocumentAsync());
+        AddShortcut(s.FileOpen, () => _ = OpenDocumentAsync());
+        AddShortcut(s.FileSave, () => _ = SaveDocumentAsync());
+        AddShortcut(s.FileSaveAs, () => _ = SaveDocumentAsAsync());
+
+        // Edit
+        AddShortcut(s.Undo, () => _canvas.Undo());
+        AddShortcut(s.Redo, () => _canvas.Redo());
+        AddShortcut(s.RedoAlt, () => _canvas.Redo());
+        AddShortcut(s.Copy, () => _canvas.CopyToClipboard());
+        AddShortcut(s.Paste, () => _ = _canvas.PasteFromOSClipboardAsync());
+        AddShortcut(s.DeleteSelection, DeleteSelectionAction);
+
+        // View - flip
+        AddShortcut(s.FlipHorizontal, () => _canvas.FlipCanvas(horizontal: true));
+        AddShortcut(s.FlipVertical, () => _canvas.FlipCanvas(horizontal: false));
+        AddShortcut(s.MirrorHorizontal, MirrorHorizontalAction);
+        AddShortcut(s.MirrorVertical, MirrorVerticalAction);
+
+        // View - zoom
+        AddShortcut(s.ZoomIn, () => SetZoom(_zoom * s.ZoomKeyFactor, null));
+        AddShortcut(s.ZoomInAlt, () => SetZoom(_zoom * s.ZoomKeyFactor, null));
+        AddShortcut(s.ZoomOut, () => SetZoom(_zoom / s.ZoomKeyFactor, null));
+        AddShortcut(s.ZoomReset, () => ResetView());
+        AddShortcut(s.ZoomFit, () => SyncCanvasFrameToDocument(fitToViewport: true));
+
+        // View - rotate
+        AddShortcut(s.RotateLeft, () => SetRotation(_rotation - s.RotateKeyStep));
+        AddShortcut(s.RotateRight, () => SetRotation(_rotation + s.RotateKeyStep));
+        AddShortcut(s.RotateReset, () => SetRotation(0));
+
+        // Image - rotate canvas
+        AddShortcut(s.RotateCanvas90Cw, RotateCanvas90CwAction);
+        AddShortcut(s.RotateCanvas90Ccw, RotateCanvas90CcwAction);
+        AddShortcut(s.RotateCanvas180, () => _canvas.RotateCanvas180());
+
+        // Selection
+        AddShortcut(s.SelectAll, () => _canvas.SelectAll());
+        AddShortcut(s.Deselect, () => _canvas.Deselect());
+        AddShortcut(s.InvertSelect, () => _canvas.InvertSelection());
+        AddShortcut(s.Transform, TransformAction);
+
+        // Brush - size
+        AddShortcut(s.BrushSizeDecrease, () => NudgeBrushSize(-1, false));
+        AddShortcut(s.BrushSizeIncrease, () => NudgeBrushSize(1, false));
+        AddShortcut(s.BrushSizeDecreaseLarge, () => NudgeBrushSize(-1, true));
+        AddShortcut(s.BrushSizeIncreaseLarge, () => NudgeBrushSize(1, true));
+
+        // Brush - opacity
+        AddShortcut(s.BrushOpacityDecrease, () => { _opacitySlider.Value = Math.Max(_opacitySlider.Minimum, _opacitySlider.Value - s.BrushOpacityStep); });
+        AddShortcut(s.BrushOpacityIncrease, () => { _opacitySlider.Value = Math.Min(_opacitySlider.Maximum, _opacitySlider.Value + s.BrushOpacityStep); });
+
+        // Color
+        AddShortcut(s.ColorCycle, () => CycleColor());
+        AddShortcut(s.ColorDefault, () => SetColor(Color.Parse("#111111")));
+
+        // Layers
+        AddShortcut(s.LayerNew, () => _canvas.AddLayer());
+        AddShortcut(s.LayerDuplicate, () => _canvas.DuplicateLayer());
+        AddShortcut(s.LayerDelete, () => _canvas.DeleteLayer());
+        AddShortcut(s.LayerMoveUp, () => _canvas.MoveActiveLayer(1));
+        AddShortcut(s.LayerMoveDown, () => _canvas.MoveActiveLayer(-1));
+        AddShortcut(s.LayerMerge, LayerMergeAction);
+        AddShortcut(s.LayerGroup, LayerGroupAction);
+        AddShortcut(s.LayerToggleColor, () => ToggleActiveLayerColor());
+
+        // Filters
+        AddShortcut(s.FilterBlur, () => _ = ApplyBlurFilter());
+        AddShortcut(s.FilterSharpen, () => _ = ApplySharpenFilter());
+        AddShortcut(s.FilterNoise, () => _ = ApplyNoiseFilter());
+        AddShortcut(s.FilterColorCurves, () => _ = ApplyColorCurvesFilter());
+        AddShortcut(s.FilterChromaticAberration, () => _ = ApplyChromaticAberrationFilter());
+        AddShortcut(s.FilterBaseColorMask, () => _ = RunBaseColorMaskGenerator());
+        AddShortcut(s.FilterRemoveDust, () => _ = ApplyRemoveDustFilter());
+
+        // Misc
+        AddShortcut(s.OpenSettings, () => OpenSettings());
+        AddShortcut(s.OpenBrushEditor, () => OpenToolProperties());
+        AddShortcut(s.ToggleCanvasOnly, () => ToggleCanvasOnly());
+        AddShortcut(s.ToggleRulers, () => ToggleRulers());
+
+        // Special keys (not in ShortcutsConfig but handled same way)
+        AddShortcut(new Input.KeyBinding(Key.Escape), () => _canvas.CancelActiveTool());
+        AddShortcut(new Input.KeyBinding(Key.Back), DeleteSelectionAction);
+        AddShortcut(new Input.KeyBinding(Key.Return), () => _canvas.CommitActiveTool(),
+            () => _canvas.ActiveTool is TransformTool or CompositeTool { CanCommitFromClick: true });
+        AddShortcut(new Input.KeyBinding(Key.Enter), () => _canvas.CommitActiveTool(),
+            () => _canvas.ActiveTool is TransformTool or CompositeTool { CanCommitFromClick: true });
+    }
+
+    private void DeleteSelectionAction()
+    {
+        if (_canvas.ActiveTool is TransformTool) _canvas.DeleteSelectionTransform();
+        else _canvas.ClearSelectionContent();
+    }
+
+    private void TransformAction()
+    {
+        if (_canvas.IsTransformActive) { _canvas.CommitActiveTool(); }
+        else
+        {
+            _canvas.BeginSelectionTransform(
+                _selectedLayerIndices.Count > 1 ? _selectedLayerIndices.ToList() : null);
+        }
+    }
+
+    private void LayerMergeAction()
+    {
+        _canvas.MergeDown(_selectedLayerIndices.Count > 1 ? _selectedLayerIndices.OrderBy(x => x).ToList() : null);
+    }
+
+    private void LayerGroupAction()
+    {
+        if (_selectedLayerIndices.Count >= 1)
+        {
+            var sorted = _selectedLayerIndices.OrderBy(x => x).ToList();
+            _canvas.GroupSelectedLayers(sorted);
+            _selectedLayerIndices.Clear();
+            _selectedLayerIndices.Add(_canvas.ActiveLayerIndex);
+            BuildLayerList();
+        }
+        else
+        {
+            _canvas.AddGroupLayer();
+        }
+    }
+
+    private void MirrorHorizontalAction()
+    {
+        _canvasFlip.ScaleX = -_canvasFlip.ScaleX;
+        _canvas.FlipX = (int)_canvasFlip.ScaleX;
+        _rulerOverlay?.InvalidateVisual();
+        _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual();
+        ClampCanvasPan();
+        UpdateStatus();
+    }
+
+    private void MirrorVerticalAction()
+    {
+        _canvasFlip.ScaleY = -_canvasFlip.ScaleY;
+        _canvas.FlipY = (int)_canvasFlip.ScaleY;
+        _rulerOverlay?.InvalidateVisual();
+        _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual();
+        ClampCanvasPan();
+        UpdateStatus();
+    }
+
+    private void RotateCanvas90CwAction()
+    {
+        _canvas.RotateCanvas90Clockwise();
+        SyncCanvasFrameToDocument(false);
+        ClampCanvasPan();
+        _rulerOverlay?.InvalidateVisual();
+    }
+
+    private void RotateCanvas90CcwAction()
+    {
+        _canvas.RotateCanvas90CounterClockwise();
+        SyncCanvasFrameToDocument(false);
+        ClampCanvasPan();
+        _rulerOverlay?.InvalidateVisual();
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.Handled) return;
+
+        var key = e.Key;
+        var mods = Input.KeyBinding.ModifiersWithKeyDown(key, e.KeyModifiers);
+
+        // Tool group shortcuts (checked after regular shortcuts via KeyBinding above)
+        var matching = _toolGroupButtons
+            .Where(p => !p.Group.Shortcut.IsEmpty && p.Group.Shortcut.Matches(key, mods))
+            .ToList();
+        if (matching.Count > 0)
+        {
+            var activeIdx = matching.FindIndex(p => p.Group == _activeToolGroup);
+            if (!(matching.Count == 1 && activeIdx >= 0))
+            {
+                var next = matching[(activeIdx + 1) % matching.Count];
+                var preset = next.Group.ActivePreset ?? next.Group.Presets.FirstOrDefault();
+                if (preset != null) ActivatePreset(next.Group, preset);
+            }
+            e.Handled = true;
+        }
+    }
 
     private static readonly Cursor CursorPan = new(StandardCursorType.SizeAll);
     private static readonly Cursor CursorArrow = new(StandardCursorType.Arrow);
     private static readonly Cursor CursorNone = new(StandardCursorType.None);
-    private ITool? _altToolBeforeGesture;
+    private bool _hadAlternateBeforeGesture;
+    private KeyModifiers _activeModifierCombo;
+    private ModifierAction _activeModifierAction;
+    private Avalonia.Input.Key? _activeModifierKey;
 
     private ScaleTransform _canvasFlip = null!;
     private ScaleTransform _canvasScale = null!;
@@ -559,7 +780,8 @@ public partial class MainWindow : Window
                 new Separator(),
                 _resetViewMenuItem,
                 new Separator(),
-                MenuAction("_Settings...", OpenSettings)
+                MenuAction("_Settings...", OpenSettings),
+                MenuAction("_Modifier Key Settings...", OpenModifierKeySettings)
             }
         };
 
@@ -2001,10 +2223,11 @@ public partial class MainWindow : Window
     // ── Wire-up ───────────────────────────────────────────────────────────────
     private void WireControls()
     {
-        _workspaceViewport.PointerWheelChanged += Workspace_OnPointerWheelChanged;
-        _workspaceViewport.PointerPressed += Workspace_OnPointerPressed;
-        _workspaceViewport.PointerMoved += Workspace_OnPointerMoved;
-        _workspaceViewport.PointerReleased += Workspace_OnPointerReleased;
+        _workspaceViewport.AddHandler(PointerWheelChangedEvent, Workspace_OnPointerWheelChanged, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        _workspaceViewport.AddHandler(PointerPressedEvent, Workspace_OnPointerPressed, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        _workspaceViewport.AddHandler(PointerMovedEvent, Workspace_OnPointerMoved, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        _workspaceViewport.AddHandler(PointerReleasedEvent, Workspace_OnPointerReleased, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        _workspaceViewport.PointerCaptureLost += Workspace_OnPointerCaptureLost;
         _workspaceViewport.SizeChanged += (_, _) => SyncCanvasViewport();
 
         WireCanvas();
@@ -2018,8 +2241,9 @@ public partial class MainWindow : Window
         SliderChanged(_smoothingSlider, v => UpdateCurrentBrush(p => p with { Smoothing = v }));
         SliderChanged(_grainSlider, v => UpdateCurrentBrush(p => p with { Grain = v }));
 
-        AddHandler(KeyDownEvent, OnKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        AddHandler(KeyDownEvent, OnKeyDownTunnel, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         KeyUp += OnKeyUp;
+        RegisterShortcuts();
     }
 
     private static void SliderChanged(Slider slider, Action<double> action)
@@ -2172,6 +2396,36 @@ public partial class MainWindow : Window
         if (active == null || _activePreset == null) return;
         if (!active.InputProcess.IsBrushFamily() || active.OutputProcess != OutputProcessType.DirectDraw) return;
         active.CaptureFromBrushPreset(_activePreset);
+    }
+
+    internal void PushTemporaryPreset(string presetId)
+    {
+        if (_temporaryPresetActive) return;
+        foreach (var group in App.ToolGroups.Groups)
+        {
+            var preset = group.Presets.FirstOrDefault(p => p.Id == presetId);
+            if (preset == null) continue;
+            _savedPresetTemp = _activeToolGroup?.ActivePreset;
+            _temporaryPresetActive = true;
+            _canvas.SetActiveTool(ToolForPreset(preset), preset);
+            return;
+        }
+    }
+
+    internal void PopTemporaryPreset()
+    {
+        if (!_temporaryPresetActive) return;
+        _temporaryPresetActive = false;
+        var prev = _savedPresetTemp;
+        _savedPresetTemp = null;
+        if (prev != null)
+            _canvas.SetActiveTool(ToolForPreset(prev), prev);
+        else
+            _canvas.SetActiveTool(_toolFactory!.CreateTool(new ToolPreset
+            {
+                InputProcess = InputProcessType.Brush,
+                OutputProcess = OutputProcessType.DirectDraw
+            }), null);
     }
 
     internal ITool ToolForPreset(ToolPreset preset)

@@ -1,3 +1,4 @@
+using Avalonia.Input;
 using Avalonia.Media;
 using Floss.App.Input;
 
@@ -28,4 +29,6 @@ public interface IInputProcess
 
     // True for brush-family inputs that should show a brush radius cursor outline.
     bool HasBrushCursor => false;
+    bool ConsumesModifier(Avalonia.Input.KeyModifiers mods) => false;
+    ToolAuxOperationType ToolAuxMode { get; set; }
 }

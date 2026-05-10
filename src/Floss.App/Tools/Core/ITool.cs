@@ -1,4 +1,5 @@
 using System;
+using Avalonia.Input;
 using Avalonia.Media;
 using Floss.App.Brushes;
 using Floss.App.Document;
@@ -34,6 +35,11 @@ public interface ITool
     void Commit(ToolContext ctx) { }
     // Whether a double-click should commit the current operation.
     bool CanCommitFromClick => false;
+    // Whether the tool consumes the given modifier internally (e.g. Shift for constraining shapes).
+    // Prevents the modifier from being dispatched to alternate-tool invocation.
+    bool ConsumesModifier(KeyModifiers mods) => false;
+    // The tool to temporarily swap to when the alternate-invocation key is held. Null means no swap.
+    ITool? Alternate => null;
 }
 
 // Optional rendering hook for in-progress tool operations.
@@ -55,6 +61,8 @@ public sealed class ToolContext
     public Action<Color> OnColorSampled { get; init; } = _ => { };
     public Func<int, int, EyedropperSampleOptions, Color?> SampleDocumentColor { get; init; } = (_, _, _) => null;
     public ToolPreset? ActivePreset { get; set; }
+    public KeyModifiers CurrentModifiers { get; set; }
+    public ToolAuxOperationType ToolAuxMode { get; set; }
     public DrawingLayer? ActiveLayer =>
         Document.ActiveLayerIndex >= 0 && Document.ActiveLayerIndex < Document.Layers.Count
             ? Document.Layers[Document.ActiveLayerIndex]

@@ -12,6 +12,7 @@ public partial class App : Application
     public static AppConfig Config { get; private set; } = new();
     public static ShortcutsConfig Shortcuts { get; private set; } = new();
     public static ToolGroupConfig ToolGroups { get; private set; } = new();
+    public static ModifierKeySettings ModifierKeys { get; private set; } = ModifierKeySettings.CreateDefaults();
 
     public override void Initialize()
     {
@@ -24,6 +25,7 @@ public partial class App : Application
         Config = AppConfig.Load();
         Shortcuts = ShortcutsConfig.Load();
         ToolGroups = ToolGroupConfig.Load();
+        ModifierKeys = ModifierKeySettings.Load();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
@@ -39,6 +41,7 @@ public partial class App : Application
                 Config.Save();
                 Shortcuts.Save();
                 ToolGroups.Save();
+                ModifierKeys.Save();
             };
         }
 

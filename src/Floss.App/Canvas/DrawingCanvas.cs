@@ -114,6 +114,14 @@ public sealed class DrawingCanvas : Control, IDisposable
 
     public void InvalidateCompositor() => _compositor.Invalidate(null);
 
+    public void SetCurrentModifiers(Avalonia.Input.KeyModifiers mods) => _ctx.CurrentModifiers = mods;
+    public void SetToolAuxMode(ToolAuxOperationType mode)
+    {
+        if (_ctx.ToolAuxMode == mode) return;
+        _ctx.ToolAuxMode = mode;
+        InvalidateVisual();
+    }
+
     public void Dispose()
     {
         BrushEngine.Dispose();
@@ -168,8 +176,9 @@ public sealed class DrawingCanvas : Control, IDisposable
         InvalidateVisual();
     }
 
-    public ITool? AlternateTool => _toolController.AlternateTool;
-    public void SetAlternateTool(ITool? tool) => _toolController.AlternateTool = tool;
+    public ITool? AlternateTool => _toolController.IsAlternateActive ? _toolController.ActiveTool.Alternate : null;
+    public void SetAlternateActive(bool active) => _toolController.SetAlternateActive(active);
+    public bool IsAlternateActive => _toolController.IsAlternateActive;
 
     public void SetBrush(BrushPreset preset)
     {
@@ -870,7 +879,7 @@ public sealed class DrawingCanvas : Control, IDisposable
     }
 
     private bool IsPaintBlockedByLock =>
-        _toolController.AlternateTool == null
+        !_toolController.IsAlternateActive
         && IsPaintTool(_toolController.ActiveTool)
         && !_document.CanPaintActiveLayer;
 
@@ -986,7 +995,7 @@ public sealed class DrawingCanvas : Control, IDisposable
                 context.DrawEllipse(CursorInnerBrush, null, pos, Math.Max(0.5 / CanvasZoom, r * 0.45), Math.Max(0.5 / CanvasZoom, r * 0.45));
             }
 
-            if (_toolController.AlternateTool is CompositeTool altCt && altCt.Output is EyedropperOutput
+            if (_toolController.IsAlternateActive
                 || _ctx.ActivePreset?.OutputProcess == Floss.App.OutputProcessType.Eyedropper)
             {
                 var swatchR = 10.0 / CanvasZoom;
@@ -1253,7 +1262,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             return;
         }
 
-        if (PaintInputSuspended && _toolController.AlternateTool == null) return;
+        if (PaintInputSuspended && !_toolController.IsAlternateActive) return;
         if (IsPaintBlockedByLock) return;
 
         if (!IsPaintInput(point)) return;
@@ -1339,7 +1348,7 @@ public sealed class DrawingCanvas : Control, IDisposable
                 Cursor = new Cursor(cursor.Value);
         }
 
-        if (PaintInputSuspended && _toolController.AlternateTool == null)
+        if (PaintInputSuspended && !_toolController.IsAlternateActive)
         {
             if (_activePointerId >= 0)
             {

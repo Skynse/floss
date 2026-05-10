@@ -170,6 +170,46 @@ public sealed class SelectionMask
         double tolerance, SelectOp op = SelectOp.Replace)
         => SetFromFloodFill(pixels, srcX, srcY, 0, 0, tolerance, op);
 
+    // Flood-fill selection from a flat BGRA byte[] reference composite (e.g. merged reference layers).
+    public void SetFromFloodFillBuffer(byte[] refBuf, int startDocX, int startDocY,
+        double tolerance, SelectOp op = SelectOp.Replace)
+    {
+        EnsureMaskExists();
+        if ((uint)startDocX >= (uint)_docW || (uint)startDocY >= (uint)_docH) return;
+
+        int startIdx = startDocY * _docW + startDocX;
+        int off = startIdx * 4;
+        byte refB = refBuf[off], refG = refBuf[off + 1], refR = refBuf[off + 2], refA = refBuf[off + 3];
+        int tolInt = (int)(tolerance * 255 * 4);
+
+        var next = CreateBaseMask(op);
+        var visited = new bool[_docW * _docH];
+        var queue = new Queue<int>(_docW * _docH / 4);
+        visited[startIdx] = true;
+        queue.Enqueue(startIdx);
+
+        while (queue.Count > 0)
+        {
+            int idx = queue.Dequeue();
+            int pOff = idx * 4;
+            if (Math.Abs(refBuf[pOff] - refB) + Math.Abs(refBuf[pOff + 1] - refG)
+                + Math.Abs(refBuf[pOff + 2] - refR) + Math.Abs(refBuf[pOff + 3] - refA) > tolInt) continue;
+
+            Apply(next, idx % _docW, idx / _docW, op, true);
+
+            int docX = idx % _docW, docY = idx / _docW;
+            if (docX + 1 < _docW) { int ni = idx + 1; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
+            if (docX - 1 >= 0)    { int ni = idx - 1; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
+            if (docY + 1 < _docH) { int ni = idx + _docW; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
+            if (docY - 1 >= 0)    { int ni = idx - _docW; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
+        }
+
+        CommitMask(next);
+        _geoType = SelectionGeometry.Mask;
+        _cachedMaskGeo = null;
+        _geoPoly.Clear();
+    }
+
     public void SetFromFloodFill(
         TiledPixelBuffer pixels,
         int srcX,

@@ -1,0 +1,659 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Floss.App.Input;
+
+namespace Floss.App.Windows;
+
+public sealed class ModifierKeySettingsWindow : Window
+{
+    private const string Bg1 = "#13151a";
+    private const string Bg2 = "#1a1c22";
+    private const string Stroke = "#2b303b";
+    private const string TextPrimary = "#d7dde8";
+    private const string TextSecondary = "#A0AAB4";
+    private const string TextMuted = "#6f7888";
+    private const string AccentSoft = "#22355f";
+    private const string Accent = "#4878d8";
+
+    private static readonly (Avalonia.Input.Key? Key, KeyModifiers Mods)[] ModifierCombos =
+    [
+        (null, KeyModifiers.Shift),
+        (null, KeyModifiers.Control),
+        (null, KeyModifiers.Alt),
+        (null, KeyModifiers.Control | KeyModifiers.Alt),
+        (null, KeyModifiers.Control | KeyModifiers.Shift),
+        (null, KeyModifiers.Alt | KeyModifiers.Shift),
+        (null, KeyModifiers.Control | KeyModifiers.Alt | KeyModifiers.Shift),
+        (Key.Space, KeyModifiers.None),
+        (Key.Space, KeyModifiers.Control),
+        (Key.Space, KeyModifiers.Alt),
+        (Key.Space, KeyModifiers.Control | KeyModifiers.Alt),
+        (Key.Space, KeyModifiers.Shift),
+        (Key.Space, KeyModifiers.Control | KeyModifiers.Shift),
+        (Key.Space, KeyModifiers.Alt | KeyModifiers.Shift),
+        (Key.Space, KeyModifiers.Control | KeyModifiers.Alt | KeyModifiers.Shift),
+    ];
+
+    private readonly ModifierKeySettings _settings;
+
+    // Mode
+    private bool _toolSpecificMode;
+    private (InputProcessType Input, OutputProcessType Output)? _selectedToolCombo;
+
+    // Refine filter
+    private bool _showCtrl = true, _showShift = true, _showAlt = true, _showSpace = true;
+
+    // UI containers rebuilt on mode/filter/tool change
+    private readonly Grid _tableHost = new();
+    private readonly TextBlock _toolLabel = new() { FontSize = 10, Foreground = new SolidColorBrush(Color.Parse(TextMuted)) };
+    private readonly TextBlock _outputLabel = new() { FontSize = 10, Foreground = new SolidColorBrush(Color.Parse(TextSecondary)) };
+    private readonly TextBlock _inputLabel = new() { FontSize = 10, Foreground = new SolidColorBrush(Color.Parse(TextSecondary)) };
+    private readonly Border _toolHeader;
+
+    public ModifierKeySettingsWindow()
+    {
+        _settings = App.ModifierKeys;
+
+        Width = 700;
+        Height = 540;
+        CanResize = true;
+        MinWidth = 500;
+        MinHeight = 380;
+        Background = new SolidColorBrush(Color.Parse(Bg1));
+        Title = "Modifier Key Settings";
+        ShowInTaskbar = false;
+
+        // ── Top: mode radio buttons ──────────────────────────────────────────
+        var generalRadio = new RadioButton
+        {
+            Content = "General settings(C)",
+            IsChecked = true,
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
+            GroupName = "mode"
+        };
+        var specificRadio = new RadioButton
+        {
+            Content = "Tool-specific settings",
+            IsChecked = false,
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
+            GroupName = "mode"
+        };
+
+        generalRadio.IsCheckedChanged += (_, _) => { if (generalRadio.IsChecked == true) SetMode(false); };
+        specificRadio.IsCheckedChanged += (_, _) => { if (specificRadio.IsChecked == true) SetMode(true); };
+
+        var modeRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 20,
+            Margin = new Thickness(12, 10, 12, 6),
+            Children = { generalRadio, specificRadio }
+        };
+
+        // ── Tool header (tool-specific mode) ─────────────────────────────────
+        var toolSelectBtn = new Button
+        {
+            Height = 24,
+            FontSize = 11,
+            Padding = new Thickness(10, 0),
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(3)
+        };
+        UpdateToolSelectButton(toolSelectBtn);
+        toolSelectBtn.Click += (_, _) => ShowToolComboPickerDialog(toolSelectBtn);
+
+        _toolHeader = new Border
+        {
+            IsVisible = false,
+            Padding = new Thickness(12, 4, 12, 4),
+            Child = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 16,
+                Children =
+                {
+                    new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal, Spacing = 6,
+                        Children =
+                        {
+                            new TextBlock { Text = "Tool:", FontSize = 10, Foreground = new SolidColorBrush(Color.Parse(TextMuted)), VerticalAlignment = VerticalAlignment.Center },
+                            toolSelectBtn
+                        }
+                    },
+                    new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal, Spacing = 4,
+                        Children =
+                        {
+                            new TextBlock { Text = "Output process:", FontSize = 10, Foreground = new SolidColorBrush(Color.Parse(TextMuted)), VerticalAlignment = VerticalAlignment.Center },
+                            _outputLabel
+                        }
+                    },
+                    new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal, Spacing = 4,
+                        Children =
+                        {
+                            new TextBlock { Text = "Input process:", FontSize = 10, Foreground = new SolidColorBrush(Color.Parse(TextMuted)), VerticalAlignment = VerticalAlignment.Center },
+                            _inputLabel
+                        }
+                    }
+                }
+            }
+        };
+
+        // ── Refine filter ─────────────────────────────────────────────────────
+        var ctrlCb = MakeFilterCheck("Ctrl", v => _showCtrl = v);
+        var shiftCb = MakeFilterCheck("Shift", v => _showShift = v);
+        var altCb = MakeFilterCheck("Alt", v => _showAlt = v);
+        var spaceCb = MakeFilterCheck("Space", v => _showSpace = v);
+
+        CheckBox MakeFilterCheck(string label, Action<bool> setter)
+        {
+            var cb = new CheckBox
+            {
+                Content = label,
+                IsChecked = true,
+                FontSize = 10,
+                Foreground = new SolidColorBrush(Color.Parse(TextSecondary))
+            };
+            cb.IsCheckedChanged += (_, _) => { setter(cb.IsChecked == true); RebuildTable(); };
+            return cb;
+        }
+
+        var refineRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 12,
+            Margin = new Thickness(12, 2, 12, 6),
+            Children =
+            {
+                new TextBlock { Text = "Refine:", FontSize = 10, Foreground = new SolidColorBrush(Color.Parse(TextMuted)), VerticalAlignment = VerticalAlignment.Center },
+                ctrlCb, shiftCb, altCb, spaceCb
+            }
+        };
+
+        // ── Table host (rebuilt on changes) ──────────────────────────────────
+        var scroll = new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = _tableHost
+        };
+
+        // ── Footer buttons ────────────────────────────────────────────────────
+        var okBtn = Btn("OK", true);
+        okBtn.Click += (_, _) => { _settings.Save(); Close(); };
+
+        var cancelBtn = Btn("Cancel", false);
+        cancelBtn.Click += (_, _) => Close();
+
+        var resetBtn = Btn("Reset", false);
+        resetBtn.Click += (_, _) =>
+        {
+            if (_toolSpecificMode && _selectedToolCombo.HasValue)
+            {
+                var comboKey = ComboKey(_selectedToolCombo.Value.Input, _selectedToolCombo.Value.Output);
+                _settings.ToolSpecificAssignments.Remove(comboKey);
+            }
+            else
+            {
+                _settings.GeneralAssignments.Clear();
+                foreach (var a in ModifierKeySettings.CreateDefaults().GeneralAssignments)
+                    _settings.GeneralAssignments.Add(a);
+            }
+            _settings.Save();
+            RebuildTable();
+        };
+
+        var footer = new Border
+        {
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Padding = new Thickness(12, 8),
+            Child = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Children = { resetBtn, cancelBtn, okBtn }
+            }
+        };
+
+        var root = new Grid();
+        root.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        root.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        root.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        root.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        root.RowDefinitions.Add(new RowDefinition(GridLength.Star));
+        root.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        Grid.SetRow(modeRow, 0);
+        Grid.SetRow(_toolHeader, 1);
+        Grid.SetRow(refineRow, 2);
+        Grid.SetRow(MakeSeparator(), 3);
+        Grid.SetRow(scroll, 4);
+        Grid.SetRow(footer, 5);
+        root.Children.Add(modeRow);
+        root.Children.Add(_toolHeader);
+        root.Children.Add(refineRow);
+        root.Children.Add(MakeSeparator());
+        root.Children.Add(scroll);
+        root.Children.Add(footer);
+        Content = root;
+
+        RebuildTable();
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        base.OnClosed(e);
+        _settings.Save();
+    }
+
+    private void SetMode(bool toolSpecific)
+    {
+        _toolSpecificMode = toolSpecific;
+        _toolHeader.IsVisible = toolSpecific;
+
+        if (toolSpecific && _selectedToolCombo == null)
+        {
+            var first = GetUniqueInputOutputCombos().FirstOrDefault();
+            if (first.Input != default || first.Output != default)
+            {
+                _selectedToolCombo = (first.Input, first.Output);
+                UpdateToolLabels();
+            }
+        }
+
+        RebuildTable();
+    }
+
+    private void ShowToolComboPickerDialog(Button anchor)
+    {
+        var combos = GetUniqueInputOutputCombos();
+        if (combos.Count == 0) return;
+
+        var list = new StackPanel { Spacing = 1, Margin = new Thickness(4) };
+        var buttons = new List<(Button Btn, InputProcessType In, OutputProcessType Out)>();
+        Window? dlg = null;
+
+        foreach (var (inp, outp, presets) in combos)
+        {
+            var isSelected = _selectedToolCombo is { } s && s.Input == inp && s.Output == outp;
+            var btn = new Button
+            {
+                Content = $"{inp} + {outp}",
+                Padding = new Thickness(10, 5),
+                FontSize = 11,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Background = new SolidColorBrush(Color.Parse(isSelected ? AccentSoft : "Transparent")),
+                Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
+                BorderThickness = new Thickness(0),
+                CornerRadius = new CornerRadius(0)
+            };
+            var (i, o) = (inp, outp);
+            btn.Click += (_, _) =>
+            {
+                _selectedToolCombo = (i, o);
+                UpdateToolLabels();
+                UpdateToolSelectButton(anchor);
+                RebuildTable();
+                dlg?.Close();
+            };
+            buttons.Add((btn, inp, outp));
+            list.Children.Add(btn);
+        }
+
+        dlg = new Window
+        {
+            Title = "Select Tool Combination",
+            Width = 280,
+            Height = 320,
+            ShowInTaskbar = false,
+            Background = new SolidColorBrush(Color.Parse(Bg1)),
+            Content = new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = list
+            }
+        };
+        dlg.ShowDialog(this);
+    }
+
+    private void UpdateToolSelectButton(Button btn)
+    {
+        btn.Content = _selectedToolCombo.HasValue
+            ? $"{_selectedToolCombo.Value.Input} + {_selectedToolCombo.Value.Output}"
+            : "(select tool)";
+    }
+
+    private void UpdateToolLabels()
+    {
+        if (!_selectedToolCombo.HasValue) { _outputLabel.Text = ""; _inputLabel.Text = ""; return; }
+        _outputLabel.Text = _selectedToolCombo.Value.Output.ToString();
+        _inputLabel.Text = _selectedToolCombo.Value.Input.ToString();
+    }
+
+    private void RebuildTable()
+    {
+        _tableHost.Children.Clear();
+        _tableHost.RowDefinitions.Clear();
+
+        var rows = BuildRows();
+        foreach (var row in rows)
+        {
+            _tableHost.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            Grid.SetRow(row, _tableHost.RowDefinitions.Count - 1);
+            _tableHost.Children.Add(row);
+        }
+    }
+
+    private IEnumerable<Control> BuildRows()
+    {
+        var comboKey = _toolSpecificMode && _selectedToolCombo.HasValue
+            ? ComboKey(_selectedToolCombo.Value.Input, _selectedToolCombo.Value.Output)
+            : null;
+        var specificList = comboKey != null && _settings.ToolSpecificAssignments.TryGetValue(comboKey, out var sl) ? sl : null;
+
+        foreach (var (key, mods) in ModifierCombos)
+        {
+            if (!PassesFilter(key, mods)) continue;
+
+            ModifierKeyAssignment? current;
+            if (_toolSpecificMode && specificList != null)
+                current = specificList.FirstOrDefault(a => a.Modifiers == mods && a.Key == key);
+            else
+                current = _settings.GeneralAssignments.FirstOrDefault(a => a.Modifiers == mods && a.Key == key);
+
+            var (k, m) = (key, mods); // capture
+            yield return BuildRow(k, m, current, comboKey);
+        }
+    }
+
+    private bool PassesFilter(Avalonia.Input.Key? key, KeyModifiers mods)
+    {
+        if (key == Key.Space) return _showSpace;
+        if ((mods & KeyModifiers.Control) != 0 && !_showCtrl) return false;
+        if ((mods & KeyModifiers.Shift) != 0 && !_showShift) return false;
+        if ((mods & KeyModifiers.Alt) != 0 && !_showAlt) return false;
+        return true;
+    }
+
+    private Border BuildRow(Avalonia.Input.Key? key, KeyModifiers mods, ModifierKeyAssignment? current, string? comboKey)
+    {
+        var actions = _toolSpecificMode
+            ? new[] { ModifierAction.None, ModifierAction.Common, ModifierAction.ChangeToolTemporarily, ModifierAction.ToolAux, ModifierAction.ChangeBrushSize, ModifierAction.ViewOperation }
+            : new[] { ModifierAction.None, ModifierAction.ChangeToolTemporarily, ModifierAction.ToolAux, ModifierAction.ChangeBrushSize };
+
+        var actionDropdown = new ComboBox
+        {
+            Width = 190,
+            Height = 24,
+            FontSize = 10,
+            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(3)
+        };
+        foreach (var a in actions)
+            actionDropdown.Items.Add(new ComboBoxItem { Content = ActionLabel(a), Tag = a });
+        var selectedIdx = Array.IndexOf(actions, current?.Action ?? ModifierAction.None);
+        actionDropdown.SelectedIndex = Math.Max(0, selectedIdx);
+
+        // Description text + Settings button (rebuilt when action changes)
+        var descLabel = new TextBlock
+        {
+            FontSize = 10,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(4, 0),
+            MinWidth = 80,
+            Text = DescriptionFor(current)
+        };
+
+        var settingsBtn = new Button
+        {
+            Content = "Settings",
+            Height = 22,
+            FontSize = 10,
+            Padding = new Thickness(8, 0),
+            Margin = new Thickness(4, 0),
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(3),
+            IsVisible = current?.Action == ModifierAction.ChangeToolTemporarily
+        };
+
+        settingsBtn.Click += (_, _) =>
+        {
+            var curAssignment = GetAssignment(key, mods, comboKey);
+            var dlg = new SelectToolDialog(curAssignment?.TemporaryToolPresetId);
+            dlg.ShowDialog(this).ContinueWith(_ =>
+            {
+                if (dlg.SelectedPresetId != null)
+                {
+                    SetTemporaryToolPreset(key, mods, comboKey, dlg.SelectedPresetId);
+                    descLabel.Text = FindPresetName(dlg.SelectedPresetId);
+                }
+            });
+        };
+
+        actionDropdown.SelectionChanged += (_, _) =>
+        {
+            if (actionDropdown.SelectedItem is not ComboBoxItem { Tag: ModifierAction action }) return;
+            SetAction(key, mods, action, comboKey);
+            settingsBtn.IsVisible = action == ModifierAction.ChangeToolTemporarily;
+            descLabel.Text = DescriptionFor(GetAssignment(key, mods, comboKey));
+            _settings.Save();
+        };
+
+        var row = new Grid { Margin = new Thickness(0, 0, 0, 1) };
+        row.ColumnDefinitions.Add(new ColumnDefinition(130, GridUnitType.Pixel));
+        row.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        row.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        row.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+
+        var label = new TextBlock
+        {
+            Text = ComboLabel(key, mods) + ":",
+            FontSize = 10,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(12, 0, 8, 0)
+        };
+
+        Grid.SetColumn(label, 0);
+        Grid.SetColumn(actionDropdown, 1);
+        Grid.SetColumn(settingsBtn, 2);
+        Grid.SetColumn(descLabel, 3);
+        row.Children.Add(label);
+        row.Children.Add(actionDropdown);
+        row.Children.Add(settingsBtn);
+        row.Children.Add(descLabel);
+
+        return new Border
+        {
+            Padding = new Thickness(0, 3),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Child = row
+        };
+    }
+
+    private void SetAction(Avalonia.Input.Key? key, KeyModifiers mods, ModifierAction action, string? comboKey)
+    {
+        if (comboKey != null)
+        {
+            if (!_settings.ToolSpecificAssignments.TryGetValue(comboKey, out var lst))
+            {
+                lst = [];
+                _settings.ToolSpecificAssignments[comboKey] = lst;
+            }
+            lst.RemoveAll(a => a.Key == key && a.Modifiers == mods);
+            if (action != ModifierAction.None)
+                lst.Add(new ModifierKeyAssignment { Key = key, Modifiers = mods, Action = action });
+            if (lst.Count == 0)
+                _settings.ToolSpecificAssignments.Remove(comboKey);
+        }
+        else
+        {
+            _settings.GeneralAssignments.RemoveAll(a => a.Key == key && a.Modifiers == mods);
+            if (action != ModifierAction.None)
+                _settings.GeneralAssignments.Add(new ModifierKeyAssignment { Key = key, Modifiers = mods, Action = action });
+        }
+    }
+
+    private void SetTemporaryToolPreset(Avalonia.Input.Key? key, KeyModifiers mods, string? comboKey, string presetId)
+    {
+        List<ModifierKeyAssignment> lst;
+        if (comboKey != null)
+        {
+            if (!_settings.ToolSpecificAssignments.TryGetValue(comboKey, out lst!))
+            {
+                lst = [];
+                _settings.ToolSpecificAssignments[comboKey] = lst;
+            }
+        }
+        else
+        {
+            lst = _settings.GeneralAssignments;
+        }
+
+        var existing = lst.FirstOrDefault(a => a.Key == key && a.Modifiers == mods);
+        if (existing != null)
+            existing.TemporaryToolPresetId = presetId;
+        else
+            lst.Add(new ModifierKeyAssignment { Key = key, Modifiers = mods, Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = presetId });
+        _settings.Save();
+    }
+
+    private ModifierKeyAssignment? GetAssignment(Avalonia.Input.Key? key, KeyModifiers mods, string? comboKey)
+    {
+        if (comboKey != null && _settings.ToolSpecificAssignments.TryGetValue(comboKey, out var lst))
+            return lst.FirstOrDefault(a => a.Key == key && a.Modifiers == mods);
+        return _settings.GeneralAssignments.FirstOrDefault(a => a.Key == key && a.Modifiers == mods);
+    }
+
+    private string DescriptionFor(ModifierKeyAssignment? a)
+    {
+        if (a == null || a.Action == ModifierAction.None || a.Action == ModifierAction.Common) return "";
+        return a.Action switch
+        {
+            ModifierAction.ChangeToolTemporarily when a.TemporaryToolPresetId != null => FindPresetName(a.TemporaryToolPresetId),
+            ModifierAction.ViewOperation => a.ViewOper switch
+            {
+                ViewOperationType.Pan => "Pan",
+                ViewOperationType.Zoom => "Zoom",
+                ViewOperationType.Rotate => "Rotate",
+                _ => ""
+            },
+            ModifierAction.ToolAux => a.ToolAuxOper switch
+            {
+                ToolAuxOperationType.StraightLine => "Straight line",
+                _ => ""
+            },
+            ModifierAction.ChangeBrushSize => "",
+            _ => ""
+        };
+    }
+
+    private static string FindPresetName(string presetId)
+    {
+        foreach (var group in App.ToolGroups.Groups)
+        {
+            var preset = group.Presets.FirstOrDefault(p => p.Id == presetId);
+            if (preset != null) return $"{group.Name}/{preset.Name}";
+        }
+        return presetId;
+    }
+
+    private static string ActionLabel(ModifierAction action) => action switch
+    {
+        ModifierAction.None => "None",
+        ModifierAction.Common => "General",
+        ModifierAction.ChangeToolTemporarily => "Change tool temporarily",
+        ModifierAction.ToolAux => "Tool aux. operation",
+        ModifierAction.ChangeBrushSize => "Change brush size",
+        ModifierAction.ViewOperation => "View operation",
+        _ => action.ToString()
+    };
+
+    private static string ComboLabel(Avalonia.Input.Key? key, KeyModifiers mods)
+    {
+        var modStr = mods switch
+        {
+            KeyModifiers.None => "",
+            KeyModifiers.Shift => "Shift",
+            KeyModifiers.Control => "Ctrl",
+            KeyModifiers.Alt => "Alt",
+            KeyModifiers.Control | KeyModifiers.Alt => "Ctrl+Alt",
+            KeyModifiers.Control | KeyModifiers.Shift => "Ctrl+Shift",
+            KeyModifiers.Alt | KeyModifiers.Shift => "Alt+Shift",
+            KeyModifiers.Control | KeyModifiers.Alt | KeyModifiers.Shift => "Ctrl+Alt+Shift",
+            _ => mods.ToString()
+        };
+        if (key == null) return modStr;
+        var keyStr = key == Avalonia.Input.Key.Space ? "Space" : key.ToString()!;
+        return string.IsNullOrEmpty(modStr) ? keyStr : modStr + "+" + keyStr;
+    }
+
+    private static string ComboKey(InputProcessType input, OutputProcessType output)
+        => $"{(int)input}:{(int)output}";
+
+    private static Border MakeSeparator() => new()
+    {
+        Height = 1,
+        Background = new SolidColorBrush(Color.Parse("#222428")),
+        Margin = new Thickness(0, 2, 0, 2)
+    };
+
+    private static Button Btn(string text, bool accent) => new()
+    {
+        Content = text,
+        Width = 70,
+        Height = 26,
+        FontSize = 11,
+        HorizontalContentAlignment = HorizontalAlignment.Center,
+        Background = new SolidColorBrush(Color.Parse(accent ? AccentSoft : Bg2)),
+        Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
+        BorderBrush = new SolidColorBrush(Color.Parse(accent ? Accent : Stroke)),
+        BorderThickness = new Thickness(1),
+        CornerRadius = new CornerRadius(3)
+    };
+
+    private static List<(InputProcessType Input, OutputProcessType Output, List<string> Presets)> GetUniqueInputOutputCombos()
+    {
+        var map = new Dictionary<(int, int), (InputProcessType Input, OutputProcessType Output, List<string> Presets)>();
+        foreach (var group in App.ToolGroups.Groups)
+        foreach (var preset in group.Presets)
+        {
+            var key = ((int)preset.InputProcess, (int)preset.OutputProcess);
+            if (!map.TryGetValue(key, out var entry))
+            {
+                entry = (preset.InputProcess, preset.OutputProcess, []);
+                map[key] = entry;
+            }
+            entry.Presets.Add($"{group.Name}/{preset.Name}");
+        }
+        return map.Values.OrderBy(v => v.Input).ThenBy(v => v.Output).ToList();
+    }
+}

@@ -48,6 +48,7 @@ public partial class MainWindow
 
     private void Workspace_OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
+        _isPanning = false;
         var pt = e.GetCurrentPoint(_workspaceViewport);
 
         // Ignore phantom pen events (hover without contact)
@@ -66,12 +67,31 @@ public partial class MainWindow
         }
 
         var middle = pt.Properties.IsMiddleButtonPressed;
-        if (_activeGesture == GestureMode.None)
+        if (_activeGesture == GestureMode.None && _activeModifierAction == ModifierAction.ChangeBrushSize)
         {
-            var (gesture, gestureBinding) = DetectGesture(Key.None, e.KeyModifiers, App.Shortcuts);
-            if (gesture != GestureMode.None && gestureBinding?.IsModifierOnly == true)
+            _activeGesture = GestureMode.BrushSize;
+            _gestureKey = Key.None;
+            _gestureModifiers = _activeModifierCombo;
+            _canvas.PaintInputSuspended = true;
+            _hadAlternateBeforeGesture = _canvas.IsAlternateActive;
+            _canvas.SetAlternateActive(false);
+        }
+        if (!middle && _activeGesture == GestureMode.None && pt.Properties.IsLeftButtonPressed)
+        {
+            var viewMode = _activeToolGroup?.ActivePreset?.OutputProcess switch
             {
-                BeginGesture(gesture, Key.None, gestureBinding);
+                OutputProcessType.Pan => GestureMode.Pan,
+                OutputProcessType.Zoom or OutputProcessType.ZoomOut => GestureMode.Zoom,
+                OutputProcessType.Rotate => GestureMode.Rotate,
+                _ => GestureMode.None
+            };
+            if (viewMode != GestureMode.None)
+            {
+                _activeGesture = viewMode;
+                _canvas.PaintInputSuspended = true;
+                _hadAlternateBeforeGesture = _canvas.IsAlternateActive;
+                _canvas.SetAlternateActive(false);
+                Cursor = viewMode == GestureMode.Pan ? CursorPan : CursorArrow;
             }
         }
         if (!middle && _activeGesture == GestureMode.None) return;
@@ -106,6 +126,13 @@ public partial class MainWindow
     private void Workspace_OnPointerMoved(object? sender, PointerEventArgs e)
     {
         if (!_isPanning) return;
+
+        if (_activeGesture == GestureMode.None && !IsResizeDragging)
+        {
+            _isPanning = false;
+            return;
+        }
+
         var pt = e.GetPosition(_workspaceViewport);
 
         // Resize drag takes priority over pan/gesture
@@ -222,6 +249,23 @@ public partial class MainWindow
         _canvas.UnlockCursorPreview();
         e.Pointer.Capture(null);
         e.Handled = true;
+    }
+
+    private void Workspace_OnPointerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
+    {
+        if (IsResizeDragging) EndResizeDrag();
+        _isPanning = false;
+        if (_activeGesture == GestureMode.BrushSize)
+            FinishActiveToolSizeEdit();
+        _canvas.UnlockCursorPreview();
+        if (_activeGesture != GestureMode.None)
+        {
+            _canvas.PaintInputSuspended = false;
+            _activeGesture = GestureMode.None;
+            _gestureKey = Key.None;
+            _gestureModifiers = KeyModifiers.None;
+            Cursor = Cursor.Default;
+        }
     }
 
     private void NudgeBrushSize(int direction, bool large)
@@ -480,25 +524,19 @@ public partial class MainWindow
     }
 
     // ── Keyboard ──────────────────────────────────────────────────────────────
-    private void OnKeyDown(object? sender, KeyEventArgs e)
+    private void OnKeyDownTunnel(object? sender, KeyEventArgs e)
     {
-
         var focused = FocusManager.GetFocusedElement();
         if (focused is TextBox or ComboBox)
-        {
-            // Let the input control handle the key normally
             return;
-        }
-        var key = e.Key;
-        var mods = Floss.App.Input.KeyBinding.ModifiersWithKeyDown(key, e.KeyModifiers);
-        var sc = App.Shortcuts;
 
-        // Gestures must be checked before other shortcuts since they
-        // consume modifier-only key-downs that shouldn't trigger tool shortcuts.
-        var (gesture, gestureBinding) = DetectGesture(key, mods, sc);
-        if (gesture != GestureMode.None)
+        var key = e.Key;
+        var mods = Input.KeyBinding.ModifiersWithKeyDown(key, e.KeyModifiers);
+        _canvas.SetCurrentModifiers(mods);
+
+        // Modifier key settings — view operations, tool aux, alternate tools, etc.
+        if (TryApplyModifierKeyAction(key, mods))
         {
-            BeginGesture(gesture, key, gestureBinding);
             e.Handled = true;
             return;
         }
@@ -529,184 +567,19 @@ public partial class MainWindow
             e.Handled = true;
             return;
         }
-
-        if (sc.Undo.Matches(key, mods)) { _canvas.Undo(); e.Handled = true; }
-        else if (sc.Redo.Matches(key, mods)) { _canvas.Redo(); e.Handled = true; }
-        else if (sc.RedoAlt.Matches(key, mods)) { _canvas.Redo(); e.Handled = true; }
-        else if (sc.ToggleCanvasOnly.Matches(key, mods)) { ToggleCanvasOnly(); e.Handled = true; }
-        else if (sc.ToggleRulers.Matches(key, mods)) { ToggleRulers(); e.Handled = true; }
-        else if (sc.FileNew.Matches(key, mods)) { _ = NewDocumentAsync(); e.Handled = true; }
-        else if (sc.FileSave.Matches(key, mods)) { _ = SaveDocumentAsync(); e.Handled = true; }
-        else if (sc.FileSaveAs.Matches(key, mods)) { _ = SaveDocumentAsAsync(); e.Handled = true; }
-        else if (sc.FileOpen.Matches(key, mods)) { _ = OpenDocumentAsync(); e.Handled = true; }
-        else if (sc.LayerNew.Matches(key, mods)) { _canvas.AddLayer(); e.Handled = true; }
-        else if (sc.LayerDuplicate.Matches(key, mods)) { _canvas.DuplicateLayer(); e.Handled = true; }
-        else if (sc.LayerDelete.Matches(key, mods)) { _canvas.DeleteLayer(); e.Handled = true; }
-        else if (sc.LayerMoveUp.Matches(key, mods)) { _canvas.MoveActiveLayer(1); e.Handled = true; }
-        else if (sc.LayerMoveDown.Matches(key, mods)) { _canvas.MoveActiveLayer(-1); e.Handled = true; }
-        else if (sc.LayerMerge.Matches(key, mods)) { _canvas.MergeDown(_selectedLayerIndices.Count > 1 ? _selectedLayerIndices.OrderBy(x => x).ToList() : null); e.Handled = true; }
-        else if (sc.LayerGroup.Matches(key, mods))
-        {
-            if (_selectedLayerIndices.Count >= 1)
-            {
-                var sorted = _selectedLayerIndices.OrderBy(x => x).ToList();
-                _canvas.GroupSelectedLayers(sorted);
-                _selectedLayerIndices.Clear();
-                _selectedLayerIndices.Add(_canvas.ActiveLayerIndex);
-                BuildLayerList();
-            }
-            else
-            {
-                _canvas.AddGroupLayer();
-            }
-            e.Handled = true;
-        }
-        else if (sc.LayerToggleColor.Matches(key, mods)) { ToggleActiveLayerColor(); e.Handled = true; }
-        else if (sc.ZoomReset.Matches(key, mods)) { ResetView(); e.Handled = true; }
-        else if (sc.ZoomFit.Matches(key, mods)) { SyncCanvasFrameToDocument(fitToViewport: true); e.Handled = true; }
-        else if (sc.ZoomIn.Matches(key, mods) || sc.ZoomInAlt.Matches(key, mods))
-        { SetZoom(_zoom * sc.ZoomKeyFactor, null); e.Handled = true; }
-        else if (sc.ZoomOut.Matches(key, mods))
-        { SetZoom(_zoom / sc.ZoomKeyFactor, null); e.Handled = true; }
-        else if (sc.RotateReset.Matches(key, mods)) { SetRotation(0); e.Handled = true; }
-        else if (sc.RotateLeft.Matches(key, mods)) { SetRotation(_rotation - sc.RotateKeyStep); e.Handled = true; }
-        else if (sc.RotateRight.Matches(key, mods)) { SetRotation(_rotation + sc.RotateKeyStep); e.Handled = true; }
-        else if (sc.RotateCanvas90Cw.Matches(key, mods))
-        { _canvas.RotateCanvas90Clockwise(); SyncCanvasFrameToDocument(false); ClampCanvasPan(); _rulerOverlay?.InvalidateVisual(); e.Handled = true; }
-        else if (sc.RotateCanvas90Ccw.Matches(key, mods))
-        { _canvas.RotateCanvas90CounterClockwise(); SyncCanvasFrameToDocument(false); ClampCanvasPan(); _rulerOverlay?.InvalidateVisual(); e.Handled = true; }
-        else if (sc.RotateCanvas180.Matches(key, mods)) { _canvas.RotateCanvas180(); e.Handled = true; }
-        else if (sc.SelectAll.Matches(key, mods)) { _canvas.SelectAll(); e.Handled = true; }
-        else if (sc.Deselect.Matches(key, mods)) { _canvas.Deselect(); e.Handled = true; }
-        else if (sc.InvertSelect.Matches(key, mods)) { _canvas.InvertSelection(); e.Handled = true; }
-        else if (sc.Transform.Matches(key, mods))
-        {
-            if (_canvas.IsTransformActive) { _canvas.CommitActiveTool(); }
-            else
-            {
-                _canvas.BeginSelectionTransform(
-                    _selectedLayerIndices.Count > 1 ? _selectedLayerIndices.ToList() : null);
-            }
-            e.Handled = true;
-        }
-        else if (key == Key.Back && mods == KeyModifiers.None)
-        {
-            if (_canvas.ActiveTool is TransformTool) _canvas.DeleteSelectionTransform();
-            else _canvas.ClearSelectionContent();
-            e.Handled = true;
-        }
-        else if (EffectiveAltInvocation().Matches(key, mods))
-        {
-            if (_canvas.AlternateTool == null)
-                _canvas.SetAlternateTool(CreateAlternateEyedropperTool());
-            e.Handled = true;
-        }
-        else if (key == Key.Escape)
-        { _canvas.CancelActiveTool(); e.Handled = true; }
-        else if ((key == Key.Return || key == Key.Enter) && _canvas.ActiveTool is TransformTool or CompositeTool { CanCommitFromClick: true })
-        { _canvas.CommitActiveTool(); e.Handled = true; }
-        else if (sc.ColorCycle.Matches(key, mods)) { CycleColor(); e.Handled = true; }
-        else if (sc.ColorDefault.Matches(key, mods)) { SetColor(Color.Parse("#111111")); e.Handled = true; }
-        else if (sc.Copy.Matches(key, mods)) { _canvas.CopyToClipboard(); e.Handled = true; }
-        else if (sc.Paste.Matches(key, mods)) { _ = _canvas.PasteFromOSClipboardAsync(); e.Handled = true; }
-        else if (sc.FlipHorizontal.Matches(key, mods)) { _canvas.FlipCanvas(horizontal: true); e.Handled = true; }
-        else if (sc.FlipVertical.Matches(key, mods)) { _canvas.FlipCanvas(horizontal: false); e.Handled = true; }
-        else if (sc.MirrorHorizontal.Matches(key, mods)) { _canvasFlip.ScaleX = -_canvasFlip.ScaleX; _canvas.FlipX = (int)_canvasFlip.ScaleX; _rulerOverlay?.InvalidateVisual(); _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual(); ClampCanvasPan(); UpdateStatus(); e.Handled = true; }
-        else if (sc.MirrorVertical.Matches(key, mods)) { _canvasFlip.ScaleY = -_canvasFlip.ScaleY; _canvas.FlipY = (int)_canvasFlip.ScaleY; _rulerOverlay?.InvalidateVisual(); _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual(); ClampCanvasPan(); UpdateStatus(); e.Handled = true; }
-        else if (sc.DeleteSelection.Matches(key, mods))
-        {
-            if (_canvas.ActiveTool is TransformTool) _canvas.DeleteSelectionTransform();
-            else _canvas.ClearSelectionContent();
-            e.Handled = true;
-        }
-        else if (sc.OpenSettings.Matches(key, mods)) { OpenSettings(); e.Handled = true; }
-        else if (sc.OpenBrushEditor.Matches(key, mods)) { OpenToolProperties(); e.Handled = true; }
-        else if (sc.BrushSizeDecrease.Matches(key, mods))
-        {
-            NudgeBrushSize(-1, large: false);
-            e.Handled = true;
-        }
-        else if (sc.BrushSizeIncrease.Matches(key, mods))
-        {
-            NudgeBrushSize(1, large: false);
-            e.Handled = true;
-        }
-        else if (sc.BrushSizeDecreaseLarge.Matches(key, mods))
-        {
-            NudgeBrushSize(-1, large: true);
-            e.Handled = true;
-        }
-        else if (sc.BrushSizeIncreaseLarge.Matches(key, mods))
-        {
-            NudgeBrushSize(1, large: true);
-            e.Handled = true;
-        }
-        else if (sc.BrushOpacityDecrease.Matches(key, mods))
-        {
-            _opacitySlider.Value = Math.Max(_opacitySlider.Minimum, _opacitySlider.Value - sc.BrushOpacityStep);
-            e.Handled = true;
-        }
-        else if (sc.BrushOpacityIncrease.Matches(key, mods))
-        {
-            _opacitySlider.Value = Math.Min(_opacitySlider.Maximum, _opacitySlider.Value + sc.BrushOpacityStep);
-            e.Handled = true;
-        }
-        else if (sc.FilterBlur.Matches(key, mods)) { _ = ApplyBlurFilter(); e.Handled = true; }
-        else if (sc.FilterSharpen.Matches(key, mods)) { _ = ApplySharpenFilter(); e.Handled = true; }
-        else if (sc.FilterNoise.Matches(key, mods)) { _ = ApplyNoiseFilter(); e.Handled = true; }
-        else if (sc.FilterColorCurves.Matches(key, mods)) { _ = ApplyColorCurvesFilter(); e.Handled = true; }
-        else if (sc.FilterChromaticAberration.Matches(key, mods)) { _ = ApplyChromaticAberrationFilter(); e.Handled = true; }
-        else if (sc.FilterBaseColorMask.Matches(key, mods)) { _ = RunBaseColorMaskGenerator(); e.Handled = true; }
-        else if (sc.FilterRemoveDust.Matches(key, mods)) { _ = ApplyRemoveDustFilter(); e.Handled = true; }
-
-        if (!e.Handled)
-        {
-            // Collect all groups that share this shortcut
-            var matching = _toolGroupButtons
-                .Where(p => !p.Group.Shortcut.IsEmpty && p.Group.Shortcut.Matches(key, mods))
-                .ToList();
-
-            if (matching.Count > 0)
-            {
-                var activeIdx = matching.FindIndex(p => p.Group == _activeToolGroup);
-                // Single group already active → do nothing; otherwise advance to next group
-                if (!(matching.Count == 1 && activeIdx >= 0))
-                {
-                    var next = matching[(activeIdx + 1) % matching.Count];
-                    var preset = next.Group.ActivePreset ?? next.Group.Presets.FirstOrDefault();
-                    if (preset != null) ActivatePreset(next.Group, preset);
-                }
-                e.Handled = true;
-            }
-        }
     }
 
     private void OnKeyUp(object? sender, KeyEventArgs e)
     {
         var mods = Floss.App.Input.KeyBinding.ModifiersAfterKeyUp(e.Key, e.KeyModifiers);
+        _canvas.SetCurrentModifiers(mods);
         if (_activeGesture != GestureMode.None &&
             (_gestureKey == Key.None
                 ? (mods & _gestureModifiers) != _gestureModifiers
                 : e.Key == _gestureKey))
         {
-            var wasBrushSizeGesture = _activeGesture == GestureMode.BrushSize;
-            _activeGesture = GestureMode.None;
-            _gestureKey = Key.None;
-            _gestureModifiers = KeyModifiers.None;
-            _isPanning = false;
-            if (wasBrushSizeGesture)
-                FinishActiveToolSizeEdit();
-            _canvas.UnlockCursorPreview();
-            _canvas.PaintInputSuspended = false;
-            Cursor = Cursor.Default;
+            EndGesture();
             e.Handled = true;
-
-            // Restore alternate tool if it was active before the gesture
-            if (_altToolBeforeGesture != null)
-            {
-                _canvas.SetAlternateTool(_altToolBeforeGesture);
-                _altToolBeforeGesture = null;
-            }
         }
 
         // Commit pending modifier-only key for preset alt invocation recording
@@ -722,34 +595,163 @@ public partial class MainWindow
             }
         }
 
-        var altInvocation = EffectiveAltInvocation();
-        if ((altInvocation.Key != Key.None && e.Key == altInvocation.Key) ||
-            (altInvocation.IsModifierOnly && (mods & altInvocation.Modifiers) != altInvocation.Modifiers))
+        // Re-evaluate modifier key action on key-up
+        EvaluateModifierKeyAction(mods);
+    }
+
+    private void ResetTransientInputState()
+    {
+        var hadGesture = _activeGesture != GestureMode.None;
+        _isPanning = false;
+        if (hadGesture)
+            EndGesture();
+        if (_canvas.IsAlternateActive || _hadAlternateBeforeGesture)
         {
-            _canvas.SetAlternateTool(null);
-            e.Handled = true;
+            _canvas.SetAlternateActive(false);
+            _hadAlternateBeforeGesture = false;
         }
     }
 
-    private static (GestureMode Mode, Floss.App.Input.KeyBinding? Binding) DetectGesture(Key key, KeyModifiers mods, ShortcutsConfig sc)
+    private void EvaluateModifierKeyAction(KeyModifiers mods)
     {
-        if (sc.GesturePan.Matches(key, mods)) return (GestureMode.Pan, sc.GesturePan);
-        if (sc.GestureZoom.Matches(key, mods)) return (GestureMode.Zoom, sc.GestureZoom);
-        if (sc.GestureRotate.Matches(key, mods)) return (GestureMode.Rotate, sc.GestureRotate);
-        if (sc.GestureBrushSize.Matches(key, mods)) return (GestureMode.BrushSize, sc.GestureBrushSize);
-        return (GestureMode.None, null);
+        var activePreset = _activeToolGroup?.ActivePreset;
+        if (activePreset == null) return;
+
+        var inputType = (int)activePreset.InputProcess;
+        var outputType = (int)activePreset.OutputProcess;
+        var assignment = App.ModifierKeys.Resolve(inputType, outputType, null, mods);
+
+        if (assignment?.Modifiers == _activeModifierCombo && assignment?.Action == _activeModifierAction)
+            return;
+
+        // Deactivate previous action
+        switch (_activeModifierAction)
+        {
+            case ModifierAction.ToolAux:
+                _canvas.SetToolAuxMode(Floss.App.Input.ToolAuxOperationType.None);
+                break;
+            case ModifierAction.ChangeToolTemporarily:
+                if (_temporaryPresetActive)
+                    PopTemporaryPreset();
+                else
+                    _canvas.SetAlternateActive(false);
+                break;
+            case ModifierAction.ChangeBrushSize:
+                if (_activeGesture == GestureMode.BrushSize)
+                    EndGesture();
+                break;
+            case ModifierAction.ViewOperation:
+                if (_activeGesture != GestureMode.None)
+                    EndGesture();
+                break;
+        }
+
+        _activeModifierAction = assignment?.Action ?? ModifierAction.None;
+        _activeModifierCombo = assignment?.Modifiers ?? KeyModifiers.None;
+        _activeModifierKey = assignment?.Key;
+
+        // Activate new action
+        switch (assignment?.Action)
+        {
+            case ModifierAction.ToolAux:
+                _canvas.SetToolAuxMode(assignment.ToolAuxOper);
+                break;
+            case ModifierAction.ChangeToolTemporarily:
+                if (!string.IsNullOrEmpty(assignment.TemporaryToolPresetId))
+                    PushTemporaryPreset(assignment.TemporaryToolPresetId);
+                else
+                    _canvas.SetAlternateActive(true);
+                break;
+            case ModifierAction.ChangeBrushSize:
+                // Gesture starts on pointer press, not here
+                break;
+            case ModifierAction.ViewOperation:
+                BeginGestureFromAssignment(assignment);
+                break;
+        }
     }
 
-    private void BeginGesture(GestureMode gesture, Key key, Floss.App.Input.KeyBinding? binding)
+    private bool TryApplyModifierKeyAction(Avalonia.Input.Key key, KeyModifiers mods)
     {
-        _activeGesture = gesture;
-        _gestureKey = binding?.IsModifierOnly == true ? Key.None : key;
-        _gestureModifiers = binding?.Modifiers ?? KeyModifiers.None;
+        var activePreset = _activeToolGroup?.ActivePreset;
+        if (activePreset == null) return false;
+
+        var inputType = (int)activePreset.InputProcess;
+        var outputType = (int)activePreset.OutputProcess;
+        var assignment = App.ModifierKeys.Resolve(inputType, outputType, key, mods);
+
+        if (assignment == null) return false;
+
+        // Skip if already active with same combo
+        if (assignment.Modifiers == _activeModifierCombo && assignment.Action == _activeModifierAction && assignment.Key == _activeModifierKey)
+            return false;
+
+        // Deactivate previous
+        switch (_activeModifierAction)
+        {
+            case ModifierAction.ToolAux:
+                _canvas.SetToolAuxMode(Floss.App.Input.ToolAuxOperationType.None);
+                break;
+            case ModifierAction.ChangeToolTemporarily:
+                if (_temporaryPresetActive)
+                    PopTemporaryPreset();
+                else
+                    _canvas.SetAlternateActive(false);
+                break;
+            case ModifierAction.ChangeBrushSize:
+                if (_activeGesture == GestureMode.BrushSize)
+                    EndGesture();
+                break;
+            case ModifierAction.ViewOperation:
+                if (_activeGesture != GestureMode.None)
+                    EndGesture();
+                break;
+        }
+
+        _activeModifierAction = assignment.Action;
+        _activeModifierCombo = assignment.Modifiers;
+        _activeModifierKey = assignment.Key;
+
+        // Activate
+        switch (assignment.Action)
+        {
+            case ModifierAction.ToolAux:
+                _canvas.SetToolAuxMode(assignment.ToolAuxOper);
+                return true;
+            case ModifierAction.ChangeToolTemporarily:
+                if (!string.IsNullOrEmpty(assignment.TemporaryToolPresetId))
+                    PushTemporaryPreset(assignment.TemporaryToolPresetId);
+                else
+                    _canvas.SetAlternateActive(true);
+                return true;
+            case ModifierAction.ChangeBrushSize:
+                return true;
+            case ModifierAction.ViewOperation:
+                BeginGestureFromAssignment(assignment);
+                return true;
+        }
+
+        return false;
+    }
+
+    private void BeginGestureFromAssignment(ModifierKeyAssignment assignment)
+    {
+        var mode = assignment.ViewOper switch
+        {
+            ViewOperationType.Pan => GestureMode.Pan,
+            ViewOperationType.Zoom => GestureMode.Zoom,
+            ViewOperationType.Rotate => GestureMode.Rotate,
+            _ => GestureMode.None
+        };
+        if (mode == GestureMode.None) return;
+
+        _activeGesture = mode;
+        _gestureKey = assignment.Key ?? Key.None;
+        _gestureModifiers = assignment.Modifiers;
         _canvas.PaintInputSuspended = true;
-        // Clear alternate tool during gestures so brush-size/zoom don't color-pick
-        _altToolBeforeGesture = _canvas.AlternateTool;
-        _canvas.SetAlternateTool(null);
-        Cursor = gesture switch
+        _hadAlternateBeforeGesture = _canvas.IsAlternateActive;
+        _canvas.SetAlternateActive(false);
+        Cursor = mode switch
         {
             GestureMode.Pan => CursorPan,
             GestureMode.BrushSize => CursorNone,
@@ -757,54 +759,33 @@ public partial class MainWindow
         };
     }
 
-    private void ResetTransientInputState()
+    private void EndGesture()
     {
-        if (_activeGesture != GestureMode.None || _canvas.AlternateTool != null || _altToolBeforeGesture != null)
+        var wasBrushSize = _activeGesture == GestureMode.BrushSize;
+        _activeGesture = GestureMode.None;
+        _gestureKey = Key.None;
+        _gestureModifiers = KeyModifiers.None;
+        _isPanning = false;
+        if (wasBrushSize)
+            FinishActiveToolSizeEdit();
+        _canvas.UnlockCursorPreview();
+        _canvas.PaintInputSuspended = false;
+        Cursor = Cursor.Default;
+        if (_hadAlternateBeforeGesture)
         {
-            var wasBrushSizeGesture = _activeGesture == GestureMode.BrushSize;
-            _activeGesture = GestureMode.None;
-            _gestureKey = Key.None;
-            _gestureModifiers = KeyModifiers.None;
-            _isPanning = false;
-            if (wasBrushSizeGesture)
-                FinishActiveToolSizeEdit();
-            _canvas.PaintInputSuspended = false;
-            _canvas.UnlockCursorPreview();
-            _canvas.SetAlternateTool(null);
-            _altToolBeforeGesture = null;
-            Cursor = Cursor.Default;
+            _canvas.SetAlternateActive(true);
+            _hadAlternateBeforeGesture = false;
         }
     }
 
-    private ITool CreateAlternateEyedropperTool()
+    private static bool IsModifierKey(Avalonia.Input.Key key) => key switch
     {
-        var preset = CurrentEyedropperPreset();
-        var output = new EyedropperOutput();
-        if (preset != null)
-        {
-            output.SampleMode = preset.EyedropperSampleMode;
-            output.ExcludeLockedLayers = preset.EyedropperExcludeLockedLayers;
-            output.ExcludeReferenceLayers = preset.EyedropperExcludeReferenceLayers;
-        }
-        return new CompositeTool(new ClickInputProcess(), output);
-    }
-
-    private ToolPreset? CurrentEyedropperPreset()
-    {
-        if (_activeToolGroup?.ActivePreset?.OutputProcess == OutputProcessType.Eyedropper)
-            return _activeToolGroup.ActivePreset;
-
-        return App.ToolGroups.Groups
-            .SelectMany(g => g.Presets)
-            .FirstOrDefault(p => p.OutputProcess == OutputProcessType.Eyedropper);
-    }
-
-    private Floss.App.Input.KeyBinding EffectiveAltInvocation()
-    {
-        var preset = _activeToolGroup?.ActivePreset?.AlternateInvocation;
-        if (preset != null && !preset.IsEmpty) return preset;
-        return App.Shortcuts.AlternateInvocation;
-    }
+        Avalonia.Input.Key.LeftShift or Avalonia.Input.Key.RightShift or
+        Avalonia.Input.Key.LeftCtrl or Avalonia.Input.Key.RightCtrl or
+        Avalonia.Input.Key.LeftAlt or Avalonia.Input.Key.RightAlt or
+        Avalonia.Input.Key.Space => true,
+        _ => false
+    };
 
     private void OpenSettings()
     {
@@ -812,5 +793,13 @@ public partial class MainWindow
         _settingsWindow = new SettingsWindow();
         _settingsWindow.Closed += (_, _) => _settingsWindow = null;
         _settingsWindow.Show(this);
+    }
+
+    private void OpenModifierKeySettings()
+    {
+        if (_modifierKeySettingsWindow != null) { _modifierKeySettingsWindow.Activate(); return; }
+        _modifierKeySettingsWindow = new Floss.App.Windows.ModifierKeySettingsWindow();
+        _modifierKeySettingsWindow.Closed += (_, _) => _modifierKeySettingsWindow = null;
+        _modifierKeySettingsWindow.Show(this);
     }
 }

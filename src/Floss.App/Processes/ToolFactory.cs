@@ -22,7 +22,25 @@ public sealed class ToolFactory
     {
         var input = CreateInput(preset);
         var output = CreateOutput(preset);
-        return new CompositeTool(input, output);
+        var alternate = CreateAlternate(preset);
+        return new CompositeTool(input, output, alternate);
+    }
+
+    private ITool? CreateAlternate(ToolPreset preset)
+    {
+        if (preset.InputProcess is InputProcessType.Pen or InputProcessType.Brush
+            or InputProcessType.Eraser or InputProcessType.Smudge)
+        {
+            return new CompositeTool(
+                new BrushStrokeInputProcess(),
+                new EyedropperOutput
+                {
+                    SampleMode = preset.EyedropperSampleMode,
+                    ExcludeLockedLayers = preset.EyedropperExcludeLockedLayers,
+                    ExcludeReferenceLayers = preset.EyedropperExcludeReferenceLayers
+                });
+        }
+        return null;
     }
 
     private IInputProcess CreateInput(ToolPreset preset)
@@ -36,7 +54,10 @@ public sealed class ToolFactory
             InputProcessType.Polyline => new PolylineInputProcess { ClosePath = preset.PolylineClosePath },
             InputProcessType.Rect => new RectInputProcess { ShapeKind = preset.ShapeKind },
             InputProcessType.Click => new ClickInputProcess(),
-            InputProcessType.Drag => new DragInputProcess(),
+            InputProcessType.Drag or InputProcessType.MoveLayer
+                or InputProcessType.Hand or InputProcessType.Rotate
+                or InputProcessType.Zoom or InputProcessType.ZoomOut
+                => new DragInputProcess(),
             _ => new BrushStrokeInputProcess()
         };
     }
@@ -81,7 +102,8 @@ public sealed class ToolFactory
             OutputProcessType.MagicWand => new MagicWandOutput
             {
                 Tolerance = preset.Tolerance,
-                Operation = SelectOp.Replace
+                Operation = SelectOp.Replace,
+                FillReference = preset.FillReference
             },
             OutputProcessType.Stroke => new StrokeOutput
             {
@@ -92,7 +114,16 @@ public sealed class ToolFactory
                 ShapeDrawMode = preset.ShapeDrawMode
             },
             OutputProcessType.Liquify => new LiquifyOutput(),
+            OutputProcessType.Pan or OutputProcessType.Zoom or OutputProcessType.ZoomOut or OutputProcessType.Rotate
+                => new ViewToolOutput(),
             _ => new DirectDrawOutput(_brushEngine, _document)
         };
     }
+}
+
+internal sealed class ViewToolOutput : IOutputProcess
+{
+    public bool Antialiasing { get; set; }
+    public void Preview(ToolContext ctx, IProcessedInput input) { }
+    public void Execute(ToolContext ctx, IProcessedInput input) { }
 }

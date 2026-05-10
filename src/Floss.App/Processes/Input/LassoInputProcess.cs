@@ -14,6 +14,7 @@ public sealed class LassoInputProcess : IInputProcess
     private CanvasInputSample _lastSmoothed;
 
     public bool IsActive => _active;
+    public ToolAuxOperationType ToolAuxMode { get; set; }
     public double Stabilization { get; set; }
 
     public void PointerDown(CanvasInputSample s)

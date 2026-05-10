@@ -11,6 +11,7 @@ public sealed class DragInputProcess : IInputProcess
     private bool _active;
 
     public bool IsActive => _active;
+    public ToolAuxOperationType ToolAuxMode { get; set; }
     public double Stabilization { get; set; }  // Not used
 
     public void PointerDown(CanvasInputSample s)

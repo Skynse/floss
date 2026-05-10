@@ -84,7 +84,7 @@ public static class Icons
         ToolPresetEngine.Brush => BrushOutline,
         ToolPresetEngine.Eraser => Eraser,
         ToolPresetEngine.Smudge => BlurLinear,
-        ToolPresetEngine.Move => ArrowAll,
+        ToolPresetEngine.MoveLayer => ArrowAll,
         ToolPresetEngine.Select => SelectionRect,
         ToolPresetEngine.MagicWand => AutoFix,
         ToolPresetEngine.Fill => FormatColorFill,
