@@ -678,11 +678,29 @@ public sealed class TiledPixelBuffer
     {
         _tiles.Clear();
         _compressed.Clear();
+
+        int? minX = null, minY = null, maxX = null, maxY = null;
+
         foreach (var (key, tile) in tiles)
         {
             var copy = new byte[tile.Length];
             Buffer.BlockCopy(tile, 0, copy, 0, tile.Length);
             _tiles[key] = copy;
+
+            var x = key.X * TileSize;
+            var y = key.Y * TileSize;
+            minX = minX.HasValue ? Math.Min(minX.Value, x) : x;
+            minY = minY.HasValue ? Math.Min(minY.Value, y) : y;
+            maxX = maxX.HasValue ? Math.Max(maxX.Value, x + TileSize) : x + TileSize;
+            maxY = maxY.HasValue ? Math.Max(maxY.Value, y + TileSize) : y + TileSize;
+        }
+
+        if (minX.HasValue)
+        {
+            MinX = minX!.Value;
+            MinY = minY!.Value;
+            MaxX = maxX!.Value;
+            MaxY = maxY!.Value;
         }
     }
 

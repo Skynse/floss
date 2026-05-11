@@ -207,10 +207,8 @@ public sealed class DrawingCanvas : Control, IDisposable
         var docX = point.Position.X / w * _document.Width;
         var docY = point.Position.Y / h * _document.Height;
 
-        // Clamp to document bounds so paint tools can't draw outside the canvas.
-        // Viewport tools (Hand/Rotate/Zoom) use HandleViewportPointerInput instead.
-        docX = Math.Clamp(docX, 0, _document.Width);
-        docY = Math.Clamp(docY, 0, _document.Height);
+        // Let coordinates go outside document bounds — the brush engine clips stamps
+        // to the document naturally. Clamping would draw a hard line along the edge.
 
         var sample = new CanvasInputSample(
             docX,

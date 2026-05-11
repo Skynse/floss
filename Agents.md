@@ -35,6 +35,12 @@
 - `CompositeTool` wires `IInputProcess` → `IOutputProcess`
 - `DragInputProcess` produces `DragInput` for viewport tools
 
+### Brush Clipping to Document Bounds
+- `HandlePointerInput` no longer clamps coordinates to `[0, docW] × [0, docH]` — instead passes raw coordinates through
+- `BrushEngine` clips `dirty` region to `layer.Width × layer.Height` before rendering via `RenderWithSkia`
+- Stamps outside the document are still generated (for spacing continuity) but their dirty region is clipped, so no tiles are created outside bounds
+- This prevents the hard edge line that appeared when clamping coordinates
+
 ## Important Files
 
 - `MainWindow.Viewport.cs` — viewport transforms, pointer event handlers, `IViewportController`, `SyncViewportStateToCanvas()`
@@ -52,6 +58,7 @@
 - `TransformGroup` does **not** propagate child transform change notifications to parent visual before first full render cycle
 - `_canvasFrame?.InvalidateVisual()` must be called alongside `_checkerboardOverlay?.InvalidateVisual()`
 - `_canvasFrame.IsVisible = false` at startup to avoid rendering empty canvas
+- **Centralized invalidation:** `InvalidateViewport()` helper ensures ALL viewport mutations (pan, zoom, rotate, reset) consistently invalidate frame, canvas, and overlays. Prevents the classic refactor bug where one `InvalidateVisual()` call gets dropped and tiles go stale.
 
 ## Performance Optimizations Applied
 
@@ -107,6 +114,9 @@ Reduces maintenance burden and ensures consistency.
 - [x] ~~Commented-out code in BrushEngine.cs line 164~~ — Removed
 - [x] ~~Unused `CursorPan` field~~ — Removed
 - [x] ~~Duplicate viewport state sync pattern~~ — Extracted into `SyncViewportStateToCanvas()`
+- [x] ~~Scattered viewport invalidations~~ — Centralized into `InvalidateViewport()` helper
+- [x] ~~Cursor flickering during drawing~~ — Workspace viewport cursor managed during captured strokes
+- [x] ~~Brush drawing hard edge at canvas boundary~~ — Removed clamp from `HandlePointerInput`, added `ClipTo(layer.Width, layer.Height)` in `BrushEngine`
 - [ ] `InvalidateCompositor()` added but may not be used everywhere needed
 - [ ] `PaintInputSuspended` flag is set in multiple places, potential for desync
 - [ ] `MainWindow.axaml.cs` is 2589 lines — consider further splitting

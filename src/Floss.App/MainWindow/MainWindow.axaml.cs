@@ -885,7 +885,8 @@ public partial class MainWindow : Window, Tools.IViewportController
                 MenuAction("_Save Brush", SaveActiveBrush),
                 MenuAction("_Duplicate Brush", DuplicateActiveBrush),
                 MenuAction("_Import Tip PNG...", async () => await ImportBrushTipPngAsync()),
-                MenuAction("_Import .abr Brushes...", async () => await ImportAbrAsync())
+                MenuAction("_Import .abr Brushes...", async () => await ImportAbrAsync()),
+                MenuAction("_Import .sut/.sutg Brushes...", async () => await ImportCspAsync())
             }
         };
 

@@ -36,7 +36,7 @@ public partial class MainWindow
         if (fitToViewport)
             ResetView();
         else
-            _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual();
+            InvalidateViewport();
         UpdateSelectionActionBar();
     }
 
@@ -108,7 +108,12 @@ public partial class MainWindow
             if (IsViewportTool(_canvas.ActiveTool))
                 _canvas.HandleViewportPointerInput(ToolInputEventKind.Down, pt.Position, pt);
             else
+            {
                 _canvas.HandlePointerInput(ToolInputEventKind.Down, e.GetCurrentPoint(_canvas));
+                // Force-hide the cursor on the workspace viewport so it stays hidden
+                // even when the pointer briefly leaves the canvas bounds during fast strokes.
+                _workspaceViewport.Cursor = CursorNone;
+            }
             _isToolDispatchActive = true;
             _isPanning = true;
             _lastPanPoint = pt.Position;
@@ -206,8 +211,7 @@ public partial class MainWindow
         _canvasPan.X += d.X;
         _canvasPan.Y += d.Y;
         SyncViewportStateToCanvas();
-        _rulerOverlay?.InvalidateVisual();
-        _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual();
+        InvalidateViewport();
         ClampCanvasPan();
         UpdateSelectionActionBar();
         e.Handled = true;
@@ -227,6 +231,7 @@ public partial class MainWindow
                 _canvas.HandleViewportPointerInput(ToolInputEventKind.Up, pt.Position, pt);
             else
                 _canvas.HandlePointerInput(ToolInputEventKind.Up, e.GetCurrentPoint(_canvas));
+            _workspaceViewport.Cursor = null; // restore default hit-test cursor
         }
         if (_isBrushSizeActive)
         {
@@ -255,6 +260,7 @@ public partial class MainWindow
         }
         _canvas.UnlockCursorPreview();
         _canvas.PaintInputSuspended = false;
+        _workspaceViewport.Cursor = null;
     }
 
     private void NudgeBrushSize(int direction, bool large)
@@ -336,8 +342,7 @@ public partial class MainWindow
         }
 
         SyncViewportStateToCanvas();
-        _canvasFrame?.InvalidateVisual();
-        _rulerOverlay?.InvalidateVisual();
+        InvalidateViewport();
         ClampCanvasPan();
         _zoomDisplay.Text = $"{Math.Round(_zoom * 100)}%";
         _rotDisplay.Text = "0°";
@@ -365,8 +370,7 @@ public partial class MainWindow
         _rotation = newRotation;
         _canvasRotate.Angle = _rotation;
         SyncViewportStateToCanvas();
-        _canvasFrame?.InvalidateVisual();
-        _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual();
+        InvalidateViewport();
         ClampCanvasPan();
         _rotDisplay.Text = $"{Math.Round(_rotation)}°";
         PostUpdateStatus();
@@ -397,7 +401,7 @@ public partial class MainWindow
         _canvasPan.X = 0;
         _canvasPan.Y = 0;
         SyncViewportStateToCanvas();
-        _rulerOverlay?.InvalidateVisual();
+        InvalidateViewport();
         ClampCanvasPan();
 
         _zoomDisplay.Text = $"{Math.Round(_zoom * 100)}%";
@@ -498,6 +502,18 @@ public partial class MainWindow
         _canvas.FlipY = (int)_canvasFlip.ScaleY;
     }
 
+    // Centralized invalidation after ANY viewport mutation (pan, zoom, rotate, flip, reset).
+    // Prevents the classic bug where a refactor drops one of the six InvalidateVisual() calls
+    // and tiles go stale when zooming / rotating.
+    private void InvalidateViewport()
+    {
+        _canvasFrame?.InvalidateVisual();
+        _canvas?.InvalidateVisual();
+        _rulerOverlay?.InvalidateVisual();
+        _checkerboardOverlay?.InvalidateVisual();
+        _resizeOverlay?.InvalidateVisual();
+    }
+
     private void ClampCanvasPan()
     {
         var vpW = Math.Max(1, _workspaceViewport.Bounds.Width);
@@ -539,9 +555,7 @@ public partial class MainWindow
         _canvasPan.X += dx;
         _canvasPan.Y += dy;
         SyncViewportStateToCanvas();
-        _canvasFrame?.InvalidateVisual();
-        _rulerOverlay?.InvalidateVisual();
-        _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual();
+        InvalidateViewport();
         ClampCanvasPan();
         PostUpdateStatus();
         UpdateSelectionActionBar();
@@ -620,6 +634,8 @@ public partial class MainWindow
             _canvas.SetAlternateActive(false);
             _hadAlternateBeforeBrushSize = false;
         }
+        if (_workspaceViewport != null)
+            _workspaceViewport.Cursor = null;
     }
 
     private void EvaluateModifierKeyAction(KeyModifiers mods)

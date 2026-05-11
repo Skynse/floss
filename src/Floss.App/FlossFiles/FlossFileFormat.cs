@@ -33,7 +33,17 @@ public static class FlossFileFormat
 
             var entry = archive.CreateEntry($"layers/layer{i}.bgra", CompressionLevel.Optimal);
             using var entryStream = entry.Open();
-            entryStream.Write(layer.CapturePixels());
+            var tiles = layer.CaptureTiles();
+            var txBuf = new byte[4];
+            var tyBuf = new byte[4];
+            foreach (var ((tx, ty), tile) in tiles)
+            {
+                BitConverter.TryWriteBytes(txBuf, tx);
+                BitConverter.TryWriteBytes(tyBuf, ty);
+                entryStream.Write(txBuf);
+                entryStream.Write(tyBuf);
+                entryStream.Write(tile);
+            }
         }
 
         WriteMergedImage(archive, document, "mergedimage.png");
@@ -153,21 +163,29 @@ public static class FlossFileFormat
         var entry = archive.GetEntry(path)
             ?? throw new InvalidDataException($"Floss document is missing layer payload '{path}'.");
 
-        var expectedLength = checked(layer.Width * layer.Height * 4);
-        var pixels = new byte[expectedLength];
+        var tiles = new Dictionary<(int, int), byte[]>();
+        var header = new byte[8];
         using var entryStream = entry.Open();
-        var offset = 0;
-        while (offset < pixels.Length)
+        while (true)
         {
-            var read = entryStream.Read(pixels, offset, pixels.Length - offset);
+            var read = entryStream.Read(header, 0, 8);
             if (read == 0) break;
-            offset += read;
+            if (read != 8)
+                throw new InvalidDataException($"Layer payload '{path}' has truncated tile header.");
+
+            var tx = BitConverter.ToInt32(header, 0);
+            var ty = BitConverter.ToInt32(header, 4);
+            var tileLength = Document.TiledPixelBuffer.TileSize
+                * Document.TiledPixelBuffer.TileSize * 4;
+            var tile = new byte[tileLength];
+            read = entryStream.Read(tile, 0, tileLength);
+            if (read != tileLength)
+                throw new InvalidDataException($"Layer payload '{path}' has truncated tile data.");
+
+            tiles[(tx, ty)] = tile;
         }
 
-        if (offset != pixels.Length)
-            throw new InvalidDataException($"Layer payload '{path}' is truncated.");
-
-        layer.Pixels.CopyFromBgra(pixels, layer.Width, layer.Height);
+        layer.Pixels.RestoreTiles(tiles);
         layer.MarkThumbnailDirty();
     }
 
