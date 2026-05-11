@@ -1,4 +1,5 @@
 using System;
+using Avalonia;
 using Avalonia.Input;
 using Avalonia.Media;
 using Floss.App.Brushes;
@@ -63,6 +64,8 @@ public sealed class ToolContext
     public ToolPreset? ActivePreset { get; set; }
     public KeyModifiers CurrentModifiers { get; set; }
     public ToolAuxOperationType ToolAuxMode { get; set; }
+    public IViewportController? Viewport { get; set; }
+    public Size ViewportSize { get; set; }
     public DrawingLayer? ActiveLayer =>
         Document.ActiveLayerIndex >= 0 && Document.ActiveLayerIndex < Document.Layers.Count
             ? Document.Layers[Document.ActiveLayerIndex]
@@ -70,9 +73,26 @@ public sealed class ToolContext
 
     public int ActiveLayerIndex => Document.ActiveLayerIndex;
 
+    public Action<int>? OnSelectLayer { get; init; }
+    public Action<IReadOnlyList<int>>? OnSelectLayers { get; init; }
+
     public ToolContext(DrawingDocument document)
     {
         Document = document;
+    }
+
+    public void SelectLayer(int index)
+    {
+        Document.SelectLayer(index);
+        OnSelectLayer?.Invoke(index);
+    }
+
+    public void SelectLayers(IReadOnlyList<int> indices)
+    {
+        if (indices.Count == 0) return;
+        Document.SelectLayer(indices[0]);
+        OnSelectLayer?.Invoke(indices[0]);
+        OnSelectLayers?.Invoke(indices);
     }
 
     // Convenience: commit tile mutation and notify compositor in one call.

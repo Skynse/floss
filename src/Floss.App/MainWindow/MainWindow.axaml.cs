@@ -23,7 +23,7 @@ using Floss.App.Tools;
 
 namespace Floss.App;
 
-public partial class MainWindow : Window
+public partial class MainWindow : Window, Tools.IViewportController
 {
     private const double ResetViewOutset = 80.0;
 
@@ -235,17 +235,15 @@ public partial class MainWindow : Window
     private bool _temporaryPresetActive;
     private ToolGroup? _recordingToolGroup;
     private Button? _recordingToolGroupButton;
-    private ToolPreset? _recordingPresetAltInvocation;
-    private KeyModifiers _recordingPresetPendingMods;
+
+    private readonly HashSet<Avalonia.Input.Key> _heldBaseKeys = [];
     private Panel _toolRailStack = null!;
 
-    private enum GestureMode { None, Pan, Zoom, Rotate, BrushSize }
-    private GestureMode _activeGesture;
-    private Key _gestureKey = Key.None;
-    private KeyModifiers _gestureModifiers;
+    private bool _isBrushSizeActive;
+    private bool _isToolDispatchActive;
     private bool _isPanning;
+    private bool _isMiddleButtonPanning;
     private Point _lastPanPoint;
-    private Point _gestureStartPoint;
     private Point _brushSizeGestureStartCanvasPoint;
     private Point _brushSizeGestureCenterCanvasPoint;
     private double _brushSizeGestureStartSize;
@@ -253,6 +251,7 @@ public partial class MainWindow : Window
     private double _brushSizeLastDirX;
     private double _brushSizeLastDirY;
     private bool _brushSizeHasLastDir;
+    private bool _hadAlternateBeforeBrushSize;
     private SettingsWindow? _settingsWindow;
     private Floss.App.Windows.ModifierKeySettingsWindow? _modifierKeySettingsWindow;
 
@@ -413,7 +412,7 @@ public partial class MainWindow : Window
     private void MirrorHorizontalAction()
     {
         _canvasFlip.ScaleX = -_canvasFlip.ScaleX;
-        _canvas.FlipX = (int)_canvasFlip.ScaleX;
+        SyncViewportStateToCanvas();
         _rulerOverlay?.InvalidateVisual();
         _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual();
         ClampCanvasPan();
@@ -423,7 +422,7 @@ public partial class MainWindow : Window
     private void MirrorVerticalAction()
     {
         _canvasFlip.ScaleY = -_canvasFlip.ScaleY;
-        _canvas.FlipY = (int)_canvasFlip.ScaleY;
+        SyncViewportStateToCanvas();
         _rulerOverlay?.InvalidateVisual();
         _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual();
         ClampCanvasPan();
@@ -471,10 +470,8 @@ public partial class MainWindow : Window
         }
     }
 
-    private static readonly Cursor CursorPan = new(StandardCursorType.SizeAll);
     private static readonly Cursor CursorArrow = new(StandardCursorType.Arrow);
     private static readonly Cursor CursorNone = new(StandardCursorType.None);
-    private bool _hadAlternateBeforeGesture;
     private KeyModifiers _activeModifierCombo;
     private ModifierAction _activeModifierAction;
     private Avalonia.Input.Key? _activeModifierKey;
@@ -523,7 +520,7 @@ public partial class MainWindow : Window
         Closing += (_, _) => SaveToConfig();
         Deactivated += (_, _) => ResetTransientInputState();
         LostFocus += (_, _) => ResetTransientInputState();
-        Loaded += (_, _) => UpdateTabBar();
+        Loaded += (_, _) => { UpdateTabBar(); SyncCanvasViewport(); };
     }
 
     // ── Root layout ───────────────────────────────────────────────────────────
@@ -578,7 +575,8 @@ public partial class MainWindow : Window
             BorderThickness = new Thickness(0, 0, 0, 1),
             Height = 26,
             Padding = new Thickness(12, 0),
-            Child = _canvasStatusText
+            Child = _canvasStatusText,
+            IsHitTestVisible = false
         };
 
         var footer = new Border
@@ -588,7 +586,8 @@ public partial class MainWindow : Window
             BorderThickness = new Thickness(0, 1, 0, 0),
             Height = 22,
             Padding = new Thickness(12, 0),
-            Child = _footerStatusText
+            Child = _footerStatusText,
+            IsHitTestVisible = false
         };
 
         BuildTabBar();
@@ -809,14 +808,14 @@ public partial class MainWindow : Window
         _mirrorHMenuItem = MenuAction("_Mirror Horizontal", () =>
                 {
                     _canvasFlip.ScaleX = -_canvasFlip.ScaleX;
-                    _canvas.FlipX = (int)_canvasFlip.ScaleX;
+                    SyncViewportStateToCanvas();
                     _rulerOverlay?.InvalidateVisual();
                     ClampCanvasPan(); UpdateStatus();
                 });
         _mirrorVMenuItem = MenuAction("Mirror _Vertical", () =>
                 {
                     _canvasFlip.ScaleY = -_canvasFlip.ScaleY;
-                    _canvas.FlipY = (int)_canvasFlip.ScaleY;
+                    SyncViewportStateToCanvas();
                     _rulerOverlay?.InvalidateVisual();
                     ClampCanvasPan(); UpdateStatus();
                 });
@@ -2231,7 +2230,6 @@ public partial class MainWindow : Window
         _workspaceViewport.SizeChanged += (_, _) => SyncCanvasViewport();
 
         WireCanvas();
-        SyncCanvasViewport();
 
         SliderChanged(_sizeSlider, v => UpdateCurrentBrush(p => p with { Size = v }));
         SliderChanged(_opacitySlider, v => UpdateCurrentBrush(p => p with { Opacity = v }));
@@ -2418,6 +2416,13 @@ public partial class MainWindow : Window
         _temporaryPresetActive = false;
         var prev = _savedPresetTemp;
         _savedPresetTemp = null;
+
+        // Commit any pending operation on the temporary tool before switching back
+        // (e.g. eyedropper click that hasn't received PointerUp yet because the
+        // modifier key was released first).
+        if (_canvas.ActiveTool.HasPendingOperation)
+            _canvas.CommitActiveTool();
+
         if (prev != null)
             _canvas.SetActiveTool(ToolForPreset(prev), prev);
         else

@@ -43,6 +43,8 @@ public partial class MainWindow
         };
         outerStack.Children.Add(_toolRailStack);
 
+        // Cache the tool rail — it's complex but changes infrequently
+        outerStack.CacheMode = new Avalonia.Media.BitmapCache();
 
         return outerStack;
     }

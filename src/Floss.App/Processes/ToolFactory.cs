@@ -56,7 +56,7 @@ public sealed class ToolFactory
             InputProcessType.Click => new ClickInputProcess(),
             InputProcessType.Drag or InputProcessType.MoveLayer
                 or InputProcessType.Hand or InputProcessType.Rotate
-                or InputProcessType.Zoom or InputProcessType.ZoomOut
+                or InputProcessType.Zoom
                 => new DragInputProcess(),
             _ => new BrushStrokeInputProcess()
         };
@@ -114,16 +114,12 @@ public sealed class ToolFactory
                 ShapeDrawMode = preset.ShapeDrawMode
             },
             OutputProcessType.Liquify => new LiquifyOutput(),
-            OutputProcessType.Pan or OutputProcessType.Zoom or OutputProcessType.ZoomOut or OutputProcessType.Rotate
-                => new ViewToolOutput(),
+            OutputProcessType.Hand => new HandOutput(),
+            OutputProcessType.Zoom => new ZoomOutput { ZoomSensitivity = 1.012, Direction = preset.ZoomDirection },
+            OutputProcessType.Rotate => new RotateOutput(),
+            OutputProcessType.SelectLayer => new SelectLayerOutput(),
             _ => new DirectDrawOutput(_brushEngine, _document)
         };
     }
 }
 
-internal sealed class ViewToolOutput : IOutputProcess
-{
-    public bool Antialiasing { get; set; }
-    public void Preview(ToolContext ctx, IProcessedInput input) { }
-    public void Execute(ToolContext ctx, IProcessedInput input) { }
-}

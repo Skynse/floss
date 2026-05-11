@@ -170,7 +170,7 @@ internal static class PresetStoreTests
                 InputProcess = InputProcessType.Brush,
                 OutputProcess = OutputProcessType.DirectDraw,
                 BrushId = "brush-asset",
-                AlternateInvocation = new AppKeyBinding(Key.I, KeyModifiers.Alt),
+
                 BrushSize = 31,
                 BrushOpacity = 0.72,
                 BrushFlow = 0.44,

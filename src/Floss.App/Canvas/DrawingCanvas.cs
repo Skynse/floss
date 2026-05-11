@@ -9,10 +9,10 @@ using Avalonia.Input.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Rendering.SceneGraph;
 using Floss.App.Brushes;
 using Floss.App.Document;
 using Floss.App.Input;
-using Avalonia.Rendering.SceneGraph;
 using Floss.App.Processes;
 using Floss.App.Processes.Input;
 using Floss.App.Processes.Output;
@@ -88,7 +88,9 @@ public sealed class DrawingCanvas : Control, IDisposable
             },
             SelectionChanged = NotifySelectionChanged,
             CommitSelectionMutation = _document.CommitSelectionMutation,
-            SampleDocumentColor = SampleDocumentColor
+            SampleDocumentColor = SampleDocumentColor,
+            OnSelectLayer = i => LayersChanged?.Invoke(this, EventArgs.Empty),
+            OnSelectLayers = indices => LayersFoundByRect?.Invoke(indices)
         };
 
         _brushTool = new CompositeTool(new BrushStrokeInputProcess(), new DirectDrawOutput(BrushEngine, _document));
@@ -162,6 +164,115 @@ public sealed class DrawingCanvas : Control, IDisposable
 
     public bool PaintInputSuspended { get; set; }
     public double CanvasZoom { get; set; } = 1.0;
+
+    public void SetViewport(IViewportController vp, double width, double height)
+    {
+        _ctx.Viewport = vp;
+        _ctx.ViewportSize = new Size(width, height);
+    }
+
+    public void HandlePointerInput(ToolInputEventKind kind, PointerPoint point)
+    {
+        var phase = kind switch
+        {
+            ToolInputEventKind.Down => CanvasInputPhase.Down,
+            ToolInputEventKind.Move => CanvasInputPhase.Move,
+            _ => CanvasInputPhase.Up
+        };
+        var w = Math.Max(1, Bounds.Width);
+        var h = Math.Max(1, Bounds.Height);
+
+        var props = point.Properties;
+        var pressure = props.Pressure;
+        if (double.IsNaN(pressure)) pressure = 0;
+
+        var source = point.Pointer.Type switch
+        {
+            PointerType.Pen => CanvasInputSource.Pen,
+            PointerType.Touch => CanvasInputSource.Touch,
+            PointerType.Mouse => CanvasInputSource.Mouse,
+            _ => CanvasInputSource.Unknown
+        };
+
+        if (source == CanvasInputSource.Mouse && props.IsLeftButtonPressed)
+        {
+            var hasTabletData = pressure > 0 || props.XTilt != 0 || props.YTilt != 0 || props.Twist != 0;
+            if (!hasTabletData && pressure <= 0) pressure = 1;
+        }
+        else if ((source is CanvasInputSource.Pen or CanvasInputSource.Touch) && pressure < 0.005)
+        {
+            pressure = 0;
+        }
+
+        var docX = point.Position.X / w * _document.Width;
+        var docY = point.Position.Y / h * _document.Height;
+
+        // Clamp to document bounds so paint tools can't draw outside the canvas.
+        // Viewport tools (Hand/Rotate/Zoom) use HandleViewportPointerInput instead.
+        docX = Math.Clamp(docX, 0, _document.Width);
+        docY = Math.Clamp(docY, 0, _document.Height);
+
+        var sample = new CanvasInputSample(
+            docX,
+            docY,
+            Math.Clamp(pressure, 0, 1),
+            props.XTilt,
+            props.YTilt,
+            props.Twist,
+            Environment.TickCount64 * 1000,
+            point.Pointer.Id,
+            source,
+            phase);
+        _toolController.Dispatch(new ToolInputEvent(kind, sample));
+    }
+
+    // Viewport tools (Hand, Rotate, Zoom) need viewport coordinates because
+    // canvas-local coords change dynamically as zoom/pan change. Passing
+    // viewport pixels keeps deltas stable.
+    public void HandleViewportPointerInput(ToolInputEventKind kind, Point viewportPos, PointerPoint point)
+    {
+        var phase = kind switch
+        {
+            ToolInputEventKind.Down => CanvasInputPhase.Down,
+            ToolInputEventKind.Move => CanvasInputPhase.Move,
+            _ => CanvasInputPhase.Up
+        };
+
+        var props = point.Properties;
+        var pressure = props.Pressure;
+        if (double.IsNaN(pressure)) pressure = 0;
+
+        var source = point.Pointer.Type switch
+        {
+            PointerType.Pen => CanvasInputSource.Pen,
+            PointerType.Touch => CanvasInputSource.Touch,
+            PointerType.Mouse => CanvasInputSource.Mouse,
+            _ => CanvasInputSource.Unknown
+        };
+
+        if (source == CanvasInputSource.Mouse && props.IsLeftButtonPressed)
+        {
+            var hasTabletData = pressure > 0 || props.XTilt != 0 || props.YTilt != 0 || props.Twist != 0;
+            if (!hasTabletData && pressure <= 0) pressure = 1;
+        }
+        else if ((source is CanvasInputSource.Pen or CanvasInputSource.Touch) && pressure < 0.005)
+        {
+            pressure = 0;
+        }
+
+        var sample = new CanvasInputSample(
+            viewportPos.X,
+            viewportPos.Y,
+            Math.Clamp(pressure, 0, 1),
+            props.XTilt,
+            props.YTilt,
+            props.Twist,
+            Environment.TickCount64 * 1000,
+            point.Pointer.Id,
+            source,
+            phase);
+        _toolController.Dispatch(new ToolInputEvent(kind, sample));
+    }
     public double PanOffsetX { get; set; }
     public double PanOffsetY { get; set; }
     public int FlipX { get; set; } = 1;
@@ -1264,34 +1375,11 @@ public sealed class DrawingCanvas : Control, IDisposable
 
         if (PaintInputSuspended && !_toolController.IsAlternateActive) return;
         if (IsPaintBlockedByLock) return;
-
         if (!IsPaintInput(point)) return;
 
-        Focus();
-        var sample = MakeSample(point, CanvasInputPhase.Down);
-
-        // Auto-switch to eraser when pen eraser tip is used with a paint tool.
-        if (sample.Source == CanvasInputSource.Eraser && _brush.BlendMode != SkiaSharp.SKBlendMode.DstOut)
-        {
-            _brush = _brush with { BlendMode = SkiaSharp.SKBlendMode.DstOut };
-            _ctx.Brush = _brush;
-            InvalidateVisual();
-        }
-
+        // Tool dispatch handled by workspace viewport — canvas only tracks cursor.
         _activePointerId = point.Pointer.Id;
-        _toolController.Dispatch(new ToolInputEvent(ToolInputEventKind.Down, sample));
-
-        if (e.ClickCount > 1 && CanCommitActiveToolFromClick())
-        {
-            CommitActiveTool();
-            _activePointerId = -1;
-        }
-        else
-        {
-            e.Pointer.Capture(this);
-        }
-
-        e.Handled = true;
+        InvalidateVisual();
     }
 
     protected override void OnPointerEntered(PointerEventArgs e)
@@ -1312,7 +1400,10 @@ public sealed class DrawingCanvas : Control, IDisposable
     {
         base.OnPointerExited(e);
         _isPointerOver = false;
-        Cursor = Cursor.Default;
+        // Don't reset cursor to default if we're in the middle of drawing —
+        // fast strokes can briefly exit canvas bounds and flicker the cursor.
+        if (!_toolController.HasPendingOperation)
+            Cursor = Cursor.Default;
         InvalidateVisual();
     }
 
@@ -1360,26 +1451,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             return;
         }
 
-        if (point.Pointer.Id == _activePointerId)
-        {
-            if (IsPaintInput(point))
-            {
-                _toolController.Dispatch(new ToolInputEvent(ToolInputEventKind.Move, MakeSample(point, CanvasInputPhase.Move)));
-            }
-            else
-            {
-                _toolController.Dispatch(new ToolInputEvent(ToolInputEventKind.Up, MakeSample(point, CanvasInputPhase.Up)));
-                _activePointerId = -1;
-                e.Pointer.Capture(null);
-            }
-
-            e.Handled = true;
-        }
-        else if (_activePointerId < 0)
-        {
-            _toolController.Dispatch(new ToolInputEvent(ToolInputEventKind.Move, MakeSample(point, CanvasInputPhase.Move)));
-            InvalidateVisual();
-        }
+        InvalidateVisual();
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
@@ -1399,12 +1471,10 @@ public sealed class DrawingCanvas : Control, IDisposable
 
             if (dragDist < 4)
             {
-                // Small movement — treat as point pick.
                 TryPickLayerAtPoint((int)_layerPickAnchor.X, (int)_layerPickAnchor.Y);
             }
             else
             {
-                // Rect pick — find all layers with content in the rectangle.
                 var rx = (int)Math.Min(_layerPickAnchor.X, _layerPickCurrent.X);
                 var ry = (int)Math.Min(_layerPickAnchor.Y, _layerPickCurrent.Y);
                 var rw = (int)Math.Abs(_layerPickCurrent.X - _layerPickAnchor.X) + 1;
@@ -1418,12 +1488,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             return;
         }
 
-        if (point.Pointer.Id != _activePointerId) return;
-
-        _toolController.Dispatch(new ToolInputEvent(ToolInputEventKind.Up, MakeSample(point, CanvasInputPhase.Up)));
         _activePointerId = -1;
-        e.Pointer.Capture(null);
-        e.Handled = true;
     }
 
     protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)

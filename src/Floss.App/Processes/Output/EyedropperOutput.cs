@@ -1,3 +1,4 @@
+using Floss.App.Input;
 using Floss.App.Tools;
 
 namespace Floss.App.Processes.Output;
@@ -22,11 +23,19 @@ public sealed class EyedropperOutput : IOutputProcess
 
     private void SampleColor(ToolContext ctx, IProcessedInput input)
     {
-        if (input is not ClickInput click) return;
+        CanvasInputSample? sample = input switch
+        {
+            ClickInput click => click.Point,
+            StrokeInput stroke when stroke.SmoothedSamples.Count > 0 => stroke.SmoothedSamples[^1],
+            DragInput drag => drag.Current,
+            _ => null
+        };
+
+        if (sample == null) return;
 
         var color = ctx.SampleDocumentColor(
-            (int)click.Point.X,
-            (int)click.Point.Y,
+            (int)sample.Value.X,
+            (int)sample.Value.Y,
             new EyedropperSampleOptions(SampleMode, ExcludeLockedLayers, ExcludeReferenceLayers));
         if (color.HasValue)
         {

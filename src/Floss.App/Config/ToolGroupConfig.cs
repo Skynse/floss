@@ -29,8 +29,7 @@ public enum InputProcessType
     Hand = 11,      // Pan canvas (drag)
     Rotate = 12,    // Rotate canvas (drag)
     Zoom = 13,      // Zoom canvas in (drag)
-    ZoomOut = 14,   // Zoom canvas out (drag)
-    MoveLayer = 15, // Translate layer (drag)
+    MoveLayer = 14, // Translate layer (drag)
 }
 
 public static class InputProcessTypeExtensions
@@ -52,11 +51,79 @@ public enum OutputProcessType
     MoveLayer,       // Move layer offset
     Stroke,          // Stroke a path
     Zoom,            // Zoom canvas in (drag)
-    ZoomOut,         // Zoom canvas out (drag)
-    Pan,             // Pan canvas
+    Hand,            // Hand canvas (pan)
     Rotate,          // Rotate canvas
     MagicWand,       // Magic wand selection
     Liquify,         // Warp/distort pixels
+    SelectLayer,     // Select layer by clicking or area
+}
+
+// Defines which input processes are valid for each output process (CSP-style coupling).
+public static class ProcessCompatibility
+{
+    // Locked outputs: input process is forced to match
+    public static readonly HashSet<OutputProcessType> LockedOutputs = new()
+    {
+        OutputProcessType.Hand,
+        OutputProcessType.Rotate,
+        OutputProcessType.Zoom,
+        OutputProcessType.Eyedropper,
+        OutputProcessType.Liquify,
+    };
+
+    public static InputProcessType? LockedInputFor(OutputProcessType output) => output switch
+    {
+        OutputProcessType.Hand => InputProcessType.Hand,
+        OutputProcessType.Rotate => InputProcessType.Rotate,
+        OutputProcessType.Zoom => InputProcessType.Zoom,
+        OutputProcessType.Eyedropper => InputProcessType.Click,
+        OutputProcessType.Liquify => InputProcessType.Liquify,
+        _ => null
+    };
+
+    public static IReadOnlyList<InputProcessType> ValidInputsFor(OutputProcessType output) => output switch
+    {
+        OutputProcessType.DirectDraw => new[] { InputProcessType.Pen, InputProcessType.Brush, InputProcessType.Eraser, InputProcessType.Smudge, InputProcessType.Lasso, InputProcessType.Rect, InputProcessType.Polyline },
+        OutputProcessType.ClosedAreaFill => new[] { InputProcessType.Lasso, InputProcessType.Rect, InputProcessType.Brush, InputProcessType.Pen, InputProcessType.Polyline },
+        OutputProcessType.SelectionArea => new[] { InputProcessType.Lasso, InputProcessType.Rect, InputProcessType.Polyline, InputProcessType.Brush, InputProcessType.Pen },
+        OutputProcessType.FloodFill => new[] { InputProcessType.Click },
+        OutputProcessType.Gradient => new[] { InputProcessType.Drag },
+        OutputProcessType.Eyedropper => new[] { InputProcessType.Click },
+        OutputProcessType.MoveLayer => new[] { InputProcessType.MoveLayer, InputProcessType.Drag },
+        OutputProcessType.MagicWand => new[] { InputProcessType.Click },
+        OutputProcessType.Stroke => new[] { InputProcessType.Rect, InputProcessType.Polyline },
+        OutputProcessType.Liquify => new[] { InputProcessType.Liquify },
+        OutputProcessType.Hand => new[] { InputProcessType.Hand },
+        OutputProcessType.Zoom => new[] { InputProcessType.Zoom },
+        OutputProcessType.Rotate => new[] { InputProcessType.Rotate },
+        OutputProcessType.SelectLayer => new[] { InputProcessType.Rect, InputProcessType.Lasso, InputProcessType.Brush, InputProcessType.Pen },
+        _ => Enum.GetValues<InputProcessType>().ToArray()
+    };
+
+    public static bool IsValidCombination(InputProcessType input, OutputProcessType output)
+    {
+        var valid = ValidInputsFor(output);
+        return valid.Contains(input);
+    }
+
+    public static InputProcessType DefaultInputFor(OutputProcessType output) => output switch
+    {
+        OutputProcessType.DirectDraw => InputProcessType.Brush,
+        OutputProcessType.ClosedAreaFill => InputProcessType.Lasso,
+        OutputProcessType.SelectionArea => InputProcessType.Rect,
+        OutputProcessType.FloodFill => InputProcessType.Click,
+        OutputProcessType.Gradient => InputProcessType.Drag,
+        OutputProcessType.Eyedropper => InputProcessType.Click,
+        OutputProcessType.MoveLayer => InputProcessType.MoveLayer,
+        OutputProcessType.MagicWand => InputProcessType.Click,
+        OutputProcessType.Stroke => InputProcessType.Rect,
+        OutputProcessType.Liquify => InputProcessType.Liquify,
+        OutputProcessType.Hand => InputProcessType.Hand,
+        OutputProcessType.Zoom => InputProcessType.Zoom,
+        OutputProcessType.Rotate => InputProcessType.Rotate,
+        OutputProcessType.SelectLayer => InputProcessType.Rect,
+        _ => InputProcessType.Brush
+    };
 }
 
 public enum FillReferenceMode
@@ -106,7 +173,6 @@ public sealed class ToolPreset
     // Legacy engine field for migration
     public ToolPresetEngine Engine { get; set; }
 
-    public KeyBinding AlternateInvocation { get; set; } = KeyBinding.Empty;
 
     // Shared input process properties
     public double Stabilization { get; set; } = 0.0;  // 0 = none, 1 = full
@@ -266,6 +332,9 @@ public sealed class ToolPreset
     public LiquifyMode LiquifyMode { get; set; } = LiquifyMode.Push;
     public double LiquifySize { get; set; } = 80;
     public double LiquifyStrength { get; set; } = 0.3;
+
+    // Zoom
+    public double ZoomDirection { get; set; } = 1;   // 1 = zoom-in, -1 = zoom-out
 
     // Eyedropper
     public EyedropperSampleMode EyedropperSampleMode { get; set; } = EyedropperSampleMode.Image;
@@ -517,11 +586,13 @@ public sealed class ToolGroupConfig
 
     public static string DefaultIcon(ToolPresetEngine engine) => Icons.DefaultIcon(engine);
 
-    // ── Stable IDs for built-in view presets (referenced by modifier key defaults) ──
-    internal const string ViewHandPresetId    = "builtin-hand";
-    internal const string ViewRotatePresetId  = "builtin-rotate";
-    internal const string ViewZoomInPresetId  = "builtin-zoomin";
+    // ── Stable IDs for built-in presets (referenced by modifier key defaults) ──
+    internal const string ViewHandPresetId = "builtin-hand";
+    internal const string ViewRotatePresetId = "builtin-rotate";
+    internal const string ViewZoomInPresetId = "builtin-zoomin";
     internal const string ViewZoomOutPresetId = "builtin-zoomout";
+    internal const string EyedropperPresetId = "builtin-eyedropper";
+    internal const string MoveLayerPresetId = "builtin-movelayer";
 
     // ── Factory defaults ──────────────────────────────────────────────────────
 
@@ -562,23 +633,27 @@ public sealed class ToolGroupConfig
         WithDefaultCategory(new()
         {
             Name = "Operation", DefaultEngine = ToolPresetEngine.MoveLayer, Shortcut = new(Key.V),
-            Presets = [new() { Name = "Move Layer", Engine = ToolPresetEngine.MoveLayer, InputProcess = InputProcessType.MoveLayer, OutputProcess = OutputProcessType.MoveLayer }]
+            Presets =
+            [
+                new() { Id = MoveLayerPresetId, Name = "Move Layer", Engine = ToolPresetEngine.MoveLayer, InputProcess = InputProcessType.MoveLayer, OutputProcess = OutputProcessType.MoveLayer },
+                new() { Name = "Select Layer", Engine = ToolPresetEngine.MoveLayer, InputProcess = InputProcessType.Rect, OutputProcess = OutputProcessType.SelectLayer }
+            ]
         }),
         WithDefaultCategory(new()
         {
-            Name = "View", DefaultEngine = ToolPresetEngine.Move,
+            Name = "View", DefaultEngine = ToolPresetEngine.Move, CustomIcon = Icons.Hand,
             Presets =
             [
-                new() { Id = ViewHandPresetId,    Name = "Hand",     InputProcess = InputProcessType.Hand,    OutputProcess = OutputProcessType.Pan },
+                new() { Id = ViewHandPresetId,    Name = "Hand",     InputProcess = InputProcessType.Hand,    OutputProcess = OutputProcessType.Hand },
                 new() { Id = ViewRotatePresetId,  Name = "Rotate",   InputProcess = InputProcessType.Rotate,  OutputProcess = OutputProcessType.Rotate },
-                new() { Id = ViewZoomInPresetId,  Name = "Zoom In",  InputProcess = InputProcessType.Zoom,    OutputProcess = OutputProcessType.Zoom },
-                new() { Id = ViewZoomOutPresetId, Name = "Zoom Out", InputProcess = InputProcessType.ZoomOut, OutputProcess = OutputProcessType.ZoomOut },
+                new() { Id = ViewZoomInPresetId,  Name = "Zoom In",  InputProcess = InputProcessType.Zoom,    OutputProcess = OutputProcessType.Zoom, ZoomDirection = 1 },
+                new() { Id = ViewZoomOutPresetId, Name = "Zoom Out", InputProcess = InputProcessType.Zoom,    OutputProcess = OutputProcessType.Zoom, ZoomDirection = -1 },
             ]
         }),
         WithDefaultCategory(new()
         {
             Name = "Eyedropper", DefaultEngine = ToolPresetEngine.Eyedropper, Shortcut = new(Key.I),
-            Presets = [new() { Name = "Eyedropper", Engine = ToolPresetEngine.Eyedropper, InputProcess = InputProcessType.Click, OutputProcess = OutputProcessType.Eyedropper }]
+            Presets = [new() { Id = EyedropperPresetId, Name = "Eyedropper", Engine = ToolPresetEngine.Eyedropper, InputProcess = InputProcessType.Click, OutputProcess = OutputProcessType.Eyedropper }]
         }),
         WithDefaultCategory(new()
         {

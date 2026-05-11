@@ -397,7 +397,7 @@ public sealed class ModifierKeySettingsWindow : Window
     private Border BuildRow(Avalonia.Input.Key? key, KeyModifiers mods, ModifierKeyAssignment? current, string? comboKey)
     {
         var actions = _toolSpecificMode
-            ? new[] { ModifierAction.None, ModifierAction.Common, ModifierAction.ChangeToolTemporarily, ModifierAction.ToolAux, ModifierAction.ChangeBrushSize, ModifierAction.ViewOperation }
+            ? new[] { ModifierAction.None, ModifierAction.Common, ModifierAction.ChangeToolTemporarily, ModifierAction.ToolAux, ModifierAction.ChangeBrushSize }
             : new[] { ModifierAction.None, ModifierAction.ChangeToolTemporarily, ModifierAction.ToolAux, ModifierAction.ChangeBrushSize };
 
         var actionDropdown = new ComboBox
@@ -559,13 +559,6 @@ public sealed class ModifierKeySettingsWindow : Window
         return a.Action switch
         {
             ModifierAction.ChangeToolTemporarily when a.TemporaryToolPresetId != null => FindPresetName(a.TemporaryToolPresetId),
-            ModifierAction.ViewOperation => a.ViewOper switch
-            {
-                ViewOperationType.Pan => "Pan",
-                ViewOperationType.Zoom => "Zoom",
-                ViewOperationType.Rotate => "Rotate",
-                _ => ""
-            },
             ModifierAction.ToolAux => a.ToolAuxOper switch
             {
                 ToolAuxOperationType.StraightLine => "Straight line",
@@ -593,7 +586,6 @@ public sealed class ModifierKeySettingsWindow : Window
         ModifierAction.ChangeToolTemporarily => "Change tool temporarily",
         ModifierAction.ToolAux => "Tool aux. operation",
         ModifierAction.ChangeBrushSize => "Change brush size",
-        ModifierAction.ViewOperation => "View operation",
         _ => action.ToString()
     };
 

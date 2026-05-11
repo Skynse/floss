@@ -95,6 +95,10 @@ public partial class MainWindow : Window
         root.Children.Add(_brushCategoryPanel);
         root.Children.Add(presetScroll);
         root.Children.Add(brushToolRow);
+
+        // Cache brush panel — complex but mostly static between brush changes
+        root.CacheMode = new Avalonia.Media.BitmapCache();
+
         return root;
     }
 
@@ -346,22 +350,6 @@ public partial class MainWindow : Window
         var renameItem = new MenuItem { Header = "Rename" };
         renameItem.Click += async (_, _) => await RenamePresetPrompt(group, preset);
 
-        var setAltInvocationItem = new MenuItem
-        {
-            Header = preset.AlternateInvocation.IsEmpty
-                ? "Set Alt Invocation"
-                : $"Alt Invocation:  {preset.AlternateInvocation.Display()}"
-        };
-        setAltInvocationItem.Click += (_, _) =>
-        {
-            if (_recordingPresetAltInvocation == preset)
-            {
-                CancelPresetAltInvocationRecording();
-                return;
-            }
-            StartPresetAltInvocationRecording(group, preset);
-        };
-
         var duplicateItem = new MenuItem { Header = "Duplicate" };
         duplicateItem.Click += (_, _) => DuplicatePreset(group, preset);
 
@@ -375,7 +363,6 @@ public partial class MainWindow : Window
         menu.Items.Add(new Separator());
         menu.Items.Add(propertiesItem);
         menu.Items.Add(renameItem);
-        menu.Items.Add(setAltInvocationItem);
         menu.Items.Add(duplicateItem);
         menu.Items.Add(exportItem);
         menu.Items.Add(new Separator());
@@ -523,8 +510,6 @@ public partial class MainWindow : Window
 
         var inputPicker = new ComboBox
         {
-            ItemsSource = Enum.GetValues<InputProcessType>(),
-            SelectedItem = preset.InputProcess,
             Width = 200,
             Height = 28,
             FontSize = 11
@@ -538,6 +523,27 @@ public partial class MainWindow : Window
             Height = 28,
             FontSize = 11
         };
+
+        // Filter input options based on selected output (CSP-style coupling)
+        void RefreshInputPicker()
+        {
+            var selectedOutput = (OutputProcessType)(outputPicker.SelectedItem ?? preset.OutputProcess);
+            var validInputs = ProcessCompatibility.ValidInputsFor(selectedOutput);
+            inputPicker.ItemsSource = validInputs;
+            
+            // If current input is invalid for new output, select default
+            var currentInput = (InputProcessType?)inputPicker.SelectedItem ?? preset.InputProcess;
+            if (!validInputs.Contains(currentInput))
+                inputPicker.SelectedItem = ProcessCompatibility.DefaultInputFor(selectedOutput);
+            else
+                inputPicker.SelectedItem = currentInput;
+                
+            // Disable input picker for locked outputs
+            inputPicker.IsEnabled = !ProcessCompatibility.LockedOutputs.Contains(selectedOutput);
+        }
+        
+        outputPicker.SelectionChanged += (_, _) => RefreshInputPicker();
+        RefreshInputPicker(); // Initial population
 
         var saveBtn = new Button
         {
@@ -1865,28 +1871,5 @@ public partial class MainWindow : Window
         };
     }
 
-    private void StartPresetAltInvocationRecording(ToolGroup group, ToolPreset preset)
-    {
-        _recordingPresetAltInvocation = preset;
-        _footerStatusText.Text = $"Press a key for \"{preset.Name}\" alternate invocation… (Esc = cancel)";
-    }
 
-    internal void CommitPresetAltInvocation(Input.KeyBinding kb)
-    {
-        if (_recordingPresetAltInvocation == null) return;
-        var preset = _recordingPresetAltInvocation;
-        CancelPresetAltInvocationRecording();
-        preset.AlternateInvocation = kb;
-        App.ToolGroups.Save();
-        RefreshGroupPresets();
-        _footerStatusText.Text = $"Alt invocation set to {kb.Display()}";
-    }
-
-    internal void CancelPresetAltInvocationRecording()
-    {
-        _recordingPresetAltInvocation = null;
-        _recordingPresetPendingMods = KeyModifiers.None;
-        RefreshGroupPresets();
-        _footerStatusText.Text = "";
-    }
 }

@@ -24,6 +24,7 @@ public sealed record StampLayer
 public sealed class CompoundBrushTip : IBrushTip
 {
     public IReadOnlyList<StampLayer> Layers { get; }
+    private readonly Dictionary<(int Size, int Hardness), SKBitmap> _maskCache = [];
 
     public CompoundBrushTip(IReadOnlyList<StampLayer> layers)
     {
@@ -34,6 +35,21 @@ public sealed class CompoundBrushTip : IBrushTip
     public unsafe SKBitmap GenerateMask(int baseSize, float hardness)
     {
         var size = Math.Max(1, baseSize);
+        var h = Math.Clamp(hardness, 0.001f, 1.0f);
+        var key = (size, QuantizeHardness(h));
+        if (_maskCache.TryGetValue(key, out var cached))
+            return cached;
+
+        var result = ComposeMask(size, h);
+        _maskCache[key] = result;
+        return result;
+    }
+
+    private static int QuantizeHardness(float hardness)
+        => Math.Clamp((int)MathF.Round(Math.Clamp(hardness, 0.001f, 1f) * 255f), 0, 255);
+
+    private unsafe SKBitmap ComposeMask(int size, float hardness)
+    {
         var result = new SKBitmap(new SKImageInfo(size, size, SKColorType.Alpha8, SKAlphaType.Unpremul));
         var dst = (byte*)result.GetPixels().ToPointer();
         var total = size * size;

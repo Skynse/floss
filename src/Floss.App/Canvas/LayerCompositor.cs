@@ -163,8 +163,9 @@ public sealed class LayerCompositor : IDisposable
         var clip = (_fullDirty ? new PixelRegion(0, 0, width, height) : _dirtyRegion ?? PixelRegion.Empty).ClipTo(width, height);
         var viewportClip = viewport?.ClipTo(width, height);
 
-        if (_fullDirty && viewportClip is { } initialViewport && !initialViewport.IsEmpty)
-            clip = clip.Intersect(initialViewport);
+        // Do NOT intersect dirty region with viewport — off-screen tiles in the dirty
+        // region must be re-composited so they're not stale when panned/zoomed into view.
+        // The viewport is only used as an optimisation for the "no dirty, just missing tiles" case.
 
         if ((!_dirty || clip.IsEmpty) && viewportClip is { } visibleViewport && !visibleViewport.IsEmpty)
         {
@@ -186,10 +187,6 @@ public sealed class LayerCompositor : IDisposable
 
             if (needsViewportComposite)
                 clip = visibleViewport;
-        }
-        else if (!clip.IsEmpty && viewportClip is { } dirtyViewport && !dirtyViewport.IsEmpty)
-        {
-            clip = clip.Intersect(dirtyViewport);
         }
 
         if (clip.IsEmpty)

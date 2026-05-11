@@ -13,7 +13,6 @@ public enum ModifierAction
     Common,
     ChangeToolTemporarily,
     ToolAux,
-    ViewOperation,
     ChangeBrushSize,
 }
 
@@ -23,13 +22,6 @@ public enum ToolAuxOperationType
     StraightLine,
 }
 
-public enum ViewOperationType
-{
-    Pan,
-    Zoom,
-    Rotate,
-}
-
 public sealed class ModifierKeyAssignment
 {
     public Key? Key { get; set; }
@@ -37,7 +29,6 @@ public sealed class ModifierKeyAssignment
     public ModifierAction Action { get; set; }
     public string? TemporaryToolPresetId { get; set; }
     public ToolAuxOperationType ToolAuxOper { get; set; }
-    public ViewOperationType ViewOper { get; set; }
 }
 
 public sealed class ModifierKeySettings
@@ -47,53 +38,86 @@ public sealed class ModifierKeySettings
 
     public static ModifierKeySettings CreateDefaults()
     {
-        return new()
+        var settings = new ModifierKeySettings
         {
             GeneralAssignments =
             [
-                // Modifier-only combos
+                // ── Modifier-only combos ──────────────────────────────────────
                 new() { Modifiers = KeyModifiers.Shift, Action = ModifierAction.ToolAux, ToolAuxOper = ToolAuxOperationType.StraightLine },
                 new() { Modifiers = KeyModifiers.Control, Action = ModifierAction.None },
-                new() { Modifiers = KeyModifiers.Alt, Action = ModifierAction.ChangeToolTemporarily },
+                new() { Modifiers = KeyModifiers.Alt, Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = ToolGroupConfig.EyedropperPresetId },
                 new() { Modifiers = KeyModifiers.Control | KeyModifiers.Alt, Action = ModifierAction.ChangeBrushSize },
                 new() { Modifiers = KeyModifiers.Control | KeyModifiers.Shift, Action = ModifierAction.None },
                 new() { Modifiers = KeyModifiers.Alt | KeyModifiers.Shift, Action = ModifierAction.None },
                 new() { Modifiers = KeyModifiers.Control | KeyModifiers.Alt | KeyModifiers.Shift, Action = ModifierAction.None },
-                // Space combos — temporarily switch to view tools (like CSP)
-                new() { Key = Key.Space, Modifiers = KeyModifiers.None,                              Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = ToolGroupConfig.ViewHandPresetId },
-                new() { Key = Key.Space, Modifiers = KeyModifiers.Control,                           Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = ToolGroupConfig.ViewZoomInPresetId },
-                new() { Key = Key.Space, Modifiers = KeyModifiers.Alt,                               Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = ToolGroupConfig.ViewZoomOutPresetId },
-                new() { Key = Key.Space, Modifiers = KeyModifiers.Shift,                             Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = ToolGroupConfig.ViewRotatePresetId },
-                new() { Key = Key.Space, Modifiers = KeyModifiers.Control | KeyModifiers.Alt,        Action = ModifierAction.None },
-                new() { Key = Key.Space, Modifiers = KeyModifiers.Control | KeyModifiers.Shift,      Action = ModifierAction.None },
-                new() { Key = Key.Space, Modifiers = KeyModifiers.Alt | KeyModifiers.Shift,          Action = ModifierAction.None },
+
+                // ── Space combos — view tools (like CSP) ──────────────────────
+                new() { Key = Key.Space, Modifiers = KeyModifiers.None, Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = ToolGroupConfig.ViewHandPresetId },
+                new() { Key = Key.Space, Modifiers = KeyModifiers.Control, Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = ToolGroupConfig.ViewZoomInPresetId },
+                new() { Key = Key.Space, Modifiers = KeyModifiers.Alt, Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = ToolGroupConfig.ViewZoomOutPresetId },
+                new() { Key = Key.Space, Modifiers = KeyModifiers.Shift, Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = ToolGroupConfig.ViewRotatePresetId },
+                new() { Key = Key.Space, Modifiers = KeyModifiers.Control | KeyModifiers.Alt, Action = ModifierAction.None },
+                new() { Key = Key.Space, Modifiers = KeyModifiers.Control | KeyModifiers.Shift, Action = ModifierAction.None },
+                new() { Key = Key.Space, Modifiers = KeyModifiers.Alt | KeyModifiers.Shift, Action = ModifierAction.None },
                 new() { Key = Key.Space, Modifiers = KeyModifiers.Control | KeyModifiers.Alt | KeyModifiers.Shift, Action = ModifierAction.None },
             ],
         };
+
+        // ── Tool-specific defaults for brush-family tools ───────────────────
+        // These match CSP's defaults for pen/brush/eraser/smudge tools.
+        foreach (var input in new[] { InputProcessType.Pen, InputProcessType.Brush, InputProcessType.Eraser, InputProcessType.Smudge })
+        {
+            var key = KeyFor((int)input, (int)OutputProcessType.DirectDraw);
+            settings.ToolSpecificAssignments[key] =
+            [
+                new() { Modifiers = KeyModifiers.Control, Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = ToolGroupConfig.MoveLayerPresetId },
+                new() { Modifiers = KeyModifiers.Alt, Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = ToolGroupConfig.EyedropperPresetId },
+                new() { Modifiers = KeyModifiers.Control | KeyModifiers.Alt, Action = ModifierAction.ChangeBrushSize },
+                new() { Modifiers = KeyModifiers.Shift, Action = ModifierAction.ToolAux, ToolAuxOper = ToolAuxOperationType.StraightLine },
+                new() { Modifiers = KeyModifiers.Control | KeyModifiers.Shift, Action = ModifierAction.None },
+                new() { Modifiers = KeyModifiers.Alt | KeyModifiers.Shift, Action = ModifierAction.None },
+                new() { Modifiers = KeyModifiers.Control | KeyModifiers.Alt | KeyModifiers.Shift, Action = ModifierAction.None },
+
+                new() { Key = Key.Space, Modifiers = KeyModifiers.None, Action = ModifierAction.Common },
+                new() { Key = Key.Space, Modifiers = KeyModifiers.Control, Action = ModifierAction.Common },
+                new() { Key = Key.Space, Modifiers = KeyModifiers.Alt, Action = ModifierAction.Common },
+                new() { Key = Key.Space, Modifiers = KeyModifiers.Shift, Action = ModifierAction.Common },
+                new() { Key = Key.Space, Modifiers = KeyModifiers.Control | KeyModifiers.Alt, Action = ModifierAction.Common },
+                new() { Key = Key.Space, Modifiers = KeyModifiers.Control | KeyModifiers.Shift, Action = ModifierAction.Common },
+                new() { Key = Key.Space, Modifiers = KeyModifiers.Alt | KeyModifiers.Shift, Action = ModifierAction.Common },
+                new() { Key = Key.Space, Modifiers = KeyModifiers.Control | KeyModifiers.Alt | KeyModifiers.Shift, Action = ModifierAction.Common },
+            ];
+        }
+
+        return settings;
     }
 
     private static string KeyFor(int input, int output) => $"{input}:{output}";
 
     public ModifierKeyAssignment? Resolve(int inputProcessType, int outputProcessType, Key? key, KeyModifiers mods)
     {
-        bool Matches(ModifierKeyAssignment a) =>
-            a.Modifiers == mods && (!a.Key.HasValue || a.Key.Value == key);
+        bool ExactKeyMatch(ModifierKeyAssignment a) =>
+            key.HasValue && a.Modifiers == mods && a.Key.HasValue && a.Key.Value == key.Value;
+        bool AnyKeyMatch(ModifierKeyAssignment a) =>
+            a.Modifiers == mods && !a.Key.HasValue;
 
         var specificKey = KeyFor(inputProcessType, outputProcessType);
         if (ToolSpecificAssignments.TryGetValue(specificKey, out var specific))
         {
-            var match = specific.FirstOrDefault(Matches);
+            var match = specific.FirstOrDefault(ExactKeyMatch) ?? specific.FirstOrDefault(AnyKeyMatch);
             if (match != null)
             {
                 if (match.Action == ModifierAction.None)
                     return null;
                 if (match.Action == ModifierAction.Common)
-                    return GeneralAssignments.FirstOrDefault(Matches);
+                    return GeneralAssignments.FirstOrDefault(ExactKeyMatch)
+                        ?? GeneralAssignments.FirstOrDefault(AnyKeyMatch);
                 return match;
             }
         }
 
-        var gm = GeneralAssignments.FirstOrDefault(Matches);
+        var gm = GeneralAssignments.FirstOrDefault(ExactKeyMatch)
+              ?? GeneralAssignments.FirstOrDefault(AnyKeyMatch);
         return gm?.Action == ModifierAction.None ? null : gm;
     }
 

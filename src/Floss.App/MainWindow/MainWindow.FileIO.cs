@@ -209,7 +209,6 @@ public partial class MainWindow
         // 1. If we've never saved, force a Save As
         if (string.IsNullOrEmpty(_currentFilePath))
         {
-            Console.WriteLine("No current file path, forcing Save As");
             await SaveDocumentAsAsync();
             return;
         }

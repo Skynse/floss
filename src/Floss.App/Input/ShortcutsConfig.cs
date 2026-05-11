@@ -6,8 +6,6 @@ using Avalonia.Input;
 
 namespace Floss.App.Input;
 
-public enum GestureAxis { Vertical, Horizontal }
-
 /// <summary>
 /// All configurable shortcuts and canvas behaviour tuning.
 /// Serialised to %AppData%/Floss/shortcuts.json as a human-readable JSON file
@@ -34,20 +32,6 @@ public sealed class ShortcutsConfig
 
     /// Brush opacity change per key press (0-1).
     public double BrushOpacityStep { get; set; } = 0.05;
-
-    /// Zoom change per pixel of pen drag (gesture zoom).
-    /// Formula: zoom *= pow(GestureZoomSensitivity, axisDelta)
-    public double GestureZoomSensitivity { get; set; } = 1.012;
-
-    /// Which axis of pen movement controls zoom during the Zoom gesture.
-    /// Vertical = drag up/down (up = zoom in), Horizontal = drag left/right (right = zoom in).
-    public GestureAxis GestureZoomAxis { get; set; } = GestureAxis.Vertical;
-
-    /// Canvas rotation per pixel of horizontal pen drag (gesture rotate, degrees/px).
-    public double GestureRotateSensitivity { get; set; } = 0.40;
-
-    /// Legacy brush-size drag speed retained for existing shortcut files. The current brush-size gesture maps radius to cursor distance.
-    public double GestureSizeSensitivity { get; set; } = 0.50;
 
     // ── File ──────────────────────────────────────────────────────────────────
 
@@ -140,24 +124,12 @@ public sealed class ShortcutsConfig
     public KeyBinding FilterBaseColorMask { get; set; } = new(Key.None);
     public KeyBinding FilterRemoveDust { get; set; } = new(Key.None);
 
-    // ── Pen gestures — hold key + drag pen ───────────────────────────────────
-    // Pan  : held key + any pen drag → translate canvas
-    // Zoom : held key + drag up/down → zoom in or out
-    // Rotate : held key + drag left/right → rotate canvas
-    // BrushSize : held key + drag left/right → change brush size
-
-    public KeyBinding GesturePan { get; set; } = new(Key.Space);
-    public KeyBinding GestureZoom { get; set; } = new(Key.Z, KeyModifiers.Alt);
-    public KeyBinding GestureRotate { get; set; } = new(Key.R, KeyModifiers.Alt);
-    public KeyBinding GestureBrushSize { get; set; } = new(Key.None, KeyModifiers.Control | KeyModifiers.Alt);
-
     // ── Misc ──────────────────────────────────────────────────────────────────
 
     public KeyBinding OpenSettings { get; set; } = new(Key.OemComma, KeyModifiers.Control);
     public KeyBinding OpenBrushEditor { get; set; } = new(Key.B, KeyModifiers.Control | KeyModifiers.Shift);
     public KeyBinding ToggleCanvasOnly { get; set; } = new(Key.Tab, KeyModifiers.None);
     public KeyBinding ToggleRulers { get; set; } = new(Key.R, KeyModifiers.Control);
-    public KeyBinding AlternateInvocation { get; set; } = new(Key.LeftAlt, KeyModifiers.Alt);
 
     // ── Serialisation ─────────────────────────────────────────────────────────
 
@@ -174,9 +146,7 @@ public sealed class ShortcutsConfig
             var path = AppPaths.ShortcutsConfigPath;
             if (File.Exists(path))
             {
-                var config = JsonSerializer.Deserialize<ShortcutsConfig>(File.ReadAllText(path), JsonOpts) ?? new();
-                config.RepairLegacyGestureBindings();
-                return config;
+                return JsonSerializer.Deserialize<ShortcutsConfig>(File.ReadAllText(path), JsonOpts) ?? new();
             }
         }
         catch { }
@@ -189,11 +159,4 @@ public sealed class ShortcutsConfig
         catch { }
     }
 
-    private void RepairLegacyGestureBindings()
-    {
-        if (GestureBrushSize.IsModifierOnly && GestureBrushSize.Modifiers == KeyModifiers.Control)
-        {
-            GestureBrushSize = new KeyBinding(Key.None, KeyModifiers.Control | KeyModifiers.Alt);
-        }
-    }
 }

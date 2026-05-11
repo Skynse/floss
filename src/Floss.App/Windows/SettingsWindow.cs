@@ -193,14 +193,6 @@ public sealed class SettingsWindow : Window
         content.Children.Add(RowBrushCursorPicker("Smudge",
             _cfg.SmudgeCursorMode, v => { _cfg.SmudgeCursorMode = v; App.Config.Save(); }));
 
-        content.Children.Add(GroupHeader("Pen Gesture Sensitivity"));
-        content.Children.Add(RowAxisPicker("Zoom axis",
-            _sc.GestureZoomAxis, v => { _sc.GestureZoomAxis = v; App.Shortcuts.Save(); }));
-        content.Children.Add(RowSlider("Zoom (factor/px)", _sc.GestureZoomSensitivity, 1.001, 1.05,
-            v => { _sc.GestureZoomSensitivity = v; App.Shortcuts.Save(); }, "f3"));
-        content.Children.Add(RowSlider("Rotate (°/px)", _sc.GestureRotateSensitivity, 0.05, 2.0,
-            v => { _sc.GestureRotateSensitivity = v; App.Shortcuts.Save(); }, "f2"));
-
         return new ScrollViewer
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
@@ -289,11 +281,6 @@ public sealed class SettingsWindow : Window
             // Misc
             new("Open settings",          "Misc",             () => sc.OpenSettings,           v => sc.OpenSettings = v),
             new("Open brush editor",      "Misc",             () => sc.OpenBrushEditor,        v => sc.OpenBrushEditor = v),
-            // Pen Gestures
-            new("Pan canvas",             "Pen Gestures  (hold key + drag pen)", () => sc.GesturePan,       v => sc.GesturePan = v,       IsGesture: true),
-            new("Zoom  (drag ↑↓)",        "Pen Gestures  (hold key + drag pen)", () => sc.GestureZoom,      v => sc.GestureZoom = v,      IsGesture: true),
-            new("Rotate (drag ←→)",       "Pen Gestures  (hold key + drag pen)", () => sc.GestureRotate,    v => sc.GestureRotate = v,    IsGesture: true),
-            new("Brush size (←→)",        "Pen Gestures  (hold key + drag pen)", () => sc.GestureBrushSize, v => sc.GestureBrushSize = v, IsGesture: true),
         ];
     }
 
@@ -512,43 +499,6 @@ public sealed class SettingsWindow : Window
         row.Children.Add(lbl);
         row.Children.Add(control);
         return row;
-    }
-
-    private Control RowAxisPicker(string label, GestureAxis current, Action<GestureAxis> setter)
-    {
-        Button MkBtn(GestureAxis axis, string text)
-        {
-            var active = current == axis;
-            var btn = new Button
-            {
-                Content = text,
-                Height = 24,
-                Padding = new Thickness(10, 0),
-                FontSize = 10,
-                HorizontalContentAlignment = HorizontalAlignment.Center,
-                VerticalContentAlignment = VerticalAlignment.Center,
-                Background = new SolidColorBrush(Color.Parse(active ? AccentSoft : Bg2)),
-                BorderBrush = new SolidColorBrush(Color.Parse(active ? Accent : Stroke)),
-                BorderThickness = new Thickness(1),
-                Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted)),
-                CornerRadius = new CornerRadius(3)
-            };
-            btn.Click += (_, _) =>
-            {
-                setter(axis);
-                // Rebuild general page so the buttons reflect the new state
-                SelectPage(0);
-            };
-            return btn;
-        }
-
-        var picker = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 4,
-            Children = { MkBtn(GestureAxis.Vertical, "Vertical  ↑↓"), MkBtn(GestureAxis.Horizontal, "Horizontal  ←→") }
-        };
-        return SettingRow(label, picker);
     }
 
     private Control RowBrushCursorPicker(string label, BrushCursorMode current, Action<BrushCursorMode> setter)

@@ -216,6 +216,9 @@ public partial class MainWindow
         mainGrid.Children.Add(_layerListBox);
         mainGrid.Children.Add(ctrlRow);
 
+        // Cache layer panel — complex but mostly static between layer changes
+        mainGrid.CacheMode = new Avalonia.Media.BitmapCache();
+
         return mainGrid;
     }
     private void ApplyLayerName()

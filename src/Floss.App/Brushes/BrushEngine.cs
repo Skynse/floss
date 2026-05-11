@@ -161,8 +161,6 @@ public sealed class BrushEngine : IDisposable
         if (distance > 0.001)
         {
             var currentAngle = MathF.Atan2((float)dy, (float)dx);
-            //stroke.State.DrawingAngle = MathF.Atan2((float)dy, (float)dx);
-            //
             stroke.State.DrawingAngle = LerpAngle(stroke.State.DrawingAngle, currentAngle, 0.5f);
         }
         var p0 = new SplinePoint(

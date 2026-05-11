@@ -223,12 +223,7 @@ public partial class MainWindow
         _canvasFlip.ScaleY = tab.FlipY;
         _canvasPan.X = tab.PanX;
         _canvasPan.Y = tab.PanY;
-        _canvas.CanvasZoom = _zoom;
-        _canvas.CanvasRotation = _rotation;
-        _canvas.FlipX = (int)tab.FlipX;
-        _canvas.FlipY = (int)tab.FlipY;
-        _canvas.PanOffsetX = tab.PanX;
-        _canvas.PanOffsetY = tab.PanY;
+        SyncViewportStateToCanvas();
 
         // Restore selected layers
         _selectedLayerIndices.Clear();
@@ -269,6 +264,7 @@ public partial class MainWindow
         _rulerOverlay?.InvalidateVisual();
         _checkerboardOverlay?.InvalidateVisual();
         _resizeOverlay?.InvalidateVisual();
+        SyncCanvasViewport();
         _workspaceViewport?.Focus();
     }
 

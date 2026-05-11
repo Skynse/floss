@@ -19,9 +19,11 @@ public partial class MainWindow
     // ── Viewport ──────────────────────────────────────────────────────────────
     private void SyncCanvasViewport()
     {
-        if (_canvas == null || _workspaceViewport == null) return;
-        _canvas.ViewportWidth = _workspaceViewport.Bounds.Width;
-        _canvas.ViewportHeight = _workspaceViewport.Bounds.Height;
+        var vpW = _workspaceViewport.Bounds.Width;
+        var vpH = _workspaceViewport.Bounds.Height;
+        _canvas.ViewportWidth = vpW;
+        _canvas.ViewportHeight = vpH;
+        _canvas.SetViewport(this, vpW, vpH);
     }
 
     private void SyncCanvasFrameToDocument(bool fitToViewport)
@@ -46,17 +48,21 @@ public partial class MainWindow
         e.Handled = true;
     }
 
+    private static bool IsViewportTool(ITool? tool)
+    {
+        if (tool is not CompositeTool ct) return false;
+        return ct.Output is HandOutput || ct.Output is RotateOutput || ct.Output is ZoomOutput;
+    }
+
     private void Workspace_OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         _isPanning = false;
         var pt = e.GetCurrentPoint(_workspaceViewport);
 
-        // Ignore phantom pen events (hover without contact)
         if ((pt.Pointer.Type == PointerType.Pen || pt.Properties.IsEraser) &&
             pt.Properties.Pressure < 0.02f)
             return;
 
-        // Resize mode — handle drags before normal gesture logic
         if (TryBeginResizeDrag(pt.Position, pt.Properties.IsLeftButtonPressed))
         {
             _isPanning = true;
@@ -66,46 +72,16 @@ public partial class MainWindow
             return;
         }
 
-        var middle = pt.Properties.IsMiddleButtonPressed;
-        if (_activeGesture == GestureMode.None && _activeModifierAction == ModifierAction.ChangeBrushSize)
+        if (_activeModifierAction == ModifierAction.ChangeBrushSize)
         {
-            _activeGesture = GestureMode.BrushSize;
-            _gestureKey = Key.None;
-            _gestureModifiers = _activeModifierCombo;
+            _isBrushSizeActive = true;
             _canvas.PaintInputSuspended = true;
-            _hadAlternateBeforeGesture = _canvas.IsAlternateActive;
+            _hadAlternateBeforeBrushSize = _canvas.IsAlternateActive;
             _canvas.SetAlternateActive(false);
-        }
-        if (!middle && _activeGesture == GestureMode.None && pt.Properties.IsLeftButtonPressed)
-        {
-            var viewMode = _activeToolGroup?.ActivePreset?.OutputProcess switch
-            {
-                OutputProcessType.Pan => GestureMode.Pan,
-                OutputProcessType.Zoom or OutputProcessType.ZoomOut => GestureMode.Zoom,
-                OutputProcessType.Rotate => GestureMode.Rotate,
-                _ => GestureMode.None
-            };
-            if (viewMode != GestureMode.None)
-            {
-                _activeGesture = viewMode;
-                _canvas.PaintInputSuspended = true;
-                _hadAlternateBeforeGesture = _canvas.IsAlternateActive;
-                _canvas.SetAlternateActive(false);
-                Cursor = viewMode == GestureMode.Pan ? CursorPan : CursorArrow;
-            }
-        }
-        if (!middle && _activeGesture == GestureMode.None) return;
-        _isPanning = true;
-        _lastPanPoint = e.GetPosition(_workspaceViewport);
-        _gestureStartPoint = _lastPanPoint;
-        if (_activeGesture == GestureMode.BrushSize)
-        {
             _brushSizeGestureStartCanvasPoint = e.GetPosition(_canvas);
             _brushSizeGestureStartSize = GetActiveToolSize();
             if (_brushSizeHasLastDir)
             {
-                // Re-anchor center using the saved direction so the cursor lands
-                // on the same side of the circle as the last resize ended on.
                 var startRadius = _brushSizeGestureStartSize * 0.5;
                 _brushSizeGestureCenterCanvasPoint = new Point(
                     _brushSizeGestureStartCanvasPoint.X - _brushSizeLastDirX * startRadius,
@@ -118,16 +94,44 @@ public partial class MainWindow
                 _brushSizeGestureHasCenter = false;
             }
             _canvas.LockCursorPreview(_brushSizeGestureCenterCanvasPoint, forceBrushOutline: true);
+            _isPanning = true;
+            _lastPanPoint = pt.Position;
+            e.Pointer.Capture(_workspaceViewport);
+            e.Handled = true;
+            return;
         }
-        e.Pointer.Capture(_workspaceViewport);
-        e.Handled = true;
+
+        bool isPenPress = (pt.Pointer.Type == PointerType.Pen || pt.Properties.IsEraser)
+            && pt.Properties.Pressure >= 0.02f;
+        if (pt.Properties.IsLeftButtonPressed || isPenPress)
+        {
+            if (IsViewportTool(_canvas.ActiveTool))
+                _canvas.HandleViewportPointerInput(ToolInputEventKind.Down, pt.Position, pt);
+            else
+                _canvas.HandlePointerInput(ToolInputEventKind.Down, e.GetCurrentPoint(_canvas));
+            _isToolDispatchActive = true;
+            _isPanning = true;
+            _lastPanPoint = pt.Position;
+            e.Pointer.Capture(_workspaceViewport);
+            e.Handled = true;
+            return;
+        }
+
+        if (pt.Properties.IsMiddleButtonPressed)
+        {
+            _isMiddleButtonPanning = true;
+            _isPanning = true;
+            _lastPanPoint = e.GetPosition(_workspaceViewport);
+            e.Pointer.Capture(_workspaceViewport);
+            e.Handled = true;
+        }
     }
 
     private void Workspace_OnPointerMoved(object? sender, PointerEventArgs e)
     {
         if (!_isPanning) return;
 
-        if (_activeGesture == GestureMode.None && !IsResizeDragging)
+        if (!_isBrushSizeActive && !IsResizeDragging && !_isToolDispatchActive && !_isMiddleButtonPanning)
         {
             _isPanning = false;
             return;
@@ -135,7 +139,6 @@ public partial class MainWindow
 
         var pt = e.GetPosition(_workspaceViewport);
 
-        // Resize drag takes priority over pan/gesture
         if (IsResizeDragging)
         {
             UpdateResizeDrag(pt);
@@ -143,7 +146,18 @@ public partial class MainWindow
             return;
         }
 
-        if (_activeGesture == GestureMode.BrushSize)
+        if (_isToolDispatchActive)
+        {
+            if (IsViewportTool(_canvas.ActiveTool))
+                _canvas.HandleViewportPointerInput(ToolInputEventKind.Move, pt, e.GetCurrentPoint(_workspaceViewport));
+            else
+                _canvas.HandlePointerInput(ToolInputEventKind.Move, e.GetCurrentPoint(_canvas));
+            _lastPanPoint = pt;
+            e.Handled = true;
+            return;
+        }
+
+        if (_isBrushSizeActive)
         {
             var canvasPoint = e.GetPosition(_canvas);
             if (!_brushSizeGestureHasCenter)
@@ -151,8 +165,6 @@ public partial class MainWindow
                 var startDx = canvasPoint.X - _brushSizeGestureStartCanvasPoint.X;
                 var startDy = canvasPoint.Y - _brushSizeGestureStartCanvasPoint.Y;
                 var startDistance = Math.Sqrt(startDx * startDx + startDy * startDy);
-                // Require ~10 viewport pixels of deliberate movement before locking the
-                // center direction so tablet jitter can't randomly flip which side you're on.
                 if (startDistance > 10.0 / _zoom)
                 {
                     var startRadius = _brushSizeGestureStartSize * 0.5;
@@ -163,7 +175,6 @@ public partial class MainWindow
                 }
                 else
                 {
-                    // Dead zone: hold the starting size, don't move the preview yet.
                     _lastPanPoint = pt;
                     _canvas.LockCursorPreview(_brushSizeGestureCenterCanvasPoint, forceBrushOutline: true);
                     e.Handled = true;
@@ -185,57 +196,20 @@ public partial class MainWindow
                 GetActiveToolSizeMinimum(),
                 GetActiveToolSizeMaximum()));
             _lastPanPoint = pt;
-            _canvas.LockCursorPreview(
-                _brushSizeGestureCenterCanvasPoint,
-                forceBrushOutline: true);
+            _canvas.LockCursorPreview(_brushSizeGestureCenterCanvasPoint, forceBrushOutline: true);
             e.Handled = true;
             return;
         }
 
         var d = pt - _lastPanPoint;
         _lastPanPoint = pt;
-        var sc = App.Shortcuts;
-
-        switch (_activeGesture)
-        {
-            case GestureMode.Pan:
-            case GestureMode.None:
-                _canvasPan.X += d.X;
-                _canvasPan.Y += d.Y;
-                _canvas.PanOffsetX = _canvasPan.X;
-                _canvas.PanOffsetY = _canvasPan.Y;
-                _rulerOverlay?.InvalidateVisual();
-                _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual();
-                ClampCanvasPan();
-                UpdateSelectionActionBar();
-                break;
-            case GestureMode.Zoom:
-                var axisDelta = sc.GestureZoomAxis == GestureAxis.Horizontal ? d.X : -d.Y;
-                SetZoom(_zoom * Math.Pow(sc.GestureZoomSensitivity, axisDelta), _gestureStartPoint);
-                break;
-            case GestureMode.Rotate:
-                {
-                    // Arc-based rotation around the viewport center.
-                    // Using viewport center (not gesture start) as pivot avoids the
-                    // cursor ever passing through the pivot and flipping the angle.
-                    var vpCenter = new Point(
-                        _workspaceViewport.Bounds.Width * 0.5,
-                        _workspaceViewport.Bounds.Height * 0.5);
-                    var prevPt = pt - d;
-                    var fromVec = prevPt - vpCenter;
-                    var toVec = pt - vpCenter;
-                    var fromDistSq = fromVec.X * fromVec.X + fromVec.Y * fromVec.Y;
-                    var toDistSq = toVec.X * toVec.X + toVec.Y * toVec.Y;
-                    if (fromDistSq > 400 && toDistSq > 400) // >20 px from center
-                    {
-                        var deltaRad = Math.Atan2(toVec.Y, toVec.X) - Math.Atan2(fromVec.Y, fromVec.X);
-                        if (deltaRad > Math.PI) deltaRad -= 2 * Math.PI;
-                        if (deltaRad < -Math.PI) deltaRad += 2 * Math.PI;
-                        SetRotation(_rotation + deltaRad * 180.0 / Math.PI);
-                    }
-                    break;
-                }
-        }
+        _canvasPan.X += d.X;
+        _canvasPan.Y += d.Y;
+        SyncViewportStateToCanvas();
+        _rulerOverlay?.InvalidateVisual();
+        _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual();
+        ClampCanvasPan();
+        UpdateSelectionActionBar();
         e.Handled = true;
     }
 
@@ -244,8 +218,21 @@ public partial class MainWindow
         if (!_isPanning) return;
         if (IsResizeDragging) EndResizeDrag();
         _isPanning = false;
-        if (_activeGesture == GestureMode.BrushSize)
+        _isMiddleButtonPanning = false;
+        if (_isToolDispatchActive)
+        {
+            _isToolDispatchActive = false;
+            var pt = e.GetCurrentPoint(_workspaceViewport);
+            if (IsViewportTool(_canvas.ActiveTool))
+                _canvas.HandleViewportPointerInput(ToolInputEventKind.Up, pt.Position, pt);
+            else
+                _canvas.HandlePointerInput(ToolInputEventKind.Up, e.GetCurrentPoint(_canvas));
+        }
+        if (_isBrushSizeActive)
+        {
+            _isBrushSizeActive = false;
             FinishActiveToolSizeEdit();
+        }
         _canvas.UnlockCursorPreview();
         e.Pointer.Capture(null);
         e.Handled = true;
@@ -255,17 +242,19 @@ public partial class MainWindow
     {
         if (IsResizeDragging) EndResizeDrag();
         _isPanning = false;
-        if (_activeGesture == GestureMode.BrushSize)
-            FinishActiveToolSizeEdit();
-        _canvas.UnlockCursorPreview();
-        if (_activeGesture != GestureMode.None)
+        _isMiddleButtonPanning = false;
+        if (_isToolDispatchActive)
         {
-            _canvas.PaintInputSuspended = false;
-            _activeGesture = GestureMode.None;
-            _gestureKey = Key.None;
-            _gestureModifiers = KeyModifiers.None;
-            Cursor = Cursor.Default;
+            _isToolDispatchActive = false;
+            _canvas.CancelActiveTool();
         }
+        if (_isBrushSizeActive)
+        {
+            _isBrushSizeActive = false;
+            FinishActiveToolSizeEdit();
+        }
+        _canvas.UnlockCursorPreview();
+        _canvas.PaintInputSuspended = false;
     }
 
     private void NudgeBrushSize(int direction, bool large)
@@ -346,13 +335,13 @@ public partial class MainWindow
             _canvasPan.Y = (c.Y - vpH * 0.5) * (1 - ratio) + _canvasPan.Y * ratio;
         }
 
-        _canvas.PanOffsetX = _canvasPan.X;
-        _canvas.PanOffsetY = _canvasPan.Y;
+        SyncViewportStateToCanvas();
+        _canvasFrame?.InvalidateVisual();
         _rulerOverlay?.InvalidateVisual();
-        _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual();
         ClampCanvasPan();
         _zoomDisplay.Text = $"{Math.Round(_zoom * 100)}%";
-        UpdateStatus();
+        _rotDisplay.Text = "0°";
+        PostUpdateStatus();
         UpdateSelectionActionBar();
     }
 
@@ -372,16 +361,15 @@ public partial class MainWindow
             var py = _canvasPan.Y;
             _canvasPan.X = px * cos - py * sin;
             _canvasPan.Y = px * sin + py * cos;
-            _canvas.PanOffsetX = _canvasPan.X;
-            _canvas.PanOffsetY = _canvasPan.Y;
         }
         _rotation = newRotation;
         _canvasRotate.Angle = _rotation;
-        _canvas.CanvasRotation = _rotation;
+        SyncViewportStateToCanvas();
+        _canvasFrame?.InvalidateVisual();
         _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual();
         ClampCanvasPan();
         _rotDisplay.Text = $"{Math.Round(_rotation)}°";
-        UpdateStatus();
+        PostUpdateStatus();
         UpdateSelectionActionBar();
     }
 
@@ -406,11 +394,9 @@ public partial class MainWindow
         _zoom = Math.Clamp(Math.Min(availableW / w, availableH / h), 0.05, 16.0);
         _canvasScale.ScaleX = _zoom;
         _canvasScale.ScaleY = _zoom;
-        _canvas.CanvasZoom = _zoom;
         _canvasPan.X = 0;
         _canvasPan.Y = 0;
-        _canvas.PanOffsetX = 0;
-        _canvas.PanOffsetY = 0;
+        SyncViewportStateToCanvas();
         _rulerOverlay?.InvalidateVisual();
         ClampCanvasPan();
 
@@ -502,6 +488,16 @@ public partial class MainWindow
         App.Config.Save();
     }
 
+    private void SyncViewportStateToCanvas()
+    {
+        _canvas.PanOffsetX = _canvasPan.X;
+        _canvas.PanOffsetY = _canvasPan.Y;
+        _canvas.CanvasZoom = _zoom;
+        _canvas.CanvasRotation = _rotation;
+        _canvas.FlipX = (int)_canvasFlip.ScaleX;
+        _canvas.FlipY = (int)_canvasFlip.ScaleY;
+    }
+
     private void ClampCanvasPan()
     {
         var vpW = Math.Max(1, _workspaceViewport.Bounds.Width);
@@ -523,6 +519,44 @@ public partial class MainWindow
         _canvasPan.Y = Math.Clamp(_canvasPan.Y, -maxY, maxY);
     }
 
+    private void PostUpdateStatus()
+    {
+        Avalonia.Threading.Dispatcher.UIThread.Post(UpdateStatus, Avalonia.Threading.DispatcherPriority.Background);
+    }
+
+    private void PostUpdateTitle()
+    {
+        Avalonia.Threading.Dispatcher.UIThread.Post(UpdateTitle, Avalonia.Threading.DispatcherPriority.Background);
+    }
+
+    // ── IViewportController ────────────────────────────────────────────────────
+    double Tools.IViewportController.Zoom => _zoom;
+    double Tools.IViewportController.PanOffsetX => _canvasPan.X;
+    double Tools.IViewportController.PanOffsetY => _canvasPan.Y;
+
+    void Tools.IViewportController.PanBy(double dx, double dy)
+    {
+        _canvasPan.X += dx;
+        _canvasPan.Y += dy;
+        SyncViewportStateToCanvas();
+        _canvasFrame?.InvalidateVisual();
+        _rulerOverlay?.InvalidateVisual();
+        _checkerboardOverlay?.InvalidateVisual(); _resizeOverlay?.InvalidateVisual();
+        ClampCanvasPan();
+        PostUpdateStatus();
+        UpdateSelectionActionBar();
+    }
+
+    void Tools.IViewportController.ZoomBy(double factor, Point viewportCenter)
+    {
+        SetZoom(_zoom * factor, viewportCenter);
+    }
+
+    void Tools.IViewportController.RotateBy(double degrees)
+    {
+        SetRotation(_rotation + degrees);
+    }
+
     // ── Keyboard ──────────────────────────────────────────────────────────────
     private void OnKeyDownTunnel(object? sender, KeyEventArgs e)
     {
@@ -533,6 +567,9 @@ public partial class MainWindow
         var key = e.Key;
         var mods = Input.KeyBinding.ModifiersWithKeyDown(key, e.KeyModifiers);
         _canvas.SetCurrentModifiers(mods);
+
+        if (!IsModifierKey(key))
+            _heldBaseKeys.Add(key);
 
         // Modifier key settings — view operations, tool aux, alternate tools, etc.
         if (TryApplyModifierKeyAction(key, mods))
@@ -552,48 +589,15 @@ public partial class MainWindow
             return;
         }
 
-        // Preset alternate invocation recording
-        if (_recordingPresetAltInvocation != null)
-        {
-            if (e.Key == Key.Escape) { CancelPresetAltInvocationRecording(); e.Handled = true; return; }
-            if (e.Key is Key.Back or Key.Delete) { CommitPresetAltInvocation(Input.KeyBinding.Empty); e.Handled = true; return; }
-            if (e.Key is Key.LeftCtrl or Key.RightCtrl or Key.LeftShift or Key.RightShift or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin)
-            {
-                _recordingPresetPendingMods = mods;
-                return;
-            }
-            _recordingPresetPendingMods = KeyModifiers.None;
-            CommitPresetAltInvocation(new Input.KeyBinding(e.Key, mods));
-            e.Handled = true;
-            return;
-        }
+
+
     }
 
     private void OnKeyUp(object? sender, KeyEventArgs e)
     {
+        _heldBaseKeys.Remove(e.Key);
         var mods = Floss.App.Input.KeyBinding.ModifiersAfterKeyUp(e.Key, e.KeyModifiers);
         _canvas.SetCurrentModifiers(mods);
-        if (_activeGesture != GestureMode.None &&
-            (_gestureKey == Key.None
-                ? (mods & _gestureModifiers) != _gestureModifiers
-                : e.Key == _gestureKey))
-        {
-            EndGesture();
-            e.Handled = true;
-        }
-
-        // Commit pending modifier-only key for preset alt invocation recording
-        if (_recordingPresetAltInvocation != null && _recordingPresetPendingMods != KeyModifiers.None)
-        {
-            var pending = _recordingPresetPendingMods;
-            _recordingPresetPendingMods = KeyModifiers.None;
-            if (pending != KeyModifiers.None)
-            {
-                CommitPresetAltInvocation(new Input.KeyBinding(Key.None, pending));
-                e.Handled = true;
-                return;
-            }
-        }
 
         // Re-evaluate modifier key action on key-up
         EvaluateModifierKeyAction(mods);
@@ -601,14 +605,20 @@ public partial class MainWindow
 
     private void ResetTransientInputState()
     {
-        var hadGesture = _activeGesture != GestureMode.None;
+        _heldBaseKeys.Clear();
         _isPanning = false;
-        if (hadGesture)
-            EndGesture();
-        if (_canvas.IsAlternateActive || _hadAlternateBeforeGesture)
+        _isMiddleButtonPanning = false;
+        _isToolDispatchActive = false;
+        if (_isBrushSizeActive)
+        {
+            _isBrushSizeActive = false;
+            _canvas.UnlockCursorPreview();
+            _canvas.PaintInputSuspended = false;
+        }
+        if (_canvas.IsAlternateActive || _hadAlternateBeforeBrushSize)
         {
             _canvas.SetAlternateActive(false);
-            _hadAlternateBeforeGesture = false;
+            _hadAlternateBeforeBrushSize = false;
         }
     }
 
@@ -619,7 +629,16 @@ public partial class MainWindow
 
         var inputType = (int)activePreset.InputProcess;
         var outputType = (int)activePreset.OutputProcess;
-        var assignment = App.ModifierKeys.Resolve(inputType, outputType, null, mods);
+
+        ModifierKeyAssignment? assignment = App.ModifierKeys.Resolve(inputType, outputType, null, mods);
+        if (assignment == null)
+        {
+            foreach (var heldKey in _heldBaseKeys)
+            {
+                assignment = App.ModifierKeys.Resolve(inputType, outputType, heldKey, mods);
+                if (assignment != null) break;
+            }
+        }
 
         if (assignment?.Modifiers == _activeModifierCombo && assignment?.Action == _activeModifierAction)
             return;
@@ -637,12 +656,13 @@ public partial class MainWindow
                     _canvas.SetAlternateActive(false);
                 break;
             case ModifierAction.ChangeBrushSize:
-                if (_activeGesture == GestureMode.BrushSize)
-                    EndGesture();
-                break;
-            case ModifierAction.ViewOperation:
-                if (_activeGesture != GestureMode.None)
-                    EndGesture();
+                if (_isBrushSizeActive)
+                {
+                    _isBrushSizeActive = false;
+                    FinishActiveToolSizeEdit();
+                    _canvas.UnlockCursorPreview();
+                    _canvas.PaintInputSuspended = false;
+                }
                 break;
         }
 
@@ -663,10 +683,6 @@ public partial class MainWindow
                     _canvas.SetAlternateActive(true);
                 break;
             case ModifierAction.ChangeBrushSize:
-                // Gesture starts on pointer press, not here
-                break;
-            case ModifierAction.ViewOperation:
-                BeginGestureFromAssignment(assignment);
                 break;
         }
     }
@@ -679,6 +695,15 @@ public partial class MainWindow
         var inputType = (int)activePreset.InputProcess;
         var outputType = (int)activePreset.OutputProcess;
         var assignment = App.ModifierKeys.Resolve(inputType, outputType, key, mods);
+
+        if (assignment == null && IsModifierKey(key))
+        {
+            foreach (var heldKey in _heldBaseKeys)
+            {
+                assignment = App.ModifierKeys.Resolve(inputType, outputType, heldKey, mods);
+                if (assignment != null) break;
+            }
+        }
 
         if (assignment == null) return false;
 
@@ -699,12 +724,13 @@ public partial class MainWindow
                     _canvas.SetAlternateActive(false);
                 break;
             case ModifierAction.ChangeBrushSize:
-                if (_activeGesture == GestureMode.BrushSize)
-                    EndGesture();
-                break;
-            case ModifierAction.ViewOperation:
-                if (_activeGesture != GestureMode.None)
-                    EndGesture();
+                if (_isBrushSizeActive)
+                {
+                    _isBrushSizeActive = false;
+                    FinishActiveToolSizeEdit();
+                    _canvas.UnlockCursorPreview();
+                    _canvas.PaintInputSuspended = false;
+                }
                 break;
         }
 
@@ -726,56 +752,9 @@ public partial class MainWindow
                 return true;
             case ModifierAction.ChangeBrushSize:
                 return true;
-            case ModifierAction.ViewOperation:
-                BeginGestureFromAssignment(assignment);
-                return true;
         }
 
         return false;
-    }
-
-    private void BeginGestureFromAssignment(ModifierKeyAssignment assignment)
-    {
-        var mode = assignment.ViewOper switch
-        {
-            ViewOperationType.Pan => GestureMode.Pan,
-            ViewOperationType.Zoom => GestureMode.Zoom,
-            ViewOperationType.Rotate => GestureMode.Rotate,
-            _ => GestureMode.None
-        };
-        if (mode == GestureMode.None) return;
-
-        _activeGesture = mode;
-        _gestureKey = assignment.Key ?? Key.None;
-        _gestureModifiers = assignment.Modifiers;
-        _canvas.PaintInputSuspended = true;
-        _hadAlternateBeforeGesture = _canvas.IsAlternateActive;
-        _canvas.SetAlternateActive(false);
-        Cursor = mode switch
-        {
-            GestureMode.Pan => CursorPan,
-            GestureMode.BrushSize => CursorNone,
-            _ => CursorArrow
-        };
-    }
-
-    private void EndGesture()
-    {
-        var wasBrushSize = _activeGesture == GestureMode.BrushSize;
-        _activeGesture = GestureMode.None;
-        _gestureKey = Key.None;
-        _gestureModifiers = KeyModifiers.None;
-        _isPanning = false;
-        if (wasBrushSize)
-            FinishActiveToolSizeEdit();
-        _canvas.UnlockCursorPreview();
-        _canvas.PaintInputSuspended = false;
-        Cursor = Cursor.Default;
-        if (_hadAlternateBeforeGesture)
-        {
-            _canvas.SetAlternateActive(true);
-            _hadAlternateBeforeGesture = false;
-        }
     }
 
     private static bool IsModifierKey(Avalonia.Input.Key key) => key switch
