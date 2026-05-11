@@ -212,6 +212,17 @@ public sealed class DrawingCanvas : Control, IDisposable
         // Let coordinates go outside document bounds — the brush engine clips stamps
         // to the document naturally. Clamping would draw a hard line along the edge.
 
+        // Sync cursor position so custom cursor renders during captured strokes
+        // even when OnPointerMoved is not firing on this control.
+        if (!_isCursorPreviewLocked)
+        {
+            _prevPointerPos = _pointerPos;
+            _pointerPos = point.Position;
+        }
+        _pointerTiltX = (float)props.XTilt;
+        _pointerTiltY = (float)props.YTilt;
+        _pointerTwist = (float)props.Twist;
+
         var sample = new CanvasInputSample(
             docX,
             docY,
@@ -1051,10 +1062,6 @@ public sealed class DrawingCanvas : Control, IDisposable
     {
         base.Render(context);
 
-        // Sync cursor to current state so layer lock changes take effect immediately.
-        if (_isPointerOver && !(_toolController.ActiveTool is TransformTool { HasPendingOperation: true }))
-            Cursor = IsPaintBlockedByLock ? CursorNo : CursorNone;
-
         // Skip compositing on empty-canvas documents — avoids allocating a
         // full-canvas WriteableBitmap (900MB+ for 15k²) when nothing is drawn.
         var viewport = ComputeVisibleViewport();
@@ -1092,7 +1099,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             context.DrawRectangle(null, new Pen(CursorInnerBrush, t, dash2), new Rect(rx, ry, rw, rh));
         }
 
-        if ((_isPointerOver || _isCursorPreviewLocked) && !IsPaintBlockedByLock)
+        if ((_isPointerOver || _isCursorPreviewLocked || _toolController.HasPendingOperation) && !IsPaintBlockedByLock)
         {
             var mode = ActiveCursorMode();
             var pos = _isCursorPreviewLocked ? _lockedPointerPos : _pointerPos;
@@ -1334,21 +1341,21 @@ public sealed class DrawingCanvas : Control, IDisposable
                 switch (_tip)
                 {
                     case ProceduralBrushTip { Shape: BrushTipShape.Ellipse } proc:
-                    {
-                        var asp = Math.Clamp(proc.AspectRatio, 0.05f, 20f);
-                        var rx = asp >= 1 ? _r : _r * asp;
-                        var ry = asp >= 1 ? _r / asp : _r;
-                        canvas.DrawOval(0, 0, rx, ry, paint);
-                        break;
-                    }
+                        {
+                            var asp = Math.Clamp(proc.AspectRatio, 0.05f, 20f);
+                            var rx = asp >= 1 ? _r : _r * asp;
+                            var ry = asp >= 1 ? _r / asp : _r;
+                            canvas.DrawOval(0, 0, rx, ry, paint);
+                            break;
+                        }
                     case ProceduralBrushTip { Shape: BrushTipShape.Flat or BrushTipShape.Rectangle } proc:
-                    {
-                        var asp = proc.Shape == BrushTipShape.Flat ? 4f : Math.Clamp(proc.AspectRatio, 0.05f, 20f);
-                        var rw = asp >= 1 ? _r : _r * asp;
-                        var rh = asp >= 1 ? _r / asp : _r;
-                        canvas.DrawRect(-rw, -rh, rw * 2, rh * 2, paint);
-                        break;
-                    }
+                        {
+                            var asp = proc.Shape == BrushTipShape.Flat ? 4f : Math.Clamp(proc.AspectRatio, 0.05f, 20f);
+                            var rw = asp >= 1 ? _r : _r * asp;
+                            var rh = asp >= 1 ? _r / asp : _r;
+                            canvas.DrawRect(-rw, -rh, rw * 2, rh * 2, paint);
+                            break;
+                        }
                     default:
                         canvas.DrawCircle(0, 0, _r, paint);
                         break;
@@ -1395,7 +1402,6 @@ public sealed class DrawingCanvas : Control, IDisposable
     {
         base.OnPointerEntered(e);
         _isPointerOver = true;
-        Cursor = IsPaintBlockedByLock ? CursorNo : CursorNone;
         var pt = e.GetCurrentPoint(this);
         _pointerPos = pt.Position;
         _prevPointerPos = pt.Position;
@@ -1409,10 +1415,6 @@ public sealed class DrawingCanvas : Control, IDisposable
     {
         base.OnPointerExited(e);
         _isPointerOver = false;
-        // Don't reset cursor to default if we're in the middle of drawing —
-        // fast strokes can briefly exit canvas bounds and flicker the cursor.
-        if (!_toolController.HasPendingOperation)
-            Cursor = Cursor.Default;
         InvalidateVisual();
     }
 

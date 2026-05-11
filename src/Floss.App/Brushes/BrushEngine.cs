@@ -75,7 +75,8 @@ public sealed class BrushEngine : IDisposable
         // segment take the MAX alpha rather than compounding. The scratch is then
         // composited onto the layer with SrcOver once.
         bool useScratch = brush.BlendMode == SKBlendMode.SrcOver
-            && _stampColors.Count == 0; // no color mixing
+            && _stampColors.Count == 0 // no color mixing
+            && dirty.Width <= 4096 && dirty.Height <= 4096; // guard against OOM
         if (useScratch)
             RenderStampsViaScratch(layer, stroke, dirty);
         else

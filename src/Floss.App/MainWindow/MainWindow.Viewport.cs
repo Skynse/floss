@@ -115,7 +115,7 @@ public partial class MainWindow
             else
             {
                 _canvas.HandlePointerInput(ToolInputEventKind.Down, e.GetCurrentPoint(_canvas));
-                _workspaceViewport.Cursor = CursorNone;
+                this.Cursor = new Cursor(StandardCursorType.None);
             }
             _isToolDispatchActive = true;
             _isPanning = true;
@@ -234,7 +234,7 @@ public partial class MainWindow
                 _canvas.HandleViewportPointerInput(ToolInputEventKind.Up, pt.Position, pt);
             else
                 _canvas.HandlePointerInput(ToolInputEventKind.Up, e.GetCurrentPoint(_canvas));
-            _workspaceViewport.Cursor = null; // restore default hit-test cursor
+            this.Cursor = null; // restore default hit-test cursor
         }
         if (_isBrushSizeActive)
         {
@@ -263,7 +263,7 @@ public partial class MainWindow
         }
         _canvas.UnlockCursorPreview();
         _canvas.PaintInputSuspended = false;
-        _workspaceViewport.Cursor = null;
+        this.Cursor = null;
     }
 
     private void NudgeBrushSize(int direction, bool large)
@@ -638,7 +638,7 @@ public partial class MainWindow
             _hadAlternateBeforeBrushSize = false;
         }
         if (_workspaceViewport != null)
-            _workspaceViewport.Cursor = null;
+        this.Cursor = null;
     }
 
     private void EvaluateModifierKeyAction(KeyModifiers mods)

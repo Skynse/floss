@@ -547,6 +547,8 @@ public partial class MainWindow : Window, Tools.IViewportController
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
+        _canvasFrame.PointerEntered += (_, _) => _canvasFrame.Cursor = new Cursor(StandardCursorType.None);
+        _canvasFrame.PointerExited += (_, _) => _canvasFrame.Cursor = null;
 
         _workspaceViewport = new Grid
         {
