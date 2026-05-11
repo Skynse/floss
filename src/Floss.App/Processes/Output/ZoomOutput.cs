@@ -32,21 +32,23 @@ public sealed class ZoomOutput : IOutputProcess
         var vp = ctx.Viewport;
         if (vp == null) return;
 
-        double dy;
+        double delta;
         if (_lastVpPos.HasValue)
         {
-            dy = drag.Current.Y - _lastVpPos.Value.Y;
+            var dx = drag.Current.X - _lastVpPos.Value.X;
+            var dy = drag.Current.Y - _lastVpPos.Value.Y;
+            delta = Math.Sqrt(dx * dx + dy * dy) * Math.Sign(dy);
         }
         else
         {
-            dy = 0;
+            delta = 0;
         }
 
         _lastVpPos = new Point(drag.Current.X, drag.Current.Y);
 
-        if (Math.Abs(dy) < 0.001) return;
+        if (Math.Abs(delta) < 0.001) return;
 
-        vp.ZoomBy(Math.Pow(ZoomSensitivity, -dy * Direction),
+        vp.ZoomBy(Math.Pow(ZoomSensitivity, -delta * Direction),
             new Point(drag.Start.X, drag.Start.Y));
     }
 }

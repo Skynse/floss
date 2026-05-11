@@ -97,7 +97,14 @@ internal static class Program
 
         ("PSD exporter writes parseable layer records", PsdExporterTests.Export_CanBeReadBack),
         ("PSD exporter aligns layer extra data and channel blocks", PsdExporterTests.Export_WritesValidLayerInfoStructure),
-        ("PSD exporter preserves folder hierarchy", PsdExporterTests.Export_PreservesFolderHierarchy)
+        ("PSD exporter preserves folder hierarchy", PsdExporterTests.Export_PreservesFolderHierarchy),
+
+        ("Floss file format round-trips basic document", FlossFileFormatTests.RoundTrip_BasicDocument),
+        ("Floss file format round-trips paper color", FlossFileFormatTests.RoundTrip_PaperColor),
+        ("Floss file format round-trips paper layer", FlossFileFormatTests.RoundTrip_PaperLayer),
+        ("Floss file format round-trips out-of-bounds tiles", FlossFileFormatTests.RoundTrip_OutOfBoundsTiles),
+        ("Floss file format round-trips multiple layers with group", FlossFileFormatTests.RoundTrip_MultipleLayersWithGroup),
+        ("Floss file format round-trips empty layer", FlossFileFormatTests.RoundTrip_EmptyLayer)
     ];
 
     public static int Main()
@@ -1630,15 +1637,11 @@ internal static class DrawingDocumentTests
         document.AddLayer();
         document.AddLayer();
 
-        document.GroupSelectedLayers([0]);
+        document.GroupSelectedLayers([0, 1, 2]);
         AssertEx.Equal(4, document.Layers.Count);
         AssertEx.True(document.ActiveLayer.IsGroup);
-        AssertEx.Equal(1, document.ActiveLayer.Children.Count);
+        AssertEx.Equal(3, document.ActiveLayer.Children.Count);
         AssertEx.Equal(1, document.ActiveLayer.Children[0].IndentLevel);
-
-        document.Undo();
-        AssertEx.Equal(4, document.Layers.Count);
-        AssertEx.True(document.Layers.Any(layer => layer.IsGroup));
 
         document.Undo();
         AssertEx.Equal(3, document.Layers.Count);
@@ -1928,5 +1931,130 @@ internal static class PsdExporterTests
         }
 
         public void Skip(int count) => Position += count;
+    }
+}
+
+internal static class FlossFileFormatTests
+{
+    public static void RoundTrip_BasicDocument()
+    {
+        var doc = new DrawingDocument(100, 80);
+        doc.ActiveLayer.Pixels.SetPixel(10, 10, 1, 2, 3, 255);
+        doc.ActiveLayer.Pixels.SetPixel(50, 40, 4, 5, 6, 128);
+
+        using var stream = new MemoryStream();
+        Floss.App.FlossFiles.FlossFileFormat.Save(stream, doc);
+
+        stream.Position = 0;
+        var loaded = Floss.App.FlossFiles.FlossFileFormat.Load(stream);
+
+        AssertEx.Equal(100, loaded.Width);
+        AssertEx.Equal(80, loaded.Height);
+        AssertEx.Equal(1, loaded.Layers.Count);
+        AssertEx.Equal(0, loaded.ActiveLayerIndex);
+
+        loaded.Layers[0].Pixels.GetPixel(10, 10, out var b1, out var g1, out var r1, out var a1);
+        AssertEx.SequenceEqual(new byte[] { 1, 2, 3, 255 }, [b1, g1, r1, a1]);
+
+        loaded.Layers[0].Pixels.GetPixel(50, 40, out var b2, out var g2, out var r2, out var a2);
+        AssertEx.SequenceEqual(new byte[] { 4, 5, 6, 128 }, [b2, g2, r2, a2]);
+    }
+
+    public static void RoundTrip_PaperColor()
+    {
+        var doc = new DrawingDocument(64, 64);
+        doc.PaperColor = Avalonia.Media.Color.FromArgb(255, 247, 244, 237);
+
+        using var stream = new MemoryStream();
+        Floss.App.FlossFiles.FlossFileFormat.Save(stream, doc);
+
+        stream.Position = 0;
+        var loaded = Floss.App.FlossFiles.FlossFileFormat.Load(stream);
+
+        AssertEx.Equal(247, loaded.PaperColor.R);
+        AssertEx.Equal(244, loaded.PaperColor.G);
+        AssertEx.Equal(237, loaded.PaperColor.B);
+        AssertEx.Equal(255, loaded.PaperColor.A);
+    }
+
+    public static void RoundTrip_PaperLayer()
+    {
+        var doc = new DrawingDocument(64, 64);
+        doc.PaperColor = Avalonia.Media.Colors.White;
+        doc.AddBackgroundLayer();
+
+        AssertEx.True(doc.PaperLayer != null);
+        AssertEx.True(doc.Layers[0].IsPaper);
+
+        using var stream = new MemoryStream();
+        Floss.App.FlossFiles.FlossFileFormat.Save(stream, doc);
+
+        stream.Position = 0;
+        var loaded = Floss.App.FlossFiles.FlossFileFormat.Load(stream);
+
+        AssertEx.Equal(2, loaded.Layers.Count);
+        AssertEx.True(loaded.Layers[0].IsPaper);
+        AssertEx.Equal("Paper", loaded.Layers[0].Name);
+        AssertEx.True(loaded.PaperLayer != null);
+        AssertEx.True(ReferenceEquals(loaded.PaperLayer, loaded.Layers[0]));
+    }
+
+    public static void RoundTrip_OutOfBoundsTiles()
+    {
+        var doc = new DrawingDocument(64, 64);
+        // Draw outside the document bounds — creates negative-coordinate tiles
+        doc.ActiveLayer.Pixels.SetPixel(-10, -20, 7, 8, 9, 255);
+        doc.ActiveLayer.Pixels.SetPixel(70, 80, 10, 11, 12, 200);
+
+        using var stream = new MemoryStream();
+        Floss.App.FlossFiles.FlossFileFormat.Save(stream, doc);
+
+        stream.Position = 0;
+        var loaded = Floss.App.FlossFiles.FlossFileFormat.Load(stream);
+
+        loaded.Layers[0].Pixels.GetPixel(-10, -20, out var b1, out var g1, out var r1, out var a1);
+        AssertEx.SequenceEqual(new byte[] { 7, 8, 9, 255 }, [b1, g1, r1, a1]);
+
+        loaded.Layers[0].Pixels.GetPixel(70, 80, out var b2, out var g2, out var r2, out var a2);
+        AssertEx.SequenceEqual(new byte[] { 10, 11, 12, 200 }, [b2, g2, r2, a2]);
+    }
+
+    public static void RoundTrip_MultipleLayersWithGroup()
+    {
+        var doc = new DrawingDocument(100, 100);
+        doc.AddLayer();
+        doc.AddGroupLayer();
+
+        // Group the first two layers into the group
+        doc.GroupSelectedLayers([0, 1]);
+
+        using var stream = new MemoryStream();
+        Floss.App.FlossFiles.FlossFileFormat.Save(stream, doc);
+
+        stream.Position = 0;
+        var loaded = Floss.App.FlossFiles.FlossFileFormat.Load(stream);
+
+        AssertEx.True(loaded.Layers.Count >= 3);
+        AssertEx.True(loaded.Layers.Any(l => l.IsGroup));
+
+        var group = loaded.Layers.First(l => l.IsGroup);
+        AssertEx.True(group.Children.Count > 0);
+    }
+
+    public static void RoundTrip_EmptyLayer()
+    {
+        var doc = new DrawingDocument(50, 50);
+        // Layer with no pixel content
+
+        using var stream = new MemoryStream();
+        Floss.App.FlossFiles.FlossFileFormat.Save(stream, doc);
+
+        stream.Position = 0;
+        var loaded = Floss.App.FlossFiles.FlossFileFormat.Load(stream);
+
+        AssertEx.Equal(50, loaded.Width);
+        AssertEx.Equal(50, loaded.Height);
+        AssertEx.Equal(1, loaded.Layers.Count);
+        AssertEx.Equal(PixelRegion.Empty, loaded.Layers[0].Pixels.ContentTileBounds);
     }
 }

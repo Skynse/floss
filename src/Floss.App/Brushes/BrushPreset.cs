@@ -8,6 +8,7 @@ namespace Floss.App.Brushes;
 public enum MixingMode { Standard, Perceptual }
 public enum SmudgeMode { Blend, Smear, Smudge }
 public enum BrushTipDirection { Horizontal, Vertical }
+public enum BrushQuality { Low, High }
 
 public sealed record BrushPreset(
     string Name,
@@ -33,6 +34,7 @@ public sealed record BrushPreset(
     public BrushTipDirection TipDirection { get; init; } = BrushTipDirection.Horizontal;
     public double Grain { get; init; } = 0.0;
     public double Smoothing { get; init; } = 0.3;
+    public BrushQuality Quality { get; init; } = BrushQuality.High;
     public IBrushTip Tip { get; init; } = new ProceduralBrushTip();
     public SkiaSharp.SKBlendMode BlendMode { get; init; } = SkiaSharp.SKBlendMode.SrcOver;
     public ProceduralBrushTip? Shape { get; init; } = null;

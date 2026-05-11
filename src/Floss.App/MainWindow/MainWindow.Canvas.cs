@@ -237,6 +237,23 @@ public partial class MainWindow
             }
     }
 
+    private void ShowPaperColorPicker()
+    {
+        var picker = new ColorPickerWindow(_canvas.Document.PaperColor, color =>
+        {
+            _canvas.Document.PaperColor = color;
+            var paper = _canvas.Document.PaperLayer;
+            if (paper != null)
+                paper.FillSolid(paper.Pixels.Bounds, color);
+            _canvas.InvalidateCompositor();
+            _canvas.InvalidateVisual();
+            _checkerboardOverlay?.InvalidateVisual();
+            _resizeOverlay?.InvalidateVisual();
+            BuildLayerList(); // refresh paper layer swatch color
+        });
+        picker.Show(this);
+    }
+
     private static TextBlock FieldLabel(string text) => new()
     {
         Text = text,

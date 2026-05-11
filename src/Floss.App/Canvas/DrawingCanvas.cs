@@ -121,6 +121,8 @@ public sealed class DrawingCanvas : Control, IDisposable
     {
         if (_ctx.ToolAuxMode == mode) return;
         _ctx.ToolAuxMode = mode;
+        if (_toolController.ActiveTool is Processes.CompositeTool ct)
+            ct.Input.ToolAuxMode = mode;
         InvalidateVisual();
     }
 
@@ -348,6 +350,13 @@ public sealed class DrawingCanvas : Control, IDisposable
     public void SetBrushSmoothing(double smoothing)
     {
         _brush = _brush with { Smoothing = Math.Clamp(smoothing, 0, 0.95) };
+        _ctx.Brush = _brush;
+        InvalidateVisual();
+    }
+
+    public void SetBrushQuality(BrushQuality quality)
+    {
+        _brush = _brush with { Quality = quality };
         _ctx.Brush = _brush;
         InvalidateVisual();
     }
@@ -1051,7 +1060,9 @@ public sealed class DrawingCanvas : Control, IDisposable
         var viewport = ComputeVisibleViewport();
         if (HasAnyLayerContent(_document.Layers))
         {
-            _compositor.Composite(_document.Layers, _document.Width, _document.Height, viewport, CanvasZoom);
+            var paper = _document.PaperLayer;
+            uint paperUint = paper is { IsVisible: true } ? ColorToBgraUint(_document.PaperColor) : 0u;
+            _compositor.Composite(_document.Layers, _document.Width, _document.Height, paperUint, viewport, CanvasZoom);
             var target = new Rect(Bounds.Size);
             using (context.PushClip(new RoundedRect(target)))
             using (context.PushRenderOptions(new RenderOptions
@@ -1626,4 +1637,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             _ => false
         };
     }
+
+    private static uint ColorToBgraUint(Avalonia.Media.Color c)
+        => (uint)(c.B | (c.G << 8) | (c.R << 16) | (c.A << 24));
 }

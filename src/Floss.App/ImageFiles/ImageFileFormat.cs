@@ -112,7 +112,9 @@ public static class DocumentRasterizer
         var width = Math.Max(1, document.Width);
         var height = Math.Max(1, document.Height);
 
-        var bgra = new LayerCompositor().CompositeToBgra(document.Layers, width, height);
+        var pc = document.PaperColor;
+        uint paper = (uint)(pc.B | (pc.G << 8) | (pc.R << 16) | (pc.A << 24));
+        var bgra = new LayerCompositor().CompositeToBgra(document.Layers, width, height, paper);
 
         var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Unpremul));
         fixed (byte* src = bgra)

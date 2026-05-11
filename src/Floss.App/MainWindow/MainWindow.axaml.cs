@@ -848,6 +848,7 @@ public partial class MainWindow : Window, Tools.IViewportController
                 MenuAction("Flip Canvas _Vertical", () => _canvas.FlipCanvas(horizontal: false)),
                 new Separator(),
                 MenuAction("_Resize Canvas...", async () => await ShowResizeCanvasDialog()),
+                MenuAction("Canvas Background _Color...", ShowPaperColorPicker),
             }
         };
 
@@ -885,8 +886,7 @@ public partial class MainWindow : Window, Tools.IViewportController
                 MenuAction("_Save Brush", SaveActiveBrush),
                 MenuAction("_Duplicate Brush", DuplicateActiveBrush),
                 MenuAction("_Import Tip PNG...", async () => await ImportBrushTipPngAsync()),
-                MenuAction("_Import .abr Brushes...", async () => await ImportAbrAsync()),
-                MenuAction("_Import .sut/.sutg Brushes...", async () => await ImportCspAsync())
+                MenuAction("_Import .abr Brushes...", async () => await ImportAbrAsync())
             }
         };
 

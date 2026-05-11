@@ -712,6 +712,9 @@ public sealed class BrushEngine : IDisposable
             Paint = new SKPaint
             {
                 IsAntialias = true,
+#pragma warning disable CS0618
+                FilterQuality = brush.Quality == BrushQuality.High ? SKFilterQuality.High : SKFilterQuality.Low,
+#pragma warning restore CS0618
                 BlendMode = brush.BlendMode,
                 Color = brush.BlendMode == SKBlendMode.DstOut ? SKColors.White : _baseColor,
                 ColorFilter = brush.BlendMode == SKBlendMode.DstOut ? null : SKColorFilter.CreateBlendMode(_baseColor, SKBlendMode.SrcIn)

@@ -54,6 +54,8 @@ public sealed class DrawingDocument : IDisposable
     // --- Properties ---
     public int Width { get; private set; }
     public int Height { get; private set; }
+    public Avalonia.Media.Color PaperColor { get; set; } = new(255, 255, 255, 255); // opaque white by default
+    public DrawingLayer? PaperLayer { get; internal set; }
 
     internal void SwapDimensions()
     {
@@ -66,7 +68,7 @@ public sealed class DrawingDocument : IDisposable
     public int CommittedStrokeCount { get; private set; }
     public bool CanUndo => _undo.Count > 0;
     public bool CanRedo => _redo.Count > 0;
-    public bool CanDeleteLayer => _layers.Count > 1 && !ActiveLayer.IsLocked && !ActiveLayer.IsGroup;
+    public bool CanDeleteLayer => _layers.Count > 1 && (!ActiveLayer.IsLocked || ActiveLayer.IsPaper) && !ActiveLayer.IsGroup;
     public bool CanPaintActiveLayer => !ActiveLayer.IsLocked && ActiveLayer.IsVisible && !ActiveLayer.IsGroup;
     public bool CanModifyActiveLayer => !ActiveLayer.IsLocked && !ActiveLayer.IsGroup;
     public bool IsDirty => _currentStateId != _savedStateId;
@@ -115,13 +117,21 @@ public sealed class DrawingDocument : IDisposable
                 IsClipping = layer.IsClipping,
                 IndentLevel = layer.IndentLevel,
                 IsAlphaLocked = layer.IsAlphaLocked,
-                IsReference = layer.IsReference
+                IsReference = layer.IsReference,
+                IsPaper = layer.IsPaper
             };
             if (!layer.IsGroup)
             {
-                var pixels = layer.CapturePixels();
-                var region = new PixelRegion(contentOffsetX, contentOffsetY, layer.Width, layer.Height);
-                nl.Pixels.CopyFromBgra(region, pixels, layer.Width * 4);
+                if (layer.IsPaper)
+                {
+                    nl.FillSolid(nl.Pixels.Bounds, PaperColor);
+                }
+                else
+                {
+                    var pixels = layer.CapturePixels();
+                    var region = new PixelRegion(contentOffsetX, contentOffsetY, layer.Width, layer.Height);
+                    nl.Pixels.CopyFromBgra(region, pixels, layer.Width * 4);
+                }
                 nl.MarkThumbnailDirty();
             }
             map[layer] = nl;
@@ -145,6 +155,8 @@ public sealed class DrawingDocument : IDisposable
         Width = newW;
         Height = newH;
         Selection.Resize(newW, newH);
+
+        PaperLayer = _layers.FirstOrDefault(l => l.IsPaper);
 
         ActiveLayerIndex = Math.Clamp(ActiveLayerIndex, 0, _layers.Count - 1);
         NotifyLayersChanged();
@@ -367,14 +379,17 @@ public sealed class DrawingDocument : IDisposable
 
     public void AddBackgroundLayer()
     {
-        BeginDocumentMutation();
-        var bg = new DrawingLayer("Background", Width, Height);
-        bg.IsLocked = true;
-        bg.FillSolid(bg.Pixels.Bounds, Avalonia.Media.Colors.White);
+        if (PaperLayer != null) return;
 
-        // Insert at the very bottom
+        BeginDocumentMutation();
+        var bg = new DrawingLayer("Paper", Width, Height);
+        bg.IsLocked = true;
+        bg.IsPaper = true;
+        bg.FillSolid(bg.Pixels.Bounds, PaperColor);
+
         var bottom = _layers[^1];
         InsertLayerNear(bg, bottom, LayerDropPlacement.Below);
+        PaperLayer = bg;
         RebuildFlatLayerOrder();
         NotifyLayersChanged();
     }
@@ -436,6 +451,7 @@ public sealed class DrawingDocument : IDisposable
     {
         if (_layers.Count <= 1 || !CanModifyActiveLayer) return;
         var removed = _layers[ActiveLayerIndex];
+        var wasPaper = removed.IsPaper;
         var parent = removed.Parent;
         var siblings = parent?.Children ?? RootLayers();
         var siblingIndex = siblings.IndexOf(removed);
@@ -447,6 +463,12 @@ public sealed class DrawingDocument : IDisposable
             _layers.Remove(layer);
             LayerRemoved?.Invoke(this, layer);
             layer.Dispose();
+        }
+
+        if (wasPaper)
+        {
+            PaperLayer = null;
+            PaperColor = new Avalonia.Media.Color(0, 0, 0, 0);
         }
 
         RebuildFlatLayerOrder();
@@ -483,6 +505,7 @@ public sealed class DrawingDocument : IDisposable
     public void ToggleLayerLock(int index)
     {
         if (index < 0 || index >= _layers.Count) return;
+        if (_layers[index].IsPaper) return;
         var oldValue = _layers[index].IsLocked;
         var newValue = !oldValue;
         PushHistoryState(new LayerPropertyHistoryState<bool>(index, oldValue, newValue, (layer, value) => layer.IsLocked = value, false, PixelRegion.Empty));
@@ -853,6 +876,7 @@ public sealed class DrawingDocument : IDisposable
             IsGroup = source.IsGroup,
             IsOpen = source.IsOpen,
             IsClipping = source.IsClipping,
+            IsPaper = source.IsPaper,
             IndentLevel = source.IndentLevel
         };
         copy.RestoreTiles(source.CaptureTiles());
@@ -886,11 +910,11 @@ public sealed class DrawingDocument : IDisposable
         return a.Mask.AsSpan().SequenceEqual(b.Mask);
     }
 
-    private LayerSnapshot CaptureLayerSnapshot(DrawingLayer layer) => new(layer.Name, layer.IsVisible, layer.IsLocked, layer.IsAlphaLocked, layer.IsReference, layer.Opacity, layer.BlendMode, layer.OffsetX, layer.OffsetY, layer.IsGroup, layer.IsOpen, layer.IsClipping, layer.IndentLevel, layer.Parent is null ? -1 : _layers.IndexOf(layer.Parent), layer.Width, layer.Height, layer.CaptureTiles());
+    private LayerSnapshot CaptureLayerSnapshot(DrawingLayer layer) => new(layer.Name, layer.IsVisible, layer.IsLocked, layer.IsAlphaLocked, layer.IsReference, layer.IsPaper, layer.Opacity, layer.BlendMode, layer.OffsetX, layer.OffsetY, layer.IsGroup, layer.IsOpen, layer.IsClipping, layer.IndentLevel, layer.Parent is null ? -1 : _layers.IndexOf(layer.Parent), layer.Width, layer.Height, layer.CaptureTiles());
 
     private DrawingLayer CreateLayerFromSnapshot(LayerSnapshot snap)
     {
-        var layer = new DrawingLayer(snap.Name, snap.BitmapWidth, snap.BitmapHeight) { IsVisible = snap.IsVisible, IsLocked = snap.IsLocked, IsAlphaLocked = snap.IsAlphaLocked, IsReference = snap.IsReference, Opacity = snap.Opacity, BlendMode = snap.BlendMode, OffsetX = snap.OffsetX, OffsetY = snap.OffsetY, IsGroup = snap.IsGroup, IsOpen = snap.IsOpen, IsClipping = snap.IsClipping, IndentLevel = snap.IndentLevel };
+        var layer = new DrawingLayer(snap.Name, snap.BitmapWidth, snap.BitmapHeight) { IsVisible = snap.IsVisible, IsLocked = snap.IsLocked, IsAlphaLocked = snap.IsAlphaLocked, IsReference = snap.IsReference, IsPaper = snap.IsPaper, Opacity = snap.Opacity, BlendMode = snap.BlendMode, OffsetX = snap.OffsetX, OffsetY = snap.OffsetY, IsGroup = snap.IsGroup, IsOpen = snap.IsOpen, IsClipping = snap.IsClipping, IndentLevel = snap.IndentLevel };
         layer.RestoreTiles(snap.Tiles);
         return layer;
     }
@@ -920,7 +944,7 @@ public sealed class DrawingDocument : IDisposable
 
     // --- Records and State Classes ---
     private sealed record DocumentSnapshot(int Width, int Height, int ActiveLayerIndex, LayerSnapshot[] Layers, SelectionMask.Snapshot Selection);
-    private sealed record LayerSnapshot(string Name, bool IsVisible, bool IsLocked, bool IsAlphaLocked, bool IsReference, double Opacity, string BlendMode, int OffsetX, int OffsetY, bool IsGroup, bool IsOpen, bool IsClipping, int IndentLevel, int ParentIndex, int BitmapWidth, int BitmapHeight, Dictionary<(int X, int Y), byte[]> Tiles);
+    private sealed record LayerSnapshot(string Name, bool IsVisible, bool IsLocked, bool IsAlphaLocked, bool IsReference, bool IsPaper, double Opacity, string BlendMode, int OffsetX, int OffsetY, bool IsGroup, bool IsOpen, bool IsClipping, int IndentLevel, int ParentIndex, int BitmapWidth, int BitmapHeight, Dictionary<(int X, int Y), byte[]> Tiles);
 
     private interface IHistoryState { IHistoryState CaptureRedo(DrawingDocument document); void Restore(DrawingDocument document); }
 

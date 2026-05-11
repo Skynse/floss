@@ -12,8 +12,8 @@ public static class BrushFileFormat
     public const string Extension = ".flbr";
     private const uint Magic = 0x52424C46; // FLBR, little endian
 
-    // 1. Bump version to 7 for Angle Dynamics
-    private const int Version = 7;
+    // Version 8 adds BrushQuality setting
+    private const int Version = 8;
 
     public static BrushAsset Load(string path)
     {
@@ -52,6 +52,13 @@ public static class BrushFileFormat
                 angleJitter = reader.ReadSingle();
             }
 
+            // 3. Safely read Version 8 properties
+            var quality = BrushQuality.High;
+            if (version >= 8)
+            {
+                quality = (BrushQuality)reader.ReadInt32();
+            }
+
             var dynJson = reader.ReadString();
             var dynamics = BrushDynamics.Deserialize(dynJson);
             asset.Tip = ReadTip(reader);
@@ -63,6 +70,7 @@ public static class BrushFileFormat
                 Smoothing = smoothing,
                 BaseAngleSource = baseAngleSource, // Inject V7 property
                 AngleJitter = angleJitter,         // Inject V7 property
+                Quality = quality,                 // Inject V8 property
                 Tip = asset.Tip.CreateTip()
             };
         }
@@ -164,6 +172,9 @@ public static class BrushFileFormat
         // 3. Write Version 7 properties
         writer.Write((int)p.BaseAngleSource);
         writer.Write(p.AngleJitter);
+
+        // 4. Write Version 8 properties
+        writer.Write((int)p.Quality);
 
         writer.Write(p.Dynamics.Serialize());
         WriteTip(writer, asset.Tip);

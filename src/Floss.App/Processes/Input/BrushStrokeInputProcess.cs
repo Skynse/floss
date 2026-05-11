@@ -26,6 +26,9 @@ public sealed class BrushStrokeInputProcess : IInputProcess
 
     private bool IsStraightLine => ToolAuxMode == ToolAuxOperationType.StraightLine;
 
+    // History buffer for Gaussian-weighted moving-average stabilization.
+    private readonly List<CanvasInputSample> _history = new(32);
+
     public void PointerDown(CanvasInputSample s)
     {
         if (IsStraightLine)
@@ -37,6 +40,7 @@ public sealed class BrushStrokeInputProcess : IInputProcess
             }
             _raw.Clear();
             _smoothed.Clear();
+            _history.Clear();
             _raw.Add(_straightLineAnchor);
             _smoothed.Add(_straightLineAnchor);
             _raw.Add(s);
@@ -49,6 +53,7 @@ public sealed class BrushStrokeInputProcess : IInputProcess
         _straightLineAnchorSet = false;
         _raw.Clear();
         _smoothed.Clear();
+        _history.Clear();
         _raw.Add(s);
         _smoothed.Add(s);
         _lastSmoothed = s;
@@ -97,6 +102,9 @@ public sealed class BrushStrokeInputProcess : IInputProcess
 
         _raw.Add(s);
         _smoothed.Add(ApplyStabilization(s));
+        // Remember last point for straight-line continuation (Shift)
+        _straightLineAnchor = _smoothed[^1];
+        _straightLineAnchorSet = true;
         _active = false;
     }
 
@@ -105,6 +113,7 @@ public sealed class BrushStrokeInputProcess : IInputProcess
         _active = false;
         _raw.Clear();
         _smoothed.Clear();
+        _history.Clear();
     }
 
     public IProcessedInput? GetResult()
@@ -161,12 +170,38 @@ public sealed class BrushStrokeInputProcess : IInputProcess
     private CanvasInputSample ApplyStabilization(CanvasInputSample raw)
     {
         if (Stabilization <= 0) return raw;
-        var s = Math.Clamp(Stabilization, 0, 0.99);
-        var alpha = 1.0 - s;
+
+        // Window size grows with stabilization (0.0 -> 1, 0.95 -> 20)
+        var maxWindow = 20;
+        var windowSize = Math.Max(1, (int)(Stabilization * maxWindow));
+
+        _history.Add(raw);
+        while (_history.Count > windowSize)
+            _history.RemoveAt(0);
+
+        if (_history.Count == 1) return raw;
+
+        // Gaussian-weighted average centered on newest point
+        var center = _history.Count - 1;
+        var sigma = Math.Max(1.0, _history.Count / 3.0);
+        var totalWeight = 0.0;
+        var sumX = 0.0;
+        var sumY = 0.0;
+        var sumPressure = 0.0;
+
+        for (var i = 0; i < _history.Count; i++)
+        {
+            var w = Math.Exp(-0.5 * Math.Pow((i - center) / sigma, 2));
+            totalWeight += w;
+            sumX += _history[i].X * w;
+            sumY += _history[i].Y * w;
+            sumPressure += _history[i].Pressure * w;
+        }
+
         return raw.WithPosition(
-            _lastSmoothed.X + (raw.X - _lastSmoothed.X) * alpha,
-            _lastSmoothed.Y + (raw.Y - _lastSmoothed.Y) * alpha,
-            _lastSmoothed.Pressure + (raw.Pressure - _lastSmoothed.Pressure) * alpha,
+            sumX / totalWeight,
+            sumY / totalWeight,
+            sumPressure / totalWeight,
             raw.TimeMicros);
     }
 }

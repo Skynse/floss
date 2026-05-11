@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Floss.App.Document;
@@ -69,6 +70,9 @@ public static class FlossFileFormat
         var document = new DrawingDocument(Math.Max(1, manifest.Width), Math.Max(1, manifest.Height));
         document.ClearForImport();
 
+        if (manifest.PaperColor is { } pc)
+            document.PaperColor = Avalonia.Media.Color.FromArgb(pc.A, pc.R, pc.G, pc.B);
+
         var layers = new List<DrawingLayer>(manifest.Layers.Count);
         for (var i = 0; i < manifest.Layers.Count; i++)
         {
@@ -88,6 +92,7 @@ public static class FlossFileFormat
             layer.IsOpen = info.IsOpen;
             layer.IsClipping = info.IsClipping;
             layer.IsReference = info.IsReference;
+            layer.IsPaper = info.IsPaper;
             layer.IndentLevel = Math.Max(0, info.IndentLevel);
             if (info.LayerColor is { } lc)
                 layer.LayerColor = Avalonia.Media.Color.FromArgb(255, (byte)lc.R, (byte)lc.G, (byte)lc.B);
@@ -110,6 +115,7 @@ public static class FlossFileFormat
         }
 
         document.FinalizeImport(Math.Clamp(manifest.ActiveLayerIndex, 0, Math.Max(0, layers.Count - 1)));
+        document.PaperLayer = layers.FirstOrDefault(l => l.IsPaper);
         return document;
     }
 
@@ -138,6 +144,7 @@ public static class FlossFileFormat
                 IsOpen = layer.IsOpen,
                 IsClipping = layer.IsClipping,
                 IsReference = layer.IsReference,
+                IsPaper = layer.IsPaper,
                 IndentLevel = layer.IndentLevel,
                 ParentIndex = layer.Parent != null && layerIndexes.TryGetValue(layer.Parent, out var pIdx) ? pIdx : null,
                 PixelPath = !layer.IsGroup ? $"layers/layer{i}.bgra" : null,
@@ -154,6 +161,7 @@ public static class FlossFileFormat
             Width = document.Width,
             Height = document.Height,
             ActiveLayerIndex = document.ActiveLayerIndex,
+            PaperColor = new SerializableColor(document.PaperColor.R, document.PaperColor.G, document.PaperColor.B, document.PaperColor.A),
             Layers = layers
         };
     }
@@ -163,29 +171,73 @@ public static class FlossFileFormat
         var entry = archive.GetEntry(path)
             ?? throw new InvalidDataException($"Floss document is missing layer payload '{path}'.");
 
-        var tiles = new Dictionary<(int, int), byte[]>();
-        var header = new byte[8];
+        // Read entire entry into memory — ZipArchiveEntry streams don't support seeking.
         using var entryStream = entry.Open();
-        while (true)
+        var totalLength = (int)entry.Length;
+        var data = new byte[totalLength];
+        var offset = 0;
+        while (offset < totalLength)
         {
-            var read = entryStream.Read(header, 0, 8);
+            var read = entryStream.Read(data, offset, totalLength - offset);
             if (read == 0) break;
-            if (read != 8)
-                throw new InvalidDataException($"Layer payload '{path}' has truncated tile header.");
-
-            var tx = BitConverter.ToInt32(header, 0);
-            var ty = BitConverter.ToInt32(header, 4);
-            var tileLength = Document.TiledPixelBuffer.TileSize
-                * Document.TiledPixelBuffer.TileSize * 4;
-            var tile = new byte[tileLength];
-            read = entryStream.Read(tile, 0, tileLength);
-            if (read != tileLength)
-                throw new InvalidDataException($"Layer payload '{path}' has truncated tile data.");
-
-            tiles[(tx, ty)] = tile;
+            offset += read;
         }
 
-        layer.Pixels.RestoreTiles(tiles);
+        var tileLength = Document.TiledPixelBuffer.TileSize
+            * Document.TiledPixelBuffer.TileSize * 4;
+
+        // Empty layer — nothing to restore
+        if (totalLength == 0)
+        {
+            layer.MarkThumbnailDirty();
+            return;
+        }
+
+        // Detect format: new tile-keyed vs old flat BGRA
+        // New format: stream is sequence of (tx:int32, ty:int32, tile:tileLength)
+        // Old format: flat BGRA array of width*height*4 bytes
+        bool isNewFormat;
+        if (totalLength >= 8 + tileLength)
+        {
+            var tx = BitConverter.ToInt32(data, 0);
+            var ty = BitConverter.ToInt32(data, 4);
+            // Heuristic: if tx,ty look like reasonable tile coordinates (small ints),
+            // and the total length is an exact multiple of (header + tile), it's new format.
+            isNewFormat = tx is >= -1000 and <= 1000 && ty is >= -1000 and <= 1000
+                && totalLength % (8 + tileLength) == 0;
+        }
+        else
+        {
+            isNewFormat = false;
+        }
+
+        if (isNewFormat)
+        {
+            var tiles = new Dictionary<(int, int), byte[]>();
+            var pos = 0;
+            while (pos + 8 + tileLength <= totalLength)
+            {
+                var tx = BitConverter.ToInt32(data, pos);
+                var ty = BitConverter.ToInt32(data, pos + 4);
+                pos += 8;
+
+                var tile = new byte[tileLength];
+                Buffer.BlockCopy(data, pos, tile, 0, tileLength);
+                pos += tileLength;
+
+                tiles[(tx, ty)] = tile;
+            }
+            layer.Pixels.RestoreTiles(tiles);
+        }
+        else
+        {
+            // Old format: flat BGRA array
+            var expected = layer.Width * layer.Height * 4;
+            if (data.Length != expected)
+                throw new InvalidDataException($"Layer payload '{path}' has {data.Length} bytes but expected {expected} for flat pixel data.");
+            layer.Pixels.CopyFromBgra(data, layer.Width, layer.Height);
+        }
+
         layer.MarkThumbnailDirty();
     }
 
@@ -238,6 +290,7 @@ public static class FlossFileFormat
         [JsonPropertyName("width")] public int Width { get; set; }
         [JsonPropertyName("height")] public int Height { get; set; }
         [JsonPropertyName("activeLayerIndex")] public int ActiveLayerIndex { get; set; }
+        [JsonPropertyName("paperColor")] public SerializableColor? PaperColor { get; set; }
         [JsonPropertyName("layers")] public List<FlossLayerManifest> Layers { get; set; } = [];
     }
 
@@ -256,6 +309,7 @@ public static class FlossFileFormat
         [JsonPropertyName("isOpen")] public bool IsOpen { get; set; } = true;
         [JsonPropertyName("isClipping")] public bool IsClipping { get; set; }
         [JsonPropertyName("isReference")] public bool IsReference { get; set; }
+        [JsonPropertyName("isPaper")] public bool IsPaper { get; set; }
         [JsonPropertyName("indentLevel")] public int IndentLevel { get; set; }
         [JsonPropertyName("parentIndex")] public int? ParentIndex { get; set; }
         [JsonPropertyName("pixelPath")] public string? PixelPath { get; set; }
@@ -263,5 +317,5 @@ public static class FlossFileFormat
         [JsonPropertyName("expressionColor")] public ExpressionColorMode ExpressionColor { get; set; } = ExpressionColorMode.Color;
     }
 
-    public sealed record SerializableColor(byte R, byte G, byte B);
+    public sealed record SerializableColor(byte R, byte G, byte B, byte A = 255);
 }

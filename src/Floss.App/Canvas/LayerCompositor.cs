@@ -135,7 +135,7 @@ public sealed class LayerCompositor : IDisposable
         InvalidateGroupCaches(region, layers, layerIndex);
     }
 
-    public unsafe void Composite(IReadOnlyList<DrawingLayer> layers, int width, int height, PixelRegion? viewport = null, double zoom = 1.0)
+    public unsafe void Composite(IReadOnlyList<DrawingLayer> layers, int width, int height, uint paperColor = 0, PixelRegion? viewport = null, double zoom = 1.0)
     {
         SetSize(width, height);
 
@@ -221,7 +221,7 @@ public sealed class LayerCompositor : IDisposable
             {
                 var tileRect = new PixelRegion(tx * stride, ty * stride, stride, stride).Intersect(clip);
                 if (tileRect.IsEmpty) continue;
-                CompositeTileCpu(_compTiles[(tx, ty, lod)], tileRect, rootLayers, tx * stride, ty * stride);
+                CompositeTileCpu(_compTiles[(tx, ty, lod)], tileRect, rootLayers, tx * stride, ty * stride, paperColor);
                 _tilesToPrune.Add((tx, ty, lod));
             }
 
@@ -254,7 +254,7 @@ public sealed class LayerCompositor : IDisposable
     }
 
     private unsafe void CompositeTileCpu(WriteableBitmap tile, PixelRegion tileRect,
-        IReadOnlyList<DrawingLayer> rootLayers, int originX, int originY)
+        IReadOnlyList<DrawingLayer> rootLayers, int originX, int originY, uint paperColor = 0)
     {
         var tw = tile.PixelSize.Width;
         var th = tile.PixelSize.Height;
@@ -262,7 +262,7 @@ public sealed class LayerCompositor : IDisposable
         using var frame = tile.Lock();
         var dst = (byte*)frame.Address;
         var dstStride = frame.RowBytes;
-        ClearTile(dst, dstStride, tileRect, originX, originY);
+        ClearTile(dst, dstStride, tileRect, originX, originY, paperColor);
         CompositeRenderList(dst, dstStride, tw, th, renderList, 1.0, tileRect, originX, originY);
     }
 
@@ -314,7 +314,7 @@ public sealed class LayerCompositor : IDisposable
         return true;
     }
 
-    private static unsafe void ClearTile(byte* dst, int stride, PixelRegion clip, int originX, int originY)
+    private static unsafe void ClearTile(byte* dst, int stride, PixelRegion clip, int originX, int originY, uint clearValue = 0)
     {
         for (int y = clip.Y; y < clip.Bottom; y++)
         {
@@ -324,7 +324,7 @@ public sealed class LayerCompositor : IDisposable
             if (localX < 0) continue;
             var row = (uint*)(dst + localY * stride + localX * 4);
             for (int x = 0; x < clip.Width; x++)
-                row[x] = 0u;
+                row[x] = clearValue;
         }
     }
 
@@ -351,9 +351,20 @@ public sealed class LayerCompositor : IDisposable
         }
     }
 
-    public unsafe byte[] CompositeToBgra(IReadOnlyList<DrawingLayer> layers, int width, int height)
+    public unsafe byte[] CompositeToBgra(IReadOnlyList<DrawingLayer> layers, int width, int height, uint paperColor = 0)
     {
         var buf = new byte[width * height * 4];
+        if (paperColor != 0)
+        {
+            var pc = paperColor;
+            fixed (byte* dst = buf)
+            {
+                var p = (uint*)dst;
+                var count = width * height;
+                for (int i = 0; i < count; i++)
+                    p[i] = pc;
+            }
+        }
         var clip = new PixelRegion(0, 0, width, height);
         fixed (byte* dst = buf)
             CompositeLayerList(dst, width * 4, width, height, layers, 1.0, clip, 0, 0);

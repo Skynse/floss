@@ -1203,9 +1203,6 @@ public partial class MainWindow : Window
         var importAbr = new MenuItem { Header = "Import .abr brush pack…" };
         importAbr.Click += async (_, _) => await ImportAbrAsync();
 
-        var importCsp = new MenuItem { Header = "Import .sut/.sutg brush pack…" };
-        importCsp.Click += async (_, _) => await ImportCspAsync();
-
         var importTool = new MenuItem { Header = "Import Tool (.flbr)…" };
         importTool.Click += async (_, _) => await ImportSubToolAsync();
 
@@ -1213,7 +1210,6 @@ public partial class MainWindow : Window
         importToolGroup.Click += async (_, _) => await ImportSubToolGroupAsync();
 
         menu.Items.Add(importAbr);
-        menu.Items.Add(importCsp);
         menu.Items.Add(importTool);
         menu.Items.Add(importToolGroup);
 
@@ -1857,92 +1853,6 @@ public partial class MainWindow : Window
         else
         {
             _footerStatusText.Text = $"No brushes imported — {lastDiag}";
-        }
-    }
-
-    private async System.Threading.Tasks.Task ImportCspAsync()
-    {
-        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "Import Clip Studio Paint brush",
-            AllowMultiple = true,
-            FileTypeFilter = [new FilePickerFileType("Clip Studio Paint") { Patterns = ["*.sut", "*.sutg"] }]
-        });
-        if (files.Count == 0) return;
-
-        var imported = 0;
-        var lastDiag = "";
-        var fileImports = new List<(string CategoryName, List<string> AssetIds)>();
-
-        // When selecting individual .sut files, group them all under one category.
-        var isMultiFile = files.Count > 1
-            && files.All(f => Path.GetExtension(f.Name).Equals(".sut", StringComparison.OrdinalIgnoreCase));
-
-        foreach (var file in files)
-        {
-            await using var stream = await file.OpenReadAsync();
-            List<Brushes.BrushAsset> brushes;
-            try { brushes = await System.Threading.Tasks.Task.Run(() => Brushes.CspImporter.Import(stream, out lastDiag)); }
-            catch (Exception ex) { lastDiag = ex.Message; continue; }
-
-            // .sutg or multi-file: use a shared category; single .sut: use its filename
-            var categoryName = isMultiFile
-                ? "CSP Import"
-                : Path.GetFileNameWithoutExtension(file.Name);
-
-            var assetIds = new List<string>();
-            foreach (var asset in brushes)
-            {
-                _brushLibrary.Save(asset);
-                assetIds.Add(asset.Id);
-                imported++;
-            }
-            if (assetIds.Count > 0)
-                fileImports.Add((categoryName, assetIds));
-        }
-
-        if (imported > 0)
-        {
-            LoadBrushAssets();
-
-            var brushGroup = App.ToolGroups.Groups.FirstOrDefault(g => g.DefaultEngine == ToolPresetEngine.Brush)
-                ?? App.ToolGroups.Groups.First();
-
-            foreach (var (catName, ids) in fileImports)
-            {
-                foreach (var assetId in ids)
-                {
-                    ToolPreset? preset = null;
-                    ToolGroup? sourceGroup = null;
-                    foreach (var g in App.ToolGroups.Groups)
-                    {
-                        preset = g.Presets.FirstOrDefault(p => p.BrushId == assetId);
-                        if (preset != null) { sourceGroup = g; break; }
-                    }
-                    if (preset == null) continue;
-
-                    if (sourceGroup != brushGroup)
-                    {
-                        sourceGroup!.Presets.Remove(preset);
-                        foreach (var c in sourceGroup.Categories) c.PresetIds.Remove(preset.Id);
-                        brushGroup.Presets.Add(preset);
-                    }
-
-                    foreach (var c in brushGroup.Categories) c.PresetIds.Remove(preset.Id);
-                    var cat = brushGroup.Categories.FirstOrDefault(c => c.Name == catName);
-                    if (cat == null) { cat = new ToolCategory { Name = catName }; brushGroup.Categories.Add(cat); }
-                    if (!cat.PresetIds.Contains(preset.Id)) cat.PresetIds.Add(preset.Id);
-                }
-            }
-
-            App.ToolGroups.Save();
-            _selectedCategory = fileImports[^1].CategoryName;
-            RefreshGroupPresets();
-            _footerStatusText.Text = $"Imported {imported} CSP brush{(imported == 1 ? "" : "es")} [{lastDiag}]";
-        }
-        else
-        {
-            _footerStatusText.Text = $"No CSP brushes imported — {lastDiag}";
         }
     }
 

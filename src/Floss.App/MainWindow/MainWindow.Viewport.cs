@@ -105,13 +105,16 @@ public partial class MainWindow
             && pt.Properties.Pressure >= 0.02f;
         if (pt.Properties.IsLeftButtonPressed || isPenPress)
         {
+            // Don't capture or dispatch when clicking a UI overlay (resize panel buttons etc).
+            if (_resizeFloatingPanel is { IsVisible: true } floating
+                && floating.Bounds.Contains(pt.Position))
+                return;
+
             if (IsViewportTool(_canvas.ActiveTool))
                 _canvas.HandleViewportPointerInput(ToolInputEventKind.Down, pt.Position, pt);
             else
             {
                 _canvas.HandlePointerInput(ToolInputEventKind.Down, e.GetCurrentPoint(_canvas));
-                // Force-hide the cursor on the workspace viewport so it stays hidden
-                // even when the pointer briefly leaves the canvas bounds during fast strokes.
                 _workspaceViewport.Cursor = CursorNone;
             }
             _isToolDispatchActive = true;

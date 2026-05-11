@@ -99,18 +99,26 @@ public partial class MainWindow
         // 3. Create the new document
         var newDoc = new DrawingDocument(result.Width, result.Height);
 
-        // Add a locked paper layer with the chosen background color (if not transparent)
-        if (result.BackgroundColor.Alpha > 0)
+        // Set the paper (background) color and create physical paper layer if solid.
+        var bgColor = result.BackgroundColor.ToAvalonia();
+        newDoc.PaperColor = bgColor;
+        if (bgColor.A > 0)
         {
-            var bgColor = result.BackgroundColor.ToAvalonia();
             var paperLayer = new DrawingLayer("Paper", result.Width, result.Height);
             paperLayer.IsLocked = true;
+            paperLayer.IsPaper = true;
             paperLayer.FillSolid(paperLayer.Pixels.Bounds, bgColor);
             newDoc.InsertLayerNear(paperLayer, newDoc.Layers[0], LayerDropPlacement.Below);
+            newDoc.PaperLayer = paperLayer;
+
         }
 
-        // The transparent drawing layer should be active, not the locked paper.
-        newDoc.SelectLayer(newDoc.Layers.Count > 1 ? 1 : 0);
+        // Activate the drawing layer (not the paper).
+        var drawingLayerIndex = 0;
+        for (var i = 0; i < newDoc.Layers.Count; i++)
+            if (!newDoc.Layers[i].IsPaper && !newDoc.Layers[i].IsGroup)
+            { drawingLayerIndex = i; break; }
+        newDoc.SelectLayer(drawingLayerIndex);
 
         // 4. Swap it in and reset session state
         _canvas.Document.ReplaceWith(newDoc);

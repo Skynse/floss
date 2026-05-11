@@ -120,6 +120,26 @@ public partial class MainWindow
         blendOpRow.Children.Add(_blendModeComboBox);
         blendOpRow.Children.Add(_layerOpacitySlider);
 
+        // ── Layer panel hamburger menu (CSP-style) ──────────────────────────────
+        var layerMenuBtn = SmIconBtn(Icons.DotsVertical, "Layer menu");
+        layerMenuBtn.Click += (_, _) =>
+        {
+            var menu = new ContextMenu();
+            var layer = _canvas.Document.ActiveLayer;
+            var index = _canvas.ActiveLayerIndex;
+            if (layer != null)
+            {
+                menu.ItemsSource = BuildLayerContextMenuItems(index, layer);
+                menu.Open(layerMenuBtn);
+            }
+        };
+        layerMenuBtn.Margin = new Thickness(0, 0, 4, 0);
+
+        var nameRow = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(layerMenuBtn, Avalonia.Controls.Dock.Left);
+        nameRow.Children.Add(layerMenuBtn);
+        nameRow.Children.Add(_layerNameBox);
+
         // ── Layer property toggles (row 3 — above list, like CSP) ───────────────
         _lockLayerBtn = SmIconBtn(Icons.LockOutline, "Lock layer");
         _alphaLockLayerBtn = SmIconBtn(Icons.AlphaLock, "Alpha lock");
@@ -202,7 +222,7 @@ public partial class MainWindow
             RowDefinitions = new RowDefinitions("Auto, Auto, Auto, *, Auto")
         };
 
-        Grid.SetRow(_layerNameBox, 0);
+        Grid.SetRow(nameRow, 0);
         Grid.SetRow(blendOpRow, 1);
         Grid.SetRow(toggleRow, 2);
         Grid.SetRow(_layerListBox, 3);
@@ -210,7 +230,7 @@ public partial class MainWindow
 
         blendOpRow.Margin = new Thickness(0, 3, 0, 0);
 
-        mainGrid.Children.Add(_layerNameBox);
+        mainGrid.Children.Add(nameRow);
         mainGrid.Children.Add(blendOpRow);
         mainGrid.Children.Add(toggleRow);
         mainGrid.Children.Add(_layerListBox);
@@ -288,6 +308,7 @@ public partial class MainWindow
     private void RefreshLayerToggleButtons(DrawingLayer layer)
     {
         if (_lockLayerBtn == null) return;
+        _lockLayerBtn.IsEnabled = !layer.IsPaper;
         SetToggleActive(_lockLayerBtn, layer.IsLocked);
         SetToggleActive(_alphaLockLayerBtn, layer.IsAlphaLocked);
         SetToggleActive(_clipLayerBtn, layer.IsClipping);
@@ -383,7 +404,7 @@ public partial class MainWindow
             layer.IsVisible ? IconVisOn : IconOff, i);
         visBtn.Click += (_, _) => _canvas.ToggleLayerVisibility((int)visBtn.Tag!);
 
-        var (preview, previewImage) = BuildLayerPreview(layer);
+        var (preview, previewImage) = BuildLayerPreview(layer, layer.IsPaper ? _canvas.Document.PaperColor : null);
         preview.PointerPressed += (_, e) =>
         {
             if (layer.IsGroup && e.GetCurrentPoint(preview).Properties.IsLeftButtonPressed)
@@ -392,6 +413,10 @@ public partial class MainWindow
                 e.Handled = true;
             }
         };
+        if (layer.IsPaper)
+        {
+            preview.DoubleTapped += (_, _) => ShowPaperColorPicker();
+        }
 
         var nameText = new TextBlock
         {
@@ -448,6 +473,7 @@ public partial class MainWindow
         if (layer.IsAlphaLocked) flags.Add("Alpha");
         if (layer.IsReference) flags.Add("Ref");
         if (layer.IsClipping) flags.Add("Clip");
+        if (layer.IsPaper) flags.Add("Paper");
         var suffix = flags.Count == 0 ? "" : "  " + string.Join(" ", flags);
         return $"{Math.Round(layer.Opacity * 100):0}%  {layer.BlendMode}{suffix}";
     }
@@ -495,6 +521,13 @@ public partial class MainWindow
             return item;
         }
 
+        MenuItem MakeLockItem(DrawingLayer l, int idx)
+        {
+            var lockItem = Item(l.IsLocked ? "Unlock Layer" : "Lock Layer", () => _canvas.ToggleLayerLock(idx));
+            lockItem.IsEnabled = !l.IsPaper;
+            return lockItem;
+        }
+
         var pasteItem = Item("_Paste", () => _canvas.PasteLayer(index));
         pasteItem.IsEnabled = _canvas.CanPasteLayer;
 
@@ -511,11 +544,17 @@ public partial class MainWindow
             Item("_Delete", () => _canvas.DeleteLayer(), new KeyGesture(Key.Delete, KeyModifiers.Control)),
             new() { Header = "-" },
             Item(layer.IsVisible ? "Hide Layer" : "Show Layer", () => _canvas.ToggleLayerVisibility(index)),
-            Item(layer.IsLocked ? "Unlock Layer" : "Lock Layer", () => _canvas.ToggleLayerLock(index)),
+            MakeLockItem(layer, index),
             Item(layer.IsAlphaLocked ? "Disable Alpha Lock" : "Enable Alpha Lock", () => _canvas.ToggleLayerAlphaLock(index)),
             Item(layer.IsReference ? "Disable Reference Layer" : "Enable Reference Layer", () => _canvas.ToggleLayerReference(index)),
             Item(layer.IsClipping ? "Disable Clipping Mask" : "Enable Clipping Mask", () => _canvas.ToggleLayerClipping(index))
         };
+
+        if (layer.IsPaper)
+        {
+            // Insert "Paper Color..." after visibility toggle (index 8 in base list)
+            items.Insert(9, Item("Paper _Color...", ShowPaperColorPicker));
+        }
 
         if (hasSelection)
         {
@@ -937,7 +976,7 @@ public partial class MainWindow
         }
     }
 
-    private static (Control Frame, Image? PreviewImage) BuildLayerPreview(DrawingLayer layer)
+    private static (Control Frame, Image? PreviewImage) BuildLayerPreview(DrawingLayer layer, Avalonia.Media.Color? paperColor = null)
     {
         var frame = new Border
         {
@@ -954,6 +993,24 @@ public partial class MainWindow
         if (layer.IsGroup)
         {
             frame.Child = Icons.Make(layer.IsOpen ? Icons.ArrowDown : Icons.ChevronRight, 12, GroupIconFg);
+            return (frame, null);
+        }
+
+        if (layer.IsPaper && paperColor is { } pc)
+        {
+            var swatchGrid = new Grid();
+            swatchGrid.Children.Add(new Border
+            {
+                Background = new SolidColorBrush(pc),
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch
+            });
+            var docIcon = Icons.Make(Icons.PaperDocument, 14,
+                new SolidColorBrush(pc.R + pc.G + pc.B > 384 ? Colors.Black : Colors.White));
+            docIcon.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center;
+            docIcon.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center;
+            swatchGrid.Children.Add(docIcon);
+            frame.Child = swatchGrid;
             return (frame, null);
         }
 
