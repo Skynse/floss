@@ -121,7 +121,7 @@ Reduces maintenance burden and ensures consistency.
 - [ ] `PaintInputSuspended` flag is set in multiple places, potential for desync
 - [ ] `MainWindow.axaml.cs` is 2589 lines — consider further splitting
 
-Shortcuts:
+## Shortcuts
 - Input/KeyBinding.cs — data model for key+modifiers, parsing, formatting, modifier-state helpers
 - Input/ShortcutsConfig.cs — all app-wide shortcut definitions (Undo, Zoom, Brush, Layer...), JSON load/save
 - MainWindow/MainWindow.axaml.cs — registers AddShortcut() linking config to actions, OnKeyDown for tool-group & Escape

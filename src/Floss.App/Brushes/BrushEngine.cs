@@ -79,7 +79,9 @@ public sealed class BrushEngine : IDisposable
         bool canDirect = _stampColors.Count == 0
             && (brush.BlendMode == SKBlendMode.SrcOver || brush.BlendMode == SKBlendMode.DstOut)
             && brush.Shape == null
-            && brush.Tip is ProceduralBrushTip { Shape: BrushTipShape.Circle or BrushTipShape.SoftRound or BrushTipShape.Ellipse };
+            && brush.Tip is
+                (ProceduralBrushTip { Shape: BrushTipShape.Circle or BrushTipShape.SoftRound or BrushTipShape.Ellipse }
+                 or ImageBrushTip);
 
         bool useScratch = !canDirect
             && brush.BlendMode == SKBlendMode.SrcOver
@@ -373,12 +375,13 @@ public sealed class BrushEngine : IDisposable
         });
     }
 
-    private void RasterizeStampsDirect(DrawingLayer layer, ActiveStroke stroke, BrushPreset brush, PixelRegion dirty)
+    private unsafe void RasterizeStampsDirect(DrawingLayer layer, ActiveStroke stroke, BrushPreset brush, PixelRegion dirty)
     {
-        var procTip = (ProceduralBrushTip)brush.Tip;
-        bool isSoft = procTip.Shape == BrushTipShape.SoftRound;
-        bool isCircle = procTip.Shape is BrushTipShape.Circle or BrushTipShape.SoftRound;
-        float aspect = isCircle ? 1f : MathF.Max(0.05f, MathF.Min(20f, procTip.AspectRatio));
+        var procTip = brush.Tip as ProceduralBrushTip;
+        bool isImageTip = brush.Tip is ImageBrushTip;
+        bool isSoft = procTip?.Shape == BrushTipShape.SoftRound;
+        bool isCircle = procTip?.Shape is BrushTipShape.Circle or BrushTipShape.SoftRound;
+        float aspect = (procTip != null && !isCircle) ? MathF.Max(0.05f, MathF.Min(20f, procTip.AspectRatio)) : 1f;
 
         var baseColor = stroke.BaseColor;
         int brushB = baseColor.Blue, brushG = baseColor.Green, brushR = baseColor.Red;
@@ -388,6 +391,7 @@ public sealed class BrushEngine : IDisposable
         float brushThickness = MathF.Max(0.01f, MathF.Min(4f, (float)brush.TipThickness));
         bool isHorizontal = brush.TipDirection == BrushTipDirection.Horizontal;
         int baseMaskSize = stroke.BaseMaskSize;
+        float halfBms = baseMaskSize * 0.5f;
         const int tsz = TiledPixelBuffer.TileSize;
 
         for (int si = 0; si < _stamps.Count; si++)
@@ -397,16 +401,25 @@ public sealed class BrushEngine : IDisposable
 
             float thickMul = MathF.Max(0.01f, MathF.Min(4f, brushThickness * stamp.TipThicknessMultiplier));
             float scale = stamp.Size / MathF.Max(1f, baseMaskSize);
-            float maxR = (baseMaskSize * 0.5f - 0.5f) * scale;
-            if (maxR < 0.5f) continue;
 
+            // scaleX/scaleY: pixels per mask-pixel in each axis (used by image tip path)
+            float scaleX = isHorizontal ? scale : scale * thickMul;
+            float scaleY = isHorizontal ? scale * thickMul : scale;
+
+            // rx/ry: physical half-axes in pixels (used by procedural path + bbox)
+            float maxR = (baseMaskSize * 0.5f - 0.5f) * scale;
             float rxBase = aspect >= 1f ? maxR : maxR * aspect;
             float ryBase = aspect >= 1f ? maxR / aspect : maxR;
             float rx = isHorizontal ? rxBase : rxBase * thickMul;
             float ry = isHorizontal ? ryBase * thickMul : ryBase;
-            if (rx < 0.5f || ry < 0.5f) continue;
 
-            bool hasRot = !isCircle && MathF.Abs(stamp.Angle) > 0.1f;
+            // For image tips the effective half-extent is the full mask half-size × scale
+            float bboxHalfX = isImageTip ? halfBms * scaleX : rx;
+            float bboxHalfY = isImageTip ? halfBms * scaleY : ry;
+            if (bboxHalfX < 0.5f || bboxHalfY < 0.5f) continue;
+
+            // Always rotate for image tips (texture has directionality); skip for rotationally-symmetric procedural shapes
+            bool hasRot = MathF.Abs(stamp.Angle) > 0.1f && (isImageTip || !isCircle);
             float cosA = 1f, sinA = 0f;
             if (hasRot)
             {
@@ -418,15 +431,30 @@ public sealed class BrushEngine : IDisposable
             float stampOpacity255 = isDstOut ? stamp.Opacity * 255f : stamp.Opacity * baseAlpha;
             if (stampOpacity255 <= 0) continue;
 
+            // Procedural-only params
             float hardness = stamp.Hardness;
             float hardnessRange = 1f - hardness;
-            bool hardEdge = hardness >= 0.999f;
+            bool hardEdge = !isImageTip && hardness >= 0.999f;
 
-            float maxHalf = MathF.Max(rx, ry) + 1.5f;
-            int bLeft = (int)MathF.Floor(stamp.X - maxHalf);
-            int bTop  = (int)MathF.Floor(stamp.Y - maxHalf);
-            int bRight  = (int)MathF.Ceiling(stamp.X + maxHalf);
-            int bBottom = (int)MathF.Ceiling(stamp.Y + maxHalf);
+            // Image tip: get the cached Alpha8 mask and pin its pixels
+            SKBitmap? maskBmp = null;
+            byte* maskPx = null;
+            int maskStride = 0;
+            if (isImageTip)
+            {
+                maskBmp = stroke.MaskFor(stamp.Hardness);
+                maskPx = (byte*)maskBmp.GetPixels().ToPointer();
+                maskStride = maskBmp.RowBytes;
+            }
+
+            // Tight bounding box — for rotated image tips use the rotated-rectangle formula
+            float boxHX = hasRot ? (bboxHalfX * MathF.Abs(cosA) + bboxHalfY * MathF.Abs(sinA)) : bboxHalfX;
+            float boxHY = hasRot ? (bboxHalfX * MathF.Abs(sinA) + bboxHalfY * MathF.Abs(cosA)) : bboxHalfY;
+            float margin = 1.5f;
+            int bLeft   = (int)MathF.Floor(stamp.X - boxHX - margin);
+            int bTop    = (int)MathF.Floor(stamp.Y - boxHY - margin);
+            int bRight  = (int)MathF.Ceiling(stamp.X + boxHX + margin);
+            int bBottom = (int)MathF.Ceiling(stamp.Y + boxHY + margin);
 
             int firstTx = (int)Math.Floor((double)bLeft    / tsz);
             int firstTy = (int)Math.Floor((double)bTop     / tsz);
@@ -436,7 +464,7 @@ public sealed class BrushEngine : IDisposable
             for (int ty = firstTy; ty <= lastTy; ty++)
             {
                 int tilePixY = ty * tsz;
-                int pxMinY = Math.Max(bTop,  tilePixY);
+                int pxMinY = Math.Max(bTop,    tilePixY);
                 int pxMaxY = Math.Min(bBottom, tilePixY + tsz);
                 if (pxMinY >= pxMaxY) continue;
 
@@ -458,6 +486,8 @@ public sealed class BrushEngine : IDisposable
                         for (int px = pxMinX; px < pxMaxX; px++)
                         {
                             float dx = px + 0.5f - stamp.X;
+
+                            // Apply inverse rotation to get brush-local coords
                             float fdx, fdy;
                             if (hasRot)
                             {
@@ -466,29 +496,51 @@ public sealed class BrushEngine : IDisposable
                             }
                             else { fdx = dx; fdy = dy; }
 
-                            float ndx = fdx / rx;
-                            float ndy = fdy / ry;
-                            float t2 = ndx * ndx + ndy * ndy;
-                            if (t2 >= 1f) continue;
-
                             float alpha;
-                            if (hardEdge)
+                            if (isImageTip)
                             {
-                                alpha = 1f;
+                                // Map brush-local coords to mask pixel coords via inverse scale
+                                float mx = fdx / scaleX + halfBms;
+                                float my = fdy / scaleY + halfBms;
+                                if (mx < 0f || my < 0f || mx >= baseMaskSize || my >= baseMaskSize) continue;
+
+                                // Bilinear sample the Alpha8 mask
+                                int ix0 = (int)mx, iy0 = (int)my;
+                                int ix1 = Math.Min(ix0 + 1, baseMaskSize - 1);
+                                int iy1 = Math.Min(iy0 + 1, baseMaskSize - 1);
+                                float fx = mx - ix0, fy = my - iy0;
+                                float a00 = maskPx[iy0 * maskStride + ix0];
+                                float a10 = maskPx[iy0 * maskStride + ix1];
+                                float a01 = maskPx[iy1 * maskStride + ix0];
+                                float a11 = maskPx[iy1 * maskStride + ix1];
+                                alpha = (a00 + (a10 - a00) * fx + (a01 - a00) * fy + (a00 - a10 - a01 + a11) * fx * fy) / 255f;
                             }
                             else
                             {
-                                float t = MathF.Sqrt(t2);
-                                if (t <= hardness)
+                                // Analytical radial alpha for procedural circle/round/ellipse
+                                float ndx = fdx / rx;
+                                float ndy = fdy / ry;
+                                float t2 = ndx * ndx + ndy * ndy;
+                                if (t2 >= 1f) continue;
+
+                                if (hardEdge)
                                 {
                                     alpha = 1f;
                                 }
                                 else
                                 {
-                                    float fade = hardnessRange > 0.001f ? (t - hardness) / hardnessRange : 1f;
-                                    alpha = isSoft
-                                        ? 1f - fade * fade * (3f - 2f * fade)
-                                        : (MathF.Cos(fade * MathF.PI) + 1f) * 0.5f;
+                                    float t = MathF.Sqrt(t2);
+                                    if (t <= hardness)
+                                    {
+                                        alpha = 1f;
+                                    }
+                                    else
+                                    {
+                                        float fade = hardnessRange > 0.001f ? (t - hardness) / hardnessRange : 1f;
+                                        alpha = isSoft
+                                            ? 1f - fade * fade * (3f - 2f * fade)
+                                            : (MathF.Cos(fade * MathF.PI) + 1f) * 0.5f;
+                                    }
                                 }
                             }
 
@@ -519,6 +571,9 @@ public sealed class BrushEngine : IDisposable
                     }
                 }
             }
+
+            if (maskBmp != null)
+                stroke.ReleaseMask(maskBmp);
         }
 
         layer.Pixels.PruneRegion(dirty);
