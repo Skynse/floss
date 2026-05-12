@@ -76,11 +76,20 @@ public sealed class BrushEngine : IDisposable
         // composited onto the layer with SrcOver once.
         // Skip scratch for few stamps (large brushes) — the overhead of allocating
         // and blitting a huge scratch bitmap exceeds the cost of direct per-stamp draw.
-        bool useScratch = brush.BlendMode == SKBlendMode.SrcOver
+        bool canDirect = _stampColors.Count == 0
+            && (brush.BlendMode == SKBlendMode.SrcOver || brush.BlendMode == SKBlendMode.DstOut)
+            && brush.Shape == null
+            && brush.Tip is ProceduralBrushTip { Shape: BrushTipShape.Circle or BrushTipShape.SoftRound or BrushTipShape.Ellipse };
+
+        bool useScratch = !canDirect
+            && brush.BlendMode == SKBlendMode.SrcOver
             && _stampColors.Count == 0 // no color mixing
             && dirty.Width <= 4096 && dirty.Height <= 4096 // guard against OOM
             && _stamps.Count > 3; // only worth it for many small stamps
-        if (useScratch)
+
+        if (canDirect)
+            RasterizeStampsDirect(layer, stroke, brush, dirty);
+        else if (useScratch)
             RenderStampsViaScratch(layer, stroke, dirty);
         else
             layer.Pixels.RenderWithSkia(dirty, canvas => RenderPreparedStamps(stroke, canvas));
@@ -362,6 +371,157 @@ public sealed class BrushEngine : IDisposable
         {
             canvas.DrawImage(scratchImage, srcRect, dstRect, sampling, _scratchCompositePaint);
         });
+    }
+
+    private void RasterizeStampsDirect(DrawingLayer layer, ActiveStroke stroke, BrushPreset brush, PixelRegion dirty)
+    {
+        var procTip = (ProceduralBrushTip)brush.Tip;
+        bool isSoft = procTip.Shape == BrushTipShape.SoftRound;
+        bool isCircle = procTip.Shape is BrushTipShape.Circle or BrushTipShape.SoftRound;
+        float aspect = isCircle ? 1f : MathF.Max(0.05f, MathF.Min(20f, procTip.AspectRatio));
+
+        var baseColor = stroke.BaseColor;
+        int brushB = baseColor.Blue, brushG = baseColor.Green, brushR = baseColor.Red;
+        float baseAlpha = baseColor.Alpha;
+        bool isDstOut = brush.BlendMode == SKBlendMode.DstOut;
+
+        float brushThickness = MathF.Max(0.01f, MathF.Min(4f, (float)brush.TipThickness));
+        bool isHorizontal = brush.TipDirection == BrushTipDirection.Horizontal;
+        int baseMaskSize = stroke.BaseMaskSize;
+        const int tsz = TiledPixelBuffer.TileSize;
+
+        for (int si = 0; si < _stamps.Count; si++)
+        {
+            var stamp = _stamps[si];
+            if (stamp.Opacity <= 0 || stamp.Size <= 0) continue;
+
+            float thickMul = MathF.Max(0.01f, MathF.Min(4f, brushThickness * stamp.TipThicknessMultiplier));
+            float scale = stamp.Size / MathF.Max(1f, baseMaskSize);
+            float maxR = (baseMaskSize * 0.5f - 0.5f) * scale;
+            if (maxR < 0.5f) continue;
+
+            float rxBase = aspect >= 1f ? maxR : maxR * aspect;
+            float ryBase = aspect >= 1f ? maxR / aspect : maxR;
+            float rx = isHorizontal ? rxBase : rxBase * thickMul;
+            float ry = isHorizontal ? ryBase * thickMul : ryBase;
+            if (rx < 0.5f || ry < 0.5f) continue;
+
+            bool hasRot = !isCircle && MathF.Abs(stamp.Angle) > 0.1f;
+            float cosA = 1f, sinA = 0f;
+            if (hasRot)
+            {
+                float rad = stamp.Angle * MathF.PI / 180f;
+                cosA = MathF.Cos(rad);
+                sinA = MathF.Sin(rad);
+            }
+
+            float stampOpacity255 = isDstOut ? stamp.Opacity * 255f : stamp.Opacity * baseAlpha;
+            if (stampOpacity255 <= 0) continue;
+
+            float hardness = stamp.Hardness;
+            float hardnessRange = 1f - hardness;
+            bool hardEdge = hardness >= 0.999f;
+
+            float maxHalf = MathF.Max(rx, ry) + 1.5f;
+            int bLeft = (int)MathF.Floor(stamp.X - maxHalf);
+            int bTop  = (int)MathF.Floor(stamp.Y - maxHalf);
+            int bRight  = (int)MathF.Ceiling(stamp.X + maxHalf);
+            int bBottom = (int)MathF.Ceiling(stamp.Y + maxHalf);
+
+            int firstTx = (int)Math.Floor((double)bLeft    / tsz);
+            int firstTy = (int)Math.Floor((double)bTop     / tsz);
+            int lastTx  = (int)Math.Floor((double)(bRight  - 1) / tsz);
+            int lastTy  = (int)Math.Floor((double)(bBottom - 1) / tsz);
+
+            for (int ty = firstTy; ty <= lastTy; ty++)
+            {
+                int tilePixY = ty * tsz;
+                int pxMinY = Math.Max(bTop,  tilePixY);
+                int pxMaxY = Math.Min(bBottom, tilePixY + tsz);
+                if (pxMinY >= pxMaxY) continue;
+
+                for (int tx = firstTx; tx <= lastTx; tx++)
+                {
+                    int tilePixX = tx * tsz;
+                    int pxMinX = Math.Max(bLeft,  tilePixX);
+                    int pxMaxX = Math.Min(bRight, tilePixX + tsz);
+                    if (pxMinX >= pxMaxX) continue;
+
+                    var tile = layer.Pixels.GetOrCreateRawTile(tx, ty);
+
+                    for (int py = pxMinY; py < pxMaxY; py++)
+                    {
+                        int ly = py - tilePixY;
+                        int rowBase = ly * tsz * 4;
+                        float dy = py + 0.5f - stamp.Y;
+
+                        for (int px = pxMinX; px < pxMaxX; px++)
+                        {
+                            float dx = px + 0.5f - stamp.X;
+                            float fdx, fdy;
+                            if (hasRot)
+                            {
+                                fdx = dx * cosA + dy * sinA;
+                                fdy = -dx * sinA + dy * cosA;
+                            }
+                            else { fdx = dx; fdy = dy; }
+
+                            float ndx = fdx / rx;
+                            float ndy = fdy / ry;
+                            float t2 = ndx * ndx + ndy * ndy;
+                            if (t2 >= 1f) continue;
+
+                            float alpha;
+                            if (hardEdge)
+                            {
+                                alpha = 1f;
+                            }
+                            else
+                            {
+                                float t = MathF.Sqrt(t2);
+                                if (t <= hardness)
+                                {
+                                    alpha = 1f;
+                                }
+                                else
+                                {
+                                    float fade = hardnessRange > 0.001f ? (t - hardness) / hardnessRange : 1f;
+                                    alpha = isSoft
+                                        ? 1f - fade * fade * (3f - 2f * fade)
+                                        : (MathF.Cos(fade * MathF.PI) + 1f) * 0.5f;
+                                }
+                            }
+
+                            int stampA = (int)(alpha * stampOpacity255 + 0.5f);
+                            if (stampA <= 0) continue;
+                            if (stampA > 255) stampA = 255;
+
+                            int lx = px - tilePixX;
+                            int offset = rowBase + lx * 4;
+
+                            if (isDstOut)
+                            {
+                                int dstA = tile[offset + 3];
+                                if (dstA == 0) continue;
+                                tile[offset + 3] = (byte)(dstA * (255 - stampA) / 255);
+                            }
+                            else
+                            {
+                                int dstA = tile[offset + 3];
+                                int dstW = dstA * (255 - stampA) / 255;
+                                int outA = stampA + dstW;
+                                tile[offset + 0] = (byte)((brushB * stampA + tile[offset + 0] * dstW) / outA);
+                                tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * dstW) / outA);
+                                tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * dstW) / outA);
+                                tile[offset + 3] = (byte)outA;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        layer.Pixels.PruneRegion(dirty);
     }
 
     private void RenderPreparedStamps(ActiveStroke stroke, SKCanvas canvas)

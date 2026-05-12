@@ -2,7 +2,6 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
-using System.Threading;
 using Avalonia;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
@@ -31,13 +30,6 @@ public sealed class LayerCompositor : IDisposable
     private PixelRegion? _dirtyRegion;
     private readonly HashSet<(int X, int Y, int Lod)> _tilesToPrune = [];
     private readonly Dictionary<DrawingLayer, GroupProjectionCache> _groupCaches = new();
-
-    /// <summary>
-    /// Optional read lock held during Composite/DrawTiles to prevent races
-    /// with the brush worker thread (DirectDrawOutput) which holds a write
-    /// lock while modifying layer pixels.  Set by DrawingCanvas on startup.
-    /// </summary>
-    public ReaderWriterLockSlim? TileLock { get; set; }
 
     public void RemoveGroupCache(DrawingLayer group)
     {
@@ -102,10 +94,7 @@ public sealed class LayerCompositor : IDisposable
 
     public void DrawTiles(DrawingContext context, Rect target, PixelRegion? visibleViewport = null)
     {
-        TileLock?.EnterReadLock();
-        try
-        {
-            foreach (var ((tx, ty, lod), bmp) in _compTiles)
+        foreach (var ((tx, ty, lod), bmp) in _compTiles)
         {
             if (lod != _currentLod) continue;
             var stride = CmpTileSize;
@@ -128,8 +117,6 @@ public sealed class LayerCompositor : IDisposable
             var dest = new Rect(tileLeft, tileTop, docTileW, docTileH);
             context.DrawImage(bmp, src, dest);
         }
-        }
-        finally { TileLock?.ExitReadLock(); }
     }
 
     public void Invalidate(PixelRegion? region = null)
@@ -152,10 +139,7 @@ public sealed class LayerCompositor : IDisposable
 
     public unsafe void Composite(IReadOnlyList<DrawingLayer> layers, int width, int height, uint paperColor = 0, PixelRegion? viewport = null, double zoom = 1.0)
     {
-        TileLock?.EnterReadLock();
-        try
-        {
-            SetSize(width, height);
+        SetSize(width, height);
 
         // Skip paper layers — they're handled by ClearTile with paperColor.
         var rootLayers = new System.Collections.Generic.List<DrawingLayer>(layers.Count);
@@ -253,35 +237,34 @@ public sealed class LayerCompositor : IDisposable
         _fullDirty = false;
         _dirtyRegion = null;
 
-        // Merge dirty + missing; build HashSet for O(1) lookup inside Parallel.ForEach.
-        var allTileKeys = new System.Collections.Generic.List<(int tx, int ty)>(tileKeys.Count + missingTileKeys.Count);
-        allTileKeys.AddRange(tileKeys);
-        allTileKeys.AddRange(missingTileKeys);
         var dirtySet = new HashSet<(int tx, int ty)>(tileKeys);
 
-        // Ensure all tiles exist first (sequential — dictionary access)
-        foreach (var (tx, ty) in allTileKeys)
-            EnsureTile(tx, ty, lod);
+        // Ensure all tiles exist first (sequential — dictionary access).
+        foreach (var (tx, ty) in tileKeys) EnsureTile(tx, ty, lod);
+        foreach (var (tx, ty) in missingTileKeys) EnsureTile(tx, ty, lod);
 
-        System.Threading.Tasks.Parallel.ForEach(allTileKeys, key =>
+        // Dirty tiles: composite only the dirty sub-region of the tile.
+        // Missing tiles: composite the FULL tile bounds — the WriteableBitmap has
+        // uninitialized memory outside whatever region we clear, and DrawTiles draws
+        // the full bitmap. Partial compositing would leave garbage pixels visible.
+        foreach (var (tx, ty) in tileKeys)
         {
-            var (tx, ty) = key;
-            var tileRect = new PixelRegion(tx * stride, ty * stride, stride, stride);
-            if (dirtySet.Contains(key))
-                tileRect = tileRect.Intersect(dirtyClip);
-            else if (viewportClip is { } v)
-                tileRect = tileRect.Intersect(v);
+            var tileRect = new PixelRegion(tx * stride, ty * stride, stride, stride).Intersect(dirtyClip);
             if (tileRect.IsEmpty) tileRect = new PixelRegion(tx * stride, ty * stride, 1, 1);
             CompositeTileCpu(_compTiles[(tx, ty, lod)], tileRect, rootLayers, tx * stride, ty * stride, paperColor);
-        });
+        }
+        foreach (var (tx, ty) in missingTileKeys)
+        {
+            var tileRect = new PixelRegion(tx * stride, ty * stride, stride, stride).ClipTo(width, height);
+            if (tileRect.IsEmpty) tileRect = new PixelRegion(tx * stride, ty * stride, 1, 1);
+            CompositeTileCpu(_compTiles[(tx, ty, lod)], tileRect, rootLayers, tx * stride, ty * stride, paperColor);
+        }
 
         _tilesToPrune.Clear();
-        foreach (var (tx, ty) in allTileKeys)
-            _tilesToPrune.Add((tx, ty, lod));
+        foreach (var (tx, ty) in tileKeys) _tilesToPrune.Add((tx, ty, lod));
+        foreach (var (tx, ty) in missingTileKeys) _tilesToPrune.Add((tx, ty, lod));
 
         PruneTransparentTiles();
-        }
-        finally { TileLock?.ExitReadLock(); }
     }
 
     private WriteableBitmap EnsureTile(int tx, int ty, int lod)

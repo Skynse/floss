@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading;
 using Avalonia.Media;
 using Floss.App.Tools;
 
@@ -20,15 +19,7 @@ public sealed class DrawingDocument : IDisposable
         _undoIds.Clear();
         _redoIds.Clear();
         Selection.Clear();
-        TileLock.Dispose();
     }
-
-    // --- Render Thread Safety ---
-    // Protects tile pixel data from concurrent read (compositor) / write (brush worker).
-    // The compositor holds a READ lock during Composite/DrawTiles; the brush worker
-    // holds a WRITE lock while modifying pixels.  Without this, zooming during a
-    // stroke causes the compositor to read partially-written tiles → native crash.
-    public ReaderWriterLockSlim TileLock { get; } = new();
 
     // --- History & State Tracking ---
     private readonly Stack<IHistoryState> _undo = new();

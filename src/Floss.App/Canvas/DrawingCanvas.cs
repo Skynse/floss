@@ -70,7 +70,7 @@ public sealed class DrawingCanvas : Control, IDisposable
         RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);
 
         BrushEngine = new BrushEngine();
-        _compositor = new LayerCompositor { TileLock = Document.TileLock };
+        _compositor = new LayerCompositor();
 
         _ctx = new ToolContext(_document)
         {

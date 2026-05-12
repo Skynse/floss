@@ -1,8 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
-using Avalonia.Threading;
 using Floss.App.Brushes;
 using Floss.App.Document;
 using Floss.App.Input;
@@ -11,7 +8,8 @@ using Floss.App.Tools;
 namespace Floss.App.Processes.Output;
 
 // Paints a stroke onto the active layer using the brush engine.
-// Rasterization runs on a background thread so the UI stays responsive during strokes.
+// All rasterization runs synchronously on the UI thread — no background worker,
+// no shared mutable state, no locking needed.
 public sealed class DirectDrawOutput : IOutputProcess
 {
     public bool IsPaintOutput => true;
@@ -19,28 +17,12 @@ public sealed class DirectDrawOutput : IOutputProcess
 
     public bool Antialiasing { get; set; } = true;
 
-    // Incremental stroke state
     private int _lastProcessedIndex = -1;
     private Dictionary<(int, int), byte[]?>? _beforeTiles;
     private PixelRegion _dirtyRegion;
     private DrawingLayer? _currentLayer;
     private bool _strokeActive;
-
-    // Background worker
-    private readonly object _queueLock = new();
-    private readonly List<SegmentWork> _segmentQueue = [];
-    private Task? _workerTask;
-    private CancellationTokenSource? _workerCts;
     private ToolContext? _currentCtx;
-
-    private sealed class SegmentWork
-    {
-        public required DrawingLayer Layer { get; init; }
-        public required BrushPreset Brush { get; init; }
-        public required SelectionMask Selection { get; init; }
-        public required CanvasInputSample From { get; init; }
-        public required CanvasInputSample To { get; init; }
-    }
 
     public DirectDrawOutput(BrushEngine brushEngine, DrawingDocument _)
     {
@@ -58,7 +40,6 @@ public sealed class DirectDrawOutput : IOutputProcess
         var brush = ctx.Brush;
         var selection = ctx.Selection;
 
-        // Initialize stroke on first preview call
         if (!_strokeActive)
         {
             _strokeActive = true;
@@ -69,25 +50,19 @@ public sealed class DirectDrawOutput : IOutputProcess
             _currentCtx = ctx;
             _brushEngine.BeginStroke(brush, ToLayerSample(layer, samples[0]));
 
-            // Initial dab for mouse/touch — queue it for background processing
             if (samples[0].Source is CanvasInputSource.Mouse or CanvasInputSource.Unknown)
             {
-                QueueSegment(layer, brush, selection, ToLayerSample(layer, samples[0]), ToLayerSample(layer, samples[0]));
+                ProcessSegment(layer, brush, selection, ctx, ToLayerSample(layer, samples[0]), ToLayerSample(layer, samples[0]));
                 _lastProcessedIndex = 0;
             }
         }
 
-        // Queue any new segments since last preview
         var startIdx = Math.Max(1, _lastProcessedIndex + 1);
         for (int i = startIdx; i < samples.Count; i++)
         {
-            var from = ToLayerSample(layer, samples[i - 1]);
-            var to = ToLayerSample(layer, samples[i]);
-            QueueSegment(layer, brush, selection, from, to);
+            ProcessSegment(layer, brush, selection, ctx, ToLayerSample(layer, samples[i - 1]), ToLayerSample(layer, samples[i]));
             _lastProcessedIndex = i;
         }
-
-        EnsureWorkerRunning();
     }
 
     public void Execute(ToolContext ctx, IProcessedInput input)
@@ -105,57 +80,35 @@ public sealed class DirectDrawOutput : IOutputProcess
             return;
         }
 
-        // Queue remaining segments, then end the brush stroke
         Preview(ctx, input);
         _brushEngine.EndStroke();
-
-        // The worker captures before-tiles as it processes segments.
-        // If it's still running, defer the undo commit — we read _beforeTiles
-        // after it drains the queue, without blocking the UI thread.
-        var pendingWorker = _workerTask;
-
-        if (pendingWorker != null && !pendingWorker.IsCompleted)
-        {
-            DeferCommit(pendingWorker);
-        }
-        else
-        {
-            // Edge case: old worker finished between Preview's queue and here.
-            // Preview may have started a new worker — check and defer if so.
-            var afterPreview = _workerTask;
-            if (afterPreview != null && !afterPreview.IsCompleted)
-                DeferCommit(afterPreview);
-            else
-            {
-                CommitFromWorkerState();
-                Cleanup();
-            }
-        }
+        Commit();
     }
 
-    private void DeferCommit(Task worker)
+    private void ProcessSegment(DrawingLayer layer, BrushPreset brush, SelectionMask selection, ToolContext ctx, CanvasInputSample from, CanvasInputSample to)
     {
-        worker.ContinueWith(t =>
+        var region = _brushEngine.EstimateSegmentRegion(layer, brush, from, to);
+        if (!region.IsEmpty && _beforeTiles != null)
+            layer.CaptureTiles(region, _beforeTiles);
+
+        var dirty = _brushEngine.RasterizeSegment(layer, brush, from, to,
+            (x, y, out b, out g, out r, out a) => ReadBeforeStrokePixelFrom(_beforeTiles, layer, x, y, out b, out g, out r, out a));
+
+        if (!dirty.IsEmpty)
         {
-            if (t.IsFaulted)
-            {
-                // Log the antecedent fault and rethrow on the UI thread
-                CrashLog.Write(t.Exception, "DirectDrawOutput.DeferCommit (antecedent faulted)", flushToDisk: true);
-                Dispatcher.UIThread.Post(() => throw new Exception("Brush worker task faulted", t.Exception));
-            }
-            else
-            {
-                Dispatcher.UIThread.Post(CommitFromWorkerState);
-            }
-        }, TaskScheduler.Default);
-        _strokeActive = false;
-        _lastProcessedIndex = -1;
-        _workerCts = null;
-        _workerTask = null;
-        lock (_queueLock) { _segmentQueue.Clear(); }
+            if (_beforeTiles != null)
+                RestoreUnselectedPixels(layer, dirty, selection, _beforeTiles);
+
+            var translatedDirty = dirty.Translate(layer.OffsetX, layer.OffsetY);
+            _dirtyRegion = _dirtyRegion.Union(translatedDirty);
+
+            layer.MarkThumbnailDirty();
+            ctx.Document.NotifyChanged(translatedDirty, ctx.ActiveLayerIndex);
+            ctx.InvalidateRender();
+        }
     }
 
-    private void CommitFromWorkerState()
+    private void Commit()
     {
         try
         {
@@ -175,7 +128,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         }
         catch (Exception ex)
         {
-            CrashLog.Write(ex, "DirectDrawOutput.CommitFromWorkerState");
+            CrashLog.Write(ex, "DirectDrawOutput.Commit");
         }
         finally
         {
@@ -183,125 +136,43 @@ public sealed class DirectDrawOutput : IOutputProcess
         }
     }
 
-    private void QueueSegment(DrawingLayer layer, BrushPreset brush, SelectionMask selection, CanvasInputSample from, CanvasInputSample to)
+    private void Cleanup()
     {
-        lock (_queueLock)
-        {
-            _segmentQueue.Add(new SegmentWork
-            {
-                Layer = layer,
-                Brush = brush,
-                Selection = selection,
-                From = from,
-                To = to
-            });
-        }
+        _strokeActive = false;
+        _lastProcessedIndex = -1;
+        _beforeTiles = null;
+        _dirtyRegion = PixelRegion.Empty;
+        _currentLayer = null;
+        _currentCtx = null;
     }
 
-    private void EnsureWorkerRunning()
+    public void Cancel()
     {
-        if (_workerTask != null && !_workerTask.IsCompleted) return;
-
-        var cts = new CancellationTokenSource();
-        _workerCts = cts;
-        _workerTask = Task.Run(() => WorkerLoop(cts.Token));
+        _brushEngine.EndStroke();
+        Cleanup();
     }
 
-    private void WorkerLoop(CancellationToken ct)
+    private static PixelRegion ComputeTileDirtyRegion(Dictionary<(int, int), byte[]?> tiles)
     {
-        try
+        if (tiles.Count == 0) return PixelRegion.Empty;
+        const int ts = TiledPixelBuffer.TileSize;
+        int minX = int.MaxValue, minY = int.MaxValue;
+        int maxX = int.MinValue, maxY = int.MinValue;
+        foreach (var ((tx, ty), _) in tiles)
         {
-            while (!ct.IsCancellationRequested)
-            {
-                SegmentWork? work;
-                lock (_queueLock)
-                {
-                    if (_segmentQueue.Count == 0) break;
-                    work = _segmentQueue[0];
-                    _segmentQueue.RemoveAt(0);
-                }
-
-                if (work == null) continue;
-
-                ProcessSegment(work, ct);
-            }
+            minX = Math.Min(minX, tx * ts);
+            minY = Math.Min(minY, ty * ts);
+            maxX = Math.Max(maxX, tx * ts + ts);
+            maxY = Math.Max(maxY, ty * ts + ts);
         }
-        catch (OperationCanceledException)
-        {
-            // Normal cancellation during cleanup — not an error.
-        }
-        catch (Exception ex)
-        {
-            CrashLog.Write(ex, "DirectDrawOutput.WorkerLoop", flushToDisk: true);
-            // Rethrow on the UI thread so Dispatcher.UnhandledException logs it
-            // and the user sees a crash dialog if appropriate.
-            Dispatcher.UIThread.Post(() => throw new Exception("Brush worker crashed", ex));
-        }
+        return new PixelRegion(minX, minY, maxX - minX, maxY - minY);
     }
 
-    private void ProcessSegment(SegmentWork work, CancellationToken ct)
-    {
-        ct.ThrowIfCancellationRequested();
+    private static CanvasInputSample ToLayerSample(DrawingLayer layer, CanvasInputSample s)
+        => s.WithPosition(s.X - layer.OffsetX, s.Y - layer.OffsetY, s.Pressure, s.TimeMicros);
 
-        // Capture shared state locally to avoid races with Cancel()/Cleanup()
-        var beforeTiles = _beforeTiles;
-        var ctx = _currentCtx;
-
-        // Acquire write lock — prevents the compositor from reading layer tiles
-        // while we modify them.  Without this, zooming during a stroke causes
-        // the compositor to read partially-written tiles → native SIGSEGV.
-        var tileLock = ctx?.Document.TileLock;
-        tileLock?.EnterWriteLock();
-        try
-        {
-
-        // Capture before-tiles for this segment's region
-        var region = _brushEngine.EstimateSegmentRegion(work.Layer, work.Brush, work.From, work.To);
-        if (!region.IsEmpty && beforeTiles != null)
-        {
-            work.Layer.CaptureTiles(region, beforeTiles);
-        }
-
-        // Rasterize on background thread
-        var dirty = _brushEngine.RasterizeSegment(work.Layer, work.Brush, work.From, work.To,
-            (x, y, out b, out g, out r, out a) => ReadBeforeStrokePixelFrom(beforeTiles, work.Layer, x, y, out b, out g, out r, out a));
-
-        if (!dirty.IsEmpty)
-        {
-            if (beforeTiles != null)
-                RestoreUnselectedPixels(work.Layer, dirty, work.Selection, beforeTiles);
-
-            // Accumulate dirty region (thread-safe via lock)
-            var translatedDirty = dirty.Translate(work.Layer.OffsetX, work.Layer.OffsetY);
-            lock (_queueLock)
-            {
-                _dirtyRegion = _dirtyRegion.Union(translatedDirty);
-            }
-
-            // Post invalidate to UI thread
-            if (ctx != null)
-            {
-                var layer = work.Layer;
-                var doc = ctx.Document;
-                var layerIndex = ctx.ActiveLayerIndex;
-                Dispatcher.UIThread.Post(() =>
-                {
-                    try
-                    {
-                        layer.MarkThumbnailDirty();
-                        doc.NotifyChanged(translatedDirty, layerIndex);
-                        ctx.InvalidateRender();
-                    }
-                    catch (Exception ex)
-                    {
-                        CrashLog.Write(ex, "DirectDrawOutput.WorkerLoop.UIThreadPost");
-                    }
-                });
-            }
-        }
-        }
-        finally { tileLock?.ExitWriteLock(); }
-    }
+    private static int FloorDiv(int value, int divisor)
+        => (int)Math.Floor(value / (double)divisor);
 
     private static void ReadBeforeStrokePixelFrom(Dictionary<(int, int), byte[]?>? beforeTiles, DrawingLayer? currentLayer, int x, int y, out byte b, out byte g, out byte r, out byte a)
     {
@@ -332,55 +203,8 @@ public sealed class DirectDrawOutput : IOutputProcess
         a = tile[offset + 3];
     }
 
-    private void Cleanup()
-    {
-        _workerCts?.Cancel();
-        _workerCts = null;
-        _workerTask = null;
-        _strokeActive = false;
-        _lastProcessedIndex = -1;
-        _beforeTiles = null;
-        _dirtyRegion = PixelRegion.Empty;
-        _currentLayer = null;
-        _currentCtx = null;
-        lock (_queueLock)
-        {
-            _segmentQueue.Clear();
-        }
-    }
-
-    public void Cancel()
-    {
-        _workerCts?.Cancel();
-        _brushEngine.EndStroke();
-        Cleanup();
-    }
-
-    private static PixelRegion ComputeTileDirtyRegion(Dictionary<(int, int), byte[]?> tiles)
-    {
-        if (tiles.Count == 0) return PixelRegion.Empty;
-        const int ts = TiledPixelBuffer.TileSize;
-        int minX = int.MaxValue, minY = int.MaxValue;
-        int maxX = int.MinValue, maxY = int.MinValue;
-        foreach (var ((tx, ty), _) in tiles)
-        {
-            minX = Math.Min(minX, tx * ts);
-            minY = Math.Min(minY, ty * ts);
-            maxX = Math.Max(maxX, tx * ts + ts);
-            maxY = Math.Max(maxY, ty * ts + ts);
-        }
-        return new PixelRegion(minX, minY, maxX - minX, maxY - minY);
-    }
-
-    private static CanvasInputSample ToLayerSample(DrawingLayer layer, CanvasInputSample s)
-        => s.WithPosition(s.X - layer.OffsetX, s.Y - layer.OffsetY, s.Pressure, s.TimeMicros);
-
-    private static int FloorDiv(int value, int divisor)
-        => (int)Math.Floor(value / (double)divisor);
-
     private void RestoreUnselectedPixels(DrawingLayer layer, PixelRegion dirty, SelectionMask selection, Dictionary<(int, int), byte[]?> beforeTiles)
     {
-        if (beforeTiles == null) return;
         if (dirty.IsEmpty) return;
 
         bool hasSelection = selection.HasSelection;

@@ -215,6 +215,24 @@ public sealed class TiledPixelBuffer : IDisposable
         return EnsureRaw(key);
     }
 
+    public byte[] GetOrCreateRawTile(int tileX, int tileY)
+    {
+        var key = (tileX, tileY);
+        var raw = EnsureRaw(key);
+        if (raw != null) return raw;
+
+        raw = new byte[TileBytes];
+        lock (_lock)
+        {
+            _tiles[key] = raw;
+            _compressed.Remove(key);
+        }
+        ExtendBounds(tileX * TileSize, tileY * TileSize, (tileX + 1) * TileSize, (tileY + 1) * TileSize);
+        return raw;
+    }
+
+    public void PruneRegion(PixelRegion region) => PruneTransparentTiles(region);
+
     public void PrimeTiles(PixelRegion region)
     {
         if (region.IsEmpty) return;
