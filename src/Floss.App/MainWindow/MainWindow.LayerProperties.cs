@@ -8,6 +8,8 @@ using Floss.App.Document;
 
 namespace Floss.App;
 
+using static Floss.App.AppColors;
+
 public partial class MainWindow
 {
     private StackPanel _layerPropertiesPanel = null!;
@@ -72,8 +74,8 @@ public partial class MainWindow
             var canvas = _canvas;
             if (canvas == null) return;
             var doc = canvas.Document;
-            if (doc.ActiveLayerIndex < 0) return;
-            if (doc.ActiveLayer.IsReference != (_referenceLayerCheck.IsChecked == true))
+            if (doc.ActiveLayer is not { } al) return;
+            if (al.IsReference != (_referenceLayerCheck.IsChecked == true))
                 canvas.ToggleLayerReference(doc.ActiveLayerIndex);
         };
 

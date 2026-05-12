@@ -7,17 +7,10 @@ using Floss.App.Brushes;
 
 namespace Floss.App;
 
+using static Floss.App.AppColors;
+
 public sealed class DynamicsPopupWindow : Window
 {
-    private const string Bg0 = "#0d0f14";
-    private const string Bg1 = "#13151a";
-    private const string Bg2 = "#1a1c22";
-    private const string Stroke = "#2b303b";
-    private const string TextPrimary = "#d7dde8";
-    private const string TextMuted = "#6f7888";
-    private const string Accent = "#3d6fd8";
-    private const string AccentSoft = "#22355f";
-
     private readonly CurveGraph _graph = new() { Height = 150 };
     private readonly Button _pressureToggle;
     private readonly Slider _minSlider = MkSlider(0, 1, 0, "Output at minimum pressure");

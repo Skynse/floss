@@ -13,6 +13,8 @@ using Floss.App.Tools;
 
 namespace Floss.App;
 
+using static Floss.App.AppColors;
+
 public partial class MainWindow
 {
     private StackPanel BuildToolPropertySection()

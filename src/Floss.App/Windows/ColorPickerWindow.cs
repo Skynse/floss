@@ -9,15 +9,10 @@ using SkiaSharp;
 
 namespace Floss.App;
 
+using static Floss.App.AppColors;
+
 public sealed class ColorPickerWindow : Window
 {
-    private const string Bg0 = "#1e1e1e";
-    private const string Bg1 = "#252526";
-    private const string Bg2 = "#2d2d30";
-    private const string TextPrimary = "#cccccc";
-    private const string TextSecondary = "#aaaaaa";
-    private const string Accent = "#007acc";
-
     private double _hue;        // 0-360
     private double _saturation; // 0-1
     private double _value;      // 0-1

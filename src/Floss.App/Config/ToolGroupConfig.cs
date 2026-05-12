@@ -245,7 +245,7 @@ public sealed class ToolPreset
                 var dynamics = BrushDynamics.Deserialize(BrushDynamicsJson);
                 result = result with { Dynamics = dynamics };
             }
-            catch { }
+            catch (Exception ex) { CrashLog.Write(ex, $"ToolGroupConfig.Load ({Id})"); }
         }
 
         return result;
@@ -441,6 +441,7 @@ public sealed class ToolGroupConfig
         }
         catch (Exception ex)
         {
+            CrashLog.Write(ex, "ToolGroupConfig.Load");
             Console.Error.WriteLine($"[Floss] Failed to load tool group config: {ex.Message}");
             var cfg = new ToolGroupConfig();
             cfg.EnsureDefaultPresets();
@@ -469,7 +470,7 @@ public sealed class ToolGroupConfig
     public void Save()
     {
         try { (Store ??= PresetStore.OpenDefault()).SaveToolGroups(Groups); }
-        catch (Exception ex) { Console.Error.WriteLine($"[Floss] Failed to save tool group config: {ex.Message}"); }
+        catch (Exception ex) { CrashLog.Write(ex, "ToolGroupConfig.Save"); Console.Error.WriteLine($"[Floss] Failed to save tool group config: {ex.Message}"); }
     }
 
     // ── Sync with brush assets ────────────────────────────────────────────────

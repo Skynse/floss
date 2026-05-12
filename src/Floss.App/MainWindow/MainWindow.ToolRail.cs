@@ -9,6 +9,8 @@ using Avalonia.Media;
 
 namespace Floss.App;
 
+using static Floss.App.AppColors;
+
 public partial class MainWindow
 {
     // ── Tools docker content (used by the docker system) ──────────────────────

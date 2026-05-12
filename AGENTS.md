@@ -120,3 +120,18 @@ Reduces maintenance burden and ensures consistency.
 - [ ] `InvalidateCompositor()` added but may not be used everywhere needed
 - [ ] `PaintInputSuspended` flag is set in multiple places, potential for desync
 - [ ] `MainWindow.axaml.cs` is 2589 lines — consider further splitting
+
+Shortcuts:
+- Input/KeyBinding.cs — data model for key+modifiers, parsing, formatting, modifier-state helpers
+- Input/ShortcutsConfig.cs — all app-wide shortcut definitions (Undo, Zoom, Brush, Layer...), JSON load/save
+- MainWindow/MainWindow.axaml.cs — registers AddShortcut() linking config to actions, OnKeyDown for tool-group & Escape
+- MainWindow/MainWindow.ToolRail.cs — tool-group shortcut recording/assignment, hint display on buttons
+- Windows/SettingsWindow.cs — UI for reassigning shortcuts (key capture)
+Modifier keys:
+- Input/ModifierKeySettings.cs — modifier→action mappings, dictionary-based lookup, JSON load/save
+- MainWindow/MainWindow.Viewport.cs — OnKeyDownTunnel / OnKeyUp, invokes modifier resolution
+- Windows/ModifierKeySettingsWindow.cs — UI for editing modifier-key assignments
+Shared:
+- App.axaml.cs — exposes singleton ShortcutsConfig / ModifierKeySettings loaded from disk
+- AppPaths.cs — file paths for both configs
+- tests/Floss.App.Tests/Program.cs — KeyBindingTests covering parsing, modifiers, round-trip

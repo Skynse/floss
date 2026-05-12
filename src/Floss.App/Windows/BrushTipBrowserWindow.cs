@@ -15,18 +15,10 @@ using SkiaSharp;
 
 namespace Floss.App;
 
+using static Floss.App.AppColors;
+
 public sealed class BrushTipBrowserWindow : Window
 {
-    private const string Bg0 = "#0d0f14";
-    private const string Bg1 = "#13151a";
-    private const string Bg2 = "#1a1c22";
-    private const string Stroke = "#2b303b";
-    private const string TextPrimary = "#d7dde8";
-    private const string TextSecondary = "#A0AAB4";
-    private const string TextMuted = "#6f7888";
-    private const string Accent = "#3d6fd8";
-    private const string AccentSoft = "#22355f";
-
     private readonly Action<IBrushTip> _onSelect;
 
     public BrushTipBrowserWindow(Window? owner, Action<IBrushTip> onSelect)
@@ -88,7 +80,7 @@ public sealed class BrushTipBrowserWindow : Window
             if (Directory.Exists(AppPaths.BrushTipsDirectory))
                 pngFiles.AddRange(Directory.EnumerateFiles(AppPaths.BrushTipsDirectory, "*.png"));
         }
-        catch { }
+        catch (Exception ex) { CrashLog.Write(ex, "BrushTipBrowserWindow.LoadBrushes (enum)"); }
 
         foreach (var path in pngFiles.OrderBy(Path.GetFileName))
         {
@@ -99,7 +91,7 @@ public sealed class BrushTipBrowserWindow : Window
                 using var ms = new MemoryStream(bytes);
                 bitmap = new Bitmap(ms);
             }
-            catch { continue; }
+            catch (Exception ex) { CrashLog.Write(ex, $"BrushTipBrowserWindow.LoadBrushes (load {path})"); continue; }
 
             var localPath = path;
             var btn = MakeTipBtn(bitmap, Path.GetFileNameWithoutExtension(localPath),
@@ -202,7 +194,7 @@ public sealed class BrushTipBrowserWindow : Window
             var destPath = Path.Combine(AppPaths.BrushTipsDirectory, name);
             await File.WriteAllBytesAsync(destPath, bytes);
         }
-        catch { }
+        catch (Exception ex) { CrashLog.Write(ex, "BrushTipBrowserWindow.ImportPng"); }
 
         Select(new ImageBrushTip(bytes));
     }

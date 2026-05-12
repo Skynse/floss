@@ -12,6 +12,8 @@ using Floss.App.Psd;
 
 namespace Floss.App;
 
+using static Floss.App.AppColors;
+
 using Avalonia.Media;
 using SkiaSharp;
 
@@ -167,6 +169,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
+            CrashLog.Write(ex, "MainWindow.OpenDocumentAsync");
             _footerStatusText.Text = $"Error: {ex.Message}";
         }
     }
@@ -189,6 +192,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
+            CrashLog.Write(ex, "MainWindow.OpenDocumentFromPathAsync");
             _footerStatusText.Text = $"Open error: {ex.Message}";
         }
     }
@@ -216,31 +220,32 @@ public partial class MainWindow
             $"Opened {_canvas.Document.Width}x{_canvas.Document.Height}  {Path.GetFileName(path)}";
     }
 
-    private async System.Threading.Tasks.Task SaveDocumentAsync()
+    public async System.Threading.Tasks.Task SaveDocumentAsync()
     {
-        // 1. If we've never saved, force a Save As
-        if (string.IsNullOrEmpty(_currentFilePath))
+        try
         {
-            await SaveDocumentAsAsync();
-            return;
+            if (_activeTab == null) return;
+            var path = _activeTab.FilePath;
+            if (string.IsNullOrEmpty(path))
+            {
+                await SaveDocumentAsAsync();
+                return;
+            }
+            if (IsFlossPath(path))
+                await WriteFlossInternalAsync(path);
+            else if (IsPsdPath(path))
+                await WritePsdInternalAsync(path);
+            else
+                await SaveDocumentAsAsync();
         }
-
-        // 2. If it's a saveable document, silently overwrite it.
-        if (IsFlossPath(_currentFilePath))
+        catch (Exception ex)
         {
-            await WriteFlossInternalAsync(_currentFilePath);
-        }
-        else if (IsPsdPath(_currentFilePath))
-        {
-            await WritePsdInternalAsync(_currentFilePath);
-        }
-        else
-        {
-            await SaveDocumentAsAsync();
+            CrashLog.Write(ex, "MainWindow.SaveDocumentAsync");
+            _footerStatusText.Text = $"Save error: {ex.Message}";
         }
     }
 
-    private async System.Threading.Tasks.Task SaveDocumentAsAsync()
+    public async System.Threading.Tasks.Task SaveDocumentAsAsync()
     {
         var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
@@ -248,21 +253,47 @@ public partial class MainWindow
             FileTypeChoices = [FlossFileType, PsdFileType],
             SuggestedFileName = SuggestedDocumentFileName()
         });
-
         if (file == null) return;
         var path = file.Path.LocalPath;
 
-        if (IsPsdPath(path))
+        try
         {
-            await WritePsdInternalAsync(path);
+            if (IsPsdPath(path))
+                await WritePsdInternalAsync(path);
+            else
+                await WriteFlossInternalAsync(path);
         }
-        else
+        catch (Exception ex)
         {
-            await WriteFlossInternalAsync(path); // Default to Floss format
+            CrashLog.Write(ex, "MainWindow.SaveDocumentAsAsync");
+            _footerStatusText.Text = $"Save error: {ex.Message}";
         }
     }
 
-    // ── Actual Disk Writers ───────────────────────────────────────────────────
+    public async System.Threading.Tasks.Task ExportCurrentDocumentAsync()
+    {
+        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = "Export",
+            FileTypeChoices = ExportImageFileTypes(null)
+        });
+        if (file == null) return;
+
+        try
+        {
+            if (_activeTab == null) return;
+            var path = file.Path.LocalPath;
+            await using var stream = await file.OpenWriteAsync();
+            ImageFileExporter.Export(stream, _activeTab.Canvas.Document, path);
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write(ex, "MainWindow.ExportCurrentDocumentAsync");
+            _footerStatusText.Text = $"Export error: {ex.Message}";
+        }
+    }
+
+    // ── Actual Disk Writers ───�────────────────────────────────────────────────
 
     private async System.Threading.Tasks.Task WriteFlossInternalAsync(string path)
     {

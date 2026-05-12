@@ -8,6 +8,8 @@ using Floss.App.Canvas;
 
 namespace Floss.App;
 
+using static Floss.App.AppColors;
+
 public partial class MainWindow
 {
     // ── Resize overlay state ──────────────────────────────────────────────────

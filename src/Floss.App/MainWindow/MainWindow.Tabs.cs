@@ -14,6 +14,8 @@ using Floss.App.Processes;
 
 namespace Floss.App;
 
+using static Floss.App.AppColors;
+
 public partial class MainWindow
 {
     // ── Tab model ─────────────────────────────────────────────────────────────
@@ -324,13 +326,17 @@ public partial class MainWindow
     {
         System.Threading.Tasks.Task.Run(() =>
         {
-            // Compact the LOH so freed tile/history byte[] arrays actually return to the OS.
-            // Without compaction the committed pages stay reserved even after collection.
-            System.Runtime.GCSettings.LargeObjectHeapCompactionMode =
-                System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
-            GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
-            GC.WaitForPendingFinalizers();
-            GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
+            try
+            {
+                // Compact the LOH so freed tile/history byte[] arrays actually return to the OS.
+                // Without compaction the committed pages stay reserved even after collection.
+                System.Runtime.GCSettings.LargeObjectHeapCompactionMode =
+                    System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
+                GC.WaitForPendingFinalizers();
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
+            }
+            catch (Exception ex) { CrashLog.Write(ex, "MainWindow.ScheduleDocumentGc"); }
         });
     }
 

@@ -6,6 +6,8 @@ using Avalonia.Media;
 
 namespace Floss.App;
 
+using static Floss.App.AppColors;
+
 public partial class MainWindow
 {
     private StackPanel _colorSlidersPanel = null!;

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -135,13 +136,13 @@ public sealed class ModifierKeySettings
             if (File.Exists(path))
                 return JsonSerializer.Deserialize<ModifierKeySettings>(File.ReadAllText(path), JsonOpts) ?? CreateDefaults();
         }
-        catch { }
+        catch (Exception ex) { CrashLog.Write(ex, "ModifierKeySettings.Load"); }
         return CreateDefaults();
     }
 
     public void Save()
     {
         try { File.WriteAllText(AppPaths.ModifierKeySettingsPath, JsonSerializer.Serialize(this, JsonOpts)); }
-        catch { }
+        catch (Exception ex) { CrashLog.Write(ex, "ModifierKeySettings.Save"); }
     }
 }

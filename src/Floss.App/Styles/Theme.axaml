@@ -1,0 +1,49 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- ═════════════════════════════════════════════════════════════════════
+         Shared color palette — single source of truth for XAML styles.
+         Mirror of AppColors.cs; keep in sync.
+    ═════════════════════════════════════════════════════════════════════ -->
+    <!-- Backgrounds -->
+    <Color x:Key="Bg0">#0f0f10</Color>
+    <Color x:Key="Bg1">#161618</Color>
+    <Color x:Key="Bg2">#1e1e20</Color>
+    <Color x:Key="Bg3">#252527</Color>
+    <Color x:Key="BgSidebar">#121214</Color>
+
+    <!-- Borders -->
+    <Color x:Key="Stroke">#2e2e32</Color>
+
+    <!-- Text -->
+    <Color x:Key="TextPrimary">#dde1e8</Color>
+    <Color x:Key="TextSecondary">#9ea8b4</Color>
+    <Color x:Key="TextMuted">#5e6878</Color>
+
+    <!-- Accents -->
+    <Color x:Key="Accent">#4878d8</Color>
+    <Color x:Key="AccentSoft">#1e2e52</Color>
+    <Color x:Key="AccentWarm">#d87e3d</Color>
+    <Color x:Key="AccentWarmSoft">#3d2415</Color>
+
+    <!-- Semantic -->
+    <Color x:Key="Success">#3fb950</Color>
+    <Color x:Key="Warning">#d29922</Color>
+    <Color x:Key="Danger">#da3633</Color>
+
+    <!-- Slider -->
+    <Color x:Key="SliderTrack">#161820</Color>
+    <Color x:Key="SliderFill">#3a6fd8</Color>
+    <Color x:Key="SliderThumb">#6a94ec</Color>
+
+    <!-- ── Brushes (convenience) ────────────────────────────────────────── -->
+    <SolidColorBrush x:Key="Bg0Brush"         Color="{StaticResource Bg0}"/>
+    <SolidColorBrush x:Key="Bg1Brush"         Color="{StaticResource Bg1}"/>
+    <SolidColorBrush x:Key="Bg2Brush"         Color="{StaticResource Bg2}"/>
+    <SolidColorBrush x:Key="Bg3Brush"         Color="{StaticResource Bg3}"/>
+    <SolidColorBrush x:Key="StrokeBrush"      Color="{StaticResource Stroke}"/>
+    <SolidColorBrush x:Key="TextPrimaryBrush"  Color="{StaticResource TextPrimary}"/>
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="{StaticResource TextSecondary}"/>
+    <SolidColorBrush x:Key="TextMutedBrush"    Color="{StaticResource TextMuted}"/>
+    <SolidColorBrush x:Key="AccentBrush"       Color="{StaticResource Accent}"/>
+    <SolidColorBrush x:Key="AccentSoftBrush"   Color="{StaticResource AccentSoft}"/>
+</ResourceDictionary>

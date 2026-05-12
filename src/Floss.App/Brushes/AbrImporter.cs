@@ -1287,7 +1287,7 @@ public static class AbrImporter
             if (!File.Exists(destPath))
                 File.WriteAllBytes(destPath, pngBytes);
         }
-        catch { }
+        catch (Exception ex) { CrashLog.Write(ex, "AbrImporter.ExportBrushTip"); }
     }
 
     // ── Big-endian stream reader ──────────────────────────────────────────────

@@ -51,7 +51,7 @@ public sealed class AppConfig
                 return JsonSerializer.Deserialize<AppConfig>(json) ?? new AppConfig();
             }
         }
-        catch { }
+        catch (Exception ex) { CrashLog.Write(ex, "AppConfig.Load"); }
         return new AppConfig();
     }
 
@@ -61,7 +61,7 @@ public sealed class AppConfig
         {
             File.WriteAllText(AppPaths.ConfigPath, JsonSerializer.Serialize(this, JsonOptions));
         }
-        catch { }
+        catch (Exception ex) { CrashLog.Write(ex, "AppConfig.Save"); }
     }
 
     public void AddRecentFile(string path)

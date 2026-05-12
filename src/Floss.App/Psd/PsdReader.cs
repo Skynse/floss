@@ -437,6 +437,7 @@ public static class PsdReader
         }
         catch (Exception ex)
         {
+            CrashLog.Write(ex, "PsdReader.DecompressPlane");
             Console.Error.WriteLine($"[Floss] PSD Zlib decompression failed: {ex.Message}");
             return null;
         }

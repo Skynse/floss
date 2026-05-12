@@ -13,21 +13,10 @@ using KeyBinding = Floss.App.Input.KeyBinding;
 
 namespace Floss.App;
 
+using static Floss.App.AppColors;
+
 public sealed class SettingsWindow : Window
 {
-    private const string Bg0 = "#0d0f14";
-    private const string Bg1 = "#13151a";
-    private const string Bg2 = "#1a1c22";
-    private const string BgSidebar = "#0f1117";
-    private const string Stroke = "#2b303b";
-    private const string TextPrimary = "#d7dde8";
-    private const string TextSecondary = "#A0AAB4";
-    private const string TextMuted = "#6f7888";
-    private const string Accent = "#3d6fd8";
-    private const string AccentSoft = "#22355f";
-    private const string AccentWarm = "#d87e3d";
-    private const string AccentWarmSoft = "#3d2415";
-
     private static readonly string[] SidebarItems = ["General", "Keyboard & Gestures"];
 
     private readonly ShortcutsConfig _sc;

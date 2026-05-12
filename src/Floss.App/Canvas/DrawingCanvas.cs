@@ -70,7 +70,7 @@ public sealed class DrawingCanvas : Control, IDisposable
         RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);
 
         BrushEngine = new BrushEngine();
-        _compositor = new LayerCompositor();
+        _compositor = new LayerCompositor { TileLock = Document.TileLock };
 
         _ctx = new ToolContext(_document)
         {
@@ -467,7 +467,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             _document.MergeSelectedLayers(selectedIndices, _compositor);
             return;
         }
-        var layer = _document.ActiveLayer;
+        if (_document.ActiveLayer is not { } layer) return;
         if (layer.IsGroup)
         {
             _document.FlattenGroup(active, _compositor);
@@ -879,7 +879,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             if (obj is Bitmap bitmap)
                 return PasteBitmap(bitmap);
         }
-        catch { }
+        catch (Exception ex) { CrashLog.Write(ex, "DrawingCanvas.PasteFromClipboard (bitmap)"); }
 
         try
         {
@@ -892,7 +892,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             else if (obj is IStorageFile singleFile)
                 return await TryPasteStorageFileAsync(singleFile);
         }
-        catch { }
+        catch (Exception ex) { CrashLog.Write(ex, "DrawingCanvas.PasteFromClipboard (file)"); }
 
         return false;
     }
@@ -909,7 +909,7 @@ public sealed class DrawingCanvas : Control, IDisposable
                 return true;
             }
         }
-        catch { }
+        catch (Exception ex) { CrashLog.Write(ex, "DrawingCanvas.TryPasteStorageFileAsync"); }
         return false;
     }
 

@@ -3,38 +3,41 @@
              x:Class="Floss.App.App"
              RequestedThemeVariant="Dark">
 
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceInclude Source="/Styles/Theme.axaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+
     <Application.Styles>
         <FluentTheme />
 
         <!-- ══════════════════════════════════════════════════════════════════
-             FLAT BUTTON — replaces the Fluent "elevated card" look with a
-             dead-simple transparent container that adds a white overlay on
-             hover/press.  All explicitly-set Background/Border values on
-             individual buttons are preserved because the outer Border binds
-             to TemplateBinding, not a hard-coded resource.
+             BUTTON — modern rounded card with subtle elevation.
+             Transparent bg so explicit button backgrounds show through;
+             hover adds a light overlay, pressed adds a deeper overlay.
         ══════════════════════════════════════════════════════════════════ -->
         <Style Selector="Button">
             <Setter Property="Background"    Value="Transparent"/>
             <Setter Property="BorderBrush"   Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="CornerRadius"  Value="3"/>
-            <Setter Property="Padding"       Value="6,4"/>
+            <Setter Property="CornerRadius"  Value="6"/>
+            <Setter Property="Padding"       Value="10,6"/>
             <Setter Property="Cursor"        Value="Hand"/>
-            <Setter Property="Foreground"    Value="#A0AAB4"/>
+            <Setter Property="Foreground"    Value="{StaticResource TextSecondary}"/>
             <Setter Property="Template">
                 <ControlTemplate>
-                    <!-- Outer Border supplies the button's own bg/border/radius.
-                         ClipToBounds ensures children respect the corner radius. -->
                     <Border Background="{TemplateBinding Background}"
                             BorderBrush="{TemplateBinding BorderBrush}"
                             BorderThickness="{TemplateBinding BorderThickness}"
                             CornerRadius="{TemplateBinding CornerRadius}"
                             ClipToBounds="True">
                         <Panel>
-                            <!-- Additive hover/press overlay — does not disturb
-                                 any explicit Background set on the button itself. -->
                             <Border Name="Overlay" IsHitTestVisible="False"
-                                    Background="Transparent"/>
+                                    Background="Transparent"
+                                    CornerRadius="{TemplateBinding CornerRadius}"/>
                             <ContentPresenter Padding="{TemplateBinding Padding}"
                                               HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
                                               VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
@@ -56,15 +59,15 @@
             <Setter Property="Opacity" Value="0.35"/>
         </Style>
 
-        <!-- ── ToggleButton inherits the flat button look ─────────────────── -->
+        <!-- ── ToggleButton ───────────────────────────────────────────────── -->
         <Style Selector="ToggleButton">
             <Setter Property="Background"    Value="Transparent"/>
             <Setter Property="BorderBrush"   Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="CornerRadius"  Value="3"/>
-            <Setter Property="Padding"       Value="6,4"/>
+            <Setter Property="CornerRadius"  Value="6"/>
+            <Setter Property="Padding"       Value="10,6"/>
             <Setter Property="Cursor"        Value="Hand"/>
-            <Setter Property="Foreground"    Value="#A0AAB4"/>
+            <Setter Property="Foreground"    Value="{StaticResource TextSecondary}"/>
             <Setter Property="Template">
                 <ControlTemplate>
                     <Border Background="{TemplateBinding Background}"
@@ -74,7 +77,8 @@
                             ClipToBounds="True">
                         <Panel>
                             <Border Name="Overlay" IsHitTestVisible="False"
-                                    Background="Transparent"/>
+                                    Background="Transparent"
+                                    CornerRadius="{TemplateBinding CornerRadius}"/>
                             <ContentPresenter Padding="{TemplateBinding Padding}"
                                               HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
                                               VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
@@ -93,82 +97,81 @@
             <Setter Property="Background" Value="#2cffffff"/>
         </Style>
 
-        <!-- ── TextBox — sharp corners, no Fluent glow ───────────────────── -->
+        <!-- ── TextBox — rounded, focused glow ───────────────────────────── -->
         <Style Selector="TextBox">
-            <Setter Property="CornerRadius"  Value="2"/>
-            <Setter Property="Foreground"    Value="#d7dde8"/>
-            <Setter Property="CaretBrush"    Value="#d7dde8"/>
-            <Setter Property="SelectionBrush" Value="#3d6fd8"/>
+            <Setter Property="CornerRadius"     Value="6"/>
+            <Setter Property="Foreground"       Value="{StaticResource TextPrimary}"/>
+            <Setter Property="CaretBrush"       Value="{StaticResource TextPrimary}"/>
+            <Setter Property="SelectionBrush"    Value="{StaticResource Accent}"/>
             <Setter Property="SelectionForegroundBrush" Value="#ffffff"/>
+            <Setter Property="BorderBrush"       Value="{StaticResource Stroke}"/>
+            <Setter Property="BorderThickness"   Value="1"/>
+            <Setter Property="Background"        Value="{StaticResource Bg1}"/>
+            <Setter Property="FontSize"          Value="13"/>
         </Style>
-        <!-- Kill the Fluent "focus glow" border colour -->
         <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
-            <Setter Property="BorderBrush" Value="#3d6fd8"/>
-            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush"   Value="{StaticResource Accent}"/>
+            <Setter Property="BorderThickness" Value="1.5"/>
         </Style>
         <Style Selector="TextBox:pointerover /template/ Border#PART_BorderElement">
-            <Setter Property="BorderBrush" Value="#4a5568"/>
+            <Setter Property="BorderBrush" Value="{StaticResource TextMuted}"/>
         </Style>
 
-        <!-- ── ComboBox — flatten ─────────────────────────────────────────── -->
+        <!-- ── ComboBox — rounded, consistent with TextBox ──────────────── -->
         <Style Selector="ComboBox">
-            <Setter Property="CornerRadius"  Value="2"/>
-            <Setter Property="Foreground"    Value="#A0AAB4"/>
-            <Setter Property="Background"    Value="#13151a"/>
-            <Setter Property="BorderBrush"   Value="#2b303b"/>
+            <Setter Property="CornerRadius"    Value="6"/>
+            <Setter Property="Foreground"      Value="{StaticResource TextSecondary}"/>
+            <Setter Property="Background"      Value="{StaticResource Bg1}"/>
+            <Setter Property="BorderBrush"     Value="{StaticResource Stroke}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding"       Value="6,0"/>
+            <Setter Property="Padding"         Value="8,2"/>
+            <Setter Property="FontSize"        Value="13"/>
         </Style>
         <Style Selector="ComboBox:pointerover">
-            <Setter Property="BorderBrush" Value="#4a5568"/>
+            <Setter Property="BorderBrush" Value="{StaticResource TextMuted}"/>
         </Style>
         <Style Selector="ComboBox:focus">
-            <Setter Property="BorderBrush" Value="#3d6fd8"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
         </Style>
         <Style Selector="ComboBoxItem">
-            <Setter Property="Foreground"    Value="#A0AAB4"/>
-            <Setter Property="Background"    Value="Transparent"/>
-            <Setter Property="Padding"       Value="8,5"/>
-            <Setter Property="FontSize"      Value="11"/>
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding"    Value="10,6"/>
+            <Setter Property="FontSize"   Value="12"/>
         </Style>
         <Style Selector="ComboBoxItem:selected">
-            <Setter Property="Background" Value="#22355f"/>
-            <Setter Property="Foreground" Value="#d7dde8"/>
+            <Setter Property="Background" Value="{StaticResource AccentSoft}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
         </Style>
         <Style Selector="ComboBoxItem:pointerover">
-            <Setter Property="Background" Value="#1a1c22"/>
+            <Setter Property="Background" Value="{StaticResource Bg2}"/>
         </Style>
 
         <!-- ── Menu / MenuItem ────────────────────────────────────────────── -->
         <Style Selector="Menu">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="#A0AAB4"/>
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
         </Style>
         <Style Selector="MenuItem">
-            <Setter Property="Foreground" Value="#A0AAB4"/>
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Padding"    Value="10,6"/>
-            <Setter Property="FontSize"   Value="12"/>
+            <Setter Property="Padding"    Value="12,7"/>
+            <Setter Property="FontSize"   Value="13"/>
+            <Setter Property="CornerRadius" Value="4"/>
         </Style>
-        <Style Selector="MenuItem:selected">
-            <Setter Property="Background" Value="#1a1c22"/>
-        </Style>
-        <Style Selector="MenuItem:pointerover">
-            <Setter Property="Background" Value="#1a1c22"/>
+        <Style Selector="MenuItem:selected, MenuItem:pointerover">
+            <Setter Property="Background" Value="{StaticResource Bg2}"/>
         </Style>
 
-        <!-- ── Horizontal slider — chunky progress-bar style ───────────────── -->
+        <!-- ── Horizontal slider — modern rounded track ─────────────────── -->
         <Style Selector="Slider:horizontal">
-            <Setter Property="Background" Value="#161820"/>
+            <Setter Property="Background" Value="{StaticResource SliderTrack}"/>
             <Setter Property="MinHeight" Value="22"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <ControlTemplate>
                     <Grid MinHeight="24" VerticalAlignment="Center">
-                        <!-- track trough — binds to the control's Background so colour
-                             sliders can set their own gradients, regular sliders get
-                             the default trough colour via the style below. -->
-                        <Border VerticalAlignment="Center" Height="10" CornerRadius="5"
+                        <Border VerticalAlignment="Center" Height="8" CornerRadius="4"
                                 Background="{TemplateBinding Background}"
                                 IsHitTestVisible="False"/>
                         <Track Name="PART_Track" Orientation="Horizontal"
@@ -179,20 +182,20 @@
                                 <RepeatButton Name="PART_DecreaseButton" Focusable="False" Cursor="Hand">
                                     <RepeatButton.Template>
                                         <ControlTemplate>
-                                            <Border Name="Fill" Height="10" VerticalAlignment="Center"
-                                                    CornerRadius="5,0,0,5" Background="#3a6fd8"/>
+                                            <Border Name="Fill" Height="8" VerticalAlignment="Center"
+                                                    CornerRadius="4,0,0,4" Background="{StaticResource SliderFill}"/>
                                         </ControlTemplate>
                                     </RepeatButton.Template>
                                 </RepeatButton>
                             </Track.DecreaseButton>
                             <Track.Thumb>
-                                <Thumb Cursor="Hand" Width="16" Height="16">
+                                <Thumb Cursor="Hand" Width="18" Height="18">
                                     <Thumb.Template>
                                         <ControlTemplate>
-                                            <Grid Width="16" Height="16">
-                                                <Ellipse Width="14" Height="14"
-                                                         Fill="#6a94ec"
-                                                         Stroke="#13151a"
+                                            <Grid Width="18" Height="18">
+                                                <Ellipse Width="16" Height="16"
+                                                         Fill="{StaticResource SliderThumb}"
+                                                         Stroke="{StaticResource Bg1}"
                                                          StrokeThickness="2"/>
                                             </Grid>
                                         </ControlTemplate>
@@ -203,8 +206,7 @@
                                 <RepeatButton Name="PART_IncreaseButton" Focusable="False" Cursor="Hand">
                                     <RepeatButton.Template>
                                         <ControlTemplate>
-
-                                            <Border Height="10" VerticalAlignment="Center"
+                                            <Border Height="8" VerticalAlignment="Center"
                                                     Background="Transparent"/>
                                         </ControlTemplate>
                                     </RepeatButton.Template>
@@ -228,18 +230,22 @@
             <Setter Property="Fill" Value="#a8c4fa"/>
         </Style>
 
-        <!-- ── ScrollBar: keep it minimal ────────────────────────────────── -->
+        <!-- ── ScrollBar ───────────────────────────────────────────────── -->
         <Style Selector="ScrollBar">
             <Setter Property="Opacity" Value="0.4"/>
         </Style>
 
-        <!-- ── ListBox / ListBoxItem ──────────────────────────────────────── -->
+        <!-- ── ListBox / ListBoxItem ───────────────────────────────────── -->
         <Style Selector="ListBoxItem">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Padding"    Value="0"/>
+            <Setter Property="Padding"    Value="6,4"/>
+            <Setter Property="CornerRadius" Value="4"/>
         </Style>
         <Style Selector="ListBoxItem:selected">
-            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Background" Value="{StaticResource AccentSoft}"/>
+        </Style>
+        <Style Selector="ListBoxItem:pointerover">
+            <Setter Property="Background" Value="{StaticResource Bg2}"/>
         </Style>
 
     </Application.Styles>

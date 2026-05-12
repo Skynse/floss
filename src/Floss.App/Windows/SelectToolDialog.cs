@@ -10,16 +10,10 @@ using Avalonia.Media;
 
 namespace Floss.App.Windows;
 
+using static Floss.App.AppColors;
+
 public sealed class SelectToolDialog : Window
 {
-    private const string Bg1 = "#13151a";
-    private const string Bg2 = "#1a1c22";
-    private const string Stroke = "#2b303b";
-    private const string TextPrimary = "#d7dde8";
-    private const string TextMuted = "#6f7888";
-    private const string AccentSoft = "#22355f";
-    private const string Accent = "#4878d8";
-
     public string? SelectedPresetId { get; private set; }
 
     private readonly Dictionary<Button, string> _presetButtons = [];

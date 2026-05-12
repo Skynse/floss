@@ -182,6 +182,7 @@ public sealed class PresetStore
             }
             catch (Exception ex)
             {
+                CrashLog.Write(ex, $"PresetStore.LoadAll ({id})");
                 Console.Error.WriteLine($"[Floss] Failed to deserialize brush preset '{id}': {ex.Message}");
             }
         }

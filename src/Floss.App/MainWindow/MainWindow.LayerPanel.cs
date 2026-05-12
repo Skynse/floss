@@ -16,6 +16,8 @@ using Avalonia.Controls.Templates;
 
 namespace Floss.App;
 
+using static Floss.App.AppColors;
+
 public partial class MainWindow
 {
 
@@ -677,19 +679,21 @@ public partial class MainWindow
 
     private async void LayerRowPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (sender is not Border row || row.Tag is not int index) return;
-        var point = e.GetCurrentPoint(row);
-        if (!point.Properties.IsLeftButtonPressed && !point.Properties.IsRightButtonPressed) return;
-        if (IsLayerRowInteractiveSource(e.Source)) return;
-
-        var isRightClick = point.Properties.IsRightButtonPressed;
-        var alreadySelected = _selectedLayerIndices.Contains(index);
-        if (isRightClick)
+        try
         {
-            // Right-click: update selection without clearing it, then let the
-            // context menu open. Do NOT start a drag.
-            if (!alreadySelected)
+            if (sender is not Border row || row.Tag is not int index) return;
+            var point = e.GetCurrentPoint(row);
+            if (!point.Properties.IsLeftButtonPressed && !point.Properties.IsRightButtonPressed) return;
+            if (IsLayerRowInteractiveSource(e.Source)) return;
+
+            var isRightClick = point.Properties.IsRightButtonPressed;
+            var alreadySelected = _selectedLayerIndices.Contains(index);
+            if (isRightClick)
             {
+                // Right-click: update selection without clearing it, then let the
+                // context menu open. Do NOT start a drag.
+                if (!alreadySelected)
+                {
                 _selectedLayerIndices.Add(index);
                 BuildLayerList();
             }
@@ -714,6 +718,8 @@ public partial class MainWindow
         data.Add(item);
         await DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
         _layerDragSourceIndex = -1;
+        }
+        catch (Exception ex) { CrashLog.Write(ex, "MainWindow.LayerRowPointerPressed"); }
     }
 
     private void WindowPointerPressed(object? sender, PointerPressedEventArgs e)

@@ -11,17 +11,10 @@ using Floss.App.Input;
 
 namespace Floss.App.Windows;
 
+using static Floss.App.AppColors;
+
 public sealed class ModifierKeySettingsWindow : Window
 {
-    private const string Bg1 = "#13151a";
-    private const string Bg2 = "#1a1c22";
-    private const string Stroke = "#2b303b";
-    private const string TextPrimary = "#d7dde8";
-    private const string TextSecondary = "#A0AAB4";
-    private const string TextMuted = "#6f7888";
-    private const string AccentSoft = "#22355f";
-    private const string Accent = "#4878d8";
-
     private static readonly (Avalonia.Input.Key? Key, KeyModifiers Mods)[] ModifierCombos =
     [
         (null, KeyModifiers.Shift),
@@ -446,8 +439,10 @@ public sealed class ModifierKeySettingsWindow : Window
         {
             var curAssignment = GetAssignment(key, mods, comboKey);
             var dlg = new SelectToolDialog(curAssignment?.TemporaryToolPresetId);
-            dlg.ShowDialog(this).ContinueWith(_ =>
+            dlg.ShowDialog(this).ContinueWith(t =>
             {
+                if (t.IsFaulted)
+                    CrashLog.Write(t.Exception!, "ModifierKeySettingsWindow.SelectToolDialog");
                 if (dlg.SelectedPresetId != null)
                 {
                     SetTemporaryToolPreset(key, mods, comboKey, dlg.SelectedPresetId);

@@ -15,6 +15,8 @@ using Floss.App.Document;
 
 namespace Floss.App;
 
+using static Floss.App.AppColors;
+
 public partial class MainWindow : Window
 {
     // ── Brush section ─────────────────────────────────────────────────────────
@@ -401,6 +403,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            CrashLog.Write(ex, "MainWindow.BrushLibrary.SubToolExport");
             _footerStatusText.Text = $"Sub tool export error: {ex.Message}";
         }
     }
@@ -886,7 +889,12 @@ public partial class MainWindow : Window
             var data = new DataTransfer();
             data.Add(item);
             _ = DragDrop.DoDragDropAsync(savedPress, data, DragDropEffects.Move)
-                .ContinueWith(_ => dragging = false);
+                .ContinueWith(t =>
+                {
+                    if (t.IsFaulted)
+                        CrashLog.Write(t.Exception!, "MainWindow.BrushLibrary.DragDrop");
+                    dragging = false;
+                });
         };
 
         row.PointerReleased += (_, _) => { pressEvent = null; dragging = false; };
@@ -1105,6 +1113,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            CrashLog.Write(ex, "MainWindow.BrushLibrary.ToolGroupExport");
             _footerStatusText.Text = $"Tool group export error: {ex.Message}";
         }
     }
@@ -1273,6 +1282,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            CrashLog.Write(ex, "MainWindow.BrushLibrary.SubToolImport");
             _footerStatusText.Text = $"Import error: {ex.Message}";
         }
     }
@@ -1330,6 +1340,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            CrashLog.Write(ex, "MainWindow.BrushLibrary.ToolGroupImport");
             _footerStatusText.Text = $"Import error: {ex.Message}";
         }
     }
@@ -1355,6 +1366,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            CrashLog.Write(ex, "MainWindow.BrushLibrary.ToolGroupExportCurrent");
             _footerStatusText.Text = $"Export error: {ex.Message}";
         }
     }
@@ -1792,7 +1804,7 @@ public partial class MainWindow : Window
             await using var stream = await file.OpenReadAsync();
             List<Brushes.BrushAsset> brushes;
             try { brushes = await System.Threading.Tasks.Task.Run(() => Brushes.AbrImporter.Import(stream, out lastDiag)); }
-            catch (Exception ex) { lastDiag = ex.Message; continue; }
+            catch (Exception ex) { CrashLog.Write(ex, "MainWindow.BrushLibrary.AbrImport"); continue; }
 
             var categoryName = Path.GetFileNameWithoutExtension(file.Name);
             var assetIds = new List<string>();

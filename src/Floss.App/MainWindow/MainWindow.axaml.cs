@@ -23,20 +23,11 @@ using Floss.App.Tools;
 
 namespace Floss.App;
 
+using static Floss.App.AppColors;
+
 public partial class MainWindow : Window, Tools.IViewportController
 {
     private const double ResetViewOutset = 80.0;
-
-    private const string Bg0 = "#0f0f10";
-    private const string Bg1 = "#161618";
-    private const string Bg2 = "#1e1e20";
-    private const string Bg3 = "#252527";
-    private const string Stroke = "#2e2e32";
-    private const string TextPrimary = "#dde1e8";
-    private const string TextSecondary = "#9ea8b4";
-    private const string TextMuted = "#5e6878";
-    private const string Accent = "#4878d8";
-    private const string AccentSoft = "#1e2e52";
 
     // ── Palette ───────────────────────────────────────────────────────────────
     // 10-column × 8-row palette: grays | red | orange | yellow | lime | green | teal | blue | purple | pink
@@ -383,6 +374,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         if (_canvas.IsTransformActive) { _canvas.CommitActiveTool(); }
         else
         {
+            PopTemporaryPreset();
             _canvas.BeginSelectionTransform(
                 _selectedLayerIndices.Count > 1 ? _selectedLayerIndices.ToList() : null);
         }

@@ -8,14 +8,10 @@ using static Floss.App.Brushes.BrushDynamics;
 
 namespace Floss.App;
 
+using static Floss.App.AppColors;
+
 public sealed class AngleDynamicsPopupWindow : Window
 {
-    private const string Bg1 = "#13151a";
-    private const string Bg2 = "#1a1c22";
-    private const string Stroke = "#2b303b";
-    private const string TextPrimary = "#d7dde8";
-    private const string TextMuted = "#6f7888";
-
     private readonly ComboBox _sourceCombo;
     private readonly Slider _randomSlider;
     private readonly TextBlock _randomVal;

@@ -3,5 +3,5 @@
         x:Class="Floss.App.MainWindow"
         Width="1600" Height="1050"
         MinWidth="1200" MinHeight="800"
-        Background="#101113"
+        Background="{StaticResource Bg0Brush}"
         Title="Floss"/>

@@ -149,14 +149,14 @@ public sealed class ShortcutsConfig
                 return JsonSerializer.Deserialize<ShortcutsConfig>(File.ReadAllText(path), JsonOpts) ?? new();
             }
         }
-        catch { }
+        catch (Exception ex) { CrashLog.Write(ex, "ShortcutsConfig.Load"); }
         return new();
     }
 
     public void Save()
     {
         try { File.WriteAllText(AppPaths.ShortcutsConfigPath, JsonSerializer.Serialize(this, JsonOpts)); }
-        catch { }
+        catch (Exception ex) { CrashLog.Write(ex, "ShortcutsConfig.Save"); }
     }
 
 }

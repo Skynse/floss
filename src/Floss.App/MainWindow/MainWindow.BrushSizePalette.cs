@@ -9,6 +9,8 @@ using Floss.App.Brushes;
 
 namespace Floss.App;
 
+using static Floss.App.AppColors;
+
 public partial class MainWindow
 {
     private const double SizePaletteItemSize = 27;

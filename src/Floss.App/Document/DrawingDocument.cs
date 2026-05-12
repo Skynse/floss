@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using Avalonia.Media;
 using Floss.App.Tools;
 
@@ -19,7 +20,15 @@ public sealed class DrawingDocument : IDisposable
         _undoIds.Clear();
         _redoIds.Clear();
         Selection.Clear();
+        TileLock.Dispose();
     }
+
+    // --- Render Thread Safety ---
+    // Protects tile pixel data from concurrent read (compositor) / write (brush worker).
+    // The compositor holds a READ lock during Composite/DrawTiles; the brush worker
+    // holds a WRITE lock while modifying pixels.  Without this, zooming during a
+    // stroke causes the compositor to read partially-written tiles → native crash.
+    public ReaderWriterLockSlim TileLock { get; } = new();
 
     // --- History & State Tracking ---
     private readonly Stack<IHistoryState> _undo = new();
@@ -76,9 +85,9 @@ public sealed class DrawingDocument : IDisposable
     public int CommittedStrokeCount { get; private set; }
     public bool CanUndo => _undo.Count > 0;
     public bool CanRedo => _redo.Count > 0;
-    public bool CanDeleteLayer => ActiveLayerIndex >= 0 && ActiveLayerIndex < _layers.Count && _layers.Count > 1 && (!ActiveLayer.IsLocked || ActiveLayer.IsPaper) && !ActiveLayer.IsGroup;
-    public bool CanPaintActiveLayer => ActiveLayerIndex >= 0 && ActiveLayerIndex < _layers.Count && !ActiveLayer.IsLocked && ActiveLayer.IsVisible && !ActiveLayer.IsGroup;
-    public bool CanModifyActiveLayer => ActiveLayerIndex >= 0 && ActiveLayerIndex < _layers.Count && !ActiveLayer.IsLocked && !ActiveLayer.IsGroup;
+    public bool CanDeleteLayer => ActiveLayer is { } al && _layers.Count > 1 && (!al.IsLocked || al.IsPaper) && !al.IsGroup;
+    public bool CanPaintActiveLayer => ActiveLayer is { IsLocked: false, IsVisible: true, IsGroup: false };
+    public bool CanModifyActiveLayer => ActiveLayer is { IsLocked: false, IsGroup: false };
     public bool IsDirty => _currentStateId != _savedStateId;
 
     // --- Save State Management ---

@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using Avalonia;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
@@ -30,6 +31,13 @@ public sealed class LayerCompositor : IDisposable
     private PixelRegion? _dirtyRegion;
     private readonly HashSet<(int X, int Y, int Lod)> _tilesToPrune = [];
     private readonly Dictionary<DrawingLayer, GroupProjectionCache> _groupCaches = new();
+
+    /// <summary>
+    /// Optional read lock held during Composite/DrawTiles to prevent races
+    /// with the brush worker thread (DirectDrawOutput) which holds a write
+    /// lock while modifying layer pixels.  Set by DrawingCanvas on startup.
+    /// </summary>
+    public ReaderWriterLockSlim? TileLock { get; set; }
 
     public void RemoveGroupCache(DrawingLayer group)
     {
@@ -94,7 +102,10 @@ public sealed class LayerCompositor : IDisposable
 
     public void DrawTiles(DrawingContext context, Rect target, PixelRegion? visibleViewport = null)
     {
-        foreach (var ((tx, ty, lod), bmp) in _compTiles)
+        TileLock?.EnterReadLock();
+        try
+        {
+            foreach (var ((tx, ty, lod), bmp) in _compTiles)
         {
             if (lod != _currentLod) continue;
             var stride = CmpTileSize;
@@ -117,6 +128,8 @@ public sealed class LayerCompositor : IDisposable
             var dest = new Rect(tileLeft, tileTop, docTileW, docTileH);
             context.DrawImage(bmp, src, dest);
         }
+        }
+        finally { TileLock?.ExitReadLock(); }
     }
 
     public void Invalidate(PixelRegion? region = null)
@@ -139,7 +152,10 @@ public sealed class LayerCompositor : IDisposable
 
     public unsafe void Composite(IReadOnlyList<DrawingLayer> layers, int width, int height, uint paperColor = 0, PixelRegion? viewport = null, double zoom = 1.0)
     {
-        SetSize(width, height);
+        TileLock?.EnterReadLock();
+        try
+        {
+            SetSize(width, height);
 
         // Skip paper layers — they're handled by ClearTile with paperColor.
         var rootLayers = new System.Collections.Generic.List<DrawingLayer>(layers.Count);
@@ -210,70 +226,32 @@ public sealed class LayerCompositor : IDisposable
                 }
         }
 
-        // Cap total tiles per frame to keep UI responsive. Panning at 15k can
-        // reveal 50+ missing tiles; compositing them all blocks the UI thread.
-        const int MaxTilesPerFrame = 32;
-        var hasMoreWork = false;
-        var totalTiles = tileKeys.Count + missingTileKeys.Count;
-        if (totalTiles > MaxTilesPerFrame)
+        // Only cap missing tiles (view-port navigation reveals more than we can
+        // composite per frame).  Dirty tiles represent actual pixel changes —
+        // capping them would leave stale cache tiles visible (e.g. transform commit).
+        const int MaxMissingTilesPerFrame = 32;
+        if (missingTileKeys.Count > MaxMissingTilesPerFrame)
         {
-            // Priority: dirty tiles first, then missing tiles closest to viewport center.
             var cx = viewportClip is { } vp ? vp.X + vp.Width / 2 : _width / 2;
             var cy = viewportClip is { } vp2 ? vp2.Y + vp2.Height / 2 : _height / 2;
-
-            // If we have more dirty tiles than the cap, sort and keep closest.
-            if (tileKeys.Count > MaxTilesPerFrame)
+            missingTileKeys.Sort((a, b) =>
             {
-                tileKeys.Sort((a, b) =>
-                {
-                    var da = Math.Abs(a.tx * stride + stride / 2 - cx) + Math.Abs(a.ty * stride + stride / 2 - cy);
-                    var db = Math.Abs(b.tx * stride + stride / 2 - cx) + Math.Abs(b.ty * stride + stride / 2 - cy);
-                    return da.CompareTo(db);
-                });
-                var remainingDirty = new System.Collections.Generic.List<(int tx, int ty)>(tileKeys.Count - MaxTilesPerFrame);
-                for (var i = MaxTilesPerFrame; i < tileKeys.Count; i++)
-                    remainingDirty.Add(tileKeys[i]);
-                tileKeys.RemoveRange(MaxTilesPerFrame, tileKeys.Count - MaxTilesPerFrame);
-                var nextDirty = PixelRegion.Empty;
-                foreach (var (tx, ty) in remainingDirty)
-                    nextDirty = nextDirty.Union(new PixelRegion(tx * stride, ty * stride, stride, stride));
-                _dirtyRegion = nextDirty;
-                hasMoreWork = true;
-            }
-            else if (missingTileKeys.Count > 0)
-            {
-                // Keep all dirty tiles, sort missing by distance and cap remainder.
-                var missingCap = MaxTilesPerFrame - tileKeys.Count;
-                missingTileKeys.Sort((a, b) =>
-                {
-                    var da = Math.Abs(a.tx * stride + stride / 2 - cx) + Math.Abs(a.ty * stride + stride / 2 - cy);
-                    var db = Math.Abs(b.tx * stride + stride / 2 - cx) + Math.Abs(b.ty * stride + stride / 2 - cy);
-                    return da.CompareTo(db);
-                });
-                var remainingMissing = new System.Collections.Generic.List<(int tx, int ty)>(missingTileKeys.Count - missingCap);
-                for (var i = missingCap; i < missingTileKeys.Count; i++)
-                    remainingMissing.Add(missingTileKeys[i]);
-                missingTileKeys.RemoveRange(missingCap, missingTileKeys.Count - missingCap);
-                // Missing tiles that weren't created this frame will be picked up next frame.
-                // No need to track them in _dirtyRegion — the viewport check finds them.
-            }
+                var da = Math.Abs(a.tx * stride + stride / 2 - cx) + Math.Abs(a.ty * stride + stride / 2 - cy);
+                var db = Math.Abs(b.tx * stride + stride / 2 - cx) + Math.Abs(b.ty * stride + stride / 2 - cy);
+                return da.CompareTo(db);
+            });
+            missingTileKeys.RemoveRange(MaxMissingTilesPerFrame, missingTileKeys.Count - MaxMissingTilesPerFrame);
         }
 
         if (tileKeys.Count == 0 && missingTileKeys.Count == 0)
         {
-            if (!hasMoreWork)
-            {
-                _fullDirty = false;
-                _dirtyRegion = null;
-            }
+            _fullDirty = false;
+            _dirtyRegion = null;
             return;
         }
 
-        if (!hasMoreWork)
-        {
-            _fullDirty = false;
-            _dirtyRegion = null;
-        }
+        _fullDirty = false;
+        _dirtyRegion = null;
 
         // Merge dirty + missing; build HashSet for O(1) lookup inside Parallel.ForEach.
         var allTileKeys = new System.Collections.Generic.List<(int tx, int ty)>(tileKeys.Count + missingTileKeys.Count);
@@ -302,6 +280,8 @@ public sealed class LayerCompositor : IDisposable
             _tilesToPrune.Add((tx, ty, lod));
 
         PruneTransparentTiles();
+        }
+        finally { TileLock?.ExitReadLock(); }
     }
 
     private WriteableBitmap EnsureTile(int tx, int ty, int lod)

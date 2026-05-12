@@ -15,6 +15,8 @@ using SkiaSharp;
 
 namespace Floss.App;
 
+using static Floss.App.AppColors;
+
 public partial class MainWindow
 {
     // ── Preview handle ────────────────────────────────────────────────────────

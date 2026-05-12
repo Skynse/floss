@@ -14,6 +14,8 @@ using Floss.App.Tools;
 
 namespace Floss.App;
 
+using static Floss.App.AppColors;
+
 public partial class MainWindow
 {
     // ── Viewport ──────────────────────────────────────────────────────────────
@@ -609,6 +611,12 @@ public partial class MainWindow
         if (focused is TextBox or ComboBox)
             return;
 
+        if (_recordingToolGroup != null)
+        {
+            HandleShortcutRecording(e);
+            return;
+        }
+
         var key = e.Key;
         var mods = Input.KeyBinding.ModifiersWithKeyDown(key, e.KeyModifiers);
         _canvas.SetCurrentModifiers(mods);
@@ -616,31 +624,17 @@ public partial class MainWindow
         if (!IsModifierKey(key))
             _heldBaseKeys.Add(key);
 
-        // Modifier key settings — view operations, tool aux, alternate tools, etc.
-        if (TryApplyModifierKeyAction(key, mods))
-        {
-            e.Handled = true;
-            return;
-        }
+        ReevaluateModifierState(mods);
+    }
 
-        // No specific-key match — re-evaluate modifier-only state (e.g. pressing Ctrl
-        // while Shift is held should deactivate the Shift → StraightLine action).
-        if (IsModifierKey(key))
-            EvaluateModifierKeyAction(mods);
-
-        // Tool group shortcut recording
-        if (_recordingToolGroup != null)
-        {
-            if (e.Key == Key.Escape) { CancelToolGroupShortcutRecording(); e.Handled = true; return; }
-            if (e.Key is Key.Back or Key.Delete) { CommitToolGroupShortcut(Input.KeyBinding.Empty); e.Handled = true; return; }
-            if (e.Key is Key.LeftCtrl or Key.RightCtrl or Key.LeftShift or Key.RightShift or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin) return;
-            CommitToolGroupShortcut(new Input.KeyBinding(e.Key, mods));
-            e.Handled = true;
-            return;
-        }
-
-
-
+    private void HandleShortcutRecording(KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape) { CancelToolGroupShortcutRecording(); e.Handled = true; return; }
+        if (e.Key is Key.Back or Key.Delete) { CommitToolGroupShortcut(Input.KeyBinding.Empty); e.Handled = true; return; }
+        if (e.Key is Key.LeftCtrl or Key.RightCtrl or Key.LeftShift or Key.RightShift or Key.LeftAlt or Key.RightAlt) return;
+        var mods = Input.KeyBinding.ModifiersWithKeyDown(e.Key, e.KeyModifiers);
+        CommitToolGroupShortcut(new Input.KeyBinding(e.Key, mods));
+        e.Handled = true;
     }
 
     private void OnKeyUp(object? sender, KeyEventArgs e)
@@ -648,9 +642,7 @@ public partial class MainWindow
         _heldBaseKeys.Remove(e.Key);
         var mods = Floss.App.Input.KeyBinding.ModifiersAfterKeyUp(e.Key, e.KeyModifiers);
         _canvas.SetCurrentModifiers(mods);
-
-        // Re-evaluate modifier key action on key-up
-        EvaluateModifierKeyAction(mods);
+        ReevaluateModifierState(mods);
     }
 
     private void ResetTransientInputState()
@@ -665,16 +657,33 @@ public partial class MainWindow
             _canvas.UnlockCursorPreview();
             _canvas.PaintInputSuspended = false;
         }
-        if (_canvas.IsAlternateActive || _hadAlternateBeforeBrushSize)
+        switch (_activeModifierAction)
         {
-            _canvas.SetAlternateActive(false);
-            _hadAlternateBeforeBrushSize = false;
+            case ModifierAction.ToolAux:
+                _canvas.SetToolAuxMode(Floss.App.Input.ToolAuxOperationType.None);
+                break;
+            case ModifierAction.ChangeToolTemporarily:
+                if (_temporaryPresetActive)
+                    PopTemporaryPreset();
+                else
+                    _canvas.SetAlternateActive(false);
+                break;
         }
+        _hadAlternateBeforeBrushSize = false;
+        _activeModifierAction = ModifierAction.None;
+        _activeModifierCombo = KeyModifiers.None;
+        _activeModifierKey = null;
         if (_workspaceViewport != null)
-        this.Cursor = null;
+            this.Cursor = null;
     }
 
-    private void EvaluateModifierKeyAction(KeyModifiers mods)
+    // Single source of truth for modifier key state.
+    // Resolution priority:
+    //   1. Key-specific (ExactKeyMatch) for any held base key + current mods
+    //   2. Modifier-only (AnyKeyMatch) for current mods — ONLY when no base keys are held,
+    //      so that shortcut keypresses (Ctrl+Z, Alt+[, etc.) never transiently activate
+    //      a modifier-only action.
+    private void ReevaluateModifierState(KeyModifiers mods)
     {
         var activePreset = _activeToolGroup?.ActivePreset;
         if (activePreset == null) return;
@@ -682,20 +691,32 @@ public partial class MainWindow
         var inputType = (int)activePreset.InputProcess;
         var outputType = (int)activePreset.OutputProcess;
 
-        ModifierKeyAssignment? assignment = App.ModifierKeys.Resolve(inputType, outputType, null, mods);
-        if (assignment == null)
+        ModifierKeyAssignment? assignment = null;
+
+        // Key-specific (ExactKeyMatch) assignments take priority.
+        // Resolve() tries both ExactKeyMatch and AnyKeyMatch internally; we only accept
+        // results that matched on the key itself (assignment.Key.HasValue), so that
+        // shortcut keypresses (e.g. Z while Ctrl held) don't pick up the modifier-only
+        // Ctrl→MoveLayer entry via AnyKeyMatch.
+        foreach (var heldKey in _heldBaseKeys)
         {
-            foreach (var heldKey in _heldBaseKeys)
-            {
-                assignment = App.ModifierKeys.Resolve(inputType, outputType, heldKey, mods);
-                if (assignment != null) break;
-            }
+            var a = App.ModifierKeys.Resolve(inputType, outputType, heldKey, mods);
+            if (a != null && a.Key.HasValue) { assignment = a; break; }
         }
 
-        if (assignment?.Modifiers == _activeModifierCombo && assignment?.Action == _activeModifierAction)
-            return;
+        // Modifier-only assignments only apply when no base key is held.
+        if (assignment == null && _heldBaseKeys.Count == 0)
+            assignment = App.ModifierKeys.Resolve(inputType, outputType, null, mods);
 
-        // Deactivate previous action
+        // Early-out if nothing changed.
+        bool unchanged = (assignment == null && _activeModifierAction == ModifierAction.None)
+                      || (assignment != null
+                          && assignment.Modifiers == _activeModifierCombo
+                          && assignment.Action == _activeModifierAction
+                          && assignment.Key == _activeModifierKey);
+        if (unchanged) return;
+
+        // Deactivate previous action.
         switch (_activeModifierAction)
         {
             case ModifierAction.ToolAux:
@@ -722,7 +743,7 @@ public partial class MainWindow
         _activeModifierCombo = assignment?.Modifiers ?? KeyModifiers.None;
         _activeModifierKey = assignment?.Key;
 
-        // Activate new action
+        // Activate new action.
         switch (assignment?.Action)
         {
             case ModifierAction.ToolAux:
@@ -734,87 +755,14 @@ public partial class MainWindow
                 else
                     _canvas.SetAlternateActive(true);
                 break;
-            case ModifierAction.ChangeBrushSize:
-                break;
         }
-    }
-
-    private bool TryApplyModifierKeyAction(Avalonia.Input.Key key, KeyModifiers mods)
-    {
-        var activePreset = _activeToolGroup?.ActivePreset;
-        if (activePreset == null) return false;
-
-        var inputType = (int)activePreset.InputProcess;
-        var outputType = (int)activePreset.OutputProcess;
-        var assignment = App.ModifierKeys.Resolve(inputType, outputType, key, mods);
-
-        if (assignment == null && IsModifierKey(key))
-        {
-            foreach (var heldKey in _heldBaseKeys)
-            {
-                assignment = App.ModifierKeys.Resolve(inputType, outputType, heldKey, mods);
-                if (assignment != null) break;
-            }
-        }
-
-        if (assignment == null) return false;
-
-        // Skip if already active with same combo
-        if (assignment.Modifiers == _activeModifierCombo && assignment.Action == _activeModifierAction && assignment.Key == _activeModifierKey)
-            return false;
-
-        // Deactivate previous
-        switch (_activeModifierAction)
-        {
-            case ModifierAction.ToolAux:
-                _canvas.SetToolAuxMode(Floss.App.Input.ToolAuxOperationType.None);
-                break;
-            case ModifierAction.ChangeToolTemporarily:
-                if (_temporaryPresetActive)
-                    PopTemporaryPreset();
-                else
-                    _canvas.SetAlternateActive(false);
-                break;
-            case ModifierAction.ChangeBrushSize:
-                if (_isBrushSizeActive)
-                {
-                    _isBrushSizeActive = false;
-                    FinishActiveToolSizeEdit();
-                    _canvas.UnlockCursorPreview();
-                    _canvas.PaintInputSuspended = false;
-                }
-                break;
-        }
-
-        _activeModifierAction = assignment.Action;
-        _activeModifierCombo = assignment.Modifiers;
-        _activeModifierKey = assignment.Key;
-
-        // Activate
-        switch (assignment.Action)
-        {
-            case ModifierAction.ToolAux:
-                _canvas.SetToolAuxMode(assignment.ToolAuxOper);
-                return true;
-            case ModifierAction.ChangeToolTemporarily:
-                if (!string.IsNullOrEmpty(assignment.TemporaryToolPresetId))
-                    PushTemporaryPreset(assignment.TemporaryToolPresetId);
-                else
-                    _canvas.SetAlternateActive(true);
-                return true;
-            case ModifierAction.ChangeBrushSize:
-                return true;
-        }
-
-        return false;
     }
 
     private static bool IsModifierKey(Avalonia.Input.Key key) => key switch
     {
         Avalonia.Input.Key.LeftShift or Avalonia.Input.Key.RightShift or
         Avalonia.Input.Key.LeftCtrl or Avalonia.Input.Key.RightCtrl or
-        Avalonia.Input.Key.LeftAlt or Avalonia.Input.Key.RightAlt or
-        Avalonia.Input.Key.Space => true,
+        Avalonia.Input.Key.LeftAlt or Avalonia.Input.Key.RightAlt => true,
         _ => false
     };
 

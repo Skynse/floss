@@ -25,7 +25,7 @@ public sealed class BrushPaletteConfig
                 return JsonSerializer.Deserialize<BrushPaletteConfig>(File.ReadAllText(path), JsonOpts)
                     ?? new BrushPaletteConfig();
         }
-        catch { }
+        catch (Exception ex) { CrashLog.Write(ex, "BrushPaletteConfig.Load"); }
         return new BrushPaletteConfig();
     }
 
@@ -36,7 +36,7 @@ public sealed class BrushPaletteConfig
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllText(path, JsonSerializer.Serialize(this, JsonOpts));
         }
-        catch { }
+        catch (Exception ex) { CrashLog.Write(ex, "BrushPaletteConfig.Save"); }
     }
 
     /// <summary>

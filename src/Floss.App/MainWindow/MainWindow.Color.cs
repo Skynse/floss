@@ -8,6 +8,8 @@ using Avalonia.Media;
 
 namespace Floss.App;
 
+using static Floss.App.AppColors;
+
 public partial class MainWindow
 {
     // ── Color section ─────────────────────────────────────────────────────────
