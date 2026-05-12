@@ -288,18 +288,18 @@ public partial class MainWindow : Window, Tools.IViewportController
         AddShortcut(s.FileSaveAs, () => _ = SaveDocumentAsAsync());
 
         // Edit
-        AddShortcut(s.Undo, () => _canvas.Undo());
-        AddShortcut(s.Redo, () => _canvas.Redo());
-        AddShortcut(s.RedoAlt, () => _canvas.Redo());
-        AddShortcut(s.Copy, () => _canvas.CopyToClipboard());
-        AddShortcut(s.Paste, () => _ = _canvas.PasteFromOSClipboardAsync());
-        AddShortcut(s.DeleteSelection, DeleteSelectionAction);
+        AddShortcut(s.Undo, () => _canvas.Undo(), () => _canvas.HasDocument);
+        AddShortcut(s.Redo, () => _canvas.Redo(), () => _canvas.HasDocument);
+        AddShortcut(s.RedoAlt, () => _canvas.Redo(), () => _canvas.HasDocument);
+        AddShortcut(s.Copy, () => _canvas.CopyToClipboard(), () => _canvas.HasDocument);
+        AddShortcut(s.Paste, () => _ = _canvas.PasteFromOSClipboardAsync(), () => _canvas.HasDocument);
+        AddShortcut(s.DeleteSelection, DeleteSelectionAction, () => _canvas.HasDocument);
 
         // View - flip
-        AddShortcut(s.FlipHorizontal, () => _canvas.FlipCanvas(horizontal: true));
-        AddShortcut(s.FlipVertical, () => _canvas.FlipCanvas(horizontal: false));
-        AddShortcut(s.MirrorHorizontal, MirrorHorizontalAction);
-        AddShortcut(s.MirrorVertical, MirrorVerticalAction);
+        AddShortcut(s.FlipHorizontal, () => _canvas.FlipCanvas(horizontal: true), () => _canvas.HasDocument);
+        AddShortcut(s.FlipVertical, () => _canvas.FlipCanvas(horizontal: false), () => _canvas.HasDocument);
+        AddShortcut(s.MirrorHorizontal, MirrorHorizontalAction, () => _canvas.HasDocument);
+        AddShortcut(s.MirrorVertical, MirrorVerticalAction, () => _canvas.HasDocument);
 
         // View - zoom
         AddShortcut(s.ZoomIn, () => SetZoom(_zoom * s.ZoomKeyFactor, null));
@@ -314,21 +314,21 @@ public partial class MainWindow : Window, Tools.IViewportController
         AddShortcut(s.RotateReset, () => SetRotation(0));
 
         // Image - rotate canvas
-        AddShortcut(s.RotateCanvas90Cw, RotateCanvas90CwAction);
-        AddShortcut(s.RotateCanvas90Ccw, RotateCanvas90CcwAction);
-        AddShortcut(s.RotateCanvas180, () => _canvas.RotateCanvas180());
+        AddShortcut(s.RotateCanvas90Cw, RotateCanvas90CwAction, () => _canvas.HasDocument);
+        AddShortcut(s.RotateCanvas90Ccw, RotateCanvas90CcwAction, () => _canvas.HasDocument);
+        AddShortcut(s.RotateCanvas180, () => _canvas.RotateCanvas180(), () => _canvas.HasDocument);
 
         // Selection
-        AddShortcut(s.SelectAll, () => _canvas.SelectAll());
-        AddShortcut(s.Deselect, () => _canvas.Deselect());
-        AddShortcut(s.InvertSelect, () => _canvas.InvertSelection());
-        AddShortcut(s.Transform, TransformAction);
+        AddShortcut(s.SelectAll, () => _canvas.SelectAll(), () => _canvas.HasDocument);
+        AddShortcut(s.Deselect, () => _canvas.Deselect(), () => _canvas.HasDocument);
+        AddShortcut(s.InvertSelect, () => _canvas.InvertSelection(), () => _canvas.HasDocument);
+        AddShortcut(s.Transform, TransformAction, () => _canvas.HasDocument);
 
         // Brush - size
-        AddShortcut(s.BrushSizeDecrease, () => NudgeBrushSize(-1, false));
-        AddShortcut(s.BrushSizeIncrease, () => NudgeBrushSize(1, false));
-        AddShortcut(s.BrushSizeDecreaseLarge, () => NudgeBrushSize(-1, true));
-        AddShortcut(s.BrushSizeIncreaseLarge, () => NudgeBrushSize(1, true));
+        AddShortcut(s.BrushSizeDecrease, () => NudgeBrushSize(-1, false), () => _canvas.HasDocument);
+        AddShortcut(s.BrushSizeIncrease, () => NudgeBrushSize(1, false), () => _canvas.HasDocument);
+        AddShortcut(s.BrushSizeDecreaseLarge, () => NudgeBrushSize(-1, true), () => _canvas.HasDocument);
+        AddShortcut(s.BrushSizeIncreaseLarge, () => NudgeBrushSize(1, true), () => _canvas.HasDocument);
 
         // Brush - opacity
         AddShortcut(s.BrushOpacityDecrease, () => { _opacitySlider.Value = Math.Max(_opacitySlider.Minimum, _opacitySlider.Value - s.BrushOpacityStep); });
@@ -339,23 +339,23 @@ public partial class MainWindow : Window, Tools.IViewportController
         AddShortcut(s.ColorDefault, () => SetColor(Color.Parse("#111111")));
 
         // Layers
-        AddShortcut(s.LayerNew, () => _canvas.AddLayer());
-        AddShortcut(s.LayerDuplicate, () => _canvas.DuplicateLayer());
-        AddShortcut(s.LayerDelete, () => _canvas.DeleteLayer());
-        AddShortcut(s.LayerMoveUp, () => _canvas.MoveActiveLayer(1));
-        AddShortcut(s.LayerMoveDown, () => _canvas.MoveActiveLayer(-1));
-        AddShortcut(s.LayerMerge, LayerMergeAction);
-        AddShortcut(s.LayerGroup, LayerGroupAction);
-        AddShortcut(s.LayerToggleColor, () => ToggleActiveLayerColor());
+        AddShortcut(s.LayerNew, () => _canvas.AddLayer(), () => _canvas.HasDocument);
+        AddShortcut(s.LayerDuplicate, () => _canvas.DuplicateLayer(), () => _canvas.HasDocument);
+        AddShortcut(s.LayerDelete, () => _canvas.DeleteLayer(), () => _canvas.HasDocument);
+        AddShortcut(s.LayerMoveUp, () => _canvas.MoveActiveLayer(1), () => _canvas.HasDocument);
+        AddShortcut(s.LayerMoveDown, () => _canvas.MoveActiveLayer(-1), () => _canvas.HasDocument);
+        AddShortcut(s.LayerMerge, LayerMergeAction, () => _canvas.HasDocument);
+        AddShortcut(s.LayerGroup, LayerGroupAction, () => _canvas.HasDocument);
+        AddShortcut(s.LayerToggleColor, () => ToggleActiveLayerColor(), () => _canvas.HasDocument);
 
         // Filters
-        AddShortcut(s.FilterBlur, () => _ = ApplyBlurFilter());
-        AddShortcut(s.FilterSharpen, () => _ = ApplySharpenFilter());
-        AddShortcut(s.FilterNoise, () => _ = ApplyNoiseFilter());
-        AddShortcut(s.FilterColorCurves, () => _ = ApplyColorCurvesFilter());
-        AddShortcut(s.FilterChromaticAberration, () => _ = ApplyChromaticAberrationFilter());
-        AddShortcut(s.FilterBaseColorMask, () => _ = RunBaseColorMaskGenerator());
-        AddShortcut(s.FilterRemoveDust, () => _ = ApplyRemoveDustFilter());
+        AddShortcut(s.FilterBlur, () => _ = ApplyBlurFilter(), () => _canvas.HasDocument);
+        AddShortcut(s.FilterSharpen, () => _ = ApplySharpenFilter(), () => _canvas.HasDocument);
+        AddShortcut(s.FilterNoise, () => _ = ApplyNoiseFilter(), () => _canvas.HasDocument);
+        AddShortcut(s.FilterColorCurves, () => _ = ApplyColorCurvesFilter(), () => _canvas.HasDocument);
+        AddShortcut(s.FilterChromaticAberration, () => _ = ApplyChromaticAberrationFilter(), () => _canvas.HasDocument);
+        AddShortcut(s.FilterBaseColorMask, () => _ = RunBaseColorMaskGenerator(), () => _canvas.HasDocument);
+        AddShortcut(s.FilterRemoveDust, () => _ = ApplyRemoveDustFilter(), () => _canvas.HasDocument);
 
         // Misc
         AddShortcut(s.OpenSettings, () => OpenSettings());
@@ -547,7 +547,7 @@ public partial class MainWindow : Window, Tools.IViewportController
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
-        _canvasFrame.PointerEntered += (_, _) => _canvasFrame.Cursor = new Cursor(StandardCursorType.None);
+        //_canvasFrame.PointerEntered += (_, _) => _canvasFrame.Cursor = new Cursor(StandardCursorType.None);
         _canvasFrame.PointerExited += (_, _) => _canvasFrame.Cursor = null;
 
         _workspaceViewport = new Grid

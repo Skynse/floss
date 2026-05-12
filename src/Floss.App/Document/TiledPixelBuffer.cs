@@ -6,7 +6,7 @@ using SkiaSharp;
 
 namespace Floss.App.Document;
 
-public sealed class TiledPixelBuffer
+public sealed class TiledPixelBuffer : IDisposable
 {
     public const int TileSize = 64;
     private const int BytesPerPixel = 4;
@@ -19,12 +19,25 @@ public sealed class TiledPixelBuffer
     // Cold compressed tiles — swapped out to reduce memory.
     private readonly Dictionary<(int X, int Y), byte[]> _compressed = [];
 
+    private readonly string _scratchDir;
+    private readonly object _lock = new();
+    private long _compressedBytes;
+    private bool _disposed;
+
     public TiledPixelBuffer(int width, int height)
     {
         MinX = 0;
         MinY = 0;
         MaxX = Math.Max(1, width);
         MaxY = Math.Max(1, height);
+        _scratchDir = TileSwapManager.RegisterBuffer(this);
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        TileSwapManager.UnregisterBuffer(this, _scratchDir);
     }
 
     public int Width => Math.Max(1, MaxX - MinX);
@@ -36,6 +49,39 @@ public sealed class TiledPixelBuffer
     public int MaxY { get; private set; }
 
     public int TileCount => _tiles.Count + _compressed.Count;
+
+    public bool HasCompressedTile(int tx, int ty)
+    {
+        lock (_lock)
+        {
+            return _compressed.ContainsKey((tx, ty));
+        }
+    }
+
+    public long TryEvictTileToDisk(int tx, int ty)
+    {
+        var key = (tx, ty);
+        byte[]? compressed;
+        lock (_lock)
+        {
+            if (!_compressed.TryGetValue(key, out compressed))
+                return 0;
+        }
+
+        if (!TileSwapManager.TrySwapToDisk(this, tx, ty, compressed, _scratchDir))
+            return 0;
+
+        lock (_lock)
+        {
+            if (_compressed.Remove(key))
+            {
+                _compressedBytes -= compressed.Length;
+                TileSwapManager.ReportCompressedBytes(-compressed.Length);
+                return compressed.Length;
+            }
+        }
+        return 0;
+    }
 
     public void Resize(int width, int height)
     {
@@ -59,30 +105,72 @@ public sealed class TiledPixelBuffer
 
     public void CompressTiles()
     {
-        if (_tiles.Count == 0) return;
+        List<((int X, int Y) Key, byte[] Tile)> toCompress;
+        lock (_lock)
+        {
+            if (_tiles.Count == 0) return;
+            toCompress = new List<((int X, int Y) Key, byte[] Tile)>(_tiles.Count);
+            foreach (var (key, tile) in _tiles)
+                toCompress.Add((key, tile));
+            _tiles.Clear();
+        }
 
-        var toCompress = new List<((int X, int Y) Key, byte[] Tile)>(_tiles.Count);
-        foreach (var (key, tile) in _tiles)
-            toCompress.Add((key, tile));
-        _tiles.Clear();
-
+        var compressedList = new List<((int X, int Y) Key, byte[] Data)>(toCompress.Count);
         foreach (var (key, tile) in toCompress)
         {
             var compressed = Deflate(tile);
-            _compressed[key] = compressed.Length < tile.Length ? compressed : tile;
+            var data = compressed.Length < tile.Length ? compressed : tile;
+            compressedList.Add((key, data));
+        }
+
+        long addedBytes = 0;
+        lock (_lock)
+        {
+            foreach (var (key, data) in compressedList)
+            {
+                if (_compressed.ContainsKey(key)) continue;
+                _compressed[key] = data;
+                addedBytes += data.Length;
+            }
+        }
+
+        if (addedBytes > 0)
+        {
+            TileSwapManager.ReportCompressedBytes(addedBytes);
+            TileSwapManager.EvictIfNeeded();
         }
     }
 
     private byte[] EnsureRaw((int X, int Y) key)
     {
-        if (_tiles.TryGetValue(key, out var raw))
-            return raw;
+        byte[]? raw;
+        lock (_lock)
+        {
+            if (_tiles.TryGetValue(key, out raw))
+                return raw;
 
-        if (!_compressed.Remove(key, out var compressed))
+            if (_compressed.TryGetValue(key, out var compressed))
+            {
+                raw = IsProbablyDeflated(compressed) ? Inflate(compressed) : compressed;
+                _tiles[key] = raw;
+                _compressed.Remove(key);
+                _compressedBytes -= compressed.Length;
+                TileSwapManager.ReportCompressedBytes(-compressed.Length);
+                return raw;
+            }
+        }
+
+        // Not in RAM — check scratch disk
+        var fromDisk = TileSwapManager.TryReadFromDisk(this, key.X, key.Y);
+        if (fromDisk == null)
             return null!;
 
-        raw = IsProbablyDeflated(compressed) ? Inflate(compressed) : compressed;
-        _tiles[key] = raw;
+        raw = IsProbablyDeflated(fromDisk) ? Inflate(fromDisk) : fromDisk;
+
+        lock (_lock)
+        {
+            _tiles[key] = raw;
+        }
         return raw;
     }
 
@@ -117,11 +205,14 @@ public sealed class TiledPixelBuffer
     public byte[]? GetTileOrNull(int tileX, int tileY)
     {
         var key = (tileX, tileY);
-        if (_tiles.TryGetValue(key, out var raw))
-            return raw;
-        if (_compressed.ContainsKey(key))
-            return EnsureRaw(key);
-        return null;
+        lock (_lock)
+        {
+            if (_tiles.TryGetValue(key, out var raw))
+                return raw;
+            if (!_compressed.ContainsKey(key))
+                return null;
+        }
+        return EnsureRaw(key);
     }
 
     public void PrimeTiles(PixelRegion region)
@@ -138,8 +229,13 @@ public sealed class TiledPixelBuffer
             for (var tx = firstTileX; tx <= lastTileX; tx++)
             {
                 var key = (tx, ty);
-                if (_tiles.ContainsKey(key)) continue;
-                if (_compressed.ContainsKey(key))
+                bool needsDecompress;
+                lock (_lock)
+                {
+                    if (_tiles.ContainsKey(key)) continue;
+                    needsDecompress = _compressed.ContainsKey(key);
+                }
+                if (needsDecompress)
                     EnsureRaw(key);
             }
         }
@@ -149,8 +245,11 @@ public sealed class TiledPixelBuffer
 
     public void Clear()
     {
-        _tiles.Clear();
-        _compressed.Clear();
+        lock (_lock)
+        {
+            _tiles.Clear();
+            _compressed.Clear();
+        }
     }
 
     public void Clear(PixelRegion region)
@@ -194,8 +293,11 @@ public sealed class TiledPixelBuffer
 
                 if (tileRegion.Width == TileSize && tileRegion.Height == TileSize)
                 {
-                    _tiles.Remove(key);
-                    _compressed[key] = fullTileTemplate;
+                    lock (_lock)
+                    {
+                        _tiles.Remove(key);
+                        _compressed[key] = fullTileTemplate;
+                    }
                     ExtendBounds(tx * TileSize, ty * TileSize, (tx + 1) * TileSize, (ty + 1) * TileSize);
                     continue;
                 }
@@ -204,8 +306,11 @@ public sealed class TiledPixelBuffer
                 if (raw == null)
                 {
                     raw = new byte[TileBytes];
-                    _tiles[key] = raw;
-                    _compressed.Remove(key);
+                    lock (_lock)
+                    {
+                        _tiles[key] = raw;
+                        _compressed.Remove(key);
+                    }
                     ExtendBounds(tx * TileSize, ty * TileSize, (tx + 1) * TileSize, (ty + 1) * TileSize);
                 }
 
@@ -328,8 +433,11 @@ public sealed class TiledPixelBuffer
         var key = (tileX, tileY);
         if (bytes == null || IsTransparent(bytes))
         {
-            _tiles.Remove(key);
-            _compressed.Remove(key);
+            lock (_lock)
+            {
+                _tiles.Remove(key);
+                _compressed.Remove(key);
+            }
             return;
         }
 
@@ -337,8 +445,11 @@ public sealed class TiledPixelBuffer
         if (raw == null || raw.Length != bytes.Length)
         {
             raw = new byte[bytes.Length];
-            _tiles[key] = raw;
-            _compressed.Remove(key);
+            lock (_lock)
+            {
+                _tiles[key] = raw;
+                _compressed.Remove(key);
+            }
             ExtendBounds(tileX * TileSize, tileY * TileSize, (tileX + 1) * TileSize, (tileY + 1) * TileSize);
         }
         Buffer.BlockCopy(bytes, 0, raw, 0, bytes.Length);
@@ -373,8 +484,11 @@ public sealed class TiledPixelBuffer
                     Buffer.BlockCopy(src, srcOffset, tile, dstOffset, tileW * BytesPerPixel);
                 }
 
-                _tiles[(tx, ty)] = tile;
-                _compressed.Remove((tx, ty));
+                lock (_lock)
+                {
+                    _tiles[(tx, ty)] = tile;
+                    _compressed.Remove((tx, ty));
+                }
             }
         }
     }
@@ -527,8 +641,11 @@ public sealed class TiledPixelBuffer
                 else { minX = Math.Min(minX, x); minY = Math.Min(minY, y); maxX = Math.Max(maxX, x + TileSize); maxY = Math.Max(maxY, y + TileSize); }
             }
 
-            foreach (var key in _tiles.Keys) Visit(key.X, key.Y);
-            foreach (var key in _compressed.Keys) Visit(key.X, key.Y);
+            lock (_lock)
+            {
+                foreach (var key in _tiles.Keys) Visit(key.X, key.Y);
+                foreach (var key in _compressed.Keys) Visit(key.X, key.Y);
+            }
 
             return new PixelRegion(minX, minY, maxX - minX, maxY - minY);
         }
@@ -567,14 +684,17 @@ public sealed class TiledPixelBuffer
         }
 
         // Decompress on demand for bounds check — this is cheap (called rarely).
-        foreach (var (key, tile) in _tiles)
-            CheckTile(key.X, key.Y, tile);
-        foreach (var (key, compressed) in _compressed)
+        lock (_lock)
         {
-            var raw = IsProbablyDeflated(compressed) ? Inflate(compressed) : compressed;
-            CheckTile(key.X, key.Y, raw);
-            _tiles[key] = raw;
-            _compressed.Remove(key);
+            foreach (var (key, tile) in _tiles)
+                CheckTile(key.X, key.Y, tile);
+            foreach (var (key, compressed) in _compressed)
+            {
+                var raw = IsProbablyDeflated(compressed) ? Inflate(compressed) : compressed;
+                CheckTile(key.X, key.Y, raw);
+                _tiles[key] = raw;
+                _compressed.Remove(key);
+            }
         }
 
         return found ? new PixelRegion(minX, minY, maxX - minX + 1, maxY - minY + 1) : PixelRegion.Empty;
@@ -594,8 +714,11 @@ public sealed class TiledPixelBuffer
             for (var tx = firstTileX; tx <= lastTileX; tx++)
             {
                 var key = (tx, ty);
-                if (_tiles.ContainsKey(key) || _compressed.ContainsKey(key))
-                    return true;
+                lock (_lock)
+                {
+                    if (_tiles.ContainsKey(key) || _compressed.ContainsKey(key))
+                        return true;
+                }
             }
         }
 
@@ -609,15 +732,26 @@ public sealed class TiledPixelBuffer
         if (opacity <= 0) return;
         int opInt = (int)(opacity * 255 + 0.5);
 
-        foreach (var ((tx, ty), tile) in _tiles)
+        List<((int tx, int ty), byte[] tile)> tiles;
+        List<((int tx, int ty), byte[] compressed)> compressed;
+        lock (_lock)
+        {
+            tiles = new List<((int tx, int ty), byte[] tile)>(_tiles.Count);
+            foreach (var ((tx, ty), tile) in _tiles)
+                tiles.Add(((tx, ty), tile));
+
+            compressed = new List<((int tx, int ty), byte[] compressed)>(_compressed.Count);
+            foreach (var ((tx, ty), c) in _compressed)
+                compressed.Add(((tx, ty), c));
+        }
+
+        foreach (var ((tx, ty), tile) in tiles)
             BlendTileOnto(tx, ty, tile, dst, dstWidth, dstHeight, opInt);
 
-        foreach (var ((tx, ty), compressed) in _compressed)
+        foreach (var ((tx, ty), c) in compressed)
         {
-            var raw = IsProbablyDeflated(compressed) ? Inflate(compressed) : compressed;
+            var raw = IsProbablyDeflated(c) ? Inflate(c) : c;
             BlendTileOnto(tx, ty, raw, dst, dstWidth, dstHeight, opInt);
-            _tiles[(tx, ty)] = raw;
-            _compressed.Remove((tx, ty));
         }
     }
 
@@ -656,28 +790,32 @@ public sealed class TiledPixelBuffer
     {
         var total = TileCount;
         var result = new Dictionary<(int X, int Y), byte[]>(total);
-        foreach (var (key, tile) in _tiles)
+        lock (_lock)
         {
-            var copy = new byte[tile.Length];
-            Buffer.BlockCopy(tile, 0, copy, 0, tile.Length);
-            result[key] = copy;
-        }
-        foreach (var (key, compressed) in _compressed)
-        {
-            var raw = IsProbablyDeflated(compressed) ? Inflate(compressed) : compressed;
-            var copy = new byte[raw.Length];
-            Buffer.BlockCopy(raw, 0, copy, 0, raw.Length);
-            result[key] = copy;
-            _tiles[key] = raw;
-            _compressed.Remove(key);
+            foreach (var (key, tile) in _tiles)
+            {
+                var copy = new byte[tile.Length];
+                Buffer.BlockCopy(tile, 0, copy, 0, tile.Length);
+                result[key] = copy;
+            }
+            foreach (var (key, compressed) in _compressed)
+            {
+                var raw = IsProbablyDeflated(compressed) ? Inflate(compressed) : compressed;
+                var copy = new byte[raw.Length];
+                Buffer.BlockCopy(raw, 0, copy, 0, raw.Length);
+                result[key] = copy;
+            }
         }
         return result;
     }
 
     public void RestoreTiles(Dictionary<(int X, int Y), byte[]> tiles)
     {
-        _tiles.Clear();
-        _compressed.Clear();
+        lock (_lock)
+        {
+            _tiles.Clear();
+            _compressed.Clear();
+        }
 
         int? minX = null, minY = null, maxX = null, maxY = null;
 
@@ -685,7 +823,10 @@ public sealed class TiledPixelBuffer
         {
             var copy = new byte[tile.Length];
             Buffer.BlockCopy(tile, 0, copy, 0, tile.Length);
-            _tiles[key] = copy;
+            lock (_lock)
+            {
+                _tiles[key] = copy;
+            }
 
             var x = key.X * TileSize;
             var y = key.Y * TileSize;
@@ -713,8 +854,11 @@ public sealed class TiledPixelBuffer
         if (raw != null) return raw;
 
         raw = new byte[TileBytes];
-        _tiles.Add(key, raw);
-        _compressed.Remove(key);
+        lock (_lock)
+        {
+            _tiles[key] = raw;
+            _compressed.Remove(key);
+        }
         ExtendBounds(key.X * TileSize, key.Y * TileSize, key.X * TileSize + TileSize, key.Y * TileSize + TileSize);
         return raw;
     }
@@ -736,8 +880,11 @@ public sealed class TiledPixelBuffer
                 {
                     if (!create) continue;
                     raw = new byte[TileBytes];
-                    _tiles.Add(key, raw);
-                    _compressed.Remove(key);
+                    lock (_lock)
+                    {
+                        _tiles[key] = raw;
+                        _compressed.Remove(key);
+                    }
                     ExtendBounds(tx * TileSize, ty * TileSize, (tx + 1) * TileSize, (ty + 1) * TileSize);
                 }
 
@@ -759,17 +906,20 @@ public sealed class TiledPixelBuffer
             for (var tx = firstTileX; tx <= lastTileX; tx++)
             {
                 var key = (tx, ty);
-                if (_tiles.TryGetValue(key, out var raw) && IsTransparent(raw))
-                    _tiles.Remove(key);
-                else if (_compressed.TryGetValue(key, out var compressed))
+                lock (_lock)
                 {
-                    var decomp = IsProbablyDeflated(compressed) ? Inflate(compressed) : compressed;
-                    if (IsTransparent(decomp))
-                        _compressed.Remove(key);
-                    else
+                    if (_tiles.TryGetValue(key, out var raw) && IsTransparent(raw))
+                        _tiles.Remove(key);
+                    else if (_compressed.TryGetValue(key, out var compressed))
                     {
-                        _tiles[key] = decomp;
-                        _compressed.Remove(key);
+                        var decomp = IsProbablyDeflated(compressed) ? Inflate(compressed) : compressed;
+                        if (IsTransparent(decomp))
+                            _compressed.Remove(key);
+                        else
+                        {
+                            _tiles[key] = decomp;
+                            _compressed.Remove(key);
+                        }
                     }
                 }
             }

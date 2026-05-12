@@ -1,4 +1,8 @@
 using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Avalonia.Threading;
 using Floss.App.Brushes;
 using Floss.App.Document;
 using Floss.App.Input;
@@ -7,7 +11,7 @@ using Floss.App.Tools;
 namespace Floss.App.Processes.Output;
 
 // Paints a stroke onto the active layer using the brush engine.
-// Supports incremental application for real-time preview during drag.
+// Rasterization runs on a background thread so the UI stays responsive during strokes.
 public sealed class DirectDrawOutput : IOutputProcess
 {
     public bool IsPaintOutput => true;
@@ -17,10 +21,26 @@ public sealed class DirectDrawOutput : IOutputProcess
 
     // Incremental stroke state
     private int _lastProcessedIndex = -1;
-    private System.Collections.Generic.Dictionary<(int, int), byte[]?>? _beforeTiles;
-    private PixelRegion _dirtyRegion;        // per-preview dirty (reset after notify)
+    private Dictionary<(int, int), byte[]?>? _beforeTiles;
+    private PixelRegion _dirtyRegion;
     private DrawingLayer? _currentLayer;
     private bool _strokeActive;
+
+    // Background worker
+    private readonly object _queueLock = new();
+    private readonly List<SegmentWork> _segmentQueue = [];
+    private Task? _workerTask;
+    private CancellationTokenSource? _workerCts;
+    private ToolContext? _currentCtx;
+
+    private sealed class SegmentWork
+    {
+        public required DrawingLayer Layer { get; init; }
+        public required BrushPreset Brush { get; init; }
+        public required SelectionMask Selection { get; init; }
+        public required CanvasInputSample From { get; init; }
+        public required CanvasInputSample To { get; init; }
+    }
 
     public DirectDrawOutput(BrushEngine brushEngine, DrawingDocument _)
     {
@@ -43,35 +63,31 @@ public sealed class DirectDrawOutput : IOutputProcess
         {
             _strokeActive = true;
             _lastProcessedIndex = -1;
-            _beforeTiles = new System.Collections.Generic.Dictionary<(int, int), byte[]?>();
+            _beforeTiles = new Dictionary<(int, int), byte[]?>();
             _dirtyRegion = PixelRegion.Empty;
             _currentLayer = layer;
+            _currentCtx = ctx;
             _brushEngine.BeginStroke(brush, ToLayerSample(layer, samples[0]));
 
-            // Initial dab for mouse/touch
+            // Initial dab for mouse/touch — queue it for background processing
             if (samples[0].Source is CanvasInputSource.Mouse or CanvasInputSource.Unknown)
             {
-                ApplyDab(layer, brush, selection, samples[0], velocity: 0);
+                QueueSegment(layer, brush, selection, ToLayerSample(layer, samples[0]), ToLayerSample(layer, samples[0]));
                 _lastProcessedIndex = 0;
             }
         }
 
-        // Process any new samples since last preview
+        // Queue any new segments since last preview
         var startIdx = Math.Max(1, _lastProcessedIndex + 1);
         for (int i = startIdx; i < samples.Count; i++)
         {
             var from = ToLayerSample(layer, samples[i - 1]);
             var to = ToLayerSample(layer, samples[i]);
-            ApplySegment(layer, brush, selection, from, to);
+            QueueSegment(layer, brush, selection, from, to);
             _lastProcessedIndex = i;
         }
 
-        if (!_dirtyRegion.IsEmpty)
-        {
-            layer.MarkThumbnailDirty();
-            ctx.Document.NotifyChanged(_dirtyRegion, ctx.ActiveLayerIndex);
-            _dirtyRegion = PixelRegion.Empty; // Reset after notifying
-        }
+        EnsureWorkerRunning();
     }
 
     public void Execute(ToolContext ctx, IProcessedInput input)
@@ -89,8 +105,11 @@ public sealed class DirectDrawOutput : IOutputProcess
             return;
         }
 
-        // Ensure all samples are processed
+        // Ensure all samples are processed before committing
         Preview(ctx, input);
+
+        // Wait for background worker to finish all queued segments
+        _workerTask?.Wait();
 
         _brushEngine.EndStroke();
 
@@ -109,51 +128,138 @@ public sealed class DirectDrawOutput : IOutputProcess
         Cleanup();
     }
 
-    private void ApplyDab(DrawingLayer layer, BrushPreset brush, SelectionMask selection, CanvasInputSample sample, double velocity)
+    private void QueueSegment(DrawingLayer layer, BrushPreset brush, SelectionMask selection, CanvasInputSample from, CanvasInputSample to)
     {
-        var localSample = ToLayerSample(layer, sample);
-        var region = _brushEngine.EstimateDabRegion(layer, brush, localSample);
-        if (region.IsEmpty) return;
-
-        CaptureBeforeTiles(layer, region);
-        var dirty = _brushEngine.RasterizeDab(layer, brush, localSample, velocity, ReadBeforeStrokePixel);
-        if (!dirty.IsEmpty)
+        lock (_queueLock)
         {
-            RestoreUnselectedPixels(layer, dirty, selection);
-            _dirtyRegion = _dirtyRegion.Union(dirty.Translate(layer.OffsetX, layer.OffsetY));
+            _segmentQueue.Add(new SegmentWork
+            {
+                Layer = layer,
+                Brush = brush,
+                Selection = selection,
+                From = from,
+                To = to
+            });
         }
     }
 
-    private void ApplySegment(DrawingLayer layer, BrushPreset brush, SelectionMask selection, CanvasInputSample from, CanvasInputSample to)
+    private void EnsureWorkerRunning()
     {
-        var region = _brushEngine.EstimateSegmentRegion(layer, brush, from, to);
-        if (region.IsEmpty) return;
+        if (_workerTask != null && !_workerTask.IsCompleted) return;
 
-        CaptureBeforeTiles(layer, region);
-        var dirty = _brushEngine.RasterizeSegment(layer, brush, from, to, ReadBeforeStrokePixel);
-        if (!dirty.IsEmpty)
+        _workerCts = new CancellationTokenSource();
+        _workerTask = Task.Run(() => WorkerLoop(_workerCts.Token));
+    }
+
+    private void WorkerLoop(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
         {
-            RestoreUnselectedPixels(layer, dirty, selection);
-            _dirtyRegion = _dirtyRegion.Union(dirty.Translate(layer.OffsetX, layer.OffsetY));
+            SegmentWork? work;
+            lock (_queueLock)
+            {
+                if (_segmentQueue.Count == 0) break;
+                work = _segmentQueue[0];
+                _segmentQueue.RemoveAt(0);
+            }
+
+            if (work == null) continue;
+
+            // Capture shared state locally to avoid races with Cancel()/Cleanup()
+            var beforeTiles = _beforeTiles;
+            var ctx = _currentCtx;
+
+            // Capture before-tiles for this segment's region
+            var region = _brushEngine.EstimateSegmentRegion(work.Layer, work.Brush, work.From, work.To);
+            if (!region.IsEmpty && beforeTiles != null)
+            {
+                work.Layer.CaptureTiles(region, beforeTiles);
+            }
+
+            // Rasterize on background thread
+            var dirty = _brushEngine.RasterizeSegment(work.Layer, work.Brush, work.From, work.To,
+                (x, y, out b, out g, out r, out a) => ReadBeforeStrokePixelFrom(beforeTiles, work.Layer, x, y, out b, out g, out r, out a));
+
+            if (!dirty.IsEmpty)
+            {
+                if (beforeTiles != null)
+                    RestoreUnselectedPixels(work.Layer, dirty, work.Selection, beforeTiles);
+
+                // Accumulate dirty region (thread-safe via lock)
+                var translatedDirty = dirty.Translate(work.Layer.OffsetX, work.Layer.OffsetY);
+                lock (_queueLock)
+                {
+                    _dirtyRegion = _dirtyRegion.Union(translatedDirty);
+                }
+
+                // Post invalidate to UI thread
+                if (ctx != null)
+                {
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        work.Layer.MarkThumbnailDirty();
+                        ctx.Document.NotifyChanged(translatedDirty, ctx.ActiveLayerIndex);
+                        ctx.InvalidateRender();
+                    });
+                }
+            }
         }
+    }
+
+    private static void ReadBeforeStrokePixelFrom(Dictionary<(int, int), byte[]?>? beforeTiles, DrawingLayer? currentLayer, int x, int y, out byte b, out byte g, out byte r, out byte a)
+    {
+        if (beforeTiles == null)
+        {
+            if (currentLayer != null)
+                currentLayer.Pixels.GetPixel(x, y, out b, out g, out r, out a);
+            else
+                b = g = r = a = 0;
+            return;
+        }
+
+        const int ts = TiledPixelBuffer.TileSize;
+        var tx = FloorDiv(x, ts);
+        var ty = FloorDiv(y, ts);
+        if (!beforeTiles.TryGetValue((tx, ty), out var tile) || tile == null)
+        {
+            b = g = r = a = 0;
+            return;
+        }
+
+        var lx = x - tx * ts;
+        var ly = y - ty * ts;
+        var offset = (ly * ts + lx) * 4;
+        b = tile[offset];
+        g = tile[offset + 1];
+        r = tile[offset + 2];
+        a = tile[offset + 3];
     }
 
     private void Cleanup()
     {
+        _workerCts?.Cancel();
+        _workerCts = null;
+        _workerTask = null;
         _strokeActive = false;
         _lastProcessedIndex = -1;
         _beforeTiles = null;
         _dirtyRegion = PixelRegion.Empty;
         _currentLayer = null;
+        _currentCtx = null;
+        lock (_queueLock)
+        {
+            _segmentQueue.Clear();
+        }
     }
 
     public void Cancel()
     {
+        _workerCts?.Cancel();
         _brushEngine.EndStroke();
         Cleanup();
     }
 
-    private static PixelRegion ComputeTileDirtyRegion(System.Collections.Generic.Dictionary<(int, int), byte[]?> tiles)
+    private static PixelRegion ComputeTileDirtyRegion(Dictionary<(int, int), byte[]?> tiles)
     {
         if (tiles.Count == 0) return PixelRegion.Empty;
         const int ts = TiledPixelBuffer.TileSize;
@@ -172,48 +278,12 @@ public sealed class DirectDrawOutput : IOutputProcess
     private static CanvasInputSample ToLayerSample(DrawingLayer layer, CanvasInputSample s)
         => s.WithPosition(s.X - layer.OffsetX, s.Y - layer.OffsetY, s.Pressure, s.TimeMicros);
 
-    private void CaptureBeforeTiles(DrawingLayer layer, PixelRegion region)
-    {
-        if (_beforeTiles == null) return;
-        layer.CaptureTiles(region, _beforeTiles);
-    }
-
-    private void ReadBeforeStrokePixel(int x, int y, out byte b, out byte g, out byte r, out byte a)
-    {
-        if (_beforeTiles == null)
-        {
-            if (_currentLayer != null)
-                _currentLayer.Pixels.GetPixel(x, y, out b, out g, out r, out a);
-            else
-                b = g = r = a = 0;
-            return;
-        }
-
-        const int ts = TiledPixelBuffer.TileSize;
-        var tx = FloorDiv(x, ts);
-        var ty = FloorDiv(y, ts);
-        if (!_beforeTiles.TryGetValue((tx, ty), out var tile) || tile == null)
-        {
-            b = g = r = a = 0;
-            return;
-        }
-
-        var lx = x - tx * ts;
-        var ly = y - ty * ts;
-        var offset = (ly * ts + lx) * 4;
-        b = tile[offset];
-        g = tile[offset + 1];
-        r = tile[offset + 2];
-        a = tile[offset + 3];
-    }
-
     private static int FloorDiv(int value, int divisor)
         => (int)Math.Floor(value / (double)divisor);
 
-    private void RestoreUnselectedPixels(DrawingLayer layer, PixelRegion dirty, SelectionMask selection)
+    private void RestoreUnselectedPixels(DrawingLayer layer, PixelRegion dirty, SelectionMask selection, Dictionary<(int, int), byte[]?> beforeTiles)
     {
-        if (_beforeTiles == null) return;
-
+        if (beforeTiles == null) return;
         if (dirty.IsEmpty) return;
 
         bool hasSelection = selection.HasSelection;
@@ -230,7 +300,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         {
             for (int tx = firstTileX; tx <= lastTileX; tx++)
             {
-                _beforeTiles.TryGetValue((tx, ty), out var beforeTile);
+                beforeTiles.TryGetValue((tx, ty), out var beforeTile);
                 if (alphaLocked && beforeTile != null && IsTileAllZero(beforeTile))
                     continue;
 

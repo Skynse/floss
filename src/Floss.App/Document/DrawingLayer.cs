@@ -52,6 +52,7 @@ public sealed class DrawingLayer : IDisposable
     public void Dispose()
     {
         _thumbnail?.Dispose();
+        Pixels?.Dispose();
     }
 
     public WriteableBitmap GetThumbnail(int size)

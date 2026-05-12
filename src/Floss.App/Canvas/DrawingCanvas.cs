@@ -163,6 +163,7 @@ public sealed class DrawingCanvas : Control, IDisposable
     public SelectionMask Selection => _ctx.Selection;
     public bool IsDirty => _document.IsDirty;
     public bool HasSavedBrushSettings(ToolPresetEngine engine) => _toolController.HasSavedSettings(engine);
+    public bool HasDocument => _document.Layers.Count > 0;
 
     public bool PaintInputSuspended { get; set; }
     public double CanvasZoom { get; set; } = 1.0;
@@ -1079,6 +1080,17 @@ public sealed class DrawingCanvas : Control, IDisposable
             }))
             {
                 _compositor.DrawTiles(context, target, viewport);
+            }
+        }
+        else
+        {
+            // Empty document — draw paper color so the canvas isn't transparent
+            var c = _document.PaperColor;
+            if (c.A > 0)
+            {
+                var target = new Rect(Bounds.Size);
+                using (context.PushClip(new RoundedRect(target)))
+                    context.DrawRectangle(new SolidColorBrush(c), null, target);
             }
         }
 

@@ -241,7 +241,7 @@ public partial class MainWindow
     {
         var picker = new ColorPickerWindow(_canvas.Document.PaperColor, color =>
         {
-            _canvas.Document.PaperColor = color;
+            _canvas.Document.SetPaperColor(color);
             var paper = _canvas.Document.PaperLayer;
             if (paper != null)
                 paper.FillSolid(paper.Pixels.Bounds, color);

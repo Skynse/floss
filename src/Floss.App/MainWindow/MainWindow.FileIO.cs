@@ -74,6 +74,7 @@ public partial class MainWindow
     {
         // Reuse the current tab only if it has never had a document loaded into it.
         bool reuseCurrentTab = _activeTab != null && !_activeTab.HasDocument;
+        DocumentTab? createdTab = null;
 
         if (!reuseCurrentTab)
         {
@@ -89,12 +90,18 @@ public partial class MainWindow
                 }
             }
 
-            await NewTabAsync();
+            createdTab = await NewTabAsync();
         }
 
         // 2. Show the New Document Wizard
         var result = await new NewDocumentDialog().ShowDialog<DocumentSettings?>(this);
-        if (result == null) return; // User canceled the wizard
+        if (result == null)
+        {
+            // User canceled — close the empty tab we just created
+            if (createdTab != null)
+                _ = CloseTabAsync(createdTab);
+            return;
+        }
 
         // 3. Create the new document
         var newDoc = new DrawingDocument(result.Width, result.Height);
@@ -108,17 +115,14 @@ public partial class MainWindow
             paperLayer.IsLocked = true;
             paperLayer.IsPaper = true;
             paperLayer.FillSolid(paperLayer.Pixels.Bounds, bgColor);
-            newDoc.InsertLayerNear(paperLayer, newDoc.Layers[0], LayerDropPlacement.Below);
+            newDoc.AppendLayerForImport(paperLayer);
             newDoc.PaperLayer = paperLayer;
+
+            newDoc.AddLayer();
 
         }
 
-        // Activate the drawing layer (not the paper).
-        var drawingLayerIndex = 0;
-        for (var i = 0; i < newDoc.Layers.Count; i++)
-            if (!newDoc.Layers[i].IsPaper && !newDoc.Layers[i].IsGroup)
-            { drawingLayerIndex = i; break; }
-        newDoc.SelectLayer(drawingLayerIndex);
+
 
         // 4. Swap it in and reset session state
         _canvas.Document.ReplaceWith(newDoc);

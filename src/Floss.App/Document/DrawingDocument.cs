@@ -38,8 +38,7 @@ public sealed class DrawingDocument : IDisposable
         Width = width;
         Height = height;
         Selection.Resize(width, height);
-        _layers.Add(new DrawingLayer("Layer 1", width, height));
-        ActiveLayerIndex = 0;
+        ActiveLayerIndex = -1;
     }
 
     // --- Events ---
@@ -54,7 +53,16 @@ public sealed class DrawingDocument : IDisposable
     // --- Properties ---
     public int Width { get; private set; }
     public int Height { get; private set; }
-    public Avalonia.Media.Color PaperColor { get; set; } = new(255, 255, 255, 255); // opaque white by default
+    public Avalonia.Media.Color PaperColor { get; internal set; } = new(255, 255, 255, 255); // opaque white by default
+
+    public void SetPaperColor(Avalonia.Media.Color color)
+    {
+        if (color == PaperColor) return;
+        var oldColor = PaperColor;
+        PushHistoryState(new DocumentPropertyHistoryState<Avalonia.Media.Color>(oldColor, color, v => PaperColor = v));
+        PaperColor = color;
+        DirtyStateChanged?.Invoke(this, EventArgs.Empty);
+    }
     public DrawingLayer? PaperLayer { get; internal set; }
 
     internal void SwapDimensions()
@@ -63,14 +71,14 @@ public sealed class DrawingDocument : IDisposable
     }
     public IReadOnlyList<DrawingLayer> Layers => _layers;
     public int ActiveLayerIndex { get; private set; }
-    public DrawingLayer ActiveLayer => _layers[ActiveLayerIndex];
+    public DrawingLayer? ActiveLayer => ActiveLayerIndex >= 0 && ActiveLayerIndex < _layers.Count ? _layers[ActiveLayerIndex] : null;
     public SelectionMask Selection { get; } = new();
     public int CommittedStrokeCount { get; private set; }
     public bool CanUndo => _undo.Count > 0;
     public bool CanRedo => _redo.Count > 0;
-    public bool CanDeleteLayer => _layers.Count > 1 && (!ActiveLayer.IsLocked || ActiveLayer.IsPaper) && !ActiveLayer.IsGroup;
-    public bool CanPaintActiveLayer => !ActiveLayer.IsLocked && ActiveLayer.IsVisible && !ActiveLayer.IsGroup;
-    public bool CanModifyActiveLayer => !ActiveLayer.IsLocked && !ActiveLayer.IsGroup;
+    public bool CanDeleteLayer => ActiveLayerIndex >= 0 && ActiveLayerIndex < _layers.Count && _layers.Count > 1 && (!ActiveLayer.IsLocked || ActiveLayer.IsPaper) && !ActiveLayer.IsGroup;
+    public bool CanPaintActiveLayer => ActiveLayerIndex >= 0 && ActiveLayerIndex < _layers.Count && !ActiveLayer.IsLocked && ActiveLayer.IsVisible && !ActiveLayer.IsGroup;
+    public bool CanModifyActiveLayer => ActiveLayerIndex >= 0 && ActiveLayerIndex < _layers.Count && !ActiveLayer.IsLocked && !ActiveLayer.IsGroup;
     public bool IsDirty => _currentStateId != _savedStateId;
 
     // --- Save State Management ---
@@ -158,7 +166,7 @@ public sealed class DrawingDocument : IDisposable
 
         PaperLayer = _layers.FirstOrDefault(l => l.IsPaper);
 
-        ActiveLayerIndex = Math.Clamp(ActiveLayerIndex, 0, _layers.Count - 1);
+        ActiveLayerIndex = _layers.Count > 0 ? Math.Clamp(ActiveLayerIndex, 0, _layers.Count - 1) : -1;
         NotifyLayersChanged();
         NotifySelectionChanged();
         NotifyChanged();
@@ -185,6 +193,7 @@ public sealed class DrawingDocument : IDisposable
         _savedStateId = 0;
         _nextStateId = 1;
         CommittedStrokeCount = 0;
+        ActiveLayerIndex = -1;
         Selection.Resize(Width, Height);
         Selection.Clear();
     }
@@ -207,12 +216,16 @@ public sealed class DrawingDocument : IDisposable
 
         Width = source.Width;
         Height = source.Height;
+        Selection.Resize(Width, Height);
         ActiveLayerIndex = source.ActiveLayerIndex;
         CommittedStrokeCount = source.CommittedStrokeCount;
+        PaperColor = source.PaperColor;
+        PaperLayer = source.PaperLayer;
 
         _layers.AddRange(source._layers);
         source._layers.Clear();
         source.ActiveLayerIndex = -1;
+        source.PaperLayer = null;
 
         NotifyLayersChanged();
     }
@@ -321,20 +334,23 @@ public sealed class DrawingDocument : IDisposable
     public void ClearActiveLayer(bool pushHistory = true)
     {
         if (!CanPaintActiveLayer) return;
+        var layer = ActiveLayer;
+        if (layer == null) return;
+
         if (pushHistory)
         {
             var layerIndex = ActiveLayerIndex;
             var dirtyRegion = LayerDirtyRegion(layerIndex);
             var beforeTiles = new Dictionary<(int X, int Y), byte[]?>();
-            foreach (var (key, bytes) in ActiveLayer.CaptureTiles()) beforeTiles[key] = bytes;
+            foreach (var (key, bytes) in layer.CaptureTiles()) beforeTiles[key] = bytes;
 
-            ActiveLayer.Clear();
+            layer.Clear();
             CommittedStrokeCount = 0;
             CommitLayerTileMutation(layerIndex, beforeTiles, dirtyRegion);
             return;
         }
 
-        ActiveLayer.Clear();
+        layer.Clear();
         CommittedStrokeCount = 0;
         NotifyChanged(null, ActiveLayerIndex);
     }
@@ -342,12 +358,18 @@ public sealed class DrawingDocument : IDisposable
     // --- Layer Management ---
     public void AddLayer()
     {
-        if (ActiveLayerIndex < 0) return;
         BeginDocumentMutation();
 
-        var active = ActiveLayer;
         var layer = new DrawingLayer($"Layer {_layers.Count + 1}", Width, Height);
-        InsertLayerNear(layer, active, LayerDropPlacement.Above);
+        if (ActiveLayerIndex >= 0 && ActiveLayerIndex < _layers.Count)
+        {
+            var active = ActiveLayer;
+            InsertLayerNear(layer, active!, LayerDropPlacement.Above);
+        }
+        else
+        {
+            _layers.Add(layer);
+        }
         RebuildFlatLayerOrder();
         ActiveLayerIndex = _layers.IndexOf(layer);
         NotifyLayersChanged();
@@ -355,12 +377,18 @@ public sealed class DrawingDocument : IDisposable
 
     public void AddGroupLayer()
     {
-        if (ActiveLayerIndex < 0) return;
         BeginDocumentMutation();
 
-        var active = ActiveLayer;
         var group = new DrawingLayer($"Folder {_layers.Count(l => l.IsGroup) + 1}", Width, Height) { IsGroup = true, IsOpen = true };
-        InsertLayerNear(group, active, LayerDropPlacement.Above);
+        if (ActiveLayerIndex >= 0 && ActiveLayerIndex < _layers.Count)
+        {
+            var active = ActiveLayer;
+            InsertLayerNear(group, active!, LayerDropPlacement.Above);
+        }
+        else
+        {
+            _layers.Add(group);
+        }
         RebuildFlatLayerOrder();
         ActiveLayerIndex = _layers.IndexOf(group);
         NotifyLayersChanged();
@@ -387,8 +415,15 @@ public sealed class DrawingDocument : IDisposable
         bg.IsPaper = true;
         bg.FillSolid(bg.Pixels.Bounds, PaperColor);
 
-        var bottom = _layers[^1];
-        InsertLayerNear(bg, bottom, LayerDropPlacement.Below);
+        if (_layers.Count > 0)
+        {
+            var bottom = _layers[^1];
+            InsertLayerNear(bg, bottom, LayerDropPlacement.Below);
+        }
+        else
+        {
+            _layers.Add(bg);
+        }
         PaperLayer = bg;
         RebuildFlatLayerOrder();
         NotifyLayersChanged();
@@ -472,7 +507,7 @@ public sealed class DrawingDocument : IDisposable
         }
 
         RebuildFlatLayerOrder();
-        ActiveLayerIndex = Math.Clamp(ActiveLayerIndex, 0, _layers.Count - 1);
+        ActiveLayerIndex = _layers.Count > 0 ? Math.Clamp(ActiveLayerIndex, 0, _layers.Count - 1) : -1;
         if (_layers.Count > 0)
         {
             var nextSiblings = parent is { } p && _layers.Contains(p) ? p.Children : RootLayers();
@@ -563,38 +598,46 @@ public sealed class DrawingDocument : IDisposable
 
     public void SetActiveLayerOpacity(double opacity)
     {
+        var layer = ActiveLayer;
+        if (layer == null) return;
         var clamped = Math.Clamp(opacity, 0, 1);
-        if (Math.Abs(ActiveLayer.Opacity - clamped) < 0.001) return;
-        ActiveLayer.Opacity = clamped;
+        if (Math.Abs(layer.Opacity - clamped) < 0.001) return;
+        layer.Opacity = clamped;
         NotifyLayerMetadataChanged(LayerDirtyRegion(ActiveLayerIndex), ActiveLayerIndex);
     }
 
     public void SetActiveLayerBlendMode(string blendMode)
     {
-        if (ActiveLayer.BlendMode == blendMode) return;
-        var oldMode = ActiveLayer.BlendMode;
+        var layer = ActiveLayer;
+        if (layer == null) return;
+        if (layer.BlendMode == blendMode) return;
+        var oldMode = layer.BlendMode;
         var dirtyRegion = LayerDirtyRegion(ActiveLayerIndex);
-        PushHistoryState(new LayerPropertyHistoryState<string>(ActiveLayerIndex, oldMode, blendMode, (layer, value) => layer.BlendMode = value, true, dirtyRegion));
-        ActiveLayer.BlendMode = blendMode;
+        PushHistoryState(new LayerPropertyHistoryState<string>(ActiveLayerIndex, oldMode, blendMode, (l, value) => l.BlendMode = value, true, dirtyRegion));
+        layer.BlendMode = blendMode;
         NotifyLayerMetadataChanged(dirtyRegion, ActiveLayerIndex);
     }
 
     public void SetActiveLayerColor(Avalonia.Media.Color? color)
     {
-        if (ActiveLayer.LayerColor == color) return;
-        var old = ActiveLayer.LayerColor;
+        var layer = ActiveLayer;
+        if (layer == null) return;
+        if (layer.LayerColor == color) return;
+        var old = layer.LayerColor;
         var dirtyRegion = LayerDirtyRegion(ActiveLayerIndex);
-        PushHistoryState(new LayerPropertyHistoryState<Avalonia.Media.Color?>(ActiveLayerIndex, old, color, (layer, value) => layer.LayerColor = value, true, dirtyRegion));
-        ActiveLayer.LayerColor = color;
+        PushHistoryState(new LayerPropertyHistoryState<Avalonia.Media.Color?>(ActiveLayerIndex, old, color, (l, value) => l.LayerColor = value, true, dirtyRegion));
+        layer.LayerColor = color;
         NotifyLayerMetadataChanged(dirtyRegion, ActiveLayerIndex);
     }
 
     public void SetActiveLayerName(string name)
     {
-        if (string.IsNullOrWhiteSpace(name) || ActiveLayer.Name == name) return;
-        var oldName = ActiveLayer.Name;
-        PushHistoryState(new LayerPropertyHistoryState<string>(ActiveLayerIndex, oldName, name, (layer, value) => layer.Name = value, false, PixelRegion.Empty));
-        ActiveLayer.Name = name;
+        var layer = ActiveLayer;
+        if (layer == null) return;
+        if (string.IsNullOrWhiteSpace(name) || layer.Name == name) return;
+        var oldName = layer.Name;
+        PushHistoryState(new LayerPropertyHistoryState<string>(ActiveLayerIndex, oldName, name, (l, value) => l.Name = value, false, PixelRegion.Empty));
+        layer.Name = name;
         NotifyLayerMetadataChanged(null, ActiveLayerIndex);
     }
 
@@ -704,7 +747,7 @@ public sealed class DrawingDocument : IDisposable
         }
 
         RebuildFlatLayerOrder();
-        ActiveLayerIndex = Math.Clamp(_layers.IndexOf(mergedLayer), 0, _layers.Count - 1);
+        ActiveLayerIndex = _layers.Count > 0 ? Math.Clamp(_layers.IndexOf(mergedLayer), 0, _layers.Count - 1) : -1;
         NotifyLayersChanged();
     }
 
@@ -735,7 +778,7 @@ public sealed class DrawingDocument : IDisposable
         }
 
         RebuildFlatLayerOrder();
-        ActiveLayerIndex = Math.Clamp(_layers.IndexOf(flatLayer), 0, _layers.Count - 1);
+        ActiveLayerIndex = _layers.Count > 0 ? Math.Clamp(_layers.IndexOf(flatLayer), 0, _layers.Count - 1) : -1;
         NotifyLayersChanged();
     }
 
@@ -937,7 +980,7 @@ public sealed class DrawingDocument : IDisposable
             layer.Parent = parent; parent.Children.Add(layer);
         }
 
-        ActiveLayerIndex = Math.Clamp(snapshot.ActiveLayerIndex, 0, _layers.Count - 1);
+        ActiveLayerIndex = _layers.Count > 0 ? Math.Clamp(snapshot.ActiveLayerIndex, 0, _layers.Count - 1) : -1;
         NotifyLayersChanged();
         NotifySelectionChanged();
     }
@@ -974,13 +1017,13 @@ public sealed class DrawingDocument : IDisposable
     private sealed record InsertLayerHistoryState(int InsertedIndex, int PreviousActiveIndex) : IHistoryState
     {
         public IHistoryState CaptureRedo(DrawingDocument document) => new RemoveLayerHistoryState(InsertedIndex, document.ActiveLayerIndex, document.CaptureLayerSnapshot(document._layers[InsertedIndex]));
-        public void Restore(DrawingDocument document) { var removed = document._layers[InsertedIndex]; document._layers.RemoveAt(InsertedIndex); removed.Dispose(); document.ActiveLayerIndex = Math.Clamp(PreviousActiveIndex, 0, document._layers.Count - 1); document.NotifyLayersChanged(); }
+        public void Restore(DrawingDocument document) { var removed = document._layers[InsertedIndex]; document._layers.RemoveAt(InsertedIndex); removed.Dispose(); document.ActiveLayerIndex = document._layers.Count > 0 ? Math.Clamp(PreviousActiveIndex, 0, document._layers.Count - 1) : -1; document.NotifyLayersChanged(); }
     }
 
     private sealed record RemoveLayerHistoryState(int RemovedIndex, int PreviousActiveIndex, LayerSnapshot RemovedSnap) : IHistoryState
     {
         public IHistoryState CaptureRedo(DrawingDocument document) => new InsertLayerHistoryState(RemovedIndex, document.ActiveLayerIndex);
-        public void Restore(DrawingDocument document) { document._layers.Insert(RemovedIndex, document.CreateLayerFromSnapshot(RemovedSnap)); document.ActiveLayerIndex = Math.Clamp(PreviousActiveIndex, 0, document._layers.Count - 1); document.NotifyLayersChanged(); }
+        public void Restore(DrawingDocument document) { document._layers.Insert(RemovedIndex, document.CreateLayerFromSnapshot(RemovedSnap)); document.ActiveLayerIndex = document._layers.Count > 0 ? Math.Clamp(PreviousActiveIndex, 0, document._layers.Count - 1) : -1; document.NotifyLayersChanged(); }
     }
 
     private sealed record MoveLayerHistoryState(int FromIndex, int ToIndex) : IHistoryState
@@ -1035,6 +1078,12 @@ public sealed class DrawingDocument : IDisposable
     {
         public IHistoryState CaptureRedo(DrawingDocument document) => new LayerPropertyHistoryState<T>(LayerIndex, NewValue, OldValue, Apply, AffectsComposite, DirtyRegion);
         public void Restore(DrawingDocument document) { if (LayerIndex < 0 || LayerIndex >= document._layers.Count) return; Apply(document._layers[LayerIndex], OldValue); document.NotifyLayerMetadataChanged(AffectsComposite ? DirtyRegion : null, LayerIndex); }
+    }
+
+    private sealed record DocumentPropertyHistoryState<T>(T OldValue, T NewValue, Action<T> Apply) : IHistoryState
+    {
+        public IHistoryState CaptureRedo(DrawingDocument document) => new DocumentPropertyHistoryState<T>(NewValue, OldValue, Apply);
+        public void Restore(DrawingDocument document) { Apply(OldValue); document.DirtyStateChanged?.Invoke(document, EventArgs.Empty); }
     }
 }
 

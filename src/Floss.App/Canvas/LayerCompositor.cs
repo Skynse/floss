@@ -15,6 +15,8 @@ public sealed class LayerCompositor : IDisposable
     public void Dispose()
     {
         ClearAllTiles();
+        foreach (var cache in _groupCaches.Values)
+            cache.Buffer.Dispose();
         _groupCaches.Clear();
     }
 
@@ -24,7 +26,6 @@ public sealed class LayerCompositor : IDisposable
     private readonly Dictionary<(int X, int Y, int Lod), WriteableBitmap> _compTiles = [];
     private int _width;
     private int _height;
-    private bool _dirty = true;
     private bool _fullDirty = true;
     private PixelRegion? _dirtyRegion;
     private readonly HashSet<(int X, int Y, int Lod)> _tilesToPrune = [];
@@ -32,7 +33,8 @@ public sealed class LayerCompositor : IDisposable
 
     public void RemoveGroupCache(DrawingLayer group)
     {
-        _groupCaches.Remove(group);
+        if (_groupCaches.Remove(group, out var cache))
+            cache.Buffer.Dispose();
     }
 
     public void SetSize(int width, int height)
@@ -41,9 +43,10 @@ public sealed class LayerCompositor : IDisposable
         _width = width;
         _height = height;
         ClearAllTiles();
-        _dirty = true;
         _fullDirty = true;
         _dirtyRegion = null;
+        foreach (var cache in _groupCaches.Values)
+            cache.Buffer.Dispose();
         _groupCaches.Clear();
     }
 
@@ -121,7 +124,6 @@ public sealed class LayerCompositor : IDisposable
 
     public void Invalidate(PixelRegion? region, IReadOnlyList<DrawingLayer>? layers, int? layerIndex)
     {
-        _dirty = true;
         if (region is null || region.Value.IsEmpty)
         {
             _fullDirty = true;
@@ -139,9 +141,10 @@ public sealed class LayerCompositor : IDisposable
     {
         SetSize(width, height);
 
+        // Skip paper layers — they're handled by ClearTile with paperColor.
         var rootLayers = new System.Collections.Generic.List<DrawingLayer>(layers.Count);
         foreach (var l in layers)
-            if (l.Parent == null) rootLayers.Add(l);
+            if (l.Parent == null && !l.IsPaper) rootLayers.Add(l);
 
         var lod = 0;
         var lodChanged = lod != _currentLod;
@@ -160,70 +163,143 @@ public sealed class LayerCompositor : IDisposable
             }
         }
 
-        var clip = (_fullDirty ? new PixelRegion(0, 0, width, height) : _dirtyRegion ?? PixelRegion.Empty).ClipTo(width, height);
+        var dirtyClip = (_fullDirty ? new PixelRegion(0, 0, width, height) : _dirtyRegion ?? PixelRegion.Empty).ClipTo(width, height);
         var viewportClip = viewport?.ClipTo(width, height);
 
-        // Do NOT intersect dirty region with viewport — off-screen tiles in the dirty
-        // region must be re-composited so they're not stale when panned/zoomed into view.
-        // The viewport is only used as an optimisation for the "no dirty, just missing tiles" case.
-
-        if ((!_dirty || clip.IsEmpty) && viewportClip is { } visibleViewport && !visibleViewport.IsEmpty)
+        // Fast path: nothing dirty and viewport not provided — nothing to do.
+        if (dirtyClip.IsEmpty && viewportClip is null)
         {
-            var firstVisibleTX = FloorDiv(visibleViewport.X, stride);
-            var firstVisibleTY = FloorDiv(visibleViewport.Y, stride);
-            var lastVisibleTX = FloorDiv(visibleViewport.Right - 1, stride);
-            var lastVisibleTY = FloorDiv(visibleViewport.Bottom - 1, stride);
-            var needsViewportComposite = false;
-
-            for (var ty = firstVisibleTY; ty <= lastVisibleTY && !needsViewportComposite; ty++)
-            {
-                for (var tx = firstVisibleTX; tx <= lastVisibleTX; tx++)
-                {
-                    if (_compTiles.ContainsKey((tx, ty, lod))) continue;
-                    needsViewportComposite = true;
-                    break;
-                }
-            }
-
-            if (needsViewportComposite)
-                clip = visibleViewport;
-        }
-
-        if (clip.IsEmpty)
-        {
-            _dirty = false;
             _fullDirty = false;
             _dirtyRegion = null;
             return;
         }
 
-        _dirty = false;
-        _fullDirty = false;
-        _dirtyRegion = null;
+        var tileKeys = new System.Collections.Generic.List<(int tx, int ty)>();
+        var missingTileKeys = new System.Collections.Generic.List<(int tx, int ty)>();
 
-        var firstTX = FloorDiv(clip.X, stride);
-        var firstTY = FloorDiv(clip.Y, stride);
-        var lastTX = FloorDiv(clip.Right - 1, stride);
-        var lastTY = FloorDiv(clip.Bottom - 1, stride);
+        // 1. Dirty tiles.
+        if (!dirtyClip.IsEmpty)
+        {
+            var firstDirtyTX = FloorDiv(dirtyClip.X, stride);
+            var firstDirtyTY = FloorDiv(dirtyClip.Y, stride);
+            var lastDirtyTX = FloorDiv(dirtyClip.Right - 1, stride);
+            var lastDirtyTY = FloorDiv(dirtyClip.Bottom - 1, stride);
+
+            for (var ty = firstDirtyTY; ty <= lastDirtyTY; ty++)
+                for (var tx = firstDirtyTX; tx <= lastDirtyTX; tx++)
+                {
+                    var tileRect = new PixelRegion(tx * stride, ty * stride, stride, stride).Intersect(dirtyClip);
+                    if (!tileRect.IsEmpty)
+                        tileKeys.Add((tx, ty));
+                }
+        }
+
+        // 2. Missing tiles in viewport (pan / zoom reveals new area).
+        if (viewportClip is { } visibleViewport && !visibleViewport.IsEmpty)
+        {
+            var firstVisibleTX = FloorDiv(visibleViewport.X, stride);
+            var firstVisibleTY = FloorDiv(visibleViewport.Y, stride);
+            var lastVisibleTX = FloorDiv(visibleViewport.Right - 1, stride);
+            var lastVisibleTY = FloorDiv(visibleViewport.Bottom - 1, stride);
+
+            for (var ty = firstVisibleTY; ty <= lastVisibleTY; ty++)
+                for (var tx = firstVisibleTX; tx <= lastVisibleTX; tx++)
+                {
+                    if (_compTiles.ContainsKey((tx, ty, lod))) continue;
+                    missingTileKeys.Add((tx, ty));
+                }
+        }
+
+        // Cap total tiles per frame to keep UI responsive. Panning at 15k can
+        // reveal 50+ missing tiles; compositing them all blocks the UI thread.
+        const int MaxTilesPerFrame = 32;
+        var hasMoreWork = false;
+        var totalTiles = tileKeys.Count + missingTileKeys.Count;
+        if (totalTiles > MaxTilesPerFrame)
+        {
+            // Priority: dirty tiles first, then missing tiles closest to viewport center.
+            var cx = viewportClip is { } vp ? vp.X + vp.Width / 2 : _width / 2;
+            var cy = viewportClip is { } vp2 ? vp2.Y + vp2.Height / 2 : _height / 2;
+
+            // If we have more dirty tiles than the cap, sort and keep closest.
+            if (tileKeys.Count > MaxTilesPerFrame)
+            {
+                tileKeys.Sort((a, b) =>
+                {
+                    var da = Math.Abs(a.tx * stride + stride / 2 - cx) + Math.Abs(a.ty * stride + stride / 2 - cy);
+                    var db = Math.Abs(b.tx * stride + stride / 2 - cx) + Math.Abs(b.ty * stride + stride / 2 - cy);
+                    return da.CompareTo(db);
+                });
+                var remainingDirty = new System.Collections.Generic.List<(int tx, int ty)>(tileKeys.Count - MaxTilesPerFrame);
+                for (var i = MaxTilesPerFrame; i < tileKeys.Count; i++)
+                    remainingDirty.Add(tileKeys[i]);
+                tileKeys.RemoveRange(MaxTilesPerFrame, tileKeys.Count - MaxTilesPerFrame);
+                var nextDirty = PixelRegion.Empty;
+                foreach (var (tx, ty) in remainingDirty)
+                    nextDirty = nextDirty.Union(new PixelRegion(tx * stride, ty * stride, stride, stride));
+                _dirtyRegion = nextDirty;
+                hasMoreWork = true;
+            }
+            else if (missingTileKeys.Count > 0)
+            {
+                // Keep all dirty tiles, sort missing by distance and cap remainder.
+                var missingCap = MaxTilesPerFrame - tileKeys.Count;
+                missingTileKeys.Sort((a, b) =>
+                {
+                    var da = Math.Abs(a.tx * stride + stride / 2 - cx) + Math.Abs(a.ty * stride + stride / 2 - cy);
+                    var db = Math.Abs(b.tx * stride + stride / 2 - cx) + Math.Abs(b.ty * stride + stride / 2 - cy);
+                    return da.CompareTo(db);
+                });
+                var remainingMissing = new System.Collections.Generic.List<(int tx, int ty)>(missingTileKeys.Count - missingCap);
+                for (var i = missingCap; i < missingTileKeys.Count; i++)
+                    remainingMissing.Add(missingTileKeys[i]);
+                missingTileKeys.RemoveRange(missingCap, missingTileKeys.Count - missingCap);
+                // Missing tiles that weren't created this frame will be picked up next frame.
+                // No need to track them in _dirtyRegion — the viewport check finds them.
+            }
+        }
+
+        if (tileKeys.Count == 0 && missingTileKeys.Count == 0)
+        {
+            if (!hasMoreWork)
+            {
+                _fullDirty = false;
+                _dirtyRegion = null;
+            }
+            return;
+        }
+
+        if (!hasMoreWork)
+        {
+            _fullDirty = false;
+            _dirtyRegion = null;
+        }
+
+        // Merge dirty + missing; build HashSet for O(1) lookup inside Parallel.ForEach.
+        var allTileKeys = new System.Collections.Generic.List<(int tx, int ty)>(tileKeys.Count + missingTileKeys.Count);
+        allTileKeys.AddRange(tileKeys);
+        allTileKeys.AddRange(missingTileKeys);
+        var dirtySet = new HashSet<(int tx, int ty)>(tileKeys);
+
+        // Ensure all tiles exist first (sequential — dictionary access)
+        foreach (var (tx, ty) in allTileKeys)
+            EnsureTile(tx, ty, lod);
+
+        System.Threading.Tasks.Parallel.ForEach(allTileKeys, key =>
+        {
+            var (tx, ty) = key;
+            var tileRect = new PixelRegion(tx * stride, ty * stride, stride, stride);
+            if (dirtySet.Contains(key))
+                tileRect = tileRect.Intersect(dirtyClip);
+            else if (viewportClip is { } v)
+                tileRect = tileRect.Intersect(v);
+            if (tileRect.IsEmpty) tileRect = new PixelRegion(tx * stride, ty * stride, 1, 1);
+            CompositeTileCpu(_compTiles[(tx, ty, lod)], tileRect, rootLayers, tx * stride, ty * stride, paperColor);
+        });
 
         _tilesToPrune.Clear();
-
-        for (var ty = firstTY; ty <= lastTY; ty++)
-            for (var tx = firstTX; tx <= lastTX; tx++)
-            {
-                var tileRect = new PixelRegion(tx * stride, ty * stride, stride, stride).Intersect(clip);
-                if (tileRect.IsEmpty) continue;
-                EnsureTile(tx, ty, lod);
-            }
-
-        for (var ty = firstTY; ty <= lastTY; ty++)
-            for (var tx = firstTX; tx <= lastTX; tx++)
-            {
-                var tileRect = new PixelRegion(tx * stride, ty * stride, stride, stride).Intersect(clip);
-                if (tileRect.IsEmpty) continue;
-                CompositeTileCpu(_compTiles[(tx, ty, lod)], tileRect, rootLayers, tx * stride, ty * stride, paperColor);
-                _tilesToPrune.Add((tx, ty, lod));
-            }
+        foreach (var (tx, ty) in allTileKeys)
+            _tilesToPrune.Add((tx, ty, lod));
 
         PruneTransparentTiles();
     }
@@ -989,24 +1065,143 @@ public sealed class LayerCompositor : IDisposable
                         var tileRowBase = (tileLocalY * ts + tileLocalX0) * 4;
                         var docY = srcY + offsetY;
                         var dstRow = dst + (docY - originY) * dstStride;
-                        for (int j = 0, srcX = clipLeft; srcX < clipRight; srcX++, j++)
+                        var rowWidth = clipRight - clipLeft;
+                        var j = 0;
+
+                        if (!hasLayerColor && !applyExpr)
+                        {
+                            // Fast path: no layer color or expression color.
+                            // Process 4 pixels at a time for better instruction-level parallelism.
+                            for (; j + 3 < rowWidth; j += 4)
+                            {
+                                var tileOffset = tileRowBase + j * 4;
+                                var docX = clipLeft + j + offsetX;
+                                var dstPtr = dstRow + (docX - originX) * 4;
+
+                                // Pixel 0
+                                uint rawA0 = tile[tileOffset + 3];
+                                if (rawA0 != 0)
+                                {
+                                    uint srcA0 = fullOpacity ? rawA0 : (rawA0 * opacityByte + 127) / 255;
+                                    byte sb0 = tile[tileOffset + 0], sg0 = tile[tileOffset + 1], sr0 = tile[tileOffset + 2];
+                                    if (srcA0 == 255)
+                                    {
+                                        dstPtr[0] = sb0; dstPtr[1] = sg0; dstPtr[2] = sr0; dstPtr[3] = 255;
+                                    }
+                                    else
+                                    {
+                                        uint inv0 = 255 - srcA0, dd0 = dstPtr[3];
+                                        uint dc0 = (dd0 * inv0 + 127) / 255;
+                                        uint oa0 = srcA0 + dc0;
+                                        if (oa0 != 0)
+                                        {
+                                            uint h0 = oa0 >> 1;
+                                            dstPtr[0] = (byte)((sb0 * srcA0 + dstPtr[0] * dc0 + h0) / oa0);
+                                            dstPtr[1] = (byte)((sg0 * srcA0 + dstPtr[1] * dc0 + h0) / oa0);
+                                            dstPtr[2] = (byte)((sr0 * srcA0 + dstPtr[2] * dc0 + h0) / oa0);
+                                            dstPtr[3] = (byte)oa0;
+                                        }
+                                    }
+                                }
+
+                                // Pixel 1
+                                uint rawA1 = tile[tileOffset + 7];
+                                if (rawA1 != 0)
+                                {
+                                    uint srcA1 = fullOpacity ? rawA1 : (rawA1 * opacityByte + 127) / 255;
+                                    byte sb1 = tile[tileOffset + 4], sg1 = tile[tileOffset + 5], sr1 = tile[tileOffset + 6];
+                                    if (srcA1 == 255)
+                                    {
+                                        dstPtr[4] = sb1; dstPtr[5] = sg1; dstPtr[6] = sr1; dstPtr[7] = 255;
+                                    }
+                                    else
+                                    {
+                                        uint inv1 = 255 - srcA1, dd1 = dstPtr[7];
+                                        uint dc1 = (dd1 * inv1 + 127) / 255;
+                                        uint oa1 = srcA1 + dc1;
+                                        if (oa1 != 0)
+                                        {
+                                            uint h1 = oa1 >> 1;
+                                            dstPtr[4] = (byte)((sb1 * srcA1 + dstPtr[4] * dc1 + h1) / oa1);
+                                            dstPtr[5] = (byte)((sg1 * srcA1 + dstPtr[5] * dc1 + h1) / oa1);
+                                            dstPtr[6] = (byte)((sr1 * srcA1 + dstPtr[6] * dc1 + h1) / oa1);
+                                            dstPtr[7] = (byte)oa1;
+                                        }
+                                    }
+                                }
+
+                                // Pixel 2
+                                uint rawA2 = tile[tileOffset + 11];
+                                if (rawA2 != 0)
+                                {
+                                    uint srcA2 = fullOpacity ? rawA2 : (rawA2 * opacityByte + 127) / 255;
+                                    byte sb2 = tile[tileOffset + 8], sg2 = tile[tileOffset + 9], sr2 = tile[tileOffset + 10];
+                                    if (srcA2 == 255)
+                                    {
+                                        dstPtr[8] = sb2; dstPtr[9] = sg2; dstPtr[10] = sr2; dstPtr[11] = 255;
+                                    }
+                                    else
+                                    {
+                                        uint inv2 = 255 - srcA2, dd2 = dstPtr[11];
+                                        uint dc2 = (dd2 * inv2 + 127) / 255;
+                                        uint oa2 = srcA2 + dc2;
+                                        if (oa2 != 0)
+                                        {
+                                            uint h2 = oa2 >> 1;
+                                            dstPtr[8] = (byte)((sb2 * srcA2 + dstPtr[8] * dc2 + h2) / oa2);
+                                            dstPtr[9] = (byte)((sg2 * srcA2 + dstPtr[9] * dc2 + h2) / oa2);
+                                            dstPtr[10] = (byte)((sr2 * srcA2 + dstPtr[10] * dc2 + h2) / oa2);
+                                            dstPtr[11] = (byte)oa2;
+                                        }
+                                    }
+                                }
+
+                                // Pixel 3
+                                uint rawA3 = tile[tileOffset + 15];
+                                if (rawA3 != 0)
+                                {
+                                    uint srcA3 = fullOpacity ? rawA3 : (rawA3 * opacityByte + 127) / 255;
+                                    byte sb3 = tile[tileOffset + 12], sg3 = tile[tileOffset + 13], sr3 = tile[tileOffset + 14];
+                                    if (srcA3 == 255)
+                                    {
+                                        dstPtr[12] = sb3; dstPtr[13] = sg3; dstPtr[14] = sr3; dstPtr[15] = 255;
+                                    }
+                                    else
+                                    {
+                                        uint inv3 = 255 - srcA3, dd3 = dstPtr[15];
+                                        uint dc3 = (dd3 * inv3 + 127) / 255;
+                                        uint oa3 = srcA3 + dc3;
+                                        if (oa3 != 0)
+                                        {
+                                            uint h3 = oa3 >> 1;
+                                            dstPtr[12] = (byte)((sb3 * srcA3 + dstPtr[12] * dc3 + h3) / oa3);
+                                            dstPtr[13] = (byte)((sg3 * srcA3 + dstPtr[13] * dc3 + h3) / oa3);
+                                            dstPtr[14] = (byte)((sr3 * srcA3 + dstPtr[14] * dc3 + h3) / oa3);
+                                            dstPtr[15] = (byte)oa3;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Slow path (or tail of fast path): handle layer color / expression color.
+                        for (; j < rowWidth; j++)
                         {
                             var tileOffset = tileRowBase + j * 4;
                             uint rawA = tile[tileOffset + 3];
                             if (rawA == 0) continue;
                             uint srcA = fullOpacity ? rawA : (rawA * opacityByte + 127) / 255;
-                            var docX = srcX + offsetX;
+                            var docX = clipLeft + j + offsetX;
                             var dstPtr = dstRow + (docX - originX) * 4;
-                            byte srcB, srcG, srcR;
+                            byte srcB = tile[tileOffset + 0], srcG = tile[tileOffset + 1], srcR = tile[tileOffset + 2];
                             if (hasLayerColor)
                             {
-                                var lum = (tile[tileOffset + 2] * 299 + tile[tileOffset + 1] * 587 + tile[tileOffset + 0] * 114) / 1000;
+                                var lum = (srcR * 299 + srcG * 587 + srcB * 114) / 1000;
                                 var ink = 255 - lum;
                                 srcB = (byte)(lum + (lcB * ink) / 255);
                                 srcG = (byte)(lum + (lcG * ink) / 255);
                                 srcR = (byte)(lum + (lcR * ink) / 255);
                             }
-                            else { srcB = tile[tileOffset + 0]; srcG = tile[tileOffset + 1]; srcR = tile[tileOffset + 2]; }
                             if (applyExpr)
                             {
                                 var lum = (srcR * 299 + srcG * 587 + srcB * 114) / 1000;
@@ -1439,6 +1634,7 @@ public sealed class LayerCompositor : IDisposable
         {
             if (Buffer.Width == width && Buffer.Height == height) return;
 
+            Buffer.Dispose();
             Buffer = new TiledPixelBuffer(width, height);
             _fullDirty = true;
             _dirtyRegion = null;

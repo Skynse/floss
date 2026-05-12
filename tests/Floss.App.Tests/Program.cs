@@ -41,6 +41,7 @@ internal static class Program
         ("TiledPixelBuffer computes tight content bounds", TiledPixelBufferTests.ComputeContentBounds_ReturnsNonTransparentExtents),
         ("TiledPixelBuffer restores truncated byte arrays defensively", TiledPixelBufferTests.Restore_TruncatedBytesDoesNotThrowOrOverread),
         ("TiledPixelBuffer solid fills isolate tile mutations", TiledPixelBufferTests.FillSolid_SharedTemplatesDoNotLeakMutations),
+        ("TiledPixelBuffer scratch disk round-trips tiles through disk", TiledPixelBufferTests.ScratchDisk_RoundTripsTilesThroughDisk),
 
         ("KeyBinding parses friendly names and modifiers", KeyBindingTests.Parse_HandlesFriendlyNamesAndModifiers),
         ("KeyBinding formats and displays shortcuts", KeyBindingTests.ToStringAndDisplay_ReturnExpectedText),
@@ -838,6 +839,40 @@ internal static class TiledPixelBufferTests
         AssertEx.Equal((byte)0, clearedAlpha);
         AssertEx.SequenceEqual(new byte[] { 10, 20, 30, 255 }, [b, g, r, a]);
     }
+
+    public static void ScratchDisk_RoundTripsTilesThroughDisk()
+    {
+        var originalThreshold = TileSwapManager.MemoryThreshold;
+        try
+        {
+            // Set a very low threshold so any compressed tile gets evicted.
+            TileSwapManager.MemoryThreshold = 1;
+
+            var pixels = new TiledPixelBuffer(256, 256);
+            pixels.SetPixel(0, 0, 11, 22, 33, 255);
+            pixels.SetPixel(128, 128, 44, 55, 66, 255);
+
+            // Compress — this should trigger eviction to disk because threshold is 1 byte.
+            pixels.CompressTiles();
+
+            // At this point tiles are either in _compressed or on disk.
+            // Force a clear of raw tiles so we must read from disk.
+            pixels.CompressTiles();
+
+            // Read back — EnsureRaw should fetch from disk.
+            pixels.GetPixel(0, 0, out var b1, out var g1, out var r1, out var a1);
+            pixels.GetPixel(128, 128, out var b2, out var g2, out var r2, out var a2);
+
+            AssertEx.SequenceEqual(new byte[] { 11, 22, 33, 255 }, [b1, g1, r1, a1]);
+            AssertEx.SequenceEqual(new byte[] { 44, 55, 66, 255 }, [b2, g2, r2, a2]);
+
+            pixels.Dispose();
+        }
+        finally
+        {
+            TileSwapManager.MemoryThreshold = originalThreshold;
+        }
+    }
 }
 
 internal static class KeyBindingTests
@@ -1134,7 +1169,8 @@ internal static class BrushTests
     {
         using var engine = new BrushEngine();
         var document = new DrawingDocument();
-        var layer = document.ActiveLayer;
+        document.AddLayer();
+        var layer = document.ActiveLayer!;
         for (var y = 26; y <= 34; y++)
         for (var x = 16; x <= 24; x++)
             layer.Pixels.SetPixel(x, y, 0, 0, 0, 255);
@@ -1479,9 +1515,9 @@ internal static class DrawingDocumentTests
         var document = new DrawingDocument(20, 10);
         AssertEx.Equal(20, document.Width);
         AssertEx.Equal(10, document.Height);
-        AssertEx.Equal(1, document.Layers.Count);
-        AssertEx.Equal("Layer 1", document.ActiveLayer.Name);
-        AssertEx.True(document.CanPaintActiveLayer);
+        AssertEx.Equal(0, document.Layers.Count);
+        AssertEx.Equal(-1, document.ActiveLayerIndex);
+        AssertEx.False(document.CanPaintActiveLayer);
         AssertEx.False(document.CanUndo);
         AssertEx.False(document.IsDirty);
     }
@@ -1493,22 +1529,27 @@ internal static class DrawingDocumentTests
         document.LayersChanged += (_, _) => layersChanged++;
 
         document.AddLayer();
+        AssertEx.Equal(1, document.Layers.Count);
+        AssertEx.Equal(0, document.ActiveLayerIndex);
+
+        document.AddLayer();
         AssertEx.Equal(2, document.Layers.Count);
         AssertEx.Equal(1, document.ActiveLayerIndex);
 
         document.SelectLayer(0);
         document.DuplicateActiveLayer();
         AssertEx.Equal(3, document.Layers.Count);
-        AssertEx.Equal("Layer 1 copy", document.ActiveLayer.Name);
+        AssertEx.Equal("Layer 1 copy", document.ActiveLayer!.Name);
 
         document.DeleteActiveLayer();
         AssertEx.Equal(2, document.Layers.Count);
-        AssertEx.True(layersChanged >= 3);
+        AssertEx.True(layersChanged >= 4);
     }
 
     public static void CapabilityFlags_RespectLayerState()
     {
         var document = new DrawingDocument(4, 4);
+        document.AddLayer();
         document.ToggleLayerLock(0);
         AssertEx.False(document.CanPaintActiveLayer);
         AssertEx.False(document.CanDeleteLayer);
@@ -1522,6 +1563,7 @@ internal static class DrawingDocumentTests
     public static void LayerPropertyMutations_UndoRedo()
     {
         var document = new DrawingDocument(4, 4);
+        document.AddLayer();
         document.MarkAsSaved();
         document.SetActiveLayerName("Ink");
         document.SetActiveLayerOpacity(2);
@@ -1541,8 +1583,9 @@ internal static class DrawingDocumentTests
     public static void ReferenceLayerFlag_UndoRedoAndDuplicate()
     {
         var document = new DrawingDocument(4, 4);
+        document.AddLayer();
         document.ToggleLayerReference(0);
-        AssertEx.True(document.ActiveLayer.IsReference);
+        AssertEx.True(document.ActiveLayer!.IsReference);
 
         document.Undo();
         AssertEx.False(document.ActiveLayer.IsReference);
@@ -1600,6 +1643,7 @@ internal static class DrawingDocumentTests
     public static void ClearActiveLayer_UndoRedoRestoresPixels()
     {
         var document = new DrawingDocument(4, 4);
+        document.AddLayer();
         document.ActiveLayer.Pixels.SetPixel(1, 1, 1, 2, 3, 255);
         document.ClearActiveLayer();
 
@@ -1621,6 +1665,7 @@ internal static class DrawingDocumentTests
         var document = new DrawingDocument(4, 4);
         document.AddLayer();
         document.AddLayer();
+        document.AddLayer();
 
         AssertEx.False(document.CanMoveLayer(1, 1, LayerDropPlacement.Above));
         AssertEx.False(document.CanMoveLayer(-1, 1, LayerDropPlacement.Above));
@@ -1636,10 +1681,11 @@ internal static class DrawingDocumentTests
         var document = new DrawingDocument(4, 4);
         document.AddLayer();
         document.AddLayer();
+        document.AddLayer();
 
         document.GroupSelectedLayers([0, 1, 2]);
         AssertEx.Equal(4, document.Layers.Count);
-        AssertEx.True(document.ActiveLayer.IsGroup);
+        AssertEx.True(document.ActiveLayer!.IsGroup);
         AssertEx.Equal(3, document.ActiveLayer.Children.Count);
         AssertEx.Equal(1, document.ActiveLayer.Children[0].IndentLevel);
 
@@ -1671,6 +1717,7 @@ internal static class DrawingDocumentTests
     public static void DuplicateActiveLayer_CopiesPixels()
     {
         var document = new DrawingDocument(4, 4);
+        document.AddLayer();
         document.ActiveLayer.Pixels.SetPixel(2, 2, 1, 2, 3, 255);
         document.DuplicateActiveLayer();
 
@@ -1829,7 +1876,8 @@ internal static class PsdExporterTests
     public static void Export_PreservesFolderHierarchy()
     {
         var document = new DrawingDocument(2, 2);
-        document.ActiveLayer.Name = "Background";
+        document.AddLayer();
+        document.ActiveLayer!.Name = "Background";
         document.ActiveLayer.Pixels.SetPixel(0, 0, 1, 2, 3, 255);
         document.AddLayer();
         document.ActiveLayer.Name = "Ink";
@@ -1874,6 +1922,7 @@ internal static class PsdExporterTests
     private static byte[] ExportSamplePsd()
     {
         var document = new DrawingDocument(2, 2);
+        document.AddLayer();
         var layer = document.ActiveLayer;
         layer.Name = "Ink";
         layer.Opacity = 0.5;
@@ -1939,7 +1988,8 @@ internal static class FlossFileFormatTests
     public static void RoundTrip_BasicDocument()
     {
         var doc = new DrawingDocument(100, 80);
-        doc.ActiveLayer.Pixels.SetPixel(10, 10, 1, 2, 3, 255);
+        doc.AddLayer();
+        doc.ActiveLayer!.Pixels.SetPixel(10, 10, 1, 2, 3, 255);
         doc.ActiveLayer.Pixels.SetPixel(50, 40, 4, 5, 6, 128);
 
         using var stream = new MemoryStream();
@@ -1963,7 +2013,7 @@ internal static class FlossFileFormatTests
     public static void RoundTrip_PaperColor()
     {
         var doc = new DrawingDocument(64, 64);
-        doc.PaperColor = Avalonia.Media.Color.FromArgb(255, 247, 244, 237);
+        doc.SetPaperColor(Avalonia.Media.Color.FromArgb(255, 247, 244, 237));
 
         using var stream = new MemoryStream();
         Floss.App.FlossFiles.FlossFileFormat.Save(stream, doc);
@@ -1980,7 +2030,7 @@ internal static class FlossFileFormatTests
     public static void RoundTrip_PaperLayer()
     {
         var doc = new DrawingDocument(64, 64);
-        doc.PaperColor = Avalonia.Media.Colors.White;
+        doc.SetPaperColor(Avalonia.Media.Colors.White);
         doc.AddBackgroundLayer();
 
         AssertEx.True(doc.PaperLayer != null);
@@ -1992,7 +2042,7 @@ internal static class FlossFileFormatTests
         stream.Position = 0;
         var loaded = Floss.App.FlossFiles.FlossFileFormat.Load(stream);
 
-        AssertEx.Equal(2, loaded.Layers.Count);
+        AssertEx.Equal(1, loaded.Layers.Count);
         AssertEx.True(loaded.Layers[0].IsPaper);
         AssertEx.Equal("Paper", loaded.Layers[0].Name);
         AssertEx.True(loaded.PaperLayer != null);
@@ -2002,8 +2052,9 @@ internal static class FlossFileFormatTests
     public static void RoundTrip_OutOfBoundsTiles()
     {
         var doc = new DrawingDocument(64, 64);
+        doc.AddLayer();
         // Draw outside the document bounds — creates negative-coordinate tiles
-        doc.ActiveLayer.Pixels.SetPixel(-10, -20, 7, 8, 9, 255);
+        doc.ActiveLayer!.Pixels.SetPixel(-10, -20, 7, 8, 9, 255);
         doc.ActiveLayer.Pixels.SetPixel(70, 80, 10, 11, 12, 200);
 
         using var stream = new MemoryStream();
@@ -2044,6 +2095,7 @@ internal static class FlossFileFormatTests
     public static void RoundTrip_EmptyLayer()
     {
         var doc = new DrawingDocument(50, 50);
+        doc.AddLayer();
         // Layer with no pixel content
 
         using var stream = new MemoryStream();

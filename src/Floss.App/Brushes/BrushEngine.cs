@@ -74,9 +74,12 @@ public sealed class BrushEngine : IDisposable
         // temporary scratch with Lighten blend so overlapping stamps within this
         // segment take the MAX alpha rather than compounding. The scratch is then
         // composited onto the layer with SrcOver once.
+        // Skip scratch for few stamps (large brushes) — the overhead of allocating
+        // and blitting a huge scratch bitmap exceeds the cost of direct per-stamp draw.
         bool useScratch = brush.BlendMode == SKBlendMode.SrcOver
             && _stampColors.Count == 0 // no color mixing
-            && dirty.Width <= 4096 && dirty.Height <= 4096; // guard against OOM
+            && dirty.Width <= 4096 && dirty.Height <= 4096 // guard against OOM
+            && _stamps.Count > 3; // only worth it for many small stamps
         if (useScratch)
             RenderStampsViaScratch(layer, stroke, dirty);
         else
@@ -157,7 +160,12 @@ public sealed class BrushEngine : IDisposable
         var distance = Math.Sqrt(dx * dx + dy * dy);
         var elapsedSeconds = Math.Max(0.001, (to.TimeMicros - from.TimeMicros) / 1_000_000.0);
         var velocity01 = Math.Clamp((float)(distance / elapsedSeconds / 5000.0), 0, 1);
-        var subdivisions = Math.Max(8, Math.Min(96, (int)Math.Ceiling(distance / 2.0)));
+        // Subdivide based on expected stamp count, not raw pixel distance.
+        // A 1000px brush with 250px spacing needs ~4 stamps; 96 subdivisions
+        // would waste time on 90+ pointless Catmull-Rom evaluations.
+        var stampSpacing = Math.Max(1, stroke.State.NextStampDistance);
+        var estimatedStamps = distance / stampSpacing;
+        var subdivisions = Math.Max(8, Math.Min(96, (int)Math.Ceiling(estimatedStamps * 4)));
 
         if (distance > 0.001)
         {
@@ -303,21 +311,25 @@ public sealed class BrushEngine : IDisposable
         var w = dirty.Width;
         var h = dirty.Height;
 
+        // Round up to nearest 512 to reduce reallocation churn.
+        var needW = (w + 511) & ~511;
+        var needH = (h + 511) & ~511;
+
         // Grow scratch bitmap on demand; shrink if grossly oversized.
-        if (_scratch == null || _scratch.Width < w || _scratch.Height < h)
+        if (_scratch == null || _scratch.Width < needW || _scratch.Height < needH)
         {
             var oldW = _scratch?.Width ?? 0;
             var oldH = _scratch?.Height ?? 0;
             _scratch?.Dispose();
             _scratch = new SKBitmap(new SKImageInfo(
-                Math.Max(w, oldW),
-                Math.Max(h, oldH),
+                Math.Max(needW, oldW),
+                Math.Max(needH, oldH),
                 SKColorType.Bgra8888, SKAlphaType.Unpremul));
         }
-        else if (_scratch.Width > w * 4 || _scratch.Height > h * 4)
+        else if (_scratch.Width > needW * 4 || _scratch.Height > needH * 4)
         {
             _scratch.Dispose();
-            _scratch = new SKBitmap(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+            _scratch = new SKBitmap(new SKImageInfo(needW, needH, SKColorType.Bgra8888, SKAlphaType.Unpremul));
         }
 
         // Clear then render stamps into the scratch with Lighten blend so that
