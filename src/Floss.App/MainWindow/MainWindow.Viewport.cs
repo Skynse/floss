@@ -101,6 +101,19 @@ public partial class MainWindow
             return;
         }
 
+        // Ctrl+Shift+Left: layer-pick drag.
+        if (pt.Properties.IsLeftButtonPressed &&
+            e.KeyModifiers.HasFlag(KeyModifiers.Control) &&
+            e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+        {
+            _canvas.StartLayerPickDrag(pt.Position);
+            _isPanning = true;
+            _lastPanPoint = pt.Position;
+            e.Pointer.Capture(_workspaceViewport);
+            e.Handled = true;
+            return;
+        }
+
         bool isPenPress = (pt.Pointer.Type == PointerType.Pen || pt.Properties.IsEraser)
             && pt.Properties.Pressure >= 0.02f;
         if (pt.Properties.IsLeftButtonPressed || isPenPress)
@@ -139,13 +152,21 @@ public partial class MainWindow
     {
         if (!_isPanning) return;
 
-        if (!_isBrushSizeActive && !IsResizeDragging && !_isToolDispatchActive && !_isMiddleButtonPanning)
+        if (!_isBrushSizeActive && !IsResizeDragging && !_isToolDispatchActive && !_isMiddleButtonPanning && !_canvas.IsLayerPickDrag)
         {
             _isPanning = false;
             return;
         }
 
         var pt = e.GetPosition(_workspaceViewport);
+
+        // Layer-pick drag update
+        if (_canvas.IsLayerPickDrag)
+        {
+            _canvas.UpdateLayerPickDrag(pt);
+            e.Handled = true;
+            return;
+        }
 
         if (IsResizeDragging)
         {
@@ -226,7 +247,14 @@ public partial class MainWindow
         if (IsResizeDragging) EndResizeDrag();
         _isPanning = false;
         _isMiddleButtonPanning = false;
-        if (_isToolDispatchActive)
+
+        // Layer-pick release
+        if (_canvas.IsLayerPickDrag)
+        {
+            var pt = e.GetPosition(_workspaceViewport);
+            _canvas.EndLayerPickDrag(pt);
+        }
+        else if (_isToolDispatchActive)
         {
             _isToolDispatchActive = false;
             var pt = e.GetCurrentPoint(_workspaceViewport);
@@ -594,6 +622,11 @@ public partial class MainWindow
             e.Handled = true;
             return;
         }
+
+        // No specific-key match — re-evaluate modifier-only state (e.g. pressing Ctrl
+        // while Shift is held should deactivate the Shift → StraightLine action).
+        if (IsModifierKey(key))
+            EvaluateModifierKeyAction(mods);
 
         // Tool group shortcut recording
         if (_recordingToolGroup != null)

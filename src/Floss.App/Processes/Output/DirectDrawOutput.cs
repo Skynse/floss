@@ -105,26 +105,60 @@ public sealed class DirectDrawOutput : IOutputProcess
             return;
         }
 
-        // Ensure all samples are processed before committing
+        // Queue remaining segments, then end the brush stroke
         Preview(ctx, input);
-
-        // Wait for background worker to finish all queued segments
-        _workerTask?.Wait();
-
         _brushEngine.EndStroke();
 
-        if (_beforeTiles != null && _beforeTiles.Count > 0)
+        // The worker captures before-tiles as it processes segments.
+        // If it's still running, defer the undo commit — we read _beforeTiles
+        // after it drains the queue, without blocking the UI thread.
+        var pendingWorker = _workerTask;
+
+        if (pendingWorker != null && !pendingWorker.IsCompleted)
         {
-            var tileDirty = ComputeTileDirtyRegion(_beforeTiles).Translate(layer.OffsetX, layer.OffsetY);
+            DeferCommit(pendingWorker);
+        }
+        else
+        {
+            // Edge case: old worker finished between Preview's queue and here.
+            // Preview may have started a new worker — check and defer if so.
+            var afterPreview = _workerTask;
+            if (afterPreview != null && !afterPreview.IsCompleted)
+                DeferCommit(afterPreview);
+            else
+            {
+                CommitFromWorkerState();
+                Cleanup();
+            }
+        }
+    }
+
+    private void DeferCommit(Task worker)
+    {
+        worker.ContinueWith(_ => Dispatcher.UIThread.Post(CommitFromWorkerState), TaskScheduler.Default);
+        _strokeActive = false;
+        _lastProcessedIndex = -1;
+        _workerCts = null;
+        _workerTask = null;
+        lock (_queueLock) { _segmentQueue.Clear(); }
+    }
+
+    private void CommitFromWorkerState()
+    {
+        if (_beforeTiles != null && _beforeTiles.Count > 0 && _currentLayer != null && _currentCtx != null)
+        {
+            var tileDirty = ComputeTileDirtyRegion(_beforeTiles).Translate(_currentLayer.OffsetX, _currentLayer.OffsetY);
             if (!tileDirty.IsEmpty)
             {
-                layer.MarkThumbnailDirty();
-                ctx.Document.CommitLayerTileMutation(ctx.ActiveLayerIndex, _beforeTiles, tileDirty);
-                ctx.Document.NotifyChanged(tileDirty, ctx.ActiveLayerIndex);
+                _currentLayer.MarkThumbnailDirty();
+                _currentCtx.Document.CommitLayerTileMutation(_currentCtx.ActiveLayerIndex, _beforeTiles, tileDirty);
+                _currentCtx.Document.NotifyChanged(tileDirty, _currentCtx.ActiveLayerIndex);
             }
         }
 
-        ctx.Document.CommitStroke();
+        if (_currentCtx != null)
+            _currentCtx.Document.CommitStroke();
+
         Cleanup();
     }
 

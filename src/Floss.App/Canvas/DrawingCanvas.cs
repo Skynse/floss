@@ -1377,6 +1377,48 @@ public sealed class DrawingCanvas : Control, IDisposable
         }
     }
 
+    public bool IsLayerPickDrag => _isLayerPickDrag;
+    public void StartLayerPickDrag(Point pos)
+    {
+        _isLayerPickDrag = true;
+        _layerPickAnchor = pos;
+        _layerPickCurrent = pos;
+        InvalidateVisual();
+    }
+
+    public void UpdateLayerPickDrag(Point pos)
+    {
+        if (!_isLayerPickDrag) return;
+        _layerPickCurrent = pos;
+        InvalidateVisual();
+    }
+
+    public void EndLayerPickDrag(Point pos)
+    {
+        if (!_isLayerPickDrag) return;
+        _isLayerPickDrag = false;
+        InvalidateVisual();
+
+        var dx = pos.X - _layerPickAnchor.X;
+        var dy = pos.Y - _layerPickAnchor.Y;
+        var dragDist = Math.Sqrt(dx * dx + dy * dy);
+
+        if (dragDist < 4)
+        {
+            TryPickLayerAtPoint((int)_layerPickAnchor.X, (int)_layerPickAnchor.Y);
+        }
+        else
+        {
+            var rx = (int)Math.Min(_layerPickAnchor.X, pos.X);
+            var ry = (int)Math.Min(_layerPickAnchor.Y, pos.Y);
+            var rw = (int)Math.Abs(pos.X - _layerPickAnchor.X) + 1;
+            var rh = (int)Math.Abs(pos.Y - _layerPickAnchor.Y) + 1;
+            var found = FindLayersInRect(rx, ry, rw, rh);
+            if (found.Count > 0)
+                LayersFoundByRect?.Invoke(found);
+        }
+    }
+
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
@@ -1388,14 +1430,12 @@ public sealed class DrawingCanvas : Control, IDisposable
             point.Properties.Pressure < PenPressureThreshold)
             return;
 
-        // Ctrl+Shift+Left: start a layer-find drag (release decides point-pick vs rect-pick).
+        // Ctrl+Shift+Left: start a layer-find drag.
         if (point.Properties.IsLeftButtonPressed &&
             e.KeyModifiers.HasFlag(KeyModifiers.Control) &&
             e.KeyModifiers.HasFlag(KeyModifiers.Shift))
         {
-            _isLayerPickDrag = true;
-            _layerPickAnchor = point.Position;
-            _layerPickCurrent = point.Position;
+            StartLayerPickDrag(point.Position);
             e.Pointer.Capture(this);
             e.Handled = true;
             return;
