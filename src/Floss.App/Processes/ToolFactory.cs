@@ -72,15 +72,12 @@ public sealed class ToolFactory
             },
             OutputProcessType.ClosedAreaFill => new ClosedAreaFillOutput
             {
-                Antialiasing = preset.Antialiasing
+                Antialiasing = preset.AntialiasingQuality != AntialiasingQuality.None
             },
             OutputProcessType.SelectionArea => new SelectionAreaOutput
             {
-                Operation = preset.SelectMode switch
-                {
-                    SelectMode.Rect => SelectOp.Replace,
-                    _ => SelectOp.Replace
-                }
+                Operation = preset.SelectOp,
+                Antialiasing = preset.AntialiasingQuality != AntialiasingQuality.None
             },
             OutputProcessType.FloodFill => new FloodFillOutput
             {
@@ -102,7 +99,7 @@ public sealed class ToolFactory
             OutputProcessType.MagicWand => new MagicWandOutput
             {
                 Tolerance = preset.Tolerance,
-                Operation = SelectOp.Replace,
+                Operation = preset.SelectOp,
                 FillReference = preset.FillReference
             },
             OutputProcessType.Stroke => new StrokeOutput

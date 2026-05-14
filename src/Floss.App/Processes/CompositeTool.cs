@@ -28,6 +28,11 @@ public sealed class CompositeTool : ITool
         if (Input is RectInputProcess rip)
             rip.Constrain = rip.ConsumesModifier(ctx.CurrentModifiers);
         Input.PointerDown(s);
+        if (Input.GetImmediateResult() is { } immediate)
+        {
+            Output.Execute(ctx, immediate);
+            ctx.InvalidateRender();
+        }
         if (Input.IsActive && Input.GetPreview() is { } preview)
         {
             Output.Preview(ctx, preview);

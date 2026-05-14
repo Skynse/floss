@@ -46,6 +46,7 @@ public sealed class DrawingCanvas : Control, IDisposable
     private bool _isPointerOver;
     private bool _isCursorPreviewLocked;
     private bool _forceBrushOutlineCursor;
+    private (IBrushTip? Tip, SKBitmap? Outline) _cursorOutlineCache;
 
     // Ctrl+Shift layer-pick drag state
     private bool _isLayerPickDrag;
@@ -59,6 +60,22 @@ public sealed class DrawingCanvas : Control, IDisposable
     private static readonly IBrush CursorOuterBrush = new SolidColorBrush(Color.FromArgb(160, 0, 0, 0));
     private static readonly IBrush CursorInnerBrush = new SolidColorBrush(Colors.White);
 
+    private static readonly IBrush CanvasCheckerBrush = new DrawingBrush
+    {
+        TileMode = TileMode.Tile,
+        DestinationRect = new RelativeRect(0, 0, 16, 16, RelativeUnit.Absolute),
+        Drawing = new DrawingGroup
+        {
+            Children =
+            {
+                new GeometryDrawing { Brush = new SolidColorBrush(Color.Parse("#555555")), Geometry = new RectangleGeometry(new Rect(0, 0, 8, 8)) },
+                new GeometryDrawing { Brush = new SolidColorBrush(Color.Parse("#555555")), Geometry = new RectangleGeometry(new Rect(8, 8, 8, 8)) },
+                new GeometryDrawing { Brush = new SolidColorBrush(Color.Parse("#aaaaaa")), Geometry = new RectangleGeometry(new Rect(8, 0, 8, 8)) },
+                new GeometryDrawing { Brush = new SolidColorBrush(Color.Parse("#aaaaaa")), Geometry = new RectangleGeometry(new Rect(0, 8, 8, 8)) },
+            }
+        }
+    };
+
     public BrushEngine BrushEngine { get; }
 
     public DrawingCanvas()
@@ -66,7 +83,6 @@ public sealed class DrawingCanvas : Control, IDisposable
         _document.DirtyStateChanged += (_, _) => DirtyStateChanged?.Invoke(this, EventArgs.Empty);
         Focusable = true;
         ClipToBounds = false;
-        RenderOptions.SetBitmapInterpolationMode(this, BitmapInterpolationMode.None);
         RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);
 
         BrushEngine = new BrushEngine();
@@ -133,6 +149,8 @@ public sealed class DrawingCanvas : Control, IDisposable
         _document.Dispose();
         _layerClipboard = null;
         _clipboardPixels = null;
+        _cursorOutlineCache.Outline?.Dispose();
+        _cursorOutlineCache = default;
     }
 
     public event EventHandler? StatsChanged;
@@ -166,7 +184,17 @@ public sealed class DrawingCanvas : Control, IDisposable
     public bool HasDocument => _document.Layers.Count > 0;
 
     public bool PaintInputSuspended { get; set; }
-    public double CanvasZoom { get; set; } = 1.0;
+    private double _canvasZoom = 1.0;
+    public double CanvasZoom
+    {
+        get => _canvasZoom;
+        set
+        {
+            _canvasZoom = value;
+            RenderOptions.SetBitmapInterpolationMode(this,
+                value >= 1.0 ? BitmapInterpolationMode.None : BitmapInterpolationMode.HighQuality);
+        }
+    }
 
     public void SetViewport(IViewportController vp, double width, double height)
     {
@@ -316,6 +344,12 @@ public sealed class DrawingCanvas : Control, IDisposable
     {
         _brush = brush with { Color = _paintColor };
         _ctx.Brush = _brush;
+
+        if (_brushTool.Input is BrushStrokeInputProcess brushInput)
+            brushInput.Stabilization = brush.Smoothing;
+        if (_eraserTool.Input is BrushStrokeInputProcess eraserInput)
+            eraserInput.Stabilization = brush.Smoothing;
+
         InvalidateVisual();
     }
 
@@ -636,46 +670,23 @@ public sealed class DrawingCanvas : Control, IDisposable
     public void RotateCanvas90Clockwise()
     {
         var doc = _document;
-        var oldW = doc.Width;
         var oldH = doc.Height;
         doc.BeginDocumentMutation();
-
         foreach (var layer in doc.Layers)
         {
             if (layer.IsGroup || layer.IsLocked) continue;
-
-            var lw = layer.Width;
-            var lh = layer.Height;
+            var lw = layer.Width; var lh = layer.Height;
             var pixels = layer.CapturePixels();
             if (pixels.Length == 0 || pixels.Length != lw * lh * 4) continue;
-
-            var ox = layer.OffsetX;
-            var oy = layer.OffsetY;
-
-            var rotated = new byte[pixels.Length];
-            var newW = lh;
-            var newH = lw;
-
-            for (var y = 0; y < lh; y++)
-            {
-                for (var x = 0; x < lw; x++)
-                {
-                    var src = (y * lw + x) * 4;
-                    var dst = (x * newW + (newW - 1 - y)) * 4;
-                    rotated[dst] = pixels[src];
-                    rotated[dst + 1] = pixels[src + 1];
-                    rotated[dst + 2] = pixels[src + 2];
-                    rotated[dst + 3] = pixels[src + 3];
-                }
-            }
-
-            layer.Pixels.Resize(newW, newH);
-            layer.Pixels.CopyFromBgra(rotated, newW, newH);
+            var ox = layer.OffsetX; var oy = layer.OffsetY;
+            var rotated = RotatePixelBuffer(pixels, lw, lh, lh, lw,
+                (x, y, nw) => (x * nw + (nw - 1 - y)) * 4);
+            layer.Pixels.Resize(lh, lw);
+            layer.Pixels.CopyFromBgra(rotated, lh, lw);
             layer.OffsetX = oldH - oy - lh;
             layer.OffsetY = ox;
             layer.MarkThumbnailDirty();
         }
-
         doc.SwapDimensions();
         _ctx.Selection.Resize(doc.Width, doc.Height);
         _document.NotifySelectionChanged();
@@ -687,45 +698,22 @@ public sealed class DrawingCanvas : Control, IDisposable
     {
         var doc = _document;
         var oldW = doc.Width;
-        var oldH = doc.Height;
         doc.BeginDocumentMutation();
-
         foreach (var layer in doc.Layers)
         {
             if (layer.IsGroup || layer.IsLocked) continue;
-
-            var lw = layer.Width;
-            var lh = layer.Height;
+            var lw = layer.Width; var lh = layer.Height;
             var pixels = layer.CapturePixels();
             if (pixels.Length == 0 || pixels.Length != lw * lh * 4) continue;
-
-            var ox = layer.OffsetX;
-            var oy = layer.OffsetY;
-
-            var rotated = new byte[pixels.Length];
-            var newW = lh;
-            var newH = lw;
-
-            for (var y = 0; y < lh; y++)
-            {
-                for (var x = 0; x < lw; x++)
-                {
-                    var src = (y * lw + x) * 4;
-                    var dst = ((newH - 1 - x) * newW + y) * 4;
-                    rotated[dst] = pixels[src];
-                    rotated[dst + 1] = pixels[src + 1];
-                    rotated[dst + 2] = pixels[src + 2];
-                    rotated[dst + 3] = pixels[src + 3];
-                }
-            }
-
-            layer.Pixels.Resize(newW, newH);
-            layer.Pixels.CopyFromBgra(rotated, newW, newH);
+            var ox = layer.OffsetX; var oy = layer.OffsetY;
+            var rotated = RotatePixelBuffer(pixels, lw, lh, lh, lw,
+                (x, y, nw) => ((lw - 1 - x) * nw + y) * 4);
+            layer.Pixels.Resize(lh, lw);
+            layer.Pixels.CopyFromBgra(rotated, lh, lw);
             layer.OffsetX = oy;
             layer.OffsetY = oldW - ox - lw;
             layer.MarkThumbnailDirty();
         }
-
         doc.SwapDimensions();
         _ctx.Selection.Resize(doc.Width, doc.Height);
         _document.NotifySelectionChanged();
@@ -737,39 +725,38 @@ public sealed class DrawingCanvas : Control, IDisposable
     {
         var doc = _document;
         doc.BeginDocumentMutation();
-
         foreach (var layer in doc.Layers)
         {
             if (layer.IsGroup || layer.IsLocked) continue;
-
-            var lw = layer.Width;
-            var lh = layer.Height;
+            var lw = layer.Width; var lh = layer.Height;
             var pixels = layer.CapturePixels();
             if (pixels.Length == 0 || pixels.Length != lw * lh * 4) continue;
-
-            var rotated = new byte[pixels.Length];
-
-            for (var y = 0; y < lh; y++)
-            {
-                for (var x = 0; x < lw; x++)
-                {
-                    var src = (y * lw + x) * 4;
-                    var dst = ((lh - 1 - y) * lw + (lw - 1 - x)) * 4;
-                    rotated[dst] = pixels[src];
-                    rotated[dst + 1] = pixels[src + 1];
-                    rotated[dst + 2] = pixels[src + 2];
-                    rotated[dst + 3] = pixels[src + 3];
-                }
-            }
-
+            var rotated = RotatePixelBuffer(pixels, lw, lh, lw, lh,
+                (x, y, nw) => ((lh - 1 - y) * nw + (lw - 1 - x)) * 4);
             layer.OffsetX = doc.Width - layer.OffsetX - lw;
             layer.OffsetY = doc.Height - layer.OffsetY - lh;
             layer.RestorePixels(rotated);
             layer.MarkThumbnailDirty();
         }
-
         doc.NotifyChanged();
         InvalidateVisual();
+    }
+
+    private static byte[] RotatePixelBuffer(byte[] pixels, int lw, int lh, int newW, int newH,
+        Func<int, int, int, int> dstIndex)
+    {
+        var rotated = new byte[newW * newH * 4];
+        for (var y = 0; y < lh; y++)
+        for (var x = 0; x < lw; x++)
+        {
+            var src = (y * lw + x) * 4;
+            var dst = dstIndex(x, y, newW);
+            rotated[dst] = pixels[src];
+            rotated[dst + 1] = pixels[src + 1];
+            rotated[dst + 2] = pixels[src + 2];
+            rotated[dst + 3] = pixels[src + 3];
+        }
+        return rotated;
     }
 
     // Pixel clipboard (for Copy/Paste from canvas) — instance-scoped so
@@ -966,8 +953,19 @@ public sealed class DrawingCanvas : Control, IDisposable
         if (!_document.CanPaintActiveLayer) return;
         _document.ClearActiveLayer(pushHistory);
     }
-    public void Undo() => _document.Undo();
-    public void Redo() => _document.Redo();
+    public void Undo()
+    {
+        if (_toolController.HasPendingOperation)
+            _toolController.Cancel();
+        _document.Undo();
+    }
+
+    public void Redo()
+    {
+        if (_toolController.HasPendingOperation)
+            _toolController.Cancel();
+        _document.Redo();
+    }
     public void AddLayer() => _document.AddLayer();
     public void AddGroupLayer() => _document.AddGroupLayer();
     public void AddBackgroundLayer() => _document.AddBackgroundLayer();
@@ -1066,20 +1064,28 @@ public sealed class DrawingCanvas : Control, IDisposable
         // Skip compositing on empty-canvas documents — avoids allocating a
         // full-canvas WriteableBitmap (900MB+ for 15k²) when nothing is drawn.
         var viewport = ComputeVisibleViewport();
+        var canvasBounds = new Rect(Bounds.Size);
+        {
+            var paper = _document.PaperLayer;
+            bool hasSolidPaper = paper is { IsVisible: true } && _document.PaperColor.A == 255;
+            if (hasSolidPaper)
+                context.FillRectangle(new SolidColorBrush(_document.PaperColor), canvasBounds);
+            else
+                context.FillRectangle(CanvasCheckerBrush, canvasBounds);
+        }
         if (HasAnyLayerContent(_document.Layers))
         {
             var paper = _document.PaperLayer;
             uint paperUint = paper is { IsVisible: true } ? ColorToBgraUint(_document.PaperColor) : 0u;
             _compositor.Composite(_document.Layers, _document.Width, _document.Height, paperUint, viewport, CanvasZoom);
-            var target = new Rect(Bounds.Size);
-            using (context.PushClip(new RoundedRect(target)))
+            using (context.PushClip(new RoundedRect(canvasBounds)))
             using (context.PushRenderOptions(new RenderOptions
             {
-                BitmapInterpolationMode = BitmapInterpolationMode.None,
+                BitmapInterpolationMode = CanvasZoom >= 1.0 ? BitmapInterpolationMode.None : BitmapInterpolationMode.HighQuality,
                 EdgeMode = EdgeMode.Aliased
             }))
             {
-                _compositor.DrawTiles(context, target, viewport);
+                _compositor.DrawTiles(context, canvasBounds, viewport);
             }
         }
         else
@@ -1175,10 +1181,7 @@ public sealed class DrawingCanvas : Control, IDisposable
 
         SKBitmap? tipBitmap = null;
         if (tip is ImageBrushTip img)
-        {
-            var bmpSize = Math.Clamp((int)(r * 2), 4, 256);
-            tipBitmap = OutlineBitmapFromMask(img.GenerateMask(bmpSize, 1.0f));
-        }
+            tipBitmap = GetOrBuildCursorOutline(img);
 
         var angle = ComputeLiveCursorAngle();
         _cursorAngle = angle;
@@ -1188,6 +1191,19 @@ public sealed class DrawingCanvas : Control, IDisposable
             Math.Clamp((float)_brush.TipThickness, 0.01f, 1f),
             _brush.TipDirection,
             angle));
+    }
+
+    private SKBitmap GetOrBuildCursorOutline(ImageBrushTip img)
+    {
+        if (ReferenceEquals(_cursorOutlineCache.Tip, img) && _cursorOutlineCache.Outline != null)
+            return _cursorOutlineCache.Outline;
+
+        _cursorOutlineCache.Outline?.Dispose();
+        // Always use 256 so GenerateMask hits the brush engine's existing cache entry
+        // regardless of current cursor radius, avoiding a cache miss on every slider tick.
+        var outline = OutlineBitmapFromMask(img.GenerateMask(256, 1.0f));
+        _cursorOutlineCache = (img, outline);
+        return outline;
     }
 
     private float _cursorAngle;
@@ -1312,7 +1328,7 @@ public sealed class DrawingCanvas : Control, IDisposable
 
         public bool HitTest(Point p) => false;
         public bool Equals(ICustomDrawOperation? other) => false;
-        public void Dispose() => _bitmap?.Dispose();
+        public void Dispose() { }
 
         public void Render(ImmediateDrawingContext context)
         {

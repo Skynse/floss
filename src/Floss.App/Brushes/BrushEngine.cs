@@ -19,6 +19,7 @@ public sealed class BrushEngine : IDisposable
     private ActiveStroke? _activeStroke;
     private SKBitmap? _scratch;
     private readonly SKPaint _scratchCompositePaint = new() { BlendMode = SKBlendMode.SrcOver };
+    private readonly Dictionary<string, SKBitmap?> _textureCache = new();
 
     public delegate void PixelSampler(int x, int y, out byte b, out byte g, out byte r, out byte a);
 
@@ -92,7 +93,7 @@ public sealed class BrushEngine : IDisposable
         if (canDirect)
             RasterizeStampsDirect(layer, stroke, brush, dirty);
         else if (useScratch)
-            RenderStampsViaScratch(layer, stroke, dirty);
+            RenderStampsViaScratch(layer, stroke, brush, dirty);
         else
             layer.Pixels.RenderWithSkia(dirty, canvas => RenderPreparedStamps(stroke, canvas));
 
@@ -154,6 +155,24 @@ public sealed class BrushEngine : IDisposable
         _scratch?.Dispose();
         _scratch = null;
         _scratchCompositePaint.Dispose();
+        foreach (var bmp in _textureCache.Values)
+            bmp?.Dispose();
+        _textureCache.Clear();
+    }
+
+    private SKBitmap? GetOrLoadTexture(string path)
+    {
+        if (_textureCache.TryGetValue(path, out var cached)) return cached;
+        SKBitmap? bmp = null;
+        try
+        {
+            using var original = SKBitmap.Decode(path);
+            if (original != null)
+                bmp = original.Copy(SKColorType.Gray8);
+        }
+        catch { }
+        _textureCache[path] = bmp;
+        return bmp;
     }
 
     private void EnsureStroke(BrushPreset brush, CanvasInputSample sample)
@@ -317,7 +336,7 @@ public sealed class BrushEngine : IDisposable
         return Math.Max(1.0, maxSize * 0.75 + spacing + scatter + 3.0);
     }
 
-    private void RenderStampsViaScratch(DrawingLayer layer, ActiveStroke stroke, PixelRegion dirty)
+    private unsafe void RenderStampsViaScratch(DrawingLayer layer, ActiveStroke stroke, BrushPreset brush, PixelRegion dirty)
     {
         var w = dirty.Width;
         var h = dirty.Height;
@@ -362,9 +381,39 @@ public sealed class BrushEngine : IDisposable
             sc.Restore();
         }
 
+        // Apply grain to the scratch in canvas space before compositing.
+        float grain = (float)brush.Grain;
+        if (grain > 0f)
+        {
+            SKBitmap? texBmp = brush.Texture != null ? GetOrLoadTexture(brush.Texture) : null;
+            byte* texPx = texBmp != null ? (byte*)texBmp.GetPixels().ToPointer() : null;
+            int texW = texBmp?.Width ?? 0, texH = texBmp?.Height ?? 0, texStride = texBmp?.RowBytes ?? 0;
+
+            var ptr = (byte*)_scratch.GetPixels().ToPointer();
+            int stride = _scratch.RowBytes;
+            for (int sy = 0; sy < h; sy++)
+            {
+                int cy = dirty.Y + sy;
+                byte* row = ptr + sy * stride;
+                for (int sx = 0; sx < w; sx++)
+                {
+                    byte a = row[sx * 4 + 3];
+                    if (a == 0) continue;
+                    float noise;
+                    if (texPx != null)
+                    {
+                        int tx = (dirty.X + sx) % texW; if (tx < 0) tx += texW;
+                        int ty = cy % texH; if (ty < 0) ty += texH;
+                        noise = texPx[ty * texStride + tx] / 255.0f;
+                    }
+                    else
+                        noise = GrainNoise(dirty.X + sx, cy);
+                    row[sx * 4 + 3] = (byte)(a * (1f - grain + noise * grain) + 0.5f);
+                }
+            }
+        }
+
         // Composite the scratch result onto the layer tiles with SrcOver.
-        // We snapshot the bitmap into an SKImage before the RenderWithSkia call
-        // so SkiaSharp doesn't mutate it while the canvas is live on another thread.
         using var scratchImage = SKImage.FromBitmap(_scratch);
         var srcRect = SKRect.Create(0, 0, w, h);
         var dstRect = SKRect.Create(dirty.X, dirty.Y, w, h);
@@ -387,6 +436,17 @@ public sealed class BrushEngine : IDisposable
         int brushB = baseColor.Blue, brushG = baseColor.Green, brushR = baseColor.Red;
         float baseAlpha = baseColor.Alpha;
         bool isDstOut = brush.BlendMode == SKBlendMode.DstOut;
+        float brushGrain = (float)brush.Grain;
+        byte* texPx = null;
+        int texW = 0, texH = 0, texStride = 0;
+        SKBitmap? texBmp = brushGrain > 0f && brush.Texture != null ? GetOrLoadTexture(brush.Texture) : null;
+        if (texBmp != null)
+        {
+            texPx = (byte*)texBmp.GetPixels().ToPointer();
+            texW = texBmp.Width;
+            texH = texBmp.Height;
+            texStride = texBmp.RowBytes;
+        }
 
         float brushThickness = MathF.Max(0.01f, MathF.Min(4f, (float)brush.TipThickness));
         bool isHorizontal = brush.TipDirection == BrushTipDirection.Horizontal;
@@ -542,6 +602,20 @@ public sealed class BrushEngine : IDisposable
                                             : (MathF.Cos(fade * MathF.PI) + 1f) * 0.5f;
                                     }
                                 }
+                            }
+
+                            if (brushGrain > 0f)
+                            {
+                                float noise;
+                                if (texPx != null)
+                                {
+                                    int gtx = px % texW; if (gtx < 0) gtx += texW;
+                                    int gty = py % texH; if (gty < 0) gty += texH;
+                                    noise = texPx[gty * texStride + gtx] / 255.0f;
+                                }
+                                else
+                                    noise = GrainNoise(px, py);
+                                alpha *= 1f - brushGrain + noise * brushGrain;
                             }
 
                             int stampA = (int)(alpha * stampOpacity255 + 0.5f);
@@ -1100,6 +1174,29 @@ public sealed class BrushEngine : IDisposable
                 h ^= h >> 16;
                 return (h & 0xFFFF) / 65535.0f;
             }
+        }
+    }
+
+    // Value noise at canvas pixel coordinates for grain/paper texture.
+    // Uses 4-pixel cells with bilinear interpolation so grain has a natural scale.
+    private static float GrainNoise(int cx, int cy)
+    {
+        int gx = cx >> 2, gy = cy >> 2;
+        float fx = (cx & 3) * 0.25f, fy = (cy & 3) * 0.25f;
+        float h00 = HashF(gx,     gy),     h10 = HashF(gx + 1, gy);
+        float h01 = HashF(gx,     gy + 1), h11 = HashF(gx + 1, gy + 1);
+        return h00 + (h10 - h00) * fx + (h01 - h00) * fy + (h00 - h10 - h01 + h11) * fx * fy;
+    }
+
+    private static float HashF(int x, int y)
+    {
+        unchecked
+        {
+            uint h = (uint)(x * 1619 + y * 31337);
+            h ^= h >> 17; h *= 0xbf324c81u;
+            h ^= h >> 13; h *= 0x9b2e1515u;
+            h ^= h >> 16;
+            return (h & 0xFFFF) / 65535.0f;
         }
     }
 

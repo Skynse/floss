@@ -201,11 +201,14 @@ public sealed class DrawingDocument : IDisposable
     private void NotifyLayerRemovedRecursive(List<DrawingLayer> layers)
     {
         foreach (var l in layers)
-        {
-            LayerRemoved?.Invoke(this, l);
-            if (l.Children.Count > 0)
-                NotifyLayerRemovedRecursive(l.Children);
-        }
+            NotifyLayerRemovedRecursive(l);
+    }
+
+    private void NotifyLayerRemovedRecursive(DrawingLayer layer)
+    {
+        LayerRemoved?.Invoke(this, layer);
+        if (layer.Children.Count > 0)
+            NotifyLayerRemovedRecursive(layer.Children);
     }
 
     public void ReplaceWith(DrawingDocument source)
@@ -602,8 +605,11 @@ public sealed class DrawingDocument : IDisposable
         if (layer == null) return;
         var clamped = Math.Clamp(opacity, 0, 1);
         if (Math.Abs(layer.Opacity - clamped) < 0.001) return;
+        var oldOpacity = layer.Opacity;
+        var dirtyRegion = LayerDirtyRegion(ActiveLayerIndex);
+        PushHistoryState(new LayerPropertyHistoryState<double>(ActiveLayerIndex, oldOpacity, clamped, (l, v) => l.Opacity = v, true, dirtyRegion));
         layer.Opacity = clamped;
-        NotifyLayerMetadataChanged(LayerDirtyRegion(ActiveLayerIndex), ActiveLayerIndex);
+        NotifyLayerMetadataChanged(dirtyRegion, ActiveLayerIndex);
     }
 
     public void SetActiveLayerBlendMode(string blendMode)
@@ -968,6 +974,7 @@ public sealed class DrawingDocument : IDisposable
     {
         Width = snapshot.Width; Height = snapshot.Height;
         Selection.RestoreSnapshot(snapshot.Selection);
+        NotifyLayerRemovedRecursive(_layers);
         foreach (var l in _layers) l.Dispose();
         _layers.Clear();
         foreach (var snap in snapshot.Layers) _layers.Add(CreateLayerFromSnapshot(snap));
@@ -1017,7 +1024,7 @@ public sealed class DrawingDocument : IDisposable
     private sealed record InsertLayerHistoryState(int InsertedIndex, int PreviousActiveIndex) : IHistoryState
     {
         public IHistoryState CaptureRedo(DrawingDocument document) => new RemoveLayerHistoryState(InsertedIndex, document.ActiveLayerIndex, document.CaptureLayerSnapshot(document._layers[InsertedIndex]));
-        public void Restore(DrawingDocument document) { var removed = document._layers[InsertedIndex]; document._layers.RemoveAt(InsertedIndex); removed.Dispose(); document.ActiveLayerIndex = document._layers.Count > 0 ? Math.Clamp(PreviousActiveIndex, 0, document._layers.Count - 1) : -1; document.NotifyLayersChanged(); }
+        public void Restore(DrawingDocument document) { var removed = document._layers[InsertedIndex]; document._layers.RemoveAt(InsertedIndex); document.NotifyLayerRemovedRecursive(removed); removed.Dispose(); document.ActiveLayerIndex = document._layers.Count > 0 ? Math.Clamp(PreviousActiveIndex, 0, document._layers.Count - 1) : -1; document.NotifyLayersChanged(); }
     }
 
     private sealed record RemoveLayerHistoryState(int RemovedIndex, int PreviousActiveIndex, LayerSnapshot RemovedSnap) : IHistoryState

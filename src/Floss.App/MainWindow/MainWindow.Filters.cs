@@ -467,7 +467,7 @@ public partial class MainWindow
             }
         }
 
-        var previewOn = false;
+        var previewOn = buildPreview != null;
         DispatcherTimer? debounce = null;
 
         void ApplyPreviewNow()
@@ -527,9 +527,9 @@ public partial class MainWindow
                 Content = "Preview",
                 Padding = new Thickness(10, 4),
                 FontSize = 11,
-                Background = new SolidColorBrush(Color.Parse("#14161e")),
-                Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-                BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+                Background = new SolidColorBrush(Color.Parse("#1e3050")),
+                Foreground = new SolidColorBrush(Color.Parse("#70a0e8")),
+                BorderBrush = new SolidColorBrush(Color.Parse("#2a4a88")),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(3)
             };
@@ -628,6 +628,7 @@ public partial class MainWindow
             tcs.TrySetResult(false);
         };
 
+        dialog.Opened += (_, _) => { if (previewOn) ApplyPreviewNow(); };
         await dialog.ShowDialog(this);
         return await tcs.Task;
     }

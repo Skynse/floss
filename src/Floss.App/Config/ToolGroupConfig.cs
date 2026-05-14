@@ -150,6 +150,8 @@ public enum EyedropperSampleMode
     CurrentLayer
 }
 
+public enum AntialiasingQuality { None, Low, Medium, High }
+
 // Legacy enum for backward compat during migration.
 public enum ToolPresetEngine
 {
@@ -179,6 +181,7 @@ public sealed class ToolPreset
 
     // Shared output process properties
     public bool Antialiasing { get; set; } = true;
+    public AntialiasingQuality AntialiasingQuality { get; set; } = AntialiasingQuality.High;
 
     // Brush properties (for DirectDraw output)
     public double? BrushSize { get; set; }

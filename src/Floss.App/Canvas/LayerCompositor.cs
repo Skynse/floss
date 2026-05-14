@@ -260,6 +260,9 @@ public sealed class LayerCompositor : IDisposable
             CompositeTileCpu(_compTiles[(tx, ty, lod)], tileRect, rootLayers, tx * stride, ty * stride, paperColor);
         }
 
+        foreach (var cache in _groupCaches.Values)
+            cache.FlushFullDirty();
+
         _tilesToPrune.Clear();
         foreach (var (tx, ty) in tileKeys) _tilesToPrune.Add((tx, ty, lod));
         foreach (var (tx, ty) in missingTileKeys) _tilesToPrune.Add((tx, ty, lod));
@@ -1621,12 +1624,11 @@ public sealed class LayerCompositor : IDisposable
             var clip = requestedClip.ClipTo(Buffer.Width, Buffer.Height);
             if (clip.IsEmpty) return PixelRegion.Empty;
 
+            // When fully dirty, return clip for every tile — DO NOT consume _fullDirty
+            // here. The compositor calls FlushFullDirty() after all tiles are processed
+            // so that each compositor tile gets a correct re-render of the group.
             if (_fullDirty)
-            {
-                _fullDirty = false;
-                _dirtyRegion = null;
                 return clip;
-            }
 
             if (_dirtyRegion is not { } dirty)
                 return PixelRegion.Empty;
@@ -1641,6 +1643,12 @@ public sealed class LayerCompositor : IDisposable
                 : dirty;
             _dirtyRegion = remaining.IsEmpty ? null : remaining;
             return dirtyClip;
+        }
+
+        public void FlushFullDirty()
+        {
+            _fullDirty = false;
+            _dirtyRegion = null;
         }
     }
 }

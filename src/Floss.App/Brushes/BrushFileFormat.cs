@@ -12,8 +12,8 @@ public static class BrushFileFormat
     public const string Extension = ".flbr";
     private const uint Magic = 0x52424C46; // FLBR, little endian
 
-    // Version 8 adds BrushQuality setting
-    private const int Version = 8;
+    // Version 9 adds Texture path
+    private const int Version = 9;
 
     public static BrushAsset Load(string path)
     {
@@ -55,8 +55,14 @@ public static class BrushFileFormat
             // 3. Safely read Version 8 properties
             var quality = BrushQuality.High;
             if (version >= 8)
-            {
                 quality = (BrushQuality)reader.ReadInt32();
+
+            // 4. Safely read Version 9 properties
+            string? texture = null;
+            if (version >= 9)
+            {
+                var t = reader.ReadString();
+                texture = t.Length > 0 ? t : null;
             }
 
             var dynJson = reader.ReadString();
@@ -68,9 +74,10 @@ public static class BrushFileFormat
                 Flow = flow,
                 Grain = grain,
                 Smoothing = smoothing,
-                BaseAngleSource = baseAngleSource, // Inject V7 property
-                AngleJitter = angleJitter,         // Inject V7 property
-                Quality = quality,                 // Inject V8 property
+                BaseAngleSource = baseAngleSource,
+                AngleJitter = angleJitter,
+                Quality = quality,
+                Texture = texture,
                 Tip = asset.Tip.CreateTip()
             };
         }
@@ -175,6 +182,9 @@ public static class BrushFileFormat
 
         // 4. Write Version 8 properties
         writer.Write((int)p.Quality);
+
+        // 5. Write Version 9 properties
+        writer.Write(p.Texture ?? string.Empty);
 
         writer.Write(p.Dynamics.Serialize());
         WriteTip(writer, asset.Tip);

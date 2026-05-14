@@ -452,6 +452,11 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         }
         _context.Document.CommitLayerTileMutations(mutations);
 
+        // CommitLayerTileMutations skips NotifyChanged when before==after (no-op transform).
+        // Always notify so the compositor flushes the stale "cleared" tile cache.
+        foreach (var data in _layerData)
+            _context.Document.NotifyChanged(new PixelRegion(data.SrcX, data.SrcY, data.SrcW, data.SrcH).Union(dest), data.Index);
+
         _context.Selection.SetFromRect(dest.X, dest.Y, dest.Width, dest.Height);
         _overlayBitmap?.Dispose();
         _overlayBitmap = null;

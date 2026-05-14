@@ -38,6 +38,7 @@ public sealed class ToolPropertiesWindow : Window
     // ── Stamp layers (Texture category) ──────────────────────────────────────
     private readonly List<StampLayer> _stampLayers = [];
     private StackPanel _stampPanel = null!;
+    private TextBlock _textureFileLabel = null!;
 
     // ── Sliders ───────────────────────────────────────────────────────────────
     private readonly Slider _sizeSlider = MkSlider(0.5, 1000, 8, "Brush size in pixels");
@@ -134,7 +135,7 @@ public sealed class ToolPropertiesWindow : Window
         {
             OutputProcessType.FloodFill => ["Fill Settings", "Paint Settings"],
             OutputProcessType.ClosedAreaFill => ["Lasso Fill Settings", "Paint Settings", "Lasso Input"],
-            OutputProcessType.SelectionArea => ["Selection Settings"],
+            OutputProcessType.SelectionArea => ["Selection Settings", "Lasso Input"],
             OutputProcessType.Gradient => ["Gradient Settings", "Paint Settings"],
             OutputProcessType.Stroke => ["Stroke Settings", "Paint Settings"],
             OutputProcessType.MagicWand => ["Magic Wand Settings"],
@@ -598,6 +599,66 @@ public sealed class ToolPropertiesWindow : Window
 
     private Control BuildTextureContent()
     {
+        // Grain texture picker
+        _textureFileLabel = new TextBlock
+        {
+            FontSize = 10,
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 160,
+            Text = _brushPreset.Texture != null ? Path.GetFileName(_brushPreset.Texture) : "None"
+        };
+        var browseTexBtn = SmBtn("Browse...");
+        browseTexBtn.Click += async (_, _) =>
+        {
+            var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "Select grain texture",
+                AllowMultiple = false,
+                FileTypeFilter = [new FilePickerFileType("PNG Image") { Patterns = ["*.png"] }]
+            });
+            if (files.Count == 0) return;
+            var path = files[0].TryGetLocalPath();
+            if (path == null) return;
+            Commit(p => p with { Texture = path });
+            _textureFileLabel.Text = Path.GetFileName(path);
+        };
+        var clearTexBtn = SmBtn("Clear");
+        clearTexBtn.Click += (_, _) =>
+        {
+            Commit(p => p with { Texture = null });
+            _textureFileLabel.Text = "None";
+        };
+        var texBtnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        texBtnRow.Children.Add(browseTexBtn);
+        texBtnRow.Children.Add(clearTexBtn);
+
+        var texRow = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 2, 0, 2) };
+        DockPanel.SetDock(new TextBlock
+        {
+            Text = "Texture",
+            FontSize = 10,
+            Width = 60,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            VerticalAlignment = VerticalAlignment.Center
+        }, Dock.Left);
+        texRow.Children.Add(new TextBlock
+        {
+            Text = "Texture",
+            FontSize = 10,
+            Width = 60,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        texRow.Children.Add(new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            Children = { _textureFileLabel, texBtnRow }
+        });
+
+        // Stamp layers header
         var addShapeBtn = SmBtn("+ Shape");
         var addPngBtn = SmBtn("+ PNG");
         addShapeBtn.Click += (_, _) => AddShapeLayer();
@@ -617,6 +678,7 @@ public sealed class ToolPropertiesWindow : Window
             Children =
             {
                 PlainSliderRow("Grain", _grainSlider, "%", "brush.grain"),
+                texRow,
                 new Border { Height = 4 },
                 headerRow,
                 _stampPanel
@@ -680,8 +742,9 @@ public sealed class ToolPropertiesWindow : Window
                 break;
 
             case OutputProcessType.ClosedAreaFill when cat == "Lasso Input":
-                panel.Children.Add(BuildGenericToggleRow("Antialiasing",
-                    _toolPreset.Antialiasing, v => CommitTool(p => p.Antialiasing = v), toolPropId: "input.antialiasing"));
+            case OutputProcessType.SelectionArea when cat == "Lasso Input":
+                panel.Children.Add(BuildGenericComboRow<AntialiasingQuality>("Antialiasing",
+                    _toolPreset.AntialiasingQuality, v => CommitTool(p => p.AntialiasingQuality = v), toolPropId: "input.antialiasing"));
                 panel.Children.Add(BuildGenericSliderRow("Stabilization", 0, 1.0,
                     _toolPreset.Stabilization, v => CommitTool(p => p.Stabilization = v), toolPropId: "input.stabilization"));
                 break;
@@ -1426,6 +1489,9 @@ public sealed class ToolPropertiesWindow : Window
         _tipDensityDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.TipDensity));
         _tipThicknessDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.TipThickness));
         _angleDynPopup?.SyncState(preset.BaseAngleSource, preset.AngleJitter);
+
+        if (_textureFileLabel != null)
+            _textureFileLabel.Text = preset.Texture != null ? Path.GetFileName(preset.Texture) : "None";
 
         RebuildStampPanel();
         // Refresh sidebar highlight without rebuilding cached slider panels.

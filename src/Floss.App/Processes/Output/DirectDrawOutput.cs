@@ -119,7 +119,6 @@ public sealed class DirectDrawOutput : IOutputProcess
                 {
                     _currentLayer.MarkThumbnailDirty();
                     _currentCtx.Document.CommitLayerTileMutation(_currentCtx.ActiveLayerIndex, _beforeTiles, tileDirty);
-                    _currentCtx.Document.NotifyChanged(tileDirty, _currentCtx.ActiveLayerIndex);
                 }
             }
 
@@ -149,6 +148,21 @@ public sealed class DirectDrawOutput : IOutputProcess
     public void Cancel()
     {
         _brushEngine.EndStroke();
+
+        if (_strokeActive && _beforeTiles != null && _currentLayer != null && _currentCtx != null)
+        {
+            foreach (var ((tx, ty), tile) in _beforeTiles)
+                _currentLayer.RestoreTile(tx, ty, tile);
+
+            var tileDirty = ComputeTileDirtyRegion(_beforeTiles).Translate(_currentLayer.OffsetX, _currentLayer.OffsetY);
+            if (!tileDirty.IsEmpty)
+            {
+                _currentLayer.MarkThumbnailDirty();
+                _currentCtx.Document.NotifyChanged(tileDirty, _currentCtx.ActiveLayerIndex);
+                _currentCtx.InvalidateRender();
+            }
+        }
+
         Cleanup();
     }
 

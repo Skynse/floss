@@ -18,6 +18,9 @@ public interface IInputProcess
     // Returns the processed input if complete, null otherwise.
     IProcessedInput? GetResult();
 
+    // Returns a stroke to be committed immediately (e.g. Shift-click straight line), null otherwise.
+    IProcessedInput? GetImmediateResult() => null;
+
     // Force-finish the current input (for Enter key / double-click).
     void Commit() { }
 

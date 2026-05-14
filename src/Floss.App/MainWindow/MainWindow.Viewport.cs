@@ -125,6 +125,10 @@ public partial class MainWindow
                 && floating.Bounds.Contains(pt.Position))
                 return;
 
+            if (_selectionActionBar is { IsVisible: true } selBar
+                && selBar.Bounds.Contains(pt.Position))
+                return;
+
             if (IsViewportTool(_canvas.ActiveTool))
                 _canvas.HandleViewportPointerInput(ToolInputEventKind.Down, pt.Position, pt);
             else
@@ -743,13 +747,14 @@ public partial class MainWindow
         _activeModifierCombo = assignment?.Modifiers ?? KeyModifiers.None;
         _activeModifierKey = assignment?.Key;
 
-        // Activate new action.
+        // Activate new action. Don't switch tools mid-stroke — that would cancel the stroke.
         switch (assignment?.Action)
         {
             case ModifierAction.ToolAux:
                 _canvas.SetToolAuxMode(assignment.ToolAuxOper);
                 break;
             case ModifierAction.ChangeToolTemporarily:
+                if (_isToolDispatchActive) break;
                 if (!string.IsNullOrEmpty(assignment.TemporaryToolPresetId))
                     PushTemporaryPreset(assignment.TemporaryToolPresetId);
                 else

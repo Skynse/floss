@@ -129,8 +129,8 @@ public partial class MainWindow
         if (preset.InputProcess == InputProcessType.Lasso ||
             output is OutputProcessType.ClosedAreaFill or OutputProcessType.SelectionArea)
         {
-            props.Add(BoolProp("input.antialiasing", "Antialiasing", true,
-                () => preset.Antialiasing, v => preset.Antialiasing = v));
+            props.Add(EnumProp("input.antialiasing", "Antialiasing", true,
+                () => preset.AntialiasingQuality, v => preset.AntialiasingQuality = v));
         }
 
         // ── Output-specific properties ──

@@ -44,6 +44,12 @@ public sealed class MoveLayerOutput : IOutputProcess
         var layer = ctx.ActiveLayer;
         if (layer == null) return;
 
+        if (!_hasPreview)
+        {
+            _origOffsetX = layer.OffsetX;
+            _origOffsetY = layer.OffsetY;
+        }
+
         int dx = (int)(drag.Current.X - drag.Start.X);
         int dy = (int)(drag.Current.Y - drag.Start.Y);
 

@@ -33,6 +33,7 @@ public sealed record BrushPreset(
     public double TipThickness { get; init; } = 1.0;
     public BrushTipDirection TipDirection { get; init; } = BrushTipDirection.Horizontal;
     public double Grain { get; init; } = 0.0;
+    public string? Texture { get; init; } = null;
     public double Smoothing { get; init; } = 0.3;
     public BrushQuality Quality { get; init; } = BrushQuality.High;
     public IBrushTip Tip { get; init; } = new ProceduralBrushTip();
