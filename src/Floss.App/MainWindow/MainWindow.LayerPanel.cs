@@ -612,7 +612,23 @@ public partial class MainWindow
         MenuItem AsyncItem(string header, Func<Task> action)
         {
             var mi = new MenuItem { Header = header };
-            mi.Click += async (_, _) => await action();
+            mi.Click += async (_, _) =>
+            {
+                if (index >= 0 && index < _canvas.Layers.Count)
+                    _canvas.SelectLayer(index);
+                await action();
+            };
+            return mi;
+        }
+        MenuItem InstantFilterItem(string header, Action action)
+        {
+            var mi = new MenuItem { Header = header };
+            mi.Click += (_, _) =>
+            {
+                if (index >= 0 && index < _canvas.Layers.Count)
+                    _canvas.SelectLayer(index);
+                action();
+            };
             return mi;
         }
         items.Add(new() { Header = "-" });
@@ -621,12 +637,63 @@ public partial class MainWindow
             Header = "Filters",
             ItemsSource = new object[]
             {
-                AsyncItem("_Gaussian Blur...", ApplyBlurFilter),
-                AsyncItem("_Sharpen...",       ApplySharpenFilter),
-                AsyncItem("_Noise...",         ApplyNoiseFilter),
-                new Separator(),
-                AsyncItem("_Color Curves...",  ApplyColorCurvesFilter),
-                AsyncItem("Chromatic _Aberration...", ApplyChromaticAberrationFilter),
+                new MenuItem
+                {
+                    Header = "Adjust",
+                    ItemsSource = new object[]
+                    {
+                        AsyncItem("Brightness / Contrast...", ApplyBrightnessContrastFilter),
+                        AsyncItem("Exposure / Gamma...", ApplyExposureGammaFilter),
+                        AsyncItem("Levels...", ApplyLevelsFilter),
+                        AsyncItem("Hue / Saturation...", ApplyHueSaturationFilter),
+                        AsyncItem("Color Curves...", ApplyColorCurvesFilter),
+                    }
+                },
+                new MenuItem
+                {
+                    Header = "Color",
+                    ItemsSource = new object[]
+                    {
+                        InstantFilterItem("Invert", ApplyInvertFilter),
+                        InstantFilterItem("Desaturate", ApplyDesaturateFilter),
+                        AsyncItem("Sepia...", ApplySepiaFilter),
+                        AsyncItem("Threshold...", ApplyThresholdFilter),
+                        AsyncItem("Posterize...", ApplyPosterizeFilter),
+                    }
+                },
+                new MenuItem
+                {
+                    Header = "Blur / Enhance",
+                    ItemsSource = new object[]
+                    {
+                        AsyncItem("Gaussian Blur...", ApplyBlurFilter),
+                        AsyncItem("Motion Blur...", ApplyMotionBlurFilter),
+                        new Separator(),
+                        AsyncItem("Sharpen...", ApplySharpenFilter),
+                        AsyncItem("Bloom...", ApplyBloomFilter),
+                    }
+                },
+                new MenuItem
+                {
+                    Header = "Stylize",
+                    ItemsSource = new object[]
+                    {
+                        AsyncItem("Pixelate...", ApplyPixelateFilter),
+                        AsyncItem("Vignette...", ApplyVignetteFilter),
+                        AsyncItem("Emboss...", ApplyEmbossFilter),
+                        AsyncItem("Find Edges...", ApplyEdgeDetectFilter),
+                        AsyncItem("Chromatic Aberration...", ApplyChromaticAberrationFilter),
+                        AsyncItem("Noise...", ApplyNoiseFilter),
+                    }
+                },
+                new MenuItem
+                {
+                    Header = "Cleanup",
+                    ItemsSource = new object[]
+                    {
+                        AsyncItem("Remove Dust...", ApplyRemoveDustFilter),
+                    }
+                },
             }
         });
 

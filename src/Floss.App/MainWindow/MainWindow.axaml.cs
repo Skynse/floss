@@ -889,15 +889,65 @@ public partial class MainWindow : Window, Tools.IViewportController
             Header = "F_ilter",
             ItemsSource = new object[]
             {
-                MenuAction("_Gaussian Blur...",  async () => await ApplyBlurFilter()),
-                MenuAction("_Sharpen...",         async () => await ApplySharpenFilter()),
-                MenuAction("_Noise...",           async () => await ApplyNoiseFilter()),
-                new Separator(),
-                MenuAction("_Color Curves...",    async () => await ApplyColorCurvesFilter()),
-                MenuAction("Chromatic _Aberration...", async () => await ApplyChromaticAberrationFilter()),
+                new MenuItem
+                {
+                    Header = "_Adjust",
+                    ItemsSource = new object[]
+                    {
+                        MenuAction("_Brightness / Contrast...", async () => await ApplyBrightnessContrastFilter()),
+                        MenuAction("_Exposure / Gamma...", async () => await ApplyExposureGammaFilter()),
+                        MenuAction("_Levels...", async () => await ApplyLevelsFilter()),
+                        MenuAction("_Hue / Saturation...", async () => await ApplyHueSaturationFilter()),
+                        MenuAction("_Color Curves...", async () => await ApplyColorCurvesFilter()),
+                    }
+                },
+                new MenuItem
+                {
+                    Header = "_Color",
+                    ItemsSource = new object[]
+                    {
+                        MenuAction("_Invert", ApplyInvertFilter),
+                        MenuAction("_Desaturate", ApplyDesaturateFilter),
+                        MenuAction("_Sepia...", async () => await ApplySepiaFilter()),
+                        MenuAction("_Threshold...", async () => await ApplyThresholdFilter()),
+                        MenuAction("_Posterize...", async () => await ApplyPosterizeFilter()),
+                    }
+                },
+                new MenuItem
+                {
+                    Header = "_Blur / Enhance",
+                    ItemsSource = new object[]
+                    {
+                        MenuAction("_Gaussian Blur...", async () => await ApplyBlurFilter()),
+                        MenuAction("_Motion Blur...", async () => await ApplyMotionBlurFilter()),
+                        new Separator(),
+                        MenuAction("_Sharpen...", async () => await ApplySharpenFilter()),
+                        MenuAction("_Bloom...", async () => await ApplyBloomFilter()),
+                    }
+                },
+                new MenuItem
+                {
+                    Header = "_Stylize",
+                    ItemsSource = new object[]
+                    {
+                        MenuAction("_Pixelate...", async () => await ApplyPixelateFilter()),
+                        MenuAction("_Vignette...", async () => await ApplyVignetteFilter()),
+                        MenuAction("_Emboss...", async () => await ApplyEmbossFilter()),
+                        MenuAction("_Find Edges...", async () => await ApplyEdgeDetectFilter()),
+                        MenuAction("Chromatic _Aberration...", async () => await ApplyChromaticAberrationFilter()),
+                        MenuAction("_Noise...", async () => await ApplyNoiseFilter()),
+                    }
+                },
+                new MenuItem
+                {
+                    Header = "_Cleanup",
+                    ItemsSource = new object[]
+                    {
+                        MenuAction("Remove _Dust...", async () => await ApplyRemoveDustFilter()),
+                    }
+                },
                 new Separator(),
                 MenuAction("_Base Color Masks from Sketch...", async () => await RunBaseColorMaskGenerator()),
-                MenuAction("Remove _Dust...", async () => await ApplyRemoveDustFilter()),
             }
         };
 

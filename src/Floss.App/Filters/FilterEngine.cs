@@ -178,6 +178,269 @@ public static class FilterEngine
         WriteBytes(layer, pixels, w, h);
     }
 
+    public static void ApplyBrightnessContrast(DrawingLayer layer, float brightness, float contrast, SelectionMask? sel = null)
+    {
+        var curve = contrast >= 0
+            ? 1f + contrast * 3f
+            : 1f + contrast * 0.75f;
+        var offset = brightness * 255f;
+        ApplyRgbTransform(layer, sel, (r, g, b) => (
+            ClampByte(((r - 127.5f) * curve) + 127.5f + offset),
+            ClampByte(((g - 127.5f) * curve) + 127.5f + offset),
+            ClampByte(((b - 127.5f) * curve) + 127.5f + offset)));
+    }
+
+    public static void ApplyExposureGamma(DrawingLayer layer, float exposureStops, float gamma, SelectionMask? sel = null)
+    {
+        var exposure = MathF.Pow(2f, exposureStops);
+        var invGamma = 1f / MathF.Max(0.05f, gamma);
+        ApplyRgbTransform(layer, sel, (r, g, b) => (
+            ClampByte(MathF.Pow(Math.Clamp(r / 255f * exposure, 0f, 1f), invGamma) * 255f),
+            ClampByte(MathF.Pow(Math.Clamp(g / 255f * exposure, 0f, 1f), invGamma) * 255f),
+            ClampByte(MathF.Pow(Math.Clamp(b / 255f * exposure, 0f, 1f), invGamma) * 255f)));
+    }
+
+    public static void ApplyLevels(DrawingLayer layer, int black, float gamma, int white, int outputBlack, int outputWhite, SelectionMask? sel = null)
+    {
+        white = Math.Max(black + 1, white);
+        gamma = MathF.Max(0.05f, gamma);
+        var outRange = outputWhite - outputBlack;
+
+        byte Map(byte value)
+        {
+            var normalized = Math.Clamp((value - black) / (float)(white - black), 0f, 1f);
+            var corrected = MathF.Pow(normalized, 1f / gamma);
+            return ClampByte(outputBlack + corrected * outRange);
+        }
+
+        ApplyRgbTransform(layer, sel, (r, g, b) => (Map(r), Map(g), Map(b)));
+    }
+
+    public static void ApplyHueSaturationLightness(DrawingLayer layer, float hueDegrees, float saturation, float lightness, SelectionMask? sel = null)
+    {
+        ApplyRgbTransform(layer, sel, (r, g, b) =>
+        {
+            var (h, s, l) = RgbToHsl(r / 255f, g / 255f, b / 255f);
+            h = Wrap01(h + hueDegrees / 360f);
+            s = saturation >= 0 ? s + (1f - s) * saturation : s * (1f + saturation);
+            l = lightness >= 0 ? l + (1f - l) * lightness : l * (1f + lightness);
+            var (rr, gg, bb) = HslToRgb(h, Math.Clamp(s, 0f, 1f), Math.Clamp(l, 0f, 1f));
+            return (ClampByte(rr * 255f), ClampByte(gg * 255f), ClampByte(bb * 255f));
+        });
+    }
+
+    public static void ApplyInvert(DrawingLayer layer, SelectionMask? sel = null)
+        => ApplyRgbTransform(layer, sel, (r, g, b) => ((byte)(255 - r), (byte)(255 - g), (byte)(255 - b)));
+
+    public static void ApplyDesaturate(DrawingLayer layer, SelectionMask? sel = null)
+        => ApplyRgbTransform(layer, sel, (r, g, b) =>
+        {
+            var luma = ClampByte(0.2126f * r + 0.7152f * g + 0.0722f * b);
+            return (luma, luma, luma);
+        });
+
+    public static void ApplySepia(DrawingLayer layer, float amount, SelectionMask? sel = null)
+        => ApplyRgbTransform(layer, sel, (r, g, b) =>
+        {
+            var sr = ClampByte(r * 0.393f + g * 0.769f + b * 0.189f);
+            var sg = ClampByte(r * 0.349f + g * 0.686f + b * 0.168f);
+            var sb = ClampByte(r * 0.272f + g * 0.534f + b * 0.131f);
+            return (
+                LerpByte(r, sr, amount),
+                LerpByte(g, sg, amount),
+                LerpByte(b, sb, amount));
+        });
+
+    public static void ApplyThreshold(DrawingLayer layer, byte threshold, SelectionMask? sel = null)
+        => ApplyRgbTransform(layer, sel, (r, g, b) =>
+        {
+            var v = (byte)((0.2126f * r + 0.7152f * g + 0.0722f * b) >= threshold ? 255 : 0);
+            return (v, v, v);
+        });
+
+    public static void ApplyPosterize(DrawingLayer layer, int levels, SelectionMask? sel = null)
+    {
+        levels = Math.Clamp(levels, 2, 32);
+        byte Map(byte v) => ClampByte(MathF.Round(v / 255f * (levels - 1)) / (levels - 1) * 255f);
+        ApplyRgbTransform(layer, sel, (r, g, b) => (Map(r), Map(g), Map(b)));
+    }
+
+    public static void ApplyPixelate(DrawingLayer layer, int blockSize, SelectionMask? sel = null)
+    {
+        blockSize = Math.Clamp(blockSize, 2, 256);
+        var w = layer.Width;
+        var h = layer.Height;
+        var pixels = layer.CapturePixels();
+
+        for (var by = 0; by < h; by += blockSize)
+        {
+            for (var bx = 0; bx < w; bx += blockSize)
+            {
+                long sumB = 0, sumG = 0, sumR = 0, sumA = 0;
+                var count = 0;
+                var right = Math.Min(w, bx + blockSize);
+                var bottom = Math.Min(h, by + blockSize);
+
+                for (var y = by; y < bottom; y++)
+                {
+                    for (var x = bx; x < right; x++)
+                    {
+                        if (sel != null && sel.HasSelection && !sel.IsSelected(x, y)) continue;
+                        var i = (y * w + x) * 4;
+                        if (pixels[i + 3] == 0) continue;
+                        sumB += pixels[i + 0];
+                        sumG += pixels[i + 1];
+                        sumR += pixels[i + 2];
+                        sumA += pixels[i + 3];
+                        count++;
+                    }
+                }
+
+                if (count == 0) continue;
+                var b = (byte)(sumB / count);
+                var g = (byte)(sumG / count);
+                var r = (byte)(sumR / count);
+                var a = (byte)(sumA / count);
+
+                for (var y = by; y < bottom; y++)
+                {
+                    for (var x = bx; x < right; x++)
+                    {
+                        if (sel != null && sel.HasSelection && !sel.IsSelected(x, y)) continue;
+                        var i = (y * w + x) * 4;
+                        pixels[i + 0] = b;
+                        pixels[i + 1] = g;
+                        pixels[i + 2] = r;
+                        pixels[i + 3] = a;
+                    }
+                }
+            }
+        }
+
+        WriteBytes(layer, pixels, w, h);
+    }
+
+    public static void ApplyVignette(DrawingLayer layer, float strength, float radius, float softness, SelectionMask? sel = null)
+    {
+        var w = layer.Width;
+        var h = layer.Height;
+        var cx = (w - 1) * 0.5f;
+        var cy = (h - 1) * 0.5f;
+        var maxDistance = MathF.Sqrt(cx * cx + cy * cy);
+        radius = Math.Clamp(radius, 0.05f, 1f);
+        softness = Math.Clamp(softness, 0.01f, 1f);
+
+        ApplyRgbTransform(layer, sel, (x, y, r, g, b) =>
+        {
+            var dx = x - cx;
+            var dy = y - cy;
+            var d = MathF.Sqrt(dx * dx + dy * dy) / maxDistance;
+            var t = SmoothStep(radius, Math.Min(1f, radius + softness), d) * strength;
+            var scale = 1f - Math.Clamp(t, 0f, 1f);
+            return (ClampByte(r * scale), ClampByte(g * scale), ClampByte(b * scale));
+        });
+    }
+
+    public static void ApplyBloom(DrawingLayer layer, float radius, float intensity, byte threshold, SelectionMask? sel = null)
+    {
+        var w = layer.Width;
+        var h = layer.Height;
+        var pixels = layer.CapturePixels();
+        var bright = new byte[pixels.Length];
+
+        for (var i = 0; i < pixels.Length; i += 4)
+        {
+            var luma = 0.2126f * pixels[i + 2] + 0.7152f * pixels[i + 1] + 0.0722f * pixels[i + 0];
+            if (luma < threshold || pixels[i + 3] == 0) continue;
+            bright[i + 0] = pixels[i + 0];
+            bright[i + 1] = pixels[i + 1];
+            bright[i + 2] = pixels[i + 2];
+            bright[i + 3] = pixels[i + 3];
+        }
+
+        using var srcBmp = ToSKBitmap(bright, w, h);
+        using var glowBmp = new SKBitmap(w, h, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+        using (var canvas = new SKCanvas(glowBmp))
+        using (var paint = new SKPaint { ImageFilter = SKImageFilter.CreateBlur(radius, radius) })
+        {
+            canvas.DrawBitmap(srcBmp, 0, 0, paint);
+        }
+
+        var glow = new byte[pixels.Length];
+        Marshal.Copy(glowBmp.GetPixels(), glow, 0, glow.Length);
+
+        for (var y = 0; y < h; y++)
+        {
+            for (var x = 0; x < w; x++)
+            {
+                if (sel != null && sel.HasSelection && !sel.IsSelected(x, y)) continue;
+                var i = (y * w + x) * 4;
+                if (pixels[i + 3] == 0) continue;
+                pixels[i + 0] = ClampByte(pixels[i + 0] + glow[i + 0] * intensity);
+                pixels[i + 1] = ClampByte(pixels[i + 1] + glow[i + 1] * intensity);
+                pixels[i + 2] = ClampByte(pixels[i + 2] + glow[i + 2] * intensity);
+            }
+        }
+
+        WriteBytes(layer, pixels, w, h);
+    }
+
+    public static void ApplyMotionBlur(DrawingLayer layer, int length, float angleDegrees, SelectionMask? sel = null)
+    {
+        length = Math.Clamp(length, 1, 128);
+        var w = layer.Width;
+        var h = layer.Height;
+        var source = layer.CapturePixels();
+        var result = (byte[])source.Clone();
+        var rad = angleDegrees * MathF.PI / 180f;
+        var dx = MathF.Cos(rad);
+        var dy = MathF.Sin(rad);
+        var half = length * 0.5f;
+
+        for (var y = 0; y < h; y++)
+        {
+            for (var x = 0; x < w; x++)
+            {
+                if (sel != null && sel.HasSelection && !sel.IsSelected(x, y)) continue;
+                long sumB = 0, sumG = 0, sumR = 0, sumA = 0;
+                var count = 0;
+                for (var step = 0; step < length; step++)
+                {
+                    var sample = step - half;
+                    var sx = Math.Clamp((int)MathF.Round(x + dx * sample), 0, w - 1);
+                    var sy = Math.Clamp((int)MathF.Round(y + dy * sample), 0, h - 1);
+                    var si = (sy * w + sx) * 4;
+                    sumB += source[si + 0];
+                    sumG += source[si + 1];
+                    sumR += source[si + 2];
+                    sumA += source[si + 3];
+                    count++;
+                }
+                var i = (y * w + x) * 4;
+                result[i + 0] = (byte)(sumB / count);
+                result[i + 1] = (byte)(sumG / count);
+                result[i + 2] = (byte)(sumR / count);
+                result[i + 3] = (byte)(sumA / count);
+            }
+        }
+
+        WriteBytes(layer, result, w, h);
+    }
+
+    public static void ApplyEmboss(DrawingLayer layer, float amount, SelectionMask? sel = null)
+        => ApplyKernel3(layer, sel, [
+            -2 * amount, -1 * amount, 0,
+            -1 * amount, 1, 1 * amount,
+            0, 1 * amount, 2 * amount
+        ], bias: 128f * amount);
+
+    public static void ApplyEdgeDetect(DrawingLayer layer, float amount, SelectionMask? sel = null)
+        => ApplyKernel3(layer, sel, [
+            -1 * amount, -1 * amount, -1 * amount,
+            -1 * amount, 8 * amount, -1 * amount,
+            -1 * amount, -1 * amount, -1 * amount
+        ], bias: 0f, grayscale: true);
+
     // lutMaster applied first (combined RGB), then per-channel luts.
     public static void ApplyCurves(DrawingLayer layer, byte[] lutMaster, byte[] lutR, byte[] lutG, byte[] lutB, SelectionMask? sel = null)
     {
@@ -205,6 +468,82 @@ public static class FilterEngine
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private delegate (byte R, byte G, byte B) RgbTransform(byte r, byte g, byte b);
+    private delegate (byte R, byte G, byte B) SpatialRgbTransform(int x, int y, byte r, byte g, byte b);
+
+    private static void ApplyRgbTransform(DrawingLayer layer, SelectionMask? sel, RgbTransform transform)
+        => ApplyRgbTransform(layer, sel, (x, y, r, g, b) => transform(r, g, b));
+
+    private static void ApplyRgbTransform(DrawingLayer layer, SelectionMask? sel, SpatialRgbTransform transform)
+    {
+        var w = layer.Width;
+        var h = layer.Height;
+        var pixels = layer.CapturePixels();
+
+        for (var y = 0; y < h; y++)
+        {
+            for (var x = 0; x < w; x++)
+            {
+                var i = (y * w + x) * 4;
+                if (pixels[i + 3] == 0) continue;
+                if (sel != null && sel.HasSelection && !sel.IsSelected(x, y)) continue;
+                var (r, g, b) = transform(x, y, pixels[i + 2], pixels[i + 1], pixels[i + 0]);
+                pixels[i + 0] = b;
+                pixels[i + 1] = g;
+                pixels[i + 2] = r;
+            }
+        }
+
+        WriteBytes(layer, pixels, w, h);
+    }
+
+    private static void ApplyKernel3(DrawingLayer layer, SelectionMask? sel, float[] kernel, float bias, bool grayscale = false)
+    {
+        var w = layer.Width;
+        var h = layer.Height;
+        var source = layer.CapturePixels();
+        var result = (byte[])source.Clone();
+
+        for (var y = 0; y < h; y++)
+        {
+            for (var x = 0; x < w; x++)
+            {
+                if (sel != null && sel.HasSelection && !sel.IsSelected(x, y)) continue;
+                float b = bias, g = bias, r = bias;
+                var k = 0;
+                for (var oy = -1; oy <= 1; oy++)
+                {
+                    var sy = Math.Clamp(y + oy, 0, h - 1);
+                    for (var ox = -1; ox <= 1; ox++, k++)
+                    {
+                        var sx = Math.Clamp(x + ox, 0, w - 1);
+                        var si = (sy * w + sx) * 4;
+                        b += source[si + 0] * kernel[k];
+                        g += source[si + 1] * kernel[k];
+                        r += source[si + 2] * kernel[k];
+                    }
+                }
+
+                var i = (y * w + x) * 4;
+                if (grayscale)
+                {
+                    var v = ClampByte(0.2126f * r + 0.7152f * g + 0.0722f * b);
+                    result[i + 0] = v;
+                    result[i + 1] = v;
+                    result[i + 2] = v;
+                }
+                else
+                {
+                    result[i + 0] = ClampByte(b);
+                    result[i + 1] = ClampByte(g);
+                    result[i + 2] = ClampByte(r);
+                }
+            }
+        }
+
+        WriteBytes(layer, result, w, h);
+    }
 
     private static void ApplySkiaFilter(DrawingLayer layer, SKImageFilter filter, SelectionMask? sel)
     {
@@ -244,6 +583,67 @@ public static class FilterEngine
         var bmp = new SKBitmap(w, h, SKColorType.Bgra8888, SKAlphaType.Unpremul);
         Marshal.Copy(pixels, 0, bmp.GetPixels(), pixels.Length);
         return bmp;
+    }
+
+    private static byte ClampByte(float value) => (byte)Math.Clamp((int)MathF.Round(value), 0, 255);
+
+    private static byte LerpByte(byte from, byte to, float amount)
+        => ClampByte(from + (to - from) * Math.Clamp(amount, 0f, 1f));
+
+    private static float SmoothStep(float edge0, float edge1, float x)
+    {
+        var t = Math.Clamp((x - edge0) / (edge1 - edge0), 0f, 1f);
+        return t * t * (3f - 2f * t);
+    }
+
+    private static float Wrap01(float value)
+    {
+        value %= 1f;
+        return value < 0 ? value + 1f : value;
+    }
+
+    private static (float H, float S, float L) RgbToHsl(float r, float g, float b)
+    {
+        var max = Math.Max(r, Math.Max(g, b));
+        var min = Math.Min(r, Math.Min(g, b));
+        var l = (max + min) * 0.5f;
+
+        if (Math.Abs(max - min) < 0.0001f)
+            return (0f, 0f, l);
+
+        var d = max - min;
+        var s = l > 0.5f ? d / (2f - max - min) : d / (max + min);
+        float h;
+        if (Math.Abs(max - r) < 0.0001f)
+            h = (g - b) / d + (g < b ? 6f : 0f);
+        else if (Math.Abs(max - g) < 0.0001f)
+            h = (b - r) / d + 2f;
+        else
+            h = (r - g) / d + 4f;
+        h /= 6f;
+        return (h, s, l);
+    }
+
+    private static (float R, float G, float B) HslToRgb(float h, float s, float l)
+    {
+        if (s <= 0f) return (l, l, l);
+
+        static float HueToRgb(float p, float q, float t)
+        {
+            if (t < 0f) t += 1f;
+            if (t > 1f) t -= 1f;
+            if (t < 1f / 6f) return p + (q - p) * 6f * t;
+            if (t < 1f / 2f) return q;
+            if (t < 2f / 3f) return p + (q - p) * (2f / 3f - t) * 6f;
+            return p;
+        }
+
+        var q = l < 0.5f ? l * (1f + s) : l + s - l * s;
+        var p = 2f * l - q;
+        return (
+            HueToRgb(p, q, h + 1f / 3f),
+            HueToRgb(p, q, h),
+            HueToRgb(p, q, h - 1f / 3f));
     }
 
     // Erases connected ink regions whose pixel count is <= maxSpeckSize.

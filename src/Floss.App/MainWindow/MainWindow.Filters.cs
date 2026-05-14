@@ -11,6 +11,7 @@ using Avalonia.Threading;
 using Floss.App.Document;
 using Floss.App.Filters;
 using Floss.App.ImageFiles;
+using Floss.App.Tools;
 using SkiaSharp;
 
 namespace Floss.App;
@@ -252,6 +253,127 @@ public partial class MainWindow
         BuildLayerList();
     }
 
+    internal Task ApplyBrightnessContrastFilter()
+        => ApplyTwoSliderFilter(
+            "Brightness / Contrast",
+            "Bright", -1, 1, 0, v => $"{v:+0.00;-0.00;0.00}",
+            "Contrast", -1, 1, 0, v => $"{v:+0.00;-0.00;0.00}",
+            (brightness, contrast, sel) => l => FilterEngine.ApplyBrightnessContrast(l, brightness, contrast, sel));
+
+    internal Task ApplyExposureGammaFilter()
+        => ApplyTwoSliderFilter(
+            "Exposure / Gamma",
+            "Exposure", -4, 4, 0, v => $"{v:+0.0;-0.0;0.0}",
+            "Gamma", 0.1, 3, 1, v => $"{v:0.00}",
+            (exposure, gamma, sel) => l => FilterEngine.ApplyExposureGamma(l, exposure, gamma, sel));
+
+    internal Task ApplyHueSaturationFilter()
+        => ApplyThreeSliderFilter(
+            "Hue / Saturation",
+            "Hue", -180, 180, 0, v => $"{(int)v}°",
+            "Sat", -1, 1, 0, v => $"{v:+0.00;-0.00;0.00}",
+            "Light", -1, 1, 0, v => $"{v:+0.00;-0.00;0.00}",
+            (hue, saturation, lightness, sel) => l => FilterEngine.ApplyHueSaturationLightness(l, hue, saturation, lightness, sel));
+
+    internal async Task ApplyLevelsFilter()
+    {
+        var preview = new PreviewHandle();
+        var blackLabel = FilterValueLabel("0");
+        var gammaLabel = FilterValueLabel("1.00");
+        var whiteLabel = FilterValueLabel("255");
+        var outBlackLabel = FilterValueLabel("0");
+        var outWhiteLabel = FilterValueLabel("255");
+
+        var black = FilterSlider(0, 254, 0);
+        var gamma = FilterSlider(0.1, 4, 1);
+        var white = FilterSlider(1, 255, 255);
+        var outBlack = FilterSlider(0, 255, 0);
+        var outWhite = FilterSlider(0, 255, 255);
+
+        void Update()
+        {
+            if (black.Value >= white.Value) black.Value = Math.Max(0, white.Value - 1);
+            if (white.Value <= black.Value) white.Value = Math.Min(255, black.Value + 1);
+            blackLabel.Text = $"{(int)black.Value}";
+            gammaLabel.Text = $"{gamma.Value:0.00}";
+            whiteLabel.Text = $"{(int)white.Value}";
+            outBlackLabel.Text = $"{(int)outBlack.Value}";
+            outWhiteLabel.Text = $"{(int)outWhite.Value}";
+            preview.Schedule();
+        }
+
+        foreach (var slider in new[] { black, gamma, white, outBlack, outWhite })
+            slider.PropertyChanged += (_, e) => { if (e.Property.Name == nameof(Slider.Value)) Update(); };
+
+        var panel = new StackPanel { Spacing = 4 };
+        panel.Children.Add(FilterRow(FilterLabel("Black"), black, blackLabel));
+        panel.Children.Add(FilterRow(FilterLabel("Gamma"), gamma, gammaLabel));
+        panel.Children.Add(FilterRow(FilterLabel("White"), white, whiteLabel));
+        panel.Children.Add(FilterRow(FilterLabel("Out B"), outBlack, outBlackLabel));
+        panel.Children.Add(FilterRow(FilterLabel("Out W"), outWhite, outWhiteLabel));
+
+        var sel = _canvas.Selection;
+        Func<Action<DrawingLayer>> buildPreview = () =>
+        {
+            var b = (int)black.Value;
+            var g = (float)gamma.Value;
+            var w = (int)white.Value;
+            var ob = (int)outBlack.Value;
+            var ow = (int)outWhite.Value;
+            return l => FilterEngine.ApplyLevels(l, b, g, w, ob, ow, sel);
+        };
+
+        var ok = await ShowFilterDialog("Levels", panel, LayerSelectionLabel(), buildPreview, preview);
+        if (!ok) return;
+
+        _canvas.ApplyFilter(EffectiveLayerSelection(), buildPreview());
+        BuildLayerList();
+    }
+
+    internal Task ApplySepiaFilter()
+        => ApplyOneSliderFilter("Sepia", "Amount", 0, 1, 1, v => $"{(int)(v * 100)}%", (amount, sel) => l => FilterEngine.ApplySepia(l, amount, sel));
+
+    internal Task ApplyThresholdFilter()
+        => ApplyOneSliderFilter("Threshold", "Level", 0, 255, 128, v => $"{(int)v}", (level, sel) => l => FilterEngine.ApplyThreshold(l, (byte)Math.Clamp((int)level, 0, 255), sel));
+
+    internal Task ApplyPosterizeFilter()
+        => ApplyOneSliderFilter("Posterize", "Levels", 2, 32, 5, v => $"{(int)v}", (levels, sel) => l => FilterEngine.ApplyPosterize(l, (int)levels, sel));
+
+    internal Task ApplyPixelateFilter()
+        => ApplyOneSliderFilter("Pixelate", "Block", 2, 128, 12, v => $"{(int)v}px", (block, sel) => l => FilterEngine.ApplyPixelate(l, (int)block, sel));
+
+    internal Task ApplyVignetteFilter()
+        => ApplyThreeSliderFilter(
+            "Vignette",
+            "Amount", 0, 1, 0.45, v => $"{(int)(v * 100)}%",
+            "Radius", 0.05, 1, 0.62, v => $"{(int)(v * 100)}%",
+            "Soft", 0.01, 1, 0.35, v => $"{(int)(v * 100)}%",
+            (amount, radius, softness, sel) => l => FilterEngine.ApplyVignette(l, amount, radius, softness, sel));
+
+    internal Task ApplyBloomFilter()
+        => ApplyThreeSliderFilter(
+            "Bloom",
+            "Radius", 1, 40, 8, v => $"{v:0.0}",
+            "Amount", 0, 3, 0.8, v => $"{v:0.00}",
+            "Thresh", 0, 255, 180, v => $"{(int)v}",
+            (radius, amount, threshold, sel) => l => FilterEngine.ApplyBloom(l, radius, amount, (byte)Math.Clamp((int)threshold, 0, 255), sel));
+
+    internal Task ApplyMotionBlurFilter()
+        => ApplyTwoSliderFilter(
+            "Motion Blur",
+            "Length", 1, 80, 12, v => $"{(int)v}px",
+            "Angle", 0, 360, 0, v => $"{(int)v}°",
+            (length, angle, sel) => l => FilterEngine.ApplyMotionBlur(l, (int)length, angle, sel));
+
+    internal Task ApplyEmbossFilter()
+        => ApplyOneSliderFilter("Emboss", "Amount", 0.1, 3, 1, v => $"{v:0.00}", (amount, sel) => l => FilterEngine.ApplyEmboss(l, amount, sel));
+
+    internal Task ApplyEdgeDetectFilter()
+        => ApplyOneSliderFilter("Find Edges", "Amount", 0.1, 3, 1, v => $"{v:0.00}", (amount, sel) => l => FilterEngine.ApplyEdgeDetect(l, amount, sel));
+
+    internal void ApplyInvertFilter() => ApplyInstantFilter(l => FilterEngine.ApplyInvert(l, _canvas.Selection));
+    internal void ApplyDesaturateFilter() => ApplyInstantFilter(l => FilterEngine.ApplyDesaturate(l, _canvas.Selection));
+
     internal async Task RunBaseColorMaskGenerator()
     {
         var slider = new Slider { Minimum = 2, Maximum = 20, Value = 5, Width = 240, Margin = new Thickness(0, 4, 0, 0) };
@@ -432,6 +554,146 @@ public partial class MainWindow
         var lutM = graphs[0].ComputeLut(); var lutR = graphs[1].ComputeLut();
         var lutG = graphs[2].ComputeLut(); var lutB = graphs[3].ComputeLut();
         _canvas.ApplyFilter(EffectiveLayerSelection(), l => FilterEngine.ApplyCurves(l, lutM, lutR, lutG, lutB, sel));
+        BuildLayerList();
+    }
+
+    private async Task ApplyOneSliderFilter(
+        string title,
+        string label,
+        double min,
+        double max,
+        double value,
+        Func<double, string> format,
+        Func<float, SelectionMask, Action<DrawingLayer>> actionFactory)
+    {
+        var preview = new PreviewHandle();
+        var valueLabel = FilterValueLabel(format(value));
+        var slider = FilterSlider(min, max, value);
+        slider.PropertyChanged += (_, e) =>
+        {
+            if (e.Property.Name != nameof(Slider.Value)) return;
+            valueLabel.Text = format(slider.Value);
+            preview.Schedule();
+        };
+
+        var sel = _canvas.Selection;
+        Func<Action<DrawingLayer>> buildPreview = () => actionFactory((float)slider.Value, sel);
+        var ok = await ShowFilterDialog(title, FilterRow(FilterLabel(label), slider, valueLabel), LayerSelectionLabel(), buildPreview, preview);
+        if (!ok) return;
+
+        _canvas.ApplyFilter(EffectiveLayerSelection(), buildPreview());
+        BuildLayerList();
+    }
+
+    private async Task ApplyTwoSliderFilter(
+        string title,
+        string label1,
+        double min1,
+        double max1,
+        double value1,
+        Func<double, string> format1,
+        string label2,
+        double min2,
+        double max2,
+        double value2,
+        Func<double, string> format2,
+        Func<float, float, SelectionMask, Action<DrawingLayer>> actionFactory)
+    {
+        var preview = new PreviewHandle();
+        var valueLabel1 = FilterValueLabel(format1(value1));
+        var valueLabel2 = FilterValueLabel(format2(value2));
+        var slider1 = FilterSlider(min1, max1, value1);
+        var slider2 = FilterSlider(min2, max2, value2);
+
+        slider1.PropertyChanged += (_, e) =>
+        {
+            if (e.Property.Name != nameof(Slider.Value)) return;
+            valueLabel1.Text = format1(slider1.Value);
+            preview.Schedule();
+        };
+        slider2.PropertyChanged += (_, e) =>
+        {
+            if (e.Property.Name != nameof(Slider.Value)) return;
+            valueLabel2.Text = format2(slider2.Value);
+            preview.Schedule();
+        };
+
+        var panel = new StackPanel { Spacing = 4 };
+        panel.Children.Add(FilterRow(FilterLabel(label1), slider1, valueLabel1));
+        panel.Children.Add(FilterRow(FilterLabel(label2), slider2, valueLabel2));
+
+        var sel = _canvas.Selection;
+        Func<Action<DrawingLayer>> buildPreview = () => actionFactory((float)slider1.Value, (float)slider2.Value, sel);
+        var ok = await ShowFilterDialog(title, panel, LayerSelectionLabel(), buildPreview, preview);
+        if (!ok) return;
+
+        _canvas.ApplyFilter(EffectiveLayerSelection(), buildPreview());
+        BuildLayerList();
+    }
+
+    private async Task ApplyThreeSliderFilter(
+        string title,
+        string label1,
+        double min1,
+        double max1,
+        double value1,
+        Func<double, string> format1,
+        string label2,
+        double min2,
+        double max2,
+        double value2,
+        Func<double, string> format2,
+        string label3,
+        double min3,
+        double max3,
+        double value3,
+        Func<double, string> format3,
+        Func<float, float, float, SelectionMask, Action<DrawingLayer>> actionFactory)
+    {
+        var preview = new PreviewHandle();
+        var valueLabel1 = FilterValueLabel(format1(value1));
+        var valueLabel2 = FilterValueLabel(format2(value2));
+        var valueLabel3 = FilterValueLabel(format3(value3));
+        var slider1 = FilterSlider(min1, max1, value1);
+        var slider2 = FilterSlider(min2, max2, value2);
+        var slider3 = FilterSlider(min3, max3, value3);
+
+        slider1.PropertyChanged += (_, e) =>
+        {
+            if (e.Property.Name != nameof(Slider.Value)) return;
+            valueLabel1.Text = format1(slider1.Value);
+            preview.Schedule();
+        };
+        slider2.PropertyChanged += (_, e) =>
+        {
+            if (e.Property.Name != nameof(Slider.Value)) return;
+            valueLabel2.Text = format2(slider2.Value);
+            preview.Schedule();
+        };
+        slider3.PropertyChanged += (_, e) =>
+        {
+            if (e.Property.Name != nameof(Slider.Value)) return;
+            valueLabel3.Text = format3(slider3.Value);
+            preview.Schedule();
+        };
+
+        var panel = new StackPanel { Spacing = 4 };
+        panel.Children.Add(FilterRow(FilterLabel(label1), slider1, valueLabel1));
+        panel.Children.Add(FilterRow(FilterLabel(label2), slider2, valueLabel2));
+        panel.Children.Add(FilterRow(FilterLabel(label3), slider3, valueLabel3));
+
+        var sel = _canvas.Selection;
+        Func<Action<DrawingLayer>> buildPreview = () => actionFactory((float)slider1.Value, (float)slider2.Value, (float)slider3.Value, sel);
+        var ok = await ShowFilterDialog(title, panel, LayerSelectionLabel(), buildPreview, preview);
+        if (!ok) return;
+
+        _canvas.ApplyFilter(EffectiveLayerSelection(), buildPreview());
+        BuildLayerList();
+    }
+
+    private void ApplyInstantFilter(Action<DrawingLayer> action)
+    {
+        _canvas.ApplyFilter(EffectiveLayerSelection(), action);
         BuildLayerList();
     }
 
@@ -652,6 +914,15 @@ public partial class MainWindow
         TextAlignment = Avalonia.Media.TextAlignment.Right,
         VerticalAlignment = VerticalAlignment.Center,
         Foreground = new SolidColorBrush(Color.Parse(TextSecondary))
+    };
+
+    private static Slider FilterSlider(double minimum, double maximum, double value) => new()
+    {
+        Minimum = minimum,
+        Maximum = maximum,
+        Value = value,
+        Width = 240,
+        Margin = new Thickness(0, 4, 0, 0)
     };
 
     private static Control FilterRow(TextBlock label, Slider slider, TextBlock value)
