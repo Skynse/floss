@@ -19,6 +19,9 @@ public sealed class LiquifyInputProcess : IInputProcess
     private CanvasInputSample? _lastKnownPos;
 
     private IProcessedInput? _immediateResult;
+    private bool _isPhantom;
+
+    private const double PhantomArcLengthThreshold = 2.0;
 
     public bool HasBrushCursor => true;
     public bool IsActive => _active;
@@ -31,6 +34,7 @@ public sealed class LiquifyInputProcess : IInputProcess
     public void PointerDown(CanvasInputSample s)
     {
         _samples.Clear();
+        _isPhantom = false;
 
         if (IsStraightLine && _straightLineAnchorSet)
         {
@@ -59,9 +63,14 @@ public sealed class LiquifyInputProcess : IInputProcess
     {
         if (!_active) return;
         _samples.Add(s);
-        _straightLineAnchor = _samples[^1];
-        _straightLineAnchorSet = true;
         _active = false;
+
+        _isPhantom = ArcLength(_samples) < PhantomArcLengthThreshold;
+        if (!_isPhantom)
+        {
+            _straightLineAnchor = _samples[^1];
+            _straightLineAnchorSet = true;
+        }
     }
 
     public void Cancel()
@@ -86,7 +95,7 @@ public sealed class LiquifyInputProcess : IInputProcess
 
     public IProcessedInput? GetResult()
     {
-        if (_active || _samples.Count == 0) return null;
+        if (_active || _isPhantom || _samples.Count == 0) return null;
         return new StrokeInput { RawSamples = _samples, SmoothedSamples = _samples };
     }
 
@@ -99,5 +108,17 @@ public sealed class LiquifyInputProcess : IInputProcess
             new Avalonia.Point(_straightLineAnchor.X, _straightLineAnchor.Y),
             new Avalonia.Point(end.X, end.Y),
             BrushSize);
+    }
+
+    private static double ArcLength(List<CanvasInputSample> samples)
+    {
+        var len = 0.0;
+        for (var i = 1; i < samples.Count; i++)
+        {
+            var dx = samples[i].X - samples[i - 1].X;
+            var dy = samples[i].Y - samples[i - 1].Y;
+            len += Math.Sqrt(dx * dx + dy * dy);
+        }
+        return len;
     }
 }
