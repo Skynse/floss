@@ -37,6 +37,9 @@ public static class AppPaths
     public static string ModifierKeySettingsPath { get; } =
         Path.Combine(AppDirectory, "modifier-keys.json");
 
+    public static string DocumentTemplatesPath { get; } =
+        Path.Combine(AppDirectory, "document-templates.json");
+
     public static void EnsureDirectories()
     {
         Directory.CreateDirectory(AppDirectory);

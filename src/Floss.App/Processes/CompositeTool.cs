@@ -71,6 +71,10 @@ public sealed class CompositeTool : ITool
 
     public void RenderOverlay(DrawingContext dc, ToolContext ctx, double zoom)
     {
+        if (Input is BrushStrokeInputProcess bsip)
+            bsip.BrushSize = ctx.Brush?.Size ?? 8;
+        else if (Input is LiquifyInputProcess lip)
+            lip.BrushSize = ctx.ActivePreset?.LiquifySize ?? 48;
         Input.RenderOverlay(dc, zoom);
     }
 

@@ -1530,6 +1530,11 @@ public sealed class DrawingCanvas : Control, IDisposable
             return;
         }
 
+        // Keep tool's hover position current even when no stroke is active,
+        // so the shift-line preview tracks the cursor through panning.
+        if (_activePointerId < 0)
+            HandlePointerInput(ToolInputEventKind.Move, point);
+
         InvalidateVisual();
     }
 

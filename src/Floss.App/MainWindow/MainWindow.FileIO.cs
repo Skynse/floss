@@ -271,27 +271,7 @@ public partial class MainWindow
     }
 
     public async System.Threading.Tasks.Task ExportCurrentDocumentAsync()
-    {
-        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
-        {
-            Title = "Export",
-            FileTypeChoices = ExportImageFileTypes(null)
-        });
-        if (file == null) return;
-
-        try
-        {
-            if (_activeTab == null) return;
-            var path = file.Path.LocalPath;
-            await using var stream = await file.OpenWriteAsync();
-            ImageFileExporter.Export(stream, _activeTab.Canvas.Document, path);
-        }
-        catch (Exception ex)
-        {
-            CrashLog.Write(ex, "MainWindow.ExportCurrentDocumentAsync");
-            _footerStatusText.Text = $"Export error: {ex.Message}";
-        }
-    }
+        => await ExportImageAsync();
 
     // ── Actual Disk Writers ───�────────────────────────────────────────────────
 
@@ -365,15 +345,23 @@ public partial class MainWindow
         });
         if (file == null) return;
 
+        var path = file.Path.LocalPath;
+        var ext = Path.GetExtension(path).TrimStart('.').ToUpperInvariant();
+        var doc = _canvas.Document;
+
+        // Show format-specific export wizard
+        var settings = await new ExportWizardDialog(ext, doc.Width, doc.Height).ShowDialog<ExportSettings?>(this);
+        if (settings == null) return;
+
         try
         {
-            var path = file.Path.LocalPath;
             await using var stream = await file.OpenWriteAsync();
-            ImageFileExporter.Export(stream, _canvas.Document, path);
-            _footerStatusText.Text = $"Exported {Path.GetFileName(path)}";
+            ImageFileExporter.Export(stream, doc, path, settings);
+            _footerStatusText.Text = $"Exported {Path.GetFileName(path)}  ({settings.TargetWidth}×{settings.TargetHeight})";
         }
         catch (Exception ex)
         {
+            CrashLog.Write(ex, "MainWindow.ExportImageAsync");
             _footerStatusText.Text = $"Export error: {ex.Message}";
         }
     }

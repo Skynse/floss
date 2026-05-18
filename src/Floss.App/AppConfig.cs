@@ -18,6 +18,8 @@ public sealed class AppConfig
 {
     public int NewCanvasWidth { get; set; } = 2048;
     public int NewCanvasHeight { get; set; } = 2048;
+    public int NewCanvasDpi { get; set; } = 72;
+    public string NewCanvasBackground { get; set; } = "White";
     public string LastColor { get; set; } = "#111111";
     public string LastBrushName { get; set; } = "Technical Pen";
     public string? LastToolGroupId { get; set; }

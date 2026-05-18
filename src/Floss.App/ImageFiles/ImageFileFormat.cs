@@ -46,17 +46,45 @@ public static class ImageFileImporter
 
 public static class ImageFileExporter
 {
-    public static void Export(Stream stream, DrawingDocument document, string path)
+    public static void Export(Stream stream, DrawingDocument document, string path,
+        ExportSettings? settings = null)
     {
         var format = FormatFromPath(path);
-        var quality = format is SKEncodedImageFormat.Jpeg or SKEncodedImageFormat.Webp ? 95 : 100;
+        var quality = settings?.Quality
+            ?? (format is SKEncodedImageFormat.Jpeg or SKEncodedImageFormat.Webp ? 90 : 100);
 
-        using var bitmap = DocumentRasterizer.RenderFlattenedBitmap(document);
-        using var image = SKImage.FromBitmap(bitmap);
-        using var data = image.Encode(format, quality)
-            ?? throw new InvalidDataException($"Image format '{format}' is not supported by this runtime.");
+        using var source = DocumentRasterizer.RenderFlattenedBitmap(document, settings);
 
-        data.SaveTo(stream);
+        SKBitmap bitmap = source;
+        bool needsDispose = false;
+
+        if (settings != null && (settings.TargetWidth != document.Width || settings.TargetHeight != document.Height))
+        {
+            var sampling = settings.Resample switch
+            {
+                ExportResampleMode.Bicubic  => new SKSamplingOptions(SKCubicResampler.Mitchell),
+                ExportResampleMode.Bilinear => new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None),
+                ExportResampleMode.Nearest  => new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None),
+                _                           => new SKSamplingOptions(SKCubicResampler.CatmullRom)
+            };
+            var scaled = source.Resize(
+                new SKImageInfo(settings.TargetWidth, settings.TargetHeight, SKColorType.Bgra8888, SKAlphaType.Unpremul),
+                sampling);
+            bitmap = scaled ?? source;
+            needsDispose = scaled != null;
+        }
+
+        try
+        {
+            using var image = SKImage.FromBitmap(bitmap);
+            using var data = image.Encode(format, quality)
+                ?? throw new InvalidDataException($"Image format '{format}' is not supported by this runtime.");
+            data.SaveTo(stream);
+        }
+        finally
+        {
+            if (needsDispose) bitmap.Dispose();
+        }
     }
 
     public static bool IsSupportedPath(string path) => TryFormatFromPath(path, out _);
@@ -107,13 +135,28 @@ public static class ImageFileExporter
 
 public static class DocumentRasterizer
 {
-    public static unsafe SKBitmap RenderFlattenedBitmap(DrawingDocument document)
+    public static unsafe SKBitmap RenderFlattenedBitmap(DrawingDocument document,
+        ExportSettings? settings = null)
     {
         var width = Math.Max(1, document.Width);
         var height = Math.Max(1, document.Height);
 
-        var pc = document.PaperColor;
-        uint paper = (uint)(pc.B | (pc.G << 8) | (pc.R << 16) | (pc.A << 24));
+        uint paper;
+        var bg = settings?.Background ?? ExportBackgroundMode.Document;
+        if (bg == ExportBackgroundMode.Transparent)
+        {
+            paper = 0;
+        }
+        else if (bg == ExportBackgroundMode.FillWhite)
+        {
+            paper = 0xFFFFFFFF;
+        }
+        else
+        {
+            var pc = document.PaperColor;
+            paper = (uint)(pc.B | (pc.G << 8) | (pc.R << 16) | (pc.A << 24));
+        }
+
         var bgra = new LayerCompositor().CompositeToBgra(document.Layers, width, height, paper);
 
         var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Unpremul));

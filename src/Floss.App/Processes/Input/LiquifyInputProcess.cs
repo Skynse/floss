@@ -24,6 +24,7 @@ public sealed class LiquifyInputProcess : IInputProcess
     public bool IsActive => _active;
     public ToolAuxOperationType ToolAuxMode { get; set; }
     public double Stabilization { get; set; }
+    public double BrushSize { get; set; } = 48;
 
     private bool IsStraightLine => ToolAuxMode == ToolAuxOperationType.StraightLine;
 
@@ -33,10 +34,12 @@ public sealed class LiquifyInputProcess : IInputProcess
 
         if (IsStraightLine && _straightLineAnchorSet)
         {
+            var a = _straightLineAnchor.WithPosition(_straightLineAnchor.X, _straightLineAnchor.Y, 1.0, _straightLineAnchor.TimeMicros);
+            var b = s.WithPosition(s.X, s.Y, 1.0, s.TimeMicros);
             _immediateResult = new StrokeInput
             {
-                RawSamples = [_straightLineAnchor, s],
-                SmoothedSamples = [_straightLineAnchor, s]
+                RawSamples = [a, b],
+                SmoothedSamples = [a, b]
             };
         }
 
@@ -92,12 +95,9 @@ public sealed class LiquifyInputProcess : IInputProcess
         if (!IsStraightLine || !_straightLineAnchorSet) return;
         if (_lastKnownPos is not { } end) return;
 
-        var t = Math.Max(0.5, 1.0 / zoom);
-        var pen = new Pen(Avalonia.Media.Brushes.Black, t);
-
-        dc.DrawLine(
-            pen,
+        StraightLineOverlay.Draw(dc, zoom,
             new Avalonia.Point(_straightLineAnchor.X, _straightLineAnchor.Y),
-            new Avalonia.Point(end.X, end.Y));
+            new Avalonia.Point(end.X, end.Y),
+            BrushSize);
     }
 }
