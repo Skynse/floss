@@ -61,8 +61,11 @@ public partial class MainWindow
         _isPanning = false;
         var pt = e.GetCurrentPoint(_workspaceViewport);
 
+        // Pen PointerPressed with IsLeftButtonPressed=False means the XI2 button mask
+        // doesn't reflect actual tip contact — OTD sends phantom XI_ButtonPress events
+        // that don't go through BTN_TOUCH. Real contact always has IsLeftButtonPressed=True.
         if ((pt.Pointer.Type == PointerType.Pen || pt.Properties.IsEraser) &&
-            pt.Properties.Pressure < 0.02f)
+            !pt.Properties.IsLeftButtonPressed)
             return;
 
         if (TryBeginResizeDrag(pt.Position, pt.Properties.IsLeftButtonPressed))
@@ -629,6 +632,14 @@ public partial class MainWindow
             _heldBaseKeys.Add(key);
 
         ReevaluateModifierState(mods);
+
+        // When a tool dispatch (stroke) is active, suppress modifier key events
+        // to prevent them from reaching the in-window Menu control. Without this,
+        // pressing Alt activates the menu bar (access keys), which shifts focus
+        // and releases pointer capture — cancelling the stroke.
+        // CSP-style: modifier state is tracked but the stroke continues uninterrupted.
+        if (_isToolDispatchActive && IsModifierKey(key))
+            e.Handled = true;
     }
 
     private void HandleShortcutRecording(KeyEventArgs e)

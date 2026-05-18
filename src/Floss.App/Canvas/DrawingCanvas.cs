@@ -266,6 +266,47 @@ public sealed class DrawingCanvas : Control, IDisposable
         _toolController.Dispatch(new ToolInputEvent(kind, sample));
     }
 
+    // Set to true when a NativeTabletX11 is active — suppresses Avalonia's pen events.
+    public bool NativeTabletActive { get; set; }
+
+    // Called directly from NativeTabletX11 with already-filtered, pressure-validated events.
+    public void HandleNativeTabletInput(ToolInputEventKind kind, double canvasLocalX, double canvasLocalY, double pressure)
+    {
+        var w = Math.Max(1, Bounds.Width);
+        var h = Math.Max(1, Bounds.Height);
+
+        var phase = kind switch
+        {
+            ToolInputEventKind.Down => CanvasInputPhase.Down,
+            ToolInputEventKind.Move => CanvasInputPhase.Move,
+            _                       => CanvasInputPhase.Up
+        };
+
+        if (!_isCursorPreviewLocked)
+        {
+            _prevPointerPos = _pointerPos;
+            _pointerPos     = new Point(canvasLocalX, canvasLocalY);
+        }
+
+        var docX = canvasLocalX / w * _document.Width;
+        var docY = canvasLocalY / h * _document.Height;
+
+        var sample = new CanvasInputSample(
+            docX, docY,
+            Math.Clamp(pressure, 0, 1),
+            0, 0, 0,
+            Environment.TickCount64 * 1000,
+            -2, // native tablet pointer id
+            CanvasInputSource.Pen,
+            phase);
+
+        if (phase == CanvasInputPhase.Down)  _activePointerId = -2;
+        if (phase == CanvasInputPhase.Up)    _activePointerId = -1;
+
+        _toolController.Dispatch(new ToolInputEvent(kind, sample));
+        InvalidateVisual();
+    }
+
     // Viewport tools (Hand, Rotate, Zoom) need viewport coordinates because
     // canvas-local coords change dynamically as zoom/pan change. Passing
     // viewport pixels keeps deltas stable.
@@ -1440,10 +1481,10 @@ public sealed class DrawingCanvas : Control, IDisposable
         base.OnPointerPressed(e);
         var point = e.GetCurrentPoint(this);
 
-        // Wayland / tablet: pen proximity fires PointerPressed with IsLeftButtonPressed=true
-        // but Pressure=0.  Block these phantom events before any tool logic runs.
+        // Pen/eraser PointerPressed without IsLeftButtonPressed = phantom XI2 event from OTD
+        // that didn't go through BTN_TOUCH. Real tip contact always sets IsLeftButtonPressed.
         if ((point.Pointer.Type == PointerType.Pen || point.Properties.IsEraser) &&
-            point.Properties.Pressure < PenPressureThreshold)
+            !point.Properties.IsLeftButtonPressed)
             return;
 
         // Ctrl+Shift+Left: start a layer-find drag.

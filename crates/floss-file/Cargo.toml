@@ -1,0 +1,16 @@
+[package]
+name = "floss-file"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+floss-core = { path = "../floss-core" }
+floss-document = { path = "../floss-document" }
+floss-brush = { path = "../floss-brush" }
+serde.workspace = true
+serde_json.workspace = true
+image.workspace = true
+psd.workspace = true
+thiserror.workspace = true
+zip = "2"
+flate2 = "1"

@@ -1,0 +1,23 @@
+[package]
+name = "floss-app"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "floss"
+path = "src/main.rs"
+
+[dependencies]
+floss-core        = { path = "../floss-core" }
+floss-document    = { path = "../floss-document" }
+floss-brush       = { path = "../floss-brush" }
+floss-compositor  = { path = "../floss-compositor" }
+floss-input       = { path = "../floss-input" }
+floss-tool        = { path = "../floss-tool" }
+floss-file        = { path = "../floss-file" }
+floss-ui          = { path = "../floss-ui" }
+
+winit        = "0.30"
+softbuffer   = "0.4"
+evdev        = "0.12"
+glam.workspace = true

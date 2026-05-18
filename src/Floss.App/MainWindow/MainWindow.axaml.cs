@@ -125,6 +125,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     // ── Controls ──────────────────────────────────────────────────────────────
     private DrawingCanvas _canvas = null!;
     private Grid _workspaceViewport = null!;
+    private NativeTabletX11? _nativeTablet;
     private Border _canvasFrame = null!;
     private Border _selectionActionBar = null!;
     private HsvColorPicker _colorPicker = null!;
@@ -512,7 +513,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         Closing += (_, _) => SaveToConfig();
         Deactivated += (_, _) => ResetTransientInputState();
         LostFocus += (_, _) => ResetTransientInputState();
-        Loaded += (_, _) => { UpdateTabBar(); SyncCanvasViewport(); };
+        Loaded += (_, _) => { UpdateTabBar(); SyncCanvasViewport(); InitNativeTablet(); };
     }
 
     // ── Root layout ───────────────────────────────────────────────────────────
@@ -657,6 +658,42 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         Content = shell;
         AddHandler(PointerPressedEvent, WindowPointerPressed, RoutingStrategies.Tunnel);
+    }
+
+    private void InitNativeTablet()
+    {
+        var handle = TryGetPlatformHandle();
+        if (handle == null) return;
+        _nativeTablet = NativeTabletX11.TryCreate(handle.Handle);
+        if (_nativeTablet == null) return;
+        _nativeTablet.SampleReceived += OnNativeTabletSample;
+        _canvas.NativeTabletActive = true;
+    }
+
+    private void OnNativeTabletSample(NativeTabletSample s)
+    {
+        // Convert window-local pixels → canvas document coordinates and dispatch.
+        var canvasBounds = _canvas.Bounds;
+        var canvasInWindow = _canvas.TranslatePoint(new Point(0, 0), this) ?? new Point(0, 0);
+
+        // Map from window coords into canvas-local coords
+        var localX = s.X - canvasInWindow.X;
+        var localY = s.Y - canvasInWindow.Y;
+
+        var kind = s.Phase switch
+        {
+            NativeTabletPhase.Down => ToolInputEventKind.Down,
+            NativeTabletPhase.Up   => ToolInputEventKind.Up,
+            _                      => ToolInputEventKind.Move,
+        };
+
+        _canvas.HandleNativeTabletInput(kind, localX, localY, s.Pressure);
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        base.OnClosed(e);
+        _nativeTablet?.Dispose();
     }
 
     private void SetDocumentPanelsVisible(bool enabled)
