@@ -234,6 +234,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private bool _isToolDispatchActive;
     private bool _isPanning;
     private bool _isMiddleButtonPanning;
+    private KeyModifiers _currentModifierState;
     private Point _lastPanPoint;
     private Point _brushSizeGestureStartCanvasPoint;
     private Point _brushSizeGestureCenterCanvasPoint;
@@ -2441,9 +2442,9 @@ public partial class MainWindow : Window, Tools.IViewportController
         active.CaptureFromBrushPreset(_activePreset);
     }
 
-    internal void PushTemporaryPreset(string presetId)
+    internal bool PushTemporaryPreset(string presetId)
     {
-        if (_temporaryPresetActive) return;
+        if (_temporaryPresetActive) return false;
         foreach (var group in App.ToolGroups.Groups)
         {
             var preset = group.Presets.FirstOrDefault(p => p.Id == presetId);
@@ -2451,8 +2452,9 @@ public partial class MainWindow : Window, Tools.IViewportController
             _savedPresetTemp = _activeToolGroup?.ActivePreset;
             _temporaryPresetActive = true;
             _canvas.SetActiveTool(ToolForPreset(preset), preset);
-            return;
+            return true;
         }
+        return false;
     }
 
     internal void PopTemporaryPreset()

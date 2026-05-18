@@ -172,6 +172,12 @@ public sealed class SettingsWindow : Window
         content.Children.Add(RowSlider("Opacity step", _sc.BrushOpacityStep, 0.01, 0.2,
             v => { _sc.BrushOpacityStep = v; App.Shortcuts.Save(); }, "f2"));
 
+        content.Children.Add(GroupHeader("Canvas Buttons"));
+        content.Children.Add(RowCanvasButtonActionPicker("Middle button", _sc.MiddleButtonAction,
+            v => { _sc.MiddleButtonAction = v; App.Shortcuts.Save(); }));
+        content.Children.Add(RowCanvasButtonActionPicker("Right button", _sc.RightButtonAction,
+            v => { _sc.RightButtonAction = v; App.Shortcuts.Save(); }));
+
         content.Children.Add(GroupHeader("Cursor Shape"));
         content.Children.Add(RowBrushCursorPicker("Brush",
             _cfg.BrushCursorMode, v => { _cfg.BrushCursorMode = v; App.Config.Save(); }));
@@ -528,6 +534,33 @@ public sealed class SettingsWindow : Window
                 MkBtn(BrushCursorMode.Dot, "Dot"),
                 MkBtn(BrushCursorMode.DotAndOutline, "Dot + size"),
                 MkBtn(BrushCursorMode.None, "None")
+            }
+        };
+        return SettingRow(label, picker);
+    }
+
+    private Control RowCanvasButtonActionPicker(string label, CanvasButtonAction current, Action<CanvasButtonAction> setter)
+    {
+        var picker = new ComboBox
+        {
+            Width = 180,
+            Height = 26,
+            FontSize = 11,
+            ItemsSource = Enum.GetValues<CanvasButtonAction>()
+                .Where(a => a != CanvasButtonAction.PrimaryTool)
+                .ToArray(),
+            SelectedItem = current == CanvasButtonAction.PrimaryTool ? CanvasButtonAction.None : current,
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(1),
+        };
+        picker.SelectionChanged += (_, _) =>
+        {
+            if (picker.SelectedItem is CanvasButtonAction action)
+            {
+                setter(action);
+                App.Shortcuts.Save();
             }
         };
         return SettingRow(label, picker);

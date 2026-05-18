@@ -14,6 +14,7 @@ using Floss.App.Document;
 using Floss.App.Input;
 using Floss.App.Psd;
 using Floss.App.Processes;
+using Floss.App.Processes.Input;
 using Floss.App.Processes.Output;
 using Floss.App.Tools;
 using Microsoft.Data.Sqlite;
@@ -66,6 +67,8 @@ internal static class Program
         ("Brush engine color mixing amount controls deposited color", BrushTests.BrushEngine_ColorMixAmountControlsDepositedColor),
         ("Brush engine does not dispose tip-owned cached masks", BrushTests.BrushEngine_DoesNotDisposeTipOwnedCachedMasks),
         ("Tool controller does not restore stale engine brush state", BrushTests.ToolController_DoesNotOverridePresetBrushState),
+        ("Composite tool deactivation keeps completed output intact", BrushTests.CompositeTool_DeactivateDoesNotCancelCompletedOutput),
+        ("Composite tool deactivation cancels only active input", BrushTests.CompositeTool_DeactivateCancelsActiveInput),
         ("Image brush tips preserve source aspect ratio", BrushTests.ImageBrushTip_PreservesAspectRatio),
         ("Image brush tips keep cached masks stable across sizes", BrushTests.ImageBrushTip_MasksRemainStableAcrossSizes),
         ("ABR preset mapping keeps usable brush dynamics", BrushTests.AbrPresetMapping_KeepsDynamics),
@@ -1197,6 +1200,39 @@ internal static class BrushTests
         AssertEx.Equal((byte)0, farAlpha, "Color mixing must sample the pre-stroke layer, not feed back from its own slow stroke.");
     }
 
+    public static void CompositeTool_DeactivateDoesNotCancelCompletedOutput()
+    {
+        var ctx = new ToolContext(new DrawingDocument()) { Brush = new BrushPreset("Ink", 8, 1, 1, 1, Colors.Black, 0) };
+        var output = new RecordingOutputProcess();
+        var tool = new CompositeTool(new BrushStrokeInputProcess(), output);
+
+        tool.PointerDown(ctx, Sample(10, 10, 0));
+        tool.PointerUp(ctx, Sample(12, 10, 1_000));
+
+        AssertEx.Equal(1, output.ExecuteCount);
+        AssertEx.False(tool.HasPendingOperation);
+
+        tool.Deactivate(ctx);
+
+        AssertEx.Equal(0, output.CancelCount, "Deactivating an idle tool must not cancel/restore the already completed stroke.");
+    }
+
+    public static void CompositeTool_DeactivateCancelsActiveInput()
+    {
+        var ctx = new ToolContext(new DrawingDocument()) { Brush = new BrushPreset("Ink", 8, 1, 1, 1, Colors.Black, 0) };
+        var output = new RecordingOutputProcess();
+        var tool = new CompositeTool(new BrushStrokeInputProcess(), output);
+
+        tool.PointerDown(ctx, Sample(10, 10, 0));
+        tool.PointerMove(ctx, Sample(12, 10, 1_000));
+
+        AssertEx.True(tool.HasPendingOperation);
+
+        tool.Deactivate(ctx);
+
+        AssertEx.Equal(1, output.CancelCount, "Deactivating during a running transaction should cancel the in-progress preview.");
+    }
+
     public static void BrushEngine_ColorMixAmountControlsDepositedColor()
     {
         using var lowEngine = new BrushEngine();
@@ -1356,6 +1392,17 @@ internal static class BrushTests
             if (ctx.ActivePreset != null)
                 ctx.Brush = ctx.ActivePreset.ApplyToBrushPreset(ctx.Brush);
         }
+    }
+
+    private sealed class RecordingOutputProcess : IOutputProcess
+    {
+        public bool Antialiasing { get; set; } = true;
+        public int ExecuteCount { get; private set; }
+        public int CancelCount { get; private set; }
+
+        public void Preview(ToolContext ctx, IProcessedInput input) { }
+        public void Execute(ToolContext ctx, IProcessedInput input) => ExecuteCount++;
+        public void Cancel() => CancelCount++;
     }
 
     private static CanvasInputSample Sample(double x, double y, long timeMicros)

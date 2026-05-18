@@ -213,27 +213,8 @@ public sealed class DrawingCanvas : Control, IDisposable
         var w = Math.Max(1, Bounds.Width);
         var h = Math.Max(1, Bounds.Height);
 
+        var sampleInfo = GetCanvasInputSampleInfo(point);
         var props = point.Properties;
-        var pressure = props.Pressure;
-        if (double.IsNaN(pressure)) pressure = 0;
-
-        var source = point.Pointer.Type switch
-        {
-            PointerType.Pen => CanvasInputSource.Pen,
-            PointerType.Touch => CanvasInputSource.Touch,
-            PointerType.Mouse => CanvasInputSource.Mouse,
-            _ => CanvasInputSource.Unknown
-        };
-
-        if (source == CanvasInputSource.Mouse && props.IsLeftButtonPressed)
-        {
-            var hasTabletData = pressure > 0 || props.XTilt != 0 || props.YTilt != 0 || props.Twist != 0;
-            if (!hasTabletData && pressure <= 0) pressure = 1;
-        }
-        else if ((source is CanvasInputSource.Pen or CanvasInputSource.Touch) && pressure < 0.005)
-        {
-            pressure = 0;
-        }
 
         var docX = point.Position.X / w * _document.Width;
         var docY = point.Position.Y / h * _document.Height;
@@ -255,13 +236,13 @@ public sealed class DrawingCanvas : Control, IDisposable
         var sample = new CanvasInputSample(
             docX,
             docY,
-            Math.Clamp(pressure, 0, 1),
+            sampleInfo.Pressure,
             props.XTilt,
             props.YTilt,
             props.Twist,
             Environment.TickCount64 * 1000,
             point.Pointer.Id,
-            source,
+            sampleInfo.Source,
             phase);
         _toolController.Dispatch(new ToolInputEvent(kind, sample));
     }
@@ -279,40 +260,57 @@ public sealed class DrawingCanvas : Control, IDisposable
         };
 
         var props = point.Properties;
+        var sampleInfo = GetCanvasInputSampleInfo(point);
+
+        var sample = new CanvasInputSample(
+            viewportPos.X,
+            viewportPos.Y,
+            sampleInfo.Pressure,
+            props.XTilt,
+            props.YTilt,
+            props.Twist,
+            Environment.TickCount64 * 1000,
+            point.Pointer.Id,
+            sampleInfo.Source,
+            phase);
+        _toolController.Dispatch(new ToolInputEvent(kind, sample));
+    }
+
+    private static (CanvasInputSource Source, double Pressure) GetCanvasInputSampleInfo(PointerPoint point)
+    {
+        var props = point.Properties;
+        var source = SourceFromPointer(point);
         var pressure = props.Pressure;
         if (double.IsNaN(pressure)) pressure = 0;
 
-        var source = point.Pointer.Type switch
+        if (source == CanvasInputSource.Mouse && props.IsLeftButtonPressed)
+        {
+            var hasTabletData = pressure > 0 || props.XTilt != 0 || props.YTilt != 0 || props.Twist != 0;
+            if (!hasTabletData && pressure <= 0)
+                pressure = 1;
+        }
+        else if ((source is CanvasInputSource.Pen or CanvasInputSource.Eraser or CanvasInputSource.Touch) && pressure < 0.005)
+        {
+            pressure = 0;
+        }
+
+        return (source, Math.Clamp(pressure, 0, 1));
+    }
+
+    private static CanvasInputSource SourceFromPointer(PointerPoint point)
+    {
+        if (point.Properties.IsEraser)
+            return CanvasInputSource.Eraser;
+
+        return point.Pointer.Type switch
         {
             PointerType.Pen => CanvasInputSource.Pen,
             PointerType.Touch => CanvasInputSource.Touch,
             PointerType.Mouse => CanvasInputSource.Mouse,
             _ => CanvasInputSource.Unknown
         };
-
-        if (source == CanvasInputSource.Mouse && props.IsLeftButtonPressed)
-        {
-            var hasTabletData = pressure > 0 || props.XTilt != 0 || props.YTilt != 0 || props.Twist != 0;
-            if (!hasTabletData && pressure <= 0) pressure = 1;
-        }
-        else if ((source is CanvasInputSource.Pen or CanvasInputSource.Touch) && pressure < 0.005)
-        {
-            pressure = 0;
-        }
-
-        var sample = new CanvasInputSample(
-            viewportPos.X,
-            viewportPos.Y,
-            Math.Clamp(pressure, 0, 1),
-            props.XTilt,
-            props.YTilt,
-            props.Twist,
-            Environment.TickCount64 * 1000,
-            point.Pointer.Id,
-            source,
-            phase);
-        _toolController.Dispatch(new ToolInputEvent(kind, sample));
     }
+
     public double PanOffsetX { get; set; }
     public double PanOffsetY { get; set; }
     public int FlipX { get; set; } = 1;
@@ -1440,14 +1438,8 @@ public sealed class DrawingCanvas : Control, IDisposable
         base.OnPointerPressed(e);
         var point = e.GetCurrentPoint(this);
 
-        // Wayland / tablet: pen proximity fires PointerPressed with IsLeftButtonPressed=true
-        // but Pressure=0.  Block these phantom events before any tool logic runs.
-        if ((point.Pointer.Type == PointerType.Pen || point.Properties.IsEraser) &&
-            point.Properties.Pressure < PenPressureThreshold)
-            return;
-
         // Ctrl+Shift+Left: start a layer-find drag.
-        if (point.Properties.IsLeftButtonPressed &&
+        if (IsPaintInput(point) &&
             e.KeyModifiers.HasFlag(KeyModifiers.Control) &&
             e.KeyModifiers.HasFlag(KeyModifiers.Shift))
         {
@@ -1587,12 +1579,6 @@ public sealed class DrawingCanvas : Control, IDisposable
     private bool CanCommitActiveToolFromClick() =>
         _toolController.ActiveTool.CanCommitFromClick;
 
-    private CanvasInputSample MakeSample(PointerPoint point, CanvasInputPhase phase)
-        => CanvasInputSample.FromPointerPoint(
-            point, Bounds.Size,
-            _document.Width, _document.Height,
-            phase);
-
     private void TryPickLayerAtPoint(int x, int y)
     {
         var layers = _document.Layers;
@@ -1702,11 +1688,11 @@ public sealed class DrawingCanvas : Control, IDisposable
     {
         var properties = point.Properties;
         if (properties.IsEraser)
-            return properties.IsLeftButtonPressed || properties.Pressure >= PenPressureThreshold;
+            return properties.Pressure >= PenPressureThreshold;
 
         return point.Pointer.Type switch
         {
-            PointerType.Pen => properties.IsLeftButtonPressed || properties.Pressure >= PenPressureThreshold,
+            PointerType.Pen => properties.Pressure >= PenPressureThreshold,
             PointerType.Touch => properties.IsLeftButtonPressed || properties.Pressure >= PenPressureThreshold,
             PointerType.Mouse => properties.IsLeftButtonPressed,
             _ => false

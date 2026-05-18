@@ -20,7 +20,14 @@ public sealed class CompositeTool : ITool
     }
 
     public void Activate(ToolContext ctx) { }
-    public void Deactivate(ToolContext ctx) => Cancel(ctx);
+
+    public void Deactivate(ToolContext ctx)
+    {
+        if (Input.IsActive)
+            Cancel(ctx);
+        else
+            Input.Cancel();
+    }
 
     public void PointerDown(ToolContext ctx, CanvasInputSample s)
     {

@@ -33,6 +33,11 @@ public sealed class ShortcutsConfig
     /// Brush opacity change per key press (0-1).
     public double BrushOpacityStep { get; set; } = 0.05;
 
+    // ── Canvas pointer buttons ────────────────────────────────────────────────
+
+    public CanvasButtonAction MiddleButtonAction { get; set; } = CanvasButtonAction.PanCanvas;
+    public CanvasButtonAction RightButtonAction { get; set; } = CanvasButtonAction.Eyedropper;
+
     // ── File ──────────────────────────────────────────────────────────────────
 
     public KeyBinding FileNew { get; set; } = new(Key.N, KeyModifiers.Control);

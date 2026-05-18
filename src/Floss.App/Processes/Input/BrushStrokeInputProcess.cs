@@ -31,11 +31,6 @@ public sealed class BrushStrokeInputProcess : IInputProcess
 
     private bool IsStraightLine => ToolAuxMode == ToolAuxOperationType.StraightLine;
 
-    // Phantom-tap guard: strokes whose total arc length stays below this
-    // threshold (document pixels) are discarded as pen-hover ghost events.
-    private const double PhantomArcLengthThreshold = 2.0;
-    private bool _isPhantom;
-
     // History buffer for Gaussian-weighted moving-average stabilization.
     private readonly List<CanvasInputSample> _history = new(32);
 
@@ -44,7 +39,6 @@ public sealed class BrushStrokeInputProcess : IInputProcess
         _raw.Clear();
         _smoothed.Clear();
         _history.Clear();
-        _isPhantom = false;
 
         if (IsStraightLine && _straightLineAnchorSet)
         {
@@ -82,13 +76,8 @@ public sealed class BrushStrokeInputProcess : IInputProcess
         _raw.Add(s);
         _smoothed.Add(ApplyStabilization(s));
         _active = false;
-
-        _isPhantom = ArcLength(_smoothed) < PhantomArcLengthThreshold;
-        if (!_isPhantom)
-        {
-            _straightLineAnchor = _smoothed[^1];
-            _straightLineAnchorSet = true;
-        }
+        _straightLineAnchor = _smoothed[^1];
+        _straightLineAnchorSet = true;
     }
 
     public void Cancel()
@@ -109,7 +98,7 @@ public sealed class BrushStrokeInputProcess : IInputProcess
 
     public IProcessedInput? GetResult()
     {
-        if (!_active && !_isPhantom && _smoothed.Count > 0)
+        if (!_active && _smoothed.Count > 0)
         {
             return new StrokeInput
             {
@@ -180,15 +169,4 @@ public sealed class BrushStrokeInputProcess : IInputProcess
             raw.TimeMicros);
     }
 
-    private static double ArcLength(List<CanvasInputSample> samples)
-    {
-        var len = 0.0;
-        for (var i = 1; i < samples.Count; i++)
-        {
-            var dx = samples[i].X - samples[i - 1].X;
-            var dy = samples[i].Y - samples[i - 1].Y;
-            len += Math.Sqrt(dx * dx + dy * dy);
-        }
-        return len;
-    }
 }

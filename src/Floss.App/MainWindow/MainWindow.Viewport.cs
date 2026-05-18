@@ -18,6 +18,9 @@ using static Floss.App.AppColors;
 
 public partial class MainWindow
 {
+    private const double PenPressureThreshold = 0.02;
+    private bool _canvasButtonPresetActive;
+
     // ── Viewport ──────────────────────────────────────────────────────────────
     private void SyncCanvasViewport()
     {
@@ -60,12 +63,10 @@ public partial class MainWindow
     {
         _isPanning = false;
         var pt = e.GetCurrentPoint(_workspaceViewport);
+        var buttonAction = ResolveCanvasButtonAction(pt);
+        var isPrimaryDown = buttonAction == CanvasButtonAction.PrimaryTool;
 
-        if ((pt.Pointer.Type == PointerType.Pen || pt.Properties.IsEraser) &&
-            pt.Properties.Pressure < 0.02f)
-            return;
-
-        if (TryBeginResizeDrag(pt.Position, pt.Properties.IsLeftButtonPressed))
+        if (TryBeginResizeDrag(pt.Position, isPrimaryDown))
         {
             _isPanning = true;
             _lastPanPoint = pt.Position;
@@ -76,6 +77,9 @@ public partial class MainWindow
 
         if (_activeModifierAction == ModifierAction.ChangeBrushSize)
         {
+            if (!isPrimaryDown)
+                return;
+
             _isBrushSizeActive = true;
             _canvas.PaintInputSuspended = true;
             _hadAlternateBeforeBrushSize = _canvas.IsAlternateActive;
@@ -104,7 +108,7 @@ public partial class MainWindow
         }
 
         // Ctrl+Shift+Left: layer-pick drag.
-        if (pt.Properties.IsLeftButtonPressed &&
+        if (isPrimaryDown &&
             e.KeyModifiers.HasFlag(KeyModifiers.Control) &&
             e.KeyModifiers.HasFlag(KeyModifiers.Shift))
         {
@@ -116,42 +120,99 @@ public partial class MainWindow
             return;
         }
 
-        bool isPenPress = (pt.Pointer.Type == PointerType.Pen || pt.Properties.IsEraser)
-            && pt.Properties.Pressure >= 0.02f;
-        if (pt.Properties.IsLeftButtonPressed || isPenPress)
+        if (isPrimaryDown)
         {
-            // Don't capture or dispatch when clicking a UI overlay (resize panel buttons etc).
-            if (_resizeFloatingPanel is { IsVisible: true } floating
-                && floating.Bounds.Contains(pt.Position))
-                return;
-
-            if (_selectionActionBar is { IsVisible: true } selBar
-                && selBar.Bounds.Contains(pt.Position))
-                return;
-
-            if (IsViewportTool(_canvas.ActiveTool))
-                _canvas.HandleViewportPointerInput(ToolInputEventKind.Down, pt.Position, pt);
-            else
-            {
-                _canvas.HandlePointerInput(ToolInputEventKind.Down, e.GetCurrentPoint(_canvas));
-                this.Cursor = new Cursor(StandardCursorType.None);
-            }
-            _isToolDispatchActive = true;
-            _isPanning = true;
-            _lastPanPoint = pt.Position;
-            e.Pointer.Capture(_workspaceViewport);
-            e.Handled = true;
+            BeginCanvasToolDispatch(e, pt, temporaryPreset: false);
             return;
         }
 
-        if (pt.Properties.IsMiddleButtonPressed)
+        if (TryBeginCanvasButtonAction(buttonAction, e, pt))
+            return;
+    }
+
+    private bool TryBeginCanvasButtonAction(CanvasButtonAction action, PointerPressedEventArgs e, PointerPoint pt)
+    {
+        var presetId = PresetIdForCanvasButtonAction(action);
+        if (presetId == null)
+            return false;
+
+        if (!PushTemporaryPreset(presetId))
+            return false;
+
+        if (!BeginCanvasToolDispatch(e, pt, temporaryPreset: true))
         {
-            _isMiddleButtonPanning = true;
-            _isPanning = true;
-            _lastPanPoint = e.GetPosition(_workspaceViewport);
-            e.Pointer.Capture(_workspaceViewport);
-            e.Handled = true;
+            PopTemporaryPreset();
+            return false;
         }
+        return true;
+    }
+
+    private bool BeginCanvasToolDispatch(PointerPressedEventArgs e, PointerPoint pt, bool temporaryPreset)
+    {
+        // Don't capture or dispatch when clicking a UI overlay (resize panel buttons etc).
+        if (_resizeFloatingPanel is { IsVisible: true } floating
+            && floating.Bounds.Contains(pt.Position))
+            return false;
+
+        if (_selectionActionBar is { IsVisible: true } selBar
+            && selBar.Bounds.Contains(pt.Position))
+            return false;
+
+        if (IsViewportTool(_canvas.ActiveTool))
+            _canvas.HandleViewportPointerInput(ToolInputEventKind.Down, pt.Position, pt);
+        else
+        {
+            _canvas.HandlePointerInput(ToolInputEventKind.Down, e.GetCurrentPoint(_canvas));
+            this.Cursor = new Cursor(StandardCursorType.None);
+        }
+        _canvasButtonPresetActive = temporaryPreset;
+        _isToolDispatchActive = true;
+        _isPanning = true;
+        _lastPanPoint = pt.Position;
+        e.Pointer.Capture(_workspaceViewport);
+        e.Handled = true;
+        return true;
+    }
+
+    private static CanvasButtonAction ResolveCanvasButtonAction(PointerPoint pt)
+    {
+        var props = pt.Properties;
+        if (props.IsEraser || pt.Pointer.Type == PointerType.Pen)
+        {
+            if (props.Pressure >= PenPressureThreshold)
+                return CanvasButtonAction.PrimaryTool;
+            if (props.IsMiddleButtonPressed)
+                return App.Shortcuts.MiddleButtonAction;
+            if (props.IsRightButtonPressed)
+                return App.Shortcuts.RightButtonAction;
+            return CanvasButtonAction.None;
+        }
+
+        if (pt.Pointer.Type == PointerType.Touch)
+            return props.IsLeftButtonPressed || props.Pressure >= PenPressureThreshold
+                ? CanvasButtonAction.PrimaryTool
+                : CanvasButtonAction.None;
+
+        if (props.IsLeftButtonPressed)
+            return CanvasButtonAction.PrimaryTool;
+        if (props.IsMiddleButtonPressed)
+            return App.Shortcuts.MiddleButtonAction;
+        if (props.IsRightButtonPressed)
+            return App.Shortcuts.RightButtonAction;
+        return CanvasButtonAction.None;
+    }
+
+    private static string? PresetIdForCanvasButtonAction(CanvasButtonAction action)
+    {
+        return action switch
+        {
+            CanvasButtonAction.PanCanvas => ToolGroupConfig.ViewHandPresetId,
+            CanvasButtonAction.RotateCanvas => ToolGroupConfig.ViewRotatePresetId,
+            CanvasButtonAction.ZoomCanvas => ToolGroupConfig.ViewZoomInPresetId,
+            CanvasButtonAction.Eyedropper => ToolGroupConfig.EyedropperPresetId,
+            CanvasButtonAction.MoveLayer => ToolGroupConfig.MoveLayerPresetId,
+            _ => null
+        };
     }
 
     private void Workspace_OnPointerMoved(object? sender, PointerEventArgs e)
@@ -268,6 +329,11 @@ public partial class MainWindow
                 _canvas.HandleViewportPointerInput(ToolInputEventKind.Up, pt.Position, pt);
             else
                 _canvas.HandlePointerInput(ToolInputEventKind.Up, e.GetCurrentPoint(_canvas));
+            if (_canvasButtonPresetActive)
+            {
+                _canvasButtonPresetActive = false;
+                PopTemporaryPreset();
+            }
             this.Cursor = null; // restore default hit-test cursor
         }
         if (_isBrushSizeActive)
@@ -275,6 +341,7 @@ public partial class MainWindow
             _isBrushSizeActive = false;
             FinishActiveToolSizeEdit();
         }
+        ReevaluateModifierState(_currentModifierState);
         _canvas.UnlockCursorPreview();
         e.Pointer.Capture(null);
         e.Handled = true;
@@ -290,11 +357,17 @@ public partial class MainWindow
             _isToolDispatchActive = false;
             _canvas.CancelActiveTool();
         }
+        if (_canvasButtonPresetActive)
+        {
+            _canvasButtonPresetActive = false;
+            PopTemporaryPreset();
+        }
         if (_isBrushSizeActive)
         {
             _isBrushSizeActive = false;
             FinishActiveToolSizeEdit();
         }
+        ReevaluateModifierState(_currentModifierState);
         _canvas.UnlockCursorPreview();
         _canvas.PaintInputSuspended = false;
         this.Cursor = null;
@@ -623,6 +696,7 @@ public partial class MainWindow
 
         var key = e.Key;
         var mods = Input.KeyBinding.ModifiersWithKeyDown(key, e.KeyModifiers);
+        _currentModifierState = mods;
         _canvas.SetCurrentModifiers(mods);
 
         if (!IsModifierKey(key))
@@ -645,6 +719,7 @@ public partial class MainWindow
     {
         _heldBaseKeys.Remove(e.Key);
         var mods = Floss.App.Input.KeyBinding.ModifiersAfterKeyUp(e.Key, e.KeyModifiers);
+        _currentModifierState = mods;
         _canvas.SetCurrentModifiers(mods);
         ReevaluateModifierState(mods);
     }
@@ -652,6 +727,7 @@ public partial class MainWindow
     private void ResetTransientInputState()
     {
         _heldBaseKeys.Clear();
+        _currentModifierState = KeyModifiers.None;
         _isPanning = false;
         _isMiddleButtonPanning = false;
         _isToolDispatchActive = false;
@@ -712,6 +788,9 @@ public partial class MainWindow
         if (assignment == null && _heldBaseKeys.Count == 0)
             assignment = App.ModifierKeys.Resolve(inputType, outputType, null, mods);
 
+        if (IsPointerInputTransactionActive())
+            return;
+
         // Early-out if nothing changed.
         bool unchanged = (assignment == null && _activeModifierAction == ModifierAction.None)
                       || (assignment != null
@@ -747,20 +826,28 @@ public partial class MainWindow
         _activeModifierCombo = assignment?.Modifiers ?? KeyModifiers.None;
         _activeModifierKey = assignment?.Key;
 
-        // Activate new action. Don't switch tools mid-stroke — that would cancel the stroke.
+        // Activate new action. Pointer transactions are deferred above, so this only
+        // runs when it is safe to mutate the active tool/modifier state.
         switch (assignment?.Action)
         {
             case ModifierAction.ToolAux:
                 _canvas.SetToolAuxMode(assignment.ToolAuxOper);
                 break;
             case ModifierAction.ChangeToolTemporarily:
-                if (_isToolDispatchActive) break;
                 if (!string.IsNullOrEmpty(assignment.TemporaryToolPresetId))
                     PushTemporaryPreset(assignment.TemporaryToolPresetId);
                 else
                     _canvas.SetAlternateActive(true);
                 break;
         }
+    }
+
+    private bool IsPointerInputTransactionActive()
+    {
+        return _isToolDispatchActive
+            || _isBrushSizeActive
+            || IsResizeDragging
+            || _canvas.IsLayerPickDrag;
     }
 
     private static bool IsModifierKey(Avalonia.Input.Key key) => key switch
