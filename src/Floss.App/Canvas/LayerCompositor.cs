@@ -139,7 +139,7 @@ public sealed class LayerCompositor : IDisposable
         InvalidateGroupCaches(region, layers, layerIndex);
     }
 
-    public unsafe void Composite(IReadOnlyList<DrawingLayer> layers, int width, int height, uint paperColor = 0, PixelRegion? viewport = null, double zoom = 1.0)
+    public unsafe bool Composite(IReadOnlyList<DrawingLayer> layers, int width, int height, uint paperColor = 0, PixelRegion? viewport = null, double zoom = 1.0)
     {
         SetSize(width, height);
 
@@ -173,7 +173,7 @@ public sealed class LayerCompositor : IDisposable
         {
             _fullDirty = false;
             _dirtyRegion = null;
-            return;
+            return false;
         }
 
         var tileKeys = new System.Collections.Generic.List<(int tx, int ty)>();
@@ -216,8 +216,10 @@ public sealed class LayerCompositor : IDisposable
         // composite per frame).  Dirty tiles represent actual pixel changes —
         // capping them would leave stale cache tiles visible (e.g. transform commit).
         const int MaxMissingTilesPerFrame = 32;
+        var deferredMissingTiles = false;
         if (missingTileKeys.Count > MaxMissingTilesPerFrame)
         {
+            deferredMissingTiles = true;
             var cx = viewportClip is { } vp ? vp.X + vp.Width / 2 : _width / 2;
             var cy = viewportClip is { } vp2 ? vp2.Y + vp2.Height / 2 : _height / 2;
             missingTileKeys.Sort((a, b) =>
@@ -233,7 +235,7 @@ public sealed class LayerCompositor : IDisposable
         {
             _fullDirty = false;
             _dirtyRegion = null;
-            return;
+            return deferredMissingTiles;
         }
 
         _fullDirty = false;
@@ -270,6 +272,7 @@ public sealed class LayerCompositor : IDisposable
         foreach (var (tx, ty) in missingTileKeys) _tilesToPrune.Add((tx, ty, lod));
 
         PruneTransparentTiles();
+        return deferredMissingTiles;
     }
 
     private WriteableBitmap EnsureTile(int tx, int ty, int lod)

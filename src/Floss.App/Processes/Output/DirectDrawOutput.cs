@@ -12,6 +12,8 @@ namespace Floss.App.Processes.Output;
 // no shared mutable state, no locking needed.
 public sealed class DirectDrawOutput : IOutputProcess
 {
+    private const long PreviewNotifyIntervalMs = 12;
+
     public bool IsPaintOutput => true;
     private readonly BrushEngine _brushEngine;
 
@@ -20,9 +22,11 @@ public sealed class DirectDrawOutput : IOutputProcess
     private int _lastProcessedIndex = -1;
     private Dictionary<(int, int), byte[]?>? _beforeTiles;
     private PixelRegion _dirtyRegion;
+    private PixelRegion _pendingPreviewDirty;
     private DrawingLayer? _currentLayer;
     private bool _strokeActive;
     private ToolContext? _currentCtx;
+    private long _lastPreviewNotifyMs;
 
     public DirectDrawOutput(BrushEngine brushEngine, DrawingDocument _)
     {
@@ -39,6 +43,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         var samples = stroke.SmoothedSamples;
         var brush = ctx.Brush;
         var selection = ctx.Selection;
+        var batchDirty = PixelRegion.Empty;
 
         if (!_strokeActive)
         {
@@ -52,7 +57,7 @@ public sealed class DirectDrawOutput : IOutputProcess
 
             if (samples[0].Source is CanvasInputSource.Mouse or CanvasInputSource.Unknown)
             {
-                ProcessSegment(layer, brush, selection, ctx, ToLayerSample(layer, samples[0]), ToLayerSample(layer, samples[0]));
+                batchDirty = batchDirty.Union(ProcessSegment(layer, brush, selection, ToLayerSample(layer, samples[0]), ToLayerSample(layer, samples[0])));
                 _lastProcessedIndex = 0;
             }
         }
@@ -60,8 +65,14 @@ public sealed class DirectDrawOutput : IOutputProcess
         var startIdx = Math.Max(1, _lastProcessedIndex + 1);
         for (int i = startIdx; i < samples.Count; i++)
         {
-            ProcessSegment(layer, brush, selection, ctx, ToLayerSample(layer, samples[i - 1]), ToLayerSample(layer, samples[i]));
+            batchDirty = batchDirty.Union(ProcessSegment(layer, brush, selection, ToLayerSample(layer, samples[i - 1]), ToLayerSample(layer, samples[i])));
             _lastProcessedIndex = i;
+        }
+
+        if (!batchDirty.IsEmpty)
+        {
+            _pendingPreviewDirty = _pendingPreviewDirty.Union(batchDirty);
+            FlushPreviewDirty(ctx, force: false);
         }
     }
 
@@ -81,11 +92,26 @@ public sealed class DirectDrawOutput : IOutputProcess
         }
 
         Preview(ctx, input);
+        FlushPreviewDirty(ctx, force: true);
         _brushEngine.EndStroke();
         Commit();
     }
 
-    private void ProcessSegment(DrawingLayer layer, BrushPreset brush, SelectionMask selection, ToolContext ctx, CanvasInputSample from, CanvasInputSample to)
+    private void FlushPreviewDirty(ToolContext ctx, bool force)
+    {
+        if (_pendingPreviewDirty.IsEmpty) return;
+
+        var now = Environment.TickCount64;
+        if (!force && now - _lastPreviewNotifyMs < PreviewNotifyIntervalMs)
+            return;
+
+        ctx.Document.NotifyChanged(_pendingPreviewDirty, ctx.ActiveLayerIndex);
+        ctx.InvalidateRender();
+        _pendingPreviewDirty = PixelRegion.Empty;
+        _lastPreviewNotifyMs = now;
+    }
+
+    private PixelRegion ProcessSegment(DrawingLayer layer, BrushPreset brush, SelectionMask selection, CanvasInputSample from, CanvasInputSample to)
     {
         var region = _brushEngine.EstimateSegmentRegion(layer, brush, from, to);
         if (!region.IsEmpty && _beforeTiles != null)
@@ -101,11 +127,10 @@ public sealed class DirectDrawOutput : IOutputProcess
 
             var translatedDirty = dirty.Translate(layer.OffsetX, layer.OffsetY);
             _dirtyRegion = _dirtyRegion.Union(translatedDirty);
-
-            layer.MarkThumbnailDirty();
-            ctx.Document.NotifyChanged(translatedDirty, ctx.ActiveLayerIndex);
-            ctx.InvalidateRender();
+            return translatedDirty;
         }
+
+        return PixelRegion.Empty;
     }
 
     private void Commit()
@@ -141,8 +166,10 @@ public sealed class DirectDrawOutput : IOutputProcess
         _lastProcessedIndex = -1;
         _beforeTiles = null;
         _dirtyRegion = PixelRegion.Empty;
+        _pendingPreviewDirty = PixelRegion.Empty;
         _currentLayer = null;
         _currentCtx = null;
+        _lastPreviewNotifyMs = 0;
     }
 
     public void Cancel()

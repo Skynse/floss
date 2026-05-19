@@ -2552,6 +2552,9 @@ internal sealed class RulerOverlay : Control
 {
     private DrawingCanvas _canvas;
     private const double RulerThickness = 20;
+    private const double MinMinorTickPixels = 8;
+    private const double MinLabelPixels = 72;
+    private static readonly double[] NiceSteps = [1, 2, 5];
 
     internal DrawingCanvas Canvas { get => _canvas; set => _canvas = value; }
     public RulerOverlay(DrawingCanvas canvas) { _canvas = canvas; IsHitTestVisible = false; }
@@ -2569,24 +2572,29 @@ internal sealed class RulerOverlay : Control
         var panX = _canvas.PanOffsetX;
         var panY = _canvas.PanOffsetY;
 
-        var bg = new SolidColorBrush(Color.FromArgb(180, 30, 30, 35));
+        var bg = new SolidColorBrush(Color.FromArgb(255, 30, 30, 35));
         var tickPen = new Pen(new SolidColorBrush(Color.FromArgb(160, 180, 200, 220)), 1);
         var labelBrush = new SolidColorBrush(Color.FromArgb(220, 200, 210, 220));
 
         var scaledW = docW * zoom;
-        var stepSize = scaledW <= 400 ? 25 : scaledW <= 800 ? 50 : 100;
+        var minorStep = NiceStepForPixels(zoom, MinMinorTickPixels);
+        var majorStep = NiceStepForPixels(zoom, MinLabelPixels);
 
         // Horizontal ruler bar (top of viewport)
         ctx.FillRectangle(bg, new Rect(0, 0, w, RulerThickness));
         if (scaledW > 0)
         {
-            for (var x = 0.0; x <= docW; x += stepSize)
+            var startX = Math.Floor(ScreenToDocX(0, w, scaledW, zoom, flipX, panX) / minorStep) * minorStep;
+            var endX = Math.Ceiling(ScreenToDocX(w, w, scaledW, zoom, flipX, panX) / minorStep) * minorStep;
+            if (startX > endX) (startX, endX) = (endX, startX);
+            startX = Math.Max(0, startX);
+            endX = Math.Min(docW, endX);
+
+            for (var x = startX; x <= endX; x += minorStep)
             {
-                var sx = flipX == 1
-                    ? (w - scaledW) * 0.5 + x * zoom + panX
-                    : (w + scaledW) * 0.5 - x * zoom + panX;
+                var sx = DocToScreenX(x, w, scaledW, zoom, flipX, panX);
                 if (sx < -0.5 || sx > w) continue;
-                var isMajor = (x % (stepSize * 5)) == 0 || (stepSize >= 50 && (x % (stepSize * 2)) == 0);
+                var isMajor = IsMajorTick(x, majorStep);
                 var tickH = isMajor ? RulerThickness : RulerThickness * 0.4;
                 ctx.DrawLine(tickPen, new Point(sx, 0), new Point(sx, tickH));
                 if (isMajor)
@@ -2603,13 +2611,17 @@ internal sealed class RulerOverlay : Control
         var scaledH = docH * zoom;
         if (scaledH > 0)
         {
-            for (var y = 0.0; y <= docH; y += stepSize)
+            var startY = Math.Floor(ScreenToDocY(0, h, scaledH, zoom, flipY, panY) / minorStep) * minorStep;
+            var endY = Math.Ceiling(ScreenToDocY(h, h, scaledH, zoom, flipY, panY) / minorStep) * minorStep;
+            if (startY > endY) (startY, endY) = (endY, startY);
+            startY = Math.Max(0, startY);
+            endY = Math.Min(docH, endY);
+
+            for (var y = startY; y <= endY; y += minorStep)
             {
-                var sy = flipY == 1
-                    ? (h - scaledH) * 0.5 + y * zoom + panY
-                    : (h + scaledH) * 0.5 - y * zoom + panY;
+                var sy = DocToScreenY(y, h, scaledH, zoom, flipY, panY);
                 if (sy < -0.5 || sy > h) continue;
-                var isMajor = (y % (stepSize * 5)) == 0 || (stepSize >= 50 && (y % (stepSize * 2)) == 0);
+                var isMajor = IsMajorTick(y, majorStep);
                 var tickW = isMajor ? RulerThickness : RulerThickness * 0.4;
                 ctx.DrawLine(tickPen, new Point(0, sy), new Point(tickW, sy));
                 if (isMajor)
@@ -2621,4 +2633,45 @@ internal sealed class RulerOverlay : Control
             }
         }
     }
+
+    private static double NiceStepForPixels(double zoom, double minPixels)
+    {
+        if (zoom <= 0) return minPixels;
+        var raw = minPixels / zoom;
+        var magnitude = Math.Pow(10, Math.Floor(Math.Log10(raw)));
+        foreach (var step in NiceSteps)
+        {
+            var candidate = step * magnitude;
+            if (candidate >= raw)
+                return candidate;
+        }
+        return 10 * magnitude;
+    }
+
+    private static bool IsMajorTick(double value, double majorStep)
+    {
+        if (majorStep <= 0) return false;
+        var nearest = Math.Round(value / majorStep) * majorStep;
+        return Math.Abs(value - nearest) <= Math.Max(0.001, majorStep * 0.0001);
+    }
+
+    private static double DocToScreenX(double x, double viewportW, double scaledW, double zoom, int flipX, double panX)
+        => flipX == 1
+            ? (viewportW - scaledW) * 0.5 + x * zoom + panX
+            : (viewportW + scaledW) * 0.5 - x * zoom + panX;
+
+    private static double ScreenToDocX(double sx, double viewportW, double scaledW, double zoom, int flipX, double panX)
+        => flipX == 1
+            ? (sx - panX - (viewportW - scaledW) * 0.5) / zoom
+            : ((viewportW + scaledW) * 0.5 + panX - sx) / zoom;
+
+    private static double DocToScreenY(double y, double viewportH, double scaledH, double zoom, int flipY, double panY)
+        => flipY == 1
+            ? (viewportH - scaledH) * 0.5 + y * zoom + panY
+            : (viewportH + scaledH) * 0.5 - y * zoom + panY;
+
+    private static double ScreenToDocY(double sy, double viewportH, double scaledH, double zoom, int flipY, double panY)
+        => flipY == 1
+            ? (sy - panY - (viewportH - scaledH) * 0.5) / zoom
+            : ((viewportH + scaledH) * 0.5 + panY - sy) / zoom;
 }

@@ -10,6 +10,7 @@ using Avalonia.Platform.Storage;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Rendering.SceneGraph;
+using Avalonia.Threading;
 using Floss.App.Brushes;
 using Floss.App.Document;
 using Floss.App.Input;
@@ -52,6 +53,7 @@ public sealed class DrawingCanvas : Control, IDisposable
     private bool _isPointerOver;
     private bool _isCursorPreviewLocked;
     private bool _forceBrushOutlineCursor;
+    private bool _deferredTileRenderQueued;
     private (IBrushTip? Tip, SKBitmap? Outline) _cursorOutlineCache;
 
     // Ctrl+Shift layer-pick drag state
@@ -1038,23 +1040,49 @@ public sealed class DrawingCanvas : Control, IDisposable
         var docH = _document.Height;
 
         var angle = CanvasRotation * Math.PI / 180.0;
-        var absCos = Math.Abs(Math.Cos(angle));
-        var absSin = Math.Abs(Math.Sin(angle));
-        var halfVpW = (ViewportWidth * absCos + ViewportHeight * absSin) / (2.0 * zoom);
-        var halfVpH = (ViewportWidth * absSin + ViewportHeight * absCos) / (2.0 * zoom);
+        var cos = Math.Cos(angle);
+        var sin = Math.Sin(angle);
+        var viewportCenterX = ViewportWidth * 0.5;
+        var viewportCenterY = ViewportHeight * 0.5;
+        var docCenterX = docW * 0.5;
+        var docCenterY = docH * 0.5;
+        var flipX = FlipX == 0 ? 1 : FlipX;
+        var flipY = FlipY == 0 ? 1 : FlipY;
 
-        var docCenterX = -PanOffsetX / zoom + docW / 2.0;
-        var docCenterY = -PanOffsetY / zoom + docH / 2.0;
+        var minX = double.PositiveInfinity;
+        var minY = double.PositiveInfinity;
+        var maxX = double.NegativeInfinity;
+        var maxY = double.NegativeInfinity;
 
-        var docLeft = docCenterX - halfVpW;
-        var docTop = docCenterY - halfVpH;
-        var docRight = docCenterX + halfVpW;
-        var docBottom = docCenterY + halfVpH;
+        foreach (var corner in new[]
+                 {
+                     new Point(0, 0),
+                     new Point(ViewportWidth, 0),
+                     new Point(ViewportWidth, ViewportHeight),
+                     new Point(0, ViewportHeight)
+                 })
+        {
+            var sx = corner.X - viewportCenterX - PanOffsetX;
+            var sy = corner.Y - viewportCenterY - PanOffsetY;
 
-        var left = (int)Math.Max(0, docLeft);
-        var top = (int)Math.Max(0, docTop);
-        var right = (int)Math.Min(docW, Math.Ceiling(docRight));
-        var bottom = (int)Math.Min(docH, Math.Ceiling(docBottom));
+            // Invert TransformGroup order around RenderTransformOrigin:
+            // flip -> zoom -> rotate -> pan.
+            var unrotatedX = sx * cos + sy * sin;
+            var unrotatedY = -sx * sin + sy * cos;
+            var docX = docCenterX + unrotatedX / (zoom * flipX);
+            var docY = docCenterY + unrotatedY / (zoom * flipY);
+
+            minX = Math.Min(minX, docX);
+            minY = Math.Min(minY, docY);
+            maxX = Math.Max(maxX, docX);
+            maxY = Math.Max(maxY, docY);
+        }
+
+        const int margin = 4;
+        var left = (int)Math.Max(0, Math.Floor(minX) - margin);
+        var top = (int)Math.Max(0, Math.Floor(minY) - margin);
+        var right = (int)Math.Min(docW, Math.Ceiling(maxX) + margin);
+        var bottom = (int)Math.Min(docH, Math.Ceiling(maxY) + margin);
         var w = Math.Max(1, right - left);
         var h = Math.Max(1, bottom - top);
 
@@ -1081,7 +1109,8 @@ public sealed class DrawingCanvas : Control, IDisposable
         {
             var paper = _document.PaperLayer;
             uint paperUint = paper is { IsVisible: true } ? ColorToBgraUint(_document.PaperColor) : 0u;
-            _compositor.Composite(_document.Layers, _document.Width, _document.Height, paperUint, viewport, CanvasZoom);
+            if (_compositor.Composite(_document.Layers, _document.Width, _document.Height, paperUint, viewport, CanvasZoom))
+                QueueDeferredTileRender();
             using (context.PushClip(new RoundedRect(canvasBounds)))
             using (context.PushRenderOptions(new RenderOptions
             {
@@ -1154,6 +1183,17 @@ public sealed class DrawingCanvas : Control, IDisposable
                 context.DrawEllipse(null, new Pen(CursorInnerBrush, t), swatchPos, swatchR, swatchR);
             }
         }
+    }
+
+    private void QueueDeferredTileRender()
+    {
+        if (_deferredTileRenderQueued) return;
+        _deferredTileRenderQueued = true;
+        Dispatcher.UIThread.Post(() =>
+        {
+            _deferredTileRenderQueued = false;
+            InvalidateVisual();
+        }, DispatcherPriority.Background);
     }
 
     private BrushCursorMode ActiveCursorMode()

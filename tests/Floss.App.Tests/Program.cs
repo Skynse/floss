@@ -71,6 +71,7 @@ internal static class Program
         ("Brush engine applies CSP-style tip thickness", BrushTests.BrushEngine_AppliesTipThickness),
         ("Brush engine applies tip density and thickness dynamics", BrushTests.BrushEngine_AppliesTipDensityAndThicknessDynamics),
         ("Brush engine blend mode does not drag paint across empty canvas", BrushTests.BrushEngine_BlendModeDoesNotCarryPaint),
+        ("Brush engine low-spacing simple brushes use cached tile-major path", BrushTests.BrushEngine_LowSpacingUsesCachedTileMajorPath),
         ("Direct draw color mixing samples pre-stroke pixels", BrushTests.DirectDraw_ColorMixingDoesNotSampleOwnStroke),
         ("Brush engine color mixing amount controls deposited color", BrushTests.BrushEngine_ColorMixAmountControlsDepositedColor),
         ("Brush engine does not dispose tip-owned cached masks", BrushTests.BrushEngine_DoesNotDisposeTipOwnedCachedMasks),
@@ -1205,6 +1206,31 @@ internal static class BrushTests
         AssertEx.False(dirty.IsEmpty);
         layer.Pixels.GetPixel(140, 30, out _, out _, out _, out var farAlpha);
         AssertEx.Equal((byte)0, farAlpha, "Blend mode should blur local paint, not carry it across transparent canvas.");
+    }
+
+    public static void BrushEngine_LowSpacingUsesCachedTileMajorPath()
+    {
+        using var engine = new BrushEngine();
+        using var layer = new DrawingLayer("Layer", 512, 256);
+        var brush = new BrushPreset("Low spacing", 48, 1, 0.75, 0.01, Colors.Black, 0)
+        {
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null,
+            ColorMix = false,
+            Grain = 0,
+            Dynamics = new BrushDynamics()
+        };
+        var from = Sample(40, 128, 0);
+        var to = Sample(430, 128, 16_000);
+
+        engine.BeginStroke(brush, from);
+        var dirty = engine.RasterizeSegment(layer, brush, from, to);
+
+        AssertEx.False(dirty.IsEmpty);
+        AssertEx.Equal("CachedTileMajor", engine.LastStats.Path);
+        AssertEx.True(engine.LastStats.StampCount > 10, $"Expected low spacing to generate many dabs, got {engine.LastStats.StampCount}.");
+        AssertEx.Equal(engine.LastStats.StampCount, engine.LastStats.CachedDabCount);
+        AssertEx.True(engine.LastStats.TileBucketCount > 0);
     }
 
     public static void DirectDraw_ColorMixingDoesNotSampleOwnStroke()
