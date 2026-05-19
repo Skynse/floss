@@ -1220,8 +1220,6 @@ public sealed class DrawingCanvas : Control, IDisposable
         var r = ActiveToolCursorSize() * 0.5;
         if (r < 0.5) return;
         var tip = _brush.Tip;
-        if (tip is CompoundBrushTip compound)
-            tip = compound.Layers.Count > 0 ? compound.Layers[0].Tip : tip;
 
         SKBitmap? tipBitmap = null;
         if (tip is ImageBrushTip img)

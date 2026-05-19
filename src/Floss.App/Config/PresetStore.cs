@@ -455,6 +455,7 @@ public sealed class PresetStore
         public string? Category { get; set; }
         public BrushPresetDocument Preset { get; set; } = new();
         public BrushTipDocument Tip { get; set; } = new();
+        public List<BrushTipDocument> Tips { get; set; } = [];
         public BrushTipDocument? ShapeData { get; set; }
 
         public static BrushAssetDocument FromAsset(BrushAsset asset, List<BrushResourceDocument> resources)
@@ -476,6 +477,9 @@ public sealed class PresetStore
                 Category = asset.Category,
                 Preset = BrushPresetDocument.FromPreset(asset.Preset),
                 Tip = BrushTipDocument.FromTipData(BrushTipData.FromTip(asset.Preset.Tip), $"{asset.Id}:tip", resources),
+                Tips = asset.Preset.Tips
+                    .Select((tip, i) => BrushTipDocument.FromTipData(tip, $"{asset.Id}:tip-list:{i}", resources))
+                    .ToList(),
                 ShapeData = shapeData == null ? null : BrushTipDocument.FromTipData(shapeData, $"{asset.Id}:shape", resources)
             };
         }
@@ -492,7 +496,8 @@ public sealed class PresetStore
                 Tip = tip,
                 ShapeData = shapeData
             };
-            asset.Preset = Preset.ToPreset(asset.Tip, asset.ShapeData);
+            var tips = Tips.Select(t => t.ToTipData(resources)).ToList();
+            asset.Preset = Preset.ToPreset(asset.Tip, asset.ShapeData) with { Tips = tips };
             return asset;
         }
     }
@@ -511,7 +516,6 @@ public sealed class PresetStore
         public BrushTipShape Shape { get; set; } = BrushTipShape.Circle;
         public float AspectRatio { get; set; } = 1.0f;
         public string? ResourceId { get; set; }
-        public List<StampLayerDocument> SubLayers { get; set; } = [];
 
         public static BrushTipDocument FromTipData(BrushTipData tip, string prefix, List<BrushResourceDocument> resources)
         {
@@ -533,21 +537,6 @@ public sealed class PresetStore
                     Data = tip.PngBytes.ToArray()
                 });
             }
-            else if (tip.Kind == BrushTipStorageKind.Compound)
-            {
-                for (var i = 0; i < tip.SubLayers.Count; i++)
-                {
-                    var layer = tip.SubLayers[i];
-                    doc.SubLayers.Add(new StampLayerDocument
-                    {
-                        Tip = FromTipData(layer.Tip, $"{prefix}:layer:{i}", resources),
-                        Blend = layer.Blend,
-                        Opacity = layer.Opacity,
-                        Scale = layer.Scale,
-                        Rotation = layer.Rotation
-                    });
-                }
-            }
 
             return doc;
         }
@@ -562,18 +551,6 @@ public sealed class PresetStore
                         ? bytes.ToArray()
                         : []
                 },
-                BrushTipStorageKind.Compound => new BrushTipData
-                {
-                    Kind = BrushTipStorageKind.Compound,
-                    SubLayers = SubLayers.Select(l => new StampLayerData
-                    {
-                        Tip = l.Tip.ToTipData(resources),
-                        Blend = l.Blend,
-                        Opacity = l.Opacity,
-                        Scale = l.Scale,
-                        Rotation = l.Rotation
-                    }).ToList()
-                },
                 _ => new BrushTipData
                 {
                     Kind = BrushTipStorageKind.Procedural,
@@ -581,15 +558,6 @@ public sealed class PresetStore
                     AspectRatio = AspectRatio
                 }
             };
-    }
-
-    private sealed class StampLayerDocument
-    {
-        public BrushTipDocument Tip { get; set; } = new();
-        public StampLayerBlend Blend { get; set; } = StampLayerBlend.Replace;
-        public float Opacity { get; set; } = 1.0f;
-        public float Scale { get; set; } = 1.0f;
-        public float Rotation { get; set; }
     }
 
     private sealed class BrushPresetDocument
@@ -614,11 +582,14 @@ public sealed class PresetStore
         public double TipDensity { get; set; }
         public double TipThickness { get; set; } = 1.0;
         public BrushTipDirection TipDirection { get; set; } = BrushTipDirection.Horizontal;
+        public BrushTipSelectionMode TipSelectionMode { get; set; } = BrushTipSelectionMode.Single;
         public double Grain { get; set; }
         public double Smoothing { get; set; }
         public SKBlendMode BlendMode { get; set; }
         public BrushDynamics.AngleSource BaseAngleSource { get; set; }
         public float AngleJitter { get; set; }
+        public bool FlipHorizontal { get; set; }
+        public bool FlipVertical { get; set; }
 
         public static BrushPresetDocument FromPreset(BrushPreset preset) => new()
         {
@@ -642,11 +613,14 @@ public sealed class PresetStore
             TipDensity = preset.TipDensity,
             TipThickness = preset.TipThickness,
             TipDirection = preset.TipDirection,
+            TipSelectionMode = preset.TipSelectionMode,
             Grain = preset.Grain,
             Smoothing = preset.Smoothing,
             BlendMode = preset.BlendMode,
             BaseAngleSource = preset.BaseAngleSource,
-            AngleJitter = preset.AngleJitter
+            AngleJitter = preset.AngleJitter,
+            FlipHorizontal = preset.FlipHorizontal,
+            FlipVertical = preset.FlipVertical
         };
 
         public BrushPreset ToPreset(BrushTipData tip, BrushTipData? shapeData)
@@ -666,11 +640,14 @@ public sealed class PresetStore
                 TipDensity = TipDensity,
                 TipThickness = TipThickness <= 0 ? 1.0 : TipThickness,
                 TipDirection = TipDirection,
+                TipSelectionMode = TipSelectionMode,
                 Grain = Grain,
                 Smoothing = Smoothing,
                 BlendMode = BlendMode,
                 BaseAngleSource = BaseAngleSource,
                 AngleJitter = AngleJitter,
+                FlipHorizontal = FlipHorizontal,
+                FlipVertical = FlipVertical,
                 Tip = tip.CreateTip()
             };
 

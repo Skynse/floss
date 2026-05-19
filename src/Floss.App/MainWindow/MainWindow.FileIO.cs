@@ -72,6 +72,11 @@ public partial class MainWindow
         Patterns = ["*.flbrg"]
     };
 
+    private static readonly FilePickerFileType Mp4VideoFileType = new("MP4 Video")
+    {
+        Patterns = ["*.mp4"]
+    };
+
     private async System.Threading.Tasks.Task NewDocumentAsync()
     {
         // Reuse the current tab only if it has never had a document loaded into it.
@@ -129,8 +134,16 @@ public partial class MainWindow
         // 4. Swap it in and reset session state
         _canvas.Document.ReplaceWith(newDoc);
         _currentFilePath = null;
-        if (_activeTab != null) { _activeTab.FilePath = null; _activeTab.HasDocument = true; }
+        if (_activeTab != null)
+        {
+            _activeTab.FilePath = null;
+            _activeTab.HasDocument = true;
+            _activeTab.DocumentName = result.FileName;
+            _activeTab.Timelapse = null;
+        }
         _canvas.Document.MarkAsSaved(); // Force IsDirty to false for the fresh canvas
+        if (result.RecordTimelapse)
+            StartTimelapseForActiveDocument(result.FileName);
 
         // 5. Sync the UI
         _canvasFrame.IsVisible = true;
@@ -140,6 +153,7 @@ public partial class MainWindow
         UpdateStatus();
         UpdateTitle();
         UpdateTabBar();
+        UpdateTimelapseMenuState();
 
         _footerStatusText.Text = $"Created '{result.FileName}'";
     }
@@ -210,12 +224,21 @@ public partial class MainWindow
         SetDocumentPanelsVisible(true);
         App.Config.AddRecentFile(path);
         _currentFilePath = CanSaveInPlace(path) ? path : null;
-        if (_activeTab != null) { _activeTab.FilePath = _currentFilePath; _activeTab.HasDocument = true; }
+        if (_activeTab != null)
+        {
+            _activeTab.FilePath = _currentFilePath;
+            _activeTab.HasDocument = true;
+            _activeTab.DocumentName = Path.GetFileNameWithoutExtension(path);
+            _activeTab.Timelapse = null;
+        }
+        if (App.Config.RecordTimelapse)
+            StartTimelapseForActiveDocument(Path.GetFileNameWithoutExtension(path));
         SyncCanvasFrameToDocument(fitToViewport: true);
         BuildLayerList();
         UpdateStatus();
         UpdateTitle();
         UpdateTabBar();
+        UpdateTimelapseMenuState();
         _footerStatusText.Text =
             $"Opened {_canvas.Document.Width}x{_canvas.Document.Height}  {Path.GetFileName(path)}";
     }
@@ -283,7 +306,11 @@ public partial class MainWindow
             FlossFileFormat.Save(stream, _canvas.Document);
 
             _currentFilePath = path;
-            if (_activeTab != null) _activeTab.FilePath = path;
+            if (_activeTab != null)
+            {
+                _activeTab.FilePath = path;
+                _activeTab.DocumentName = Path.GetFileNameWithoutExtension(path);
+            }
             App.Config.AddRecentFile(path);
             _canvas.Document.MarkAsSaved(); // Clears IsDirty
             _footerStatusText.Text = $"Saved {Path.GetFileName(path)}";
@@ -311,7 +338,11 @@ public partial class MainWindow
             }
 
             _currentFilePath = path;
-            if (_activeTab != null) _activeTab.FilePath = path;
+            if (_activeTab != null)
+            {
+                _activeTab.FilePath = path;
+                _activeTab.DocumentName = Path.GetFileNameWithoutExtension(path);
+            }
             App.Config.AddRecentFile(path);
             _canvas.Document.MarkAsSaved(); // Clears IsDirty
             _footerStatusText.Text = $"Saved PSD {Path.GetFileName(path)}";

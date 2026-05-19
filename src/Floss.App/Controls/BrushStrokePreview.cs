@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
@@ -92,20 +94,38 @@ public sealed class BrushStrokePreview : Control
         // Cap size: large brushes still show their shape/texture
         var baseSize = (float)Math.Clamp(brush.Size, 1.0, h * 0.72);
         var maskSize = Math.Max(1, (int)Math.Ceiling(baseSize));
-        var tipMask = brush.Tip.GenerateMask(maskSize, (float)brush.Hardness);
-        SKBitmap mask;
-        bool ownMask;
-        if (brush.Shape != null)
+        var materialTips = brush.TipSelectionMode != BrushTipSelectionMode.Single && brush.Tips.Count > 0
+            ? brush.Tips.Select(t => t.CreateTip()).ToList()
+            : null;
+        var maskCache = new Dictionary<int, SKBitmap>();
+        var ownedMasks = new HashSet<SKBitmap>();
+
+        IBrushTip TipFor(int tipIndex)
         {
-            var shapeMask = brush.Shape.GenerateMask(maskSize, (float)brush.Hardness);
-            mask = MultiplyMasks(tipMask, shapeMask, maskSize);
-            ownMask = true;
-            if (brush.Tip is CompoundBrushTip) tipMask.Dispose();
+            if (materialTips is { Count: > 0 })
+                return materialTips[Math.Clamp(tipIndex, 0, materialTips.Count - 1)];
+            return brush.Tip;
         }
-        else
+
+        SKBitmap MaskForTip(int tipIndex)
         {
-            mask = tipMask;
-            ownMask = brush.Tip is CompoundBrushTip;
+            tipIndex = materialTips is { Count: > 0 } ? Math.Clamp(tipIndex, 0, materialTips.Count - 1) : 0;
+            if (maskCache.TryGetValue(tipIndex, out var cached))
+                return cached;
+
+            var tip = TipFor(tipIndex);
+            var tipMask = tip.GenerateMask(maskSize, (float)brush.Hardness);
+            if (brush.Shape == null)
+            {
+                maskCache[tipIndex] = tipMask;
+                return tipMask;
+            }
+
+            var shapeMask = brush.Shape.GenerateMask(maskSize, (float)brush.Hardness);
+            var combined = MultiplyMasks(tipMask, shapeMask, maskSize);
+            ownedMasks.Add(combined);
+            maskCache[tipIndex] = combined;
+            return combined;
         }
 
         // Always white on dark — every brush reads cleanly regardless of its color
@@ -115,6 +135,11 @@ public sealed class BrushStrokePreview : Control
             IsAntialias = true,
             BlendMode = SKBlendMode.SrcOver,
             ColorFilter = colorFilter,
+        };
+        using var colorStampPaint = new SKPaint
+        {
+            IsAntialias = true,
+            BlendMode = SKBlendMode.SrcOver
         };
 
         var hPad = w * 0.05f;
@@ -161,6 +186,12 @@ public sealed class BrushStrokePreview : Control
                     dabX, dabY, pressure, 0, 0, 0,
                     drawAngle, 0.3f, (float)(t * w),
                     dabIdx, DabHash(dabIdx), strokeRandom);
+                var tipIndex = SelectTipIndex(brush, sp);
+                var tip = TipFor(tipIndex);
+                var stampBitmap = tip.HasColor
+                    ? tip.GenerateColorStamp(maskSize)
+                    : MaskForTip(tipIndex);
+                if (stampBitmap == null) continue;
 
                 var sizeM = brush.Dynamics.EvalSize(sp);
                 var opacM = brush.Dynamics.EvalOpacity(sp);
@@ -168,9 +199,11 @@ public sealed class BrushStrokePreview : Control
                 var tipThicknessM = brush.Dynamics.TipThickness.IsEnabled ? brush.Dynamics.EvalTipThickness(sp) : 1f;
                 var stampSize = (float)Math.Max(0.5, baseSize * sizeM);
                 var opacity = (float)Math.Clamp(brush.Opacity * brush.Flow * brush.TipDensity * tipDensityM * opacM, 0.0, 1.0);
-                paint.Color = new SKColor(255, 255, 255, (byte)(opacity * 255));
+                var stampAlpha = (byte)(opacity * 255);
+                paint.Color = new SKColor(255, 255, 255, stampAlpha);
+                colorStampPaint.Color = new SKColor(255, 255, 255, stampAlpha);
 
-                var scale = stampSize / Math.Max(1, mask.Width);
+                var scale = stampSize / Math.Max(1, stampBitmap.Width);
                 var thickness = Math.Clamp((float)brush.TipThickness * tipThicknessM, 0.01f, 1f);
                 var scaleX = scale;
                 var scaleY = scale;
@@ -178,7 +211,9 @@ public sealed class BrushStrokePreview : Control
                     scaleY *= thickness;
                 else
                     scaleX *= thickness;
-                var mx = SKMatrix.CreateTranslation(-mask.Width * 0.5f, -mask.Height * 0.5f)
+                if (brush.FlipHorizontal) scaleX = -scaleX;
+                if (brush.FlipVertical) scaleY = -scaleY;
+                var mx = SKMatrix.CreateTranslation(-stampBitmap.Width * 0.5f, -stampBitmap.Height * 0.5f)
                                  .PostConcat(SKMatrix.CreateScale(scaleX, scaleY));
 
                 float angle = (float)brush.Angle;
@@ -191,7 +226,7 @@ public sealed class BrushStrokePreview : Control
 
                 canvas.Save();
                 canvas.Concat(in mx);
-                canvas.DrawBitmap(mask, 0, 0, paint);
+                canvas.DrawBitmap(stampBitmap, 0, 0, tip.HasColor ? colorStampPaint : paint);
                 canvas.Restore();
 
                 // Update spacing for the next dab (adapts to current stamp size)
@@ -203,7 +238,27 @@ public sealed class BrushStrokePreview : Control
             prevY = py;
         }
 
-        if (ownMask) mask.Dispose();
+        foreach (var mask in ownedMasks)
+            mask.Dispose();
+        if (materialTips != null)
+        {
+            foreach (var tip in materialTips)
+                if (tip is IDisposable disposable)
+                    disposable.Dispose();
+        }
+    }
+
+    private static int SelectTipIndex(BrushPreset brush, in StrokePoint sp)
+    {
+        if (brush.TipSelectionMode == BrushTipSelectionMode.Single || brush.Tips.Count <= 1)
+            return 0;
+
+        return brush.TipSelectionMode switch
+        {
+            BrushTipSelectionMode.Sequential => sp.DabSeqNo % brush.Tips.Count,
+            BrushTipSelectionMode.Random => Math.Clamp((int)(DabHash(sp.DabSeqNo) * brush.Tips.Count), 0, brush.Tips.Count - 1),
+            _ => 0
+        };
     }
 
     private static unsafe SKBitmap MultiplyMasks(SKBitmap tip, SKBitmap shape, int size)

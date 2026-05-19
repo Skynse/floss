@@ -19,7 +19,9 @@ using Floss.App.Input;
 using Floss.App.Kra;
 using Floss.App.Psd;
 using Floss.App.Processes;
+using Floss.App.Timelapse;
 using Floss.App.Tools;
+using Floss.App.Windows;
 
 namespace Floss.App;
 
@@ -183,6 +185,8 @@ public partial class MainWindow : Window, Tools.IViewportController
     private MenuItem? _saveMenuItem;
     private MenuItem? _saveAsMenuItem;
     private MenuItem? _exportMenu;
+    private MenuItem? _recordTimelapseMenuItem;
+    private MenuItem? _exportTimelapseMenuItem;
     private MenuItem? _resetViewMenuItem;
     private MenuItem? _undoMenuItem;
     private MenuItem? _redoMenuItem;
@@ -492,6 +496,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         SetColor(Color.Parse(App.Config.LastColor));
         _canvasFrame.IsVisible = false;
         SetDocumentPanelsVisible(false);
+        UpdateTimelapseMenuState();
         BuildLayerList();
         UpdateStatus();
         Closing += (_, _) => SaveToConfig();
@@ -742,6 +747,17 @@ public partial class MainWindow : Window, Tools.IViewportController
                 MenuAction(".psd (Photoshop Document)...", async () => await ExportPsdAsync())
             }
         };
+        _recordTimelapseMenuItem = MenuAction("Record Timelapse", ToggleTimelapseRecording);
+        _exportTimelapseMenuItem = MenuAction("Export Timelapse...", async () => await ExportTimelapseAsync());
+        var timelapseMenu = new MenuItem
+        {
+            Header = "_Timelapse",
+            ItemsSource = new object[]
+            {
+                _recordTimelapseMenuItem,
+                _exportTimelapseMenuItem
+            }
+        };
         _resetViewMenuItem = MenuAction("_Reset View", ResetView);
 
         var fileMenu = new MenuItem
@@ -755,6 +771,7 @@ public partial class MainWindow : Window, Tools.IViewportController
                 _saveAsMenuItem,
                 new Separator(),
                 _exportMenu,
+                timelapseMenu,
                 new Separator(),
                 _resetViewMenuItem,
                 new Separator(),

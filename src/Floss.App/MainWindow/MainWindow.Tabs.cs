@@ -11,6 +11,7 @@ using Floss.App.Brushes;
 using Floss.App.Canvas;
 using Floss.App.Document;
 using Floss.App.Processes;
+using Floss.App.Timelapse;
 
 namespace Floss.App;
 
@@ -25,6 +26,8 @@ public partial class MainWindow
         public DrawingCanvas Canvas { get; }
         public string? FilePath { get; set; }
         public bool HasDocument { get; set; }
+        public string DocumentName { get; set; } = "Untitled";
+        public TimelapseSession? Timelapse { get; set; }
 
         // Viewport state persisted while this tab is inactive
         public double Zoom = 1.0;
@@ -35,7 +38,7 @@ public partial class MainWindow
         public readonly HashSet<int> SelectedLayerIndices = new();
 
         public string DisplayTitle => string.IsNullOrEmpty(FilePath)
-            ? "Untitled"
+            ? DocumentName
             : Path.GetFileName(FilePath);
 
         public DocumentTab(DrawingCanvas canvas) => Canvas = canvas;
@@ -263,6 +266,7 @@ public partial class MainWindow
         UpdateStatus();
         UpdateTitle();
         UpdateTabBar();
+        UpdateTimelapseMenuState();
         _rulerOverlay?.InvalidateVisual();
         _checkerboardOverlay?.InvalidateVisual();
         _resizeOverlay?.InvalidateVisual();
@@ -302,6 +306,12 @@ public partial class MainWindow
             SetDocumentPanelsVisible(false);
             UpdateTabBar();
             UpdateTitle();
+            UpdateTimelapseMenuState();
+            if (tab.Timelapse != null)
+            {
+                tab.Timelapse.SetRecording(false);
+                await tab.Timelapse.WaitForIdleAsync();
+            }
             tab.Canvas.Dispose();
             BuildLayerList();
             ScheduleDocumentGc();
@@ -318,6 +328,11 @@ public partial class MainWindow
             UpdateTabBar();
         }
 
+        if (tab.Timelapse != null)
+        {
+            tab.Timelapse.SetRecording(false);
+            await tab.Timelapse.WaitForIdleAsync();
+        }
         tab.Canvas.Dispose();
         ScheduleDocumentGc();
     }
@@ -370,7 +385,11 @@ public partial class MainWindow
     }
 
     private void OnCanvasStatsChanged(object? s, EventArgs e) => UpdateStatus();
-    private void OnCanvasHistoryChanged(object? s, EventArgs e) => UpdateStatus();
+    private void OnCanvasHistoryChanged(object? s, EventArgs e)
+    {
+        UpdateStatus();
+        CaptureTimelapseFrameAfterHistory();
+    }
     private void OnCanvasSelectionChanged(object? s, EventArgs e) => UpdateSelectionActionBar();
 
     private void OnCanvasLayersChanged(object? s, EventArgs e)

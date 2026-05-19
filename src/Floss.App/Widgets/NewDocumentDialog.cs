@@ -12,7 +12,7 @@ namespace Floss.App;
 
 using static AppColors;
 
-public record DocumentSettings(string FileName, int Width, int Height, int Dpi, SKColor BackgroundColor);
+public record DocumentSettings(string FileName, int Width, int Height, int Dpi, SKColor BackgroundColor, bool RecordTimelapse);
 
 public sealed class NewDocumentDialog : Window
 {
@@ -24,6 +24,7 @@ public sealed class NewDocumentDialog : Window
     private readonly ComboBox _templateDropdown;
     private readonly Button _saveTemplateBtn;
     private readonly Button _deleteTemplateBtn;
+    private readonly CheckBox _recordTimelapseCheckBox;
 
     private List<DocumentTemplate> _customTemplates;
     private bool _applyingTemplate;
@@ -72,6 +73,15 @@ public sealed class NewDocumentDialog : Window
         _deleteTemplateBtn = SmBtn("Delete");
         _deleteTemplateBtn.Click += OnDeleteTemplate;
         UpdateDeleteButton();
+
+        _recordTimelapseCheckBox = new CheckBox
+        {
+            Content = "Record timelapse",
+            IsChecked = App.Config.RecordTimelapse,
+            FontSize = 12,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            Margin = new Thickness(0, 8, 0, 0)
+        };
 
         Content = BuildShell();
     }
@@ -230,6 +240,7 @@ public sealed class NewDocumentDialog : Window
 
         stack.Children.Add(FieldRow("DPI", _dpiInput));
         stack.Children.Add(FieldRow("Background", _bgDropdown));
+        stack.Children.Add(_recordTimelapseCheckBox);
 
         // Swap orientation button
         var swapBtn = new Button
@@ -312,6 +323,7 @@ public sealed class NewDocumentDialog : Window
         App.Config.NewCanvasHeight = h;
         App.Config.NewCanvasDpi = dpi;
         App.Config.NewCanvasBackground = BgOptions[Math.Clamp(_bgDropdown.SelectedIndex, 0, BgOptions.Length - 1)];
+        App.Config.RecordTimelapse = _recordTimelapseCheckBox.IsChecked == true;
         App.Config.Save();
 
         Close(new DocumentSettings(
@@ -319,7 +331,8 @@ public sealed class NewDocumentDialog : Window
             Width: w,
             Height: h,
             Dpi: dpi,
-            BackgroundColor: bgColor));
+            BackgroundColor: bgColor,
+            RecordTimelapse: _recordTimelapseCheckBox.IsChecked == true));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

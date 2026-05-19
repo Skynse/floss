@@ -202,6 +202,7 @@ public sealed class ToolPreset
     public double? BrushTipDensity { get; set; }
     public double? BrushTipThickness { get; set; }
     public BrushTipDirection? BrushTipDirection { get; set; }
+    public BrushTipSelectionMode? BrushTipSelectionMode { get; set; }
     public SkiaSharp.SKBlendMode? BrushBlendMode { get; set; }
     public string? BrushDynamicsJson { get; set; }
 
@@ -213,7 +214,7 @@ public sealed class ToolPreset
             BrushGrain.HasValue || BrushColorMix.HasValue || BrushColorLoad.HasValue ||
             BrushColorStretch.HasValue || BrushBlurAmount.HasValue || BrushSmudgeMode.HasValue || BrushMixingMode.HasValue ||
             BrushAmountOfPaint.HasValue || BrushDensityOfPaint.HasValue || BrushTipDensity.HasValue ||
-            BrushTipThickness.HasValue || BrushTipDirection.HasValue ||
+            BrushTipThickness.HasValue || BrushTipDirection.HasValue || BrushTipSelectionMode.HasValue ||
             BrushBlendMode.HasValue || !string.IsNullOrEmpty(BrushDynamicsJson);
 
         if (!needsUpdate) return preset;
@@ -238,6 +239,7 @@ public sealed class ToolPreset
             TipDensity = BrushTipDensity ?? preset.TipDensity,
             TipThickness = BrushTipThickness ?? preset.TipThickness,
             TipDirection = BrushTipDirection ?? preset.TipDirection,
+            TipSelectionMode = BrushTipSelectionMode ?? preset.TipSelectionMode,
             BlendMode = BrushBlendMode ?? preset.BlendMode,
         };
 
@@ -275,6 +277,7 @@ public sealed class ToolPreset
         BrushTipDensity = preset.TipDensity;
         BrushTipThickness = preset.TipThickness;
         BrushTipDirection = preset.TipDirection;
+        BrushTipSelectionMode = preset.TipSelectionMode;
         BrushBlendMode = preset.BlendMode;
         BrushDynamicsJson = preset.Dynamics.Serialize();
     }
@@ -299,6 +302,7 @@ public sealed class ToolPreset
         BrushTipDensity = null;
         BrushTipThickness = null;
         BrushTipDirection = null;
+        BrushTipSelectionMode = null;
         BrushBlendMode = null;
         BrushDynamicsJson = null;
     }

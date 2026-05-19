@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using Floss.App.Brushes;
 
 namespace Floss.App;
 
@@ -29,6 +30,7 @@ public sealed class AppConfig
     public double LastBrushOpacity { get; set; } = 1.0;
     public double LastBrushHardness { get; set; } = 0.95;
     public double LastBrushSpacing { get; set; } = 0.10;
+    public bool RecordTimelapse { get; set; } = false;
     public BrushCursorMode BrushCursorMode { get; set; } = BrushCursorMode.Outline;
     public BrushCursorMode PenCursorMode { get; set; } = BrushCursorMode.Outline;
     public BrushCursorMode EraserCursorMode { get; set; } = BrushCursorMode.Outline;
@@ -40,6 +42,7 @@ public sealed class AppConfig
     public static event Action? ToolPropertyVisibilityChanged;
     public static void NotifyToolPropertyVisibilityChanged() => ToolPropertyVisibilityChanged?.Invoke();
     public string[] RecentFiles { get; set; } = [];
+    public List<BrushShapePreset> BrushShapePresets { get; set; } = [];
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 

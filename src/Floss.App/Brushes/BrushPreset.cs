@@ -9,6 +9,7 @@ public enum MixingMode { Standard, Perceptual }
 public enum SmudgeMode { Blend, Smear, Smudge }
 public enum BrushTipDirection { Horizontal, Vertical }
 public enum BrushQuality { Low, High }
+public enum BrushTipSelectionMode { Single, Sequential, Random }
 
 public sealed record BrushPreset(
     string Name,
@@ -41,6 +42,10 @@ public sealed record BrushPreset(
     public ProceduralBrushTip? Shape { get; init; } = null;
     public AngleSource BaseAngleSource { get; init; } = AngleSource.None;
     public float AngleJitter { get; init; } = 0f;
+    public bool FlipHorizontal { get; init; } = false;
+    public bool FlipVertical { get; init; } = false;
+    public IReadOnlyList<BrushTipData> Tips { get; init; } = [];
+    public BrushTipSelectionMode TipSelectionMode { get; init; } = BrushTipSelectionMode.Single;
 
     public ParameterDynamics SizeDynamics
     {

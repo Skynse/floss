@@ -12,8 +12,8 @@ public static class BrushFileFormat
     public const string Extension = ".flbr";
     private const uint Magic = 0x52424C46; // FLBR, little endian
 
-    // Version 9 adds Texture path
-    private const int Version = 9;
+    // Version 10 adds CSP-style material tip list and tip transform state.
+    private const int Version = 10;
 
     public static BrushAsset Load(string path)
     {
@@ -68,6 +68,25 @@ public static class BrushFileFormat
             var dynJson = reader.ReadString();
             var dynamics = BrushDynamics.Deserialize(dynJson);
             asset.Tip = ReadTip(reader);
+            var tipDensity = 1.0;
+            var tipThickness = 1.0;
+            var tipDirection = BrushTipDirection.Horizontal;
+            var tipSelectionMode = BrushTipSelectionMode.Single;
+            var flipHorizontal = false;
+            var flipVertical = false;
+            List<BrushTipData> tips = [];
+            if (version >= 10)
+            {
+                tipDensity = reader.ReadDouble();
+                tipThickness = reader.ReadDouble();
+                tipDirection = (BrushTipDirection)reader.ReadInt32();
+                tipSelectionMode = (BrushTipSelectionMode)reader.ReadInt32();
+                flipHorizontal = reader.ReadBoolean();
+                flipVertical = reader.ReadBoolean();
+                var tipCount = Math.Clamp(reader.ReadInt32(), 0, 256);
+                for (var i = 0; i < tipCount; i++)
+                    tips.Add(ReadTip(reader));
+            }
             asset.Preset = new BrushPreset(name, size, opacity, hardness, spacing, color, angle)
             {
                 Dynamics = dynamics,
@@ -78,6 +97,13 @@ public static class BrushFileFormat
                 AngleJitter = angleJitter,
                 Quality = quality,
                 Texture = texture,
+                TipDensity = tipDensity,
+                TipThickness = tipThickness <= 0 ? 1.0 : tipThickness,
+                TipDirection = tipDirection,
+                TipSelectionMode = tipSelectionMode,
+                FlipHorizontal = flipHorizontal,
+                FlipVertical = flipVertical,
+                Tips = tips,
                 Tip = asset.Tip.CreateTip()
             };
         }
@@ -187,7 +213,16 @@ public static class BrushFileFormat
         writer.Write(p.Texture ?? string.Empty);
 
         writer.Write(p.Dynamics.Serialize());
-        WriteTip(writer, asset.Tip);
+        WriteTip(writer, BrushTipData.FromTip(p.Tip));
+        writer.Write(p.TipDensity);
+        writer.Write(p.TipThickness);
+        writer.Write((int)p.TipDirection);
+        writer.Write((int)p.TipSelectionMode);
+        writer.Write(p.FlipHorizontal);
+        writer.Write(p.FlipVertical);
+        writer.Write(p.Tips.Count);
+        foreach (var tip in p.Tips)
+            WriteTip(writer, tip);
     }
 
     // ── Helpers (kept exactly the same) ────────────────────────────────────
@@ -265,25 +300,18 @@ public static class BrushFileFormat
 
         var tip = new BrushTipData { Kind = kind, Shape = shape, AspectRatio = aspect, PngBytes = png };
 
-        if (kind == BrushTipStorageKind.Compound)
+        if ((int)kind == 2) // legacy Compound — no longer exists
         {
             var count = reader.ReadInt32();
             for (var i = 0; i < count; i++)
             {
-                var blend = (StampLayerBlend)reader.ReadInt32();
-                var layerOpc = reader.ReadSingle();
-                var scale = reader.ReadSingle();
-                var rotation = reader.ReadSingle();
-                var subTip = ReadTip(reader);
-                tip.SubLayers.Add(new StampLayerData
-                {
-                    Tip = subTip,
-                    Blend = blend,
-                    Opacity = layerOpc,
-                    Scale = scale,
-                    Rotation = rotation
-                });
+                reader.ReadInt32(); // blend (legacy)
+                reader.ReadSingle(); // opacity
+                reader.ReadSingle(); // scale
+                reader.ReadSingle(); // rotation
+                ReadTip(reader); // sub-tip (recursive)
             }
+            kind = BrushTipStorageKind.Procedural;
         }
         return tip;
     }
@@ -297,18 +325,5 @@ public static class BrushFileFormat
         writer.Write(pngLen);
         if (pngLen > 0)
             writer.Write(tip.PngBytes!);
-
-        if (tip.Kind == BrushTipStorageKind.Compound)
-        {
-            writer.Write(tip.SubLayers.Count);
-            foreach (var layer in tip.SubLayers)
-            {
-                writer.Write((int)layer.Blend);
-                writer.Write(layer.Opacity);
-                writer.Write(layer.Scale);
-                writer.Write(layer.Rotation);
-                WriteTip(writer, layer.Tip);
-            }
-        }
     }
 }

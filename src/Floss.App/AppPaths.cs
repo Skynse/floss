@@ -19,6 +19,9 @@ public static class AppPaths
     public static string DocumentsDirectory { get; } =
         Path.Combine(AppDirectory, "Documents");
 
+    public static string TimelapsesDirectory { get; } =
+        Path.Combine(AppDirectory, "Timelapses");
+
     public static string ConfigPath { get; } =
         Path.Combine(AppDirectory, "config.json");
 
@@ -46,5 +49,6 @@ public static class AppPaths
         Directory.CreateDirectory(BrushesDirectory);
         Directory.CreateDirectory(BrushTipsDirectory);
         Directory.CreateDirectory(DocumentsDirectory);
+        Directory.CreateDirectory(TimelapsesDirectory);
     }
 }

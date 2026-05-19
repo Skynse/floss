@@ -7,6 +7,7 @@ using Floss.App.Tools;
 namespace Floss.App.Document;
 
 public enum LayerDropPlacement { Above, Below, Into }
+public enum DocumentHistoryChangeKind { Mutation, Undo, Redo }
 
 public sealed class DrawingDocument : IDisposable
 {
@@ -30,6 +31,7 @@ public sealed class DrawingDocument : IDisposable
     private long _currentStateId = 0;
     private long _savedStateId = 0;
     private long _nextStateId = 1;
+    private DocumentHistoryChangeKind? _activeHistoryReplayKind;
 
     private readonly List<DrawingLayer> _layers = [];
 
@@ -80,6 +82,7 @@ public sealed class DrawingDocument : IDisposable
     public bool CanPaintActiveLayer => ActiveLayer is { IsLocked: false, IsVisible: true, IsGroup: false };
     public bool CanModifyActiveLayer => ActiveLayer is { IsLocked: false, IsGroup: false };
     public bool IsDirty => _currentStateId != _savedStateId;
+    public DocumentHistoryChangeKind LastHistoryChangeKind { get; private set; } = DocumentHistoryChangeKind.Mutation;
 
     // --- Save State Management ---
     public void MarkAsSaved()
@@ -97,8 +100,20 @@ public sealed class DrawingDocument : IDisposable
         _currentStateId = _nextStateId++;
         _redoIds.Clear();
 
+        MarkHistoryMutation();
         HistoryChanged?.Invoke(this, EventArgs.Empty);
         DirtyStateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void MarkHistoryMutation()
+    {
+        if (_activeHistoryReplayKind.HasValue)
+        {
+            LastHistoryChangeKind = _activeHistoryReplayKind.Value;
+            return;
+        }
+
+        LastHistoryChangeKind = DocumentHistoryChangeKind.Mutation;
     }
 
     // --- Canvas Resize ---
@@ -331,6 +346,7 @@ public sealed class DrawingDocument : IDisposable
     public void CommitStroke()
     {
         CommittedStrokeCount += 1;
+        MarkHistoryMutation();
         HistoryChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -794,12 +810,22 @@ public sealed class DrawingDocument : IDisposable
         if (_undo.Count == 0) return;
         var state = _undo.Pop();
         _redo.Push(state.CaptureRedo(this));
-        state.Restore(this);
+        LastHistoryChangeKind = DocumentHistoryChangeKind.Undo;
+        _activeHistoryReplayKind = DocumentHistoryChangeKind.Undo;
+        try
+        {
+            state.Restore(this);
+        }
+        finally
+        {
+            _activeHistoryReplayKind = null;
+        }
         CommittedStrokeCount = Math.Max(0, CommittedStrokeCount - 1);
 
         _redoIds.Push(_currentStateId);
         _currentStateId = _undoIds.Pop();
 
+        LastHistoryChangeKind = DocumentHistoryChangeKind.Undo;
         HistoryChanged?.Invoke(this, EventArgs.Empty);
         DirtyStateChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -809,12 +835,22 @@ public sealed class DrawingDocument : IDisposable
         if (_redo.Count == 0) return;
         var state = _redo.Pop();
         _undo.Push(state.CaptureRedo(this));
-        state.Restore(this);
+        LastHistoryChangeKind = DocumentHistoryChangeKind.Redo;
+        _activeHistoryReplayKind = DocumentHistoryChangeKind.Redo;
+        try
+        {
+            state.Restore(this);
+        }
+        finally
+        {
+            _activeHistoryReplayKind = null;
+        }
         CommittedStrokeCount += 1;
 
         _undoIds.Push(_currentStateId);
         _currentStateId = _redoIds.Pop();
 
+        LastHistoryChangeKind = DocumentHistoryChangeKind.Redo;
         HistoryChanged?.Invoke(this, EventArgs.Empty);
         DirtyStateChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -826,6 +862,7 @@ public sealed class DrawingDocument : IDisposable
     {
         LayersChanged?.Invoke(this, EventArgs.Empty);
         Changed?.Invoke(this, new DocumentChangedEventArgs(null, null));
+        MarkHistoryMutation();
         HistoryChanged?.Invoke(this, EventArgs.Empty);
         DirtyStateChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -833,6 +870,7 @@ public sealed class DrawingDocument : IDisposable
     {
         if (layerIndex is { } index) LayerMetadataChanged?.Invoke(this, new LayerMetadataChangedEventArgs(index));
         if (dirtyRegion is { IsEmpty: false }) Changed?.Invoke(this, new DocumentChangedEventArgs(dirtyRegion, layerIndex));
+        MarkHistoryMutation();
         HistoryChanged?.Invoke(this, EventArgs.Empty);
         DirtyStateChanged?.Invoke(this, EventArgs.Empty);
     }

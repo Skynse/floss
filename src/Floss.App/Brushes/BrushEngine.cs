@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Numerics;
 using Avalonia.Media;
 using Floss.App.Document;
@@ -119,6 +120,8 @@ public sealed class BrushEngine : IDisposable
         bool canDirect = _stampColors.Count == 0
             && (brush.BlendMode == SKBlendMode.SrcOver || brush.BlendMode == SKBlendMode.DstOut)
             && brush.Shape == null
+            && !HasMultiTipSelection(brush)
+            && !brush.Tip.HasColor
             && brush.Tip is
                 (ProceduralBrushTip { Shape: BrushTipShape.Circle or BrushTipShape.SoftRound or BrushTipShape.Ellipse }
                  or ImageBrushTip);
@@ -377,7 +380,21 @@ public sealed class BrushEngine : IDisposable
             x, y, size, opacity, angle,
             Math.Clamp(hardness, 0.001f, 1f),
             Math.Clamp(spacingMul, 0.05f, 4f),
-            Math.Clamp(tipThicknessMul, 0.01f, 4f));
+            Math.Clamp(tipThicknessMul, 0.01f, 4f),
+            SelectTipIndex(brush, sp));
+    }
+
+    private static int SelectTipIndex(BrushPreset brush, in StrokePoint sp)
+    {
+        if (brush.TipSelectionMode == BrushTipSelectionMode.Single || brush.Tips.Count <= 1)
+            return 0;
+
+        return brush.TipSelectionMode switch
+        {
+            BrushTipSelectionMode.Sequential => sp.DabSeqNo % brush.Tips.Count,
+            BrushTipSelectionMode.Random => Math.Clamp((int)(Hash01(sp.DabSeqNo, (int)(sp.StrokeRandom * 100_000f)) * brush.Tips.Count), 0, brush.Tips.Count - 1),
+            _ => 0
+        };
     }
 
     private static double EstimateBrushRadius(BrushPreset brush)
@@ -528,6 +545,8 @@ public sealed class BrushEngine : IDisposable
             // scaleX/scaleY: pixels per mask-pixel in each axis (used by image tip path)
             float scaleX = isHorizontal ? scale : scale * thickMul;
             float scaleY = isHorizontal ? scale * thickMul : scale;
+            if (brush.FlipHorizontal) scaleX = -scaleX;
+            if (brush.FlipVertical) scaleY = -scaleY;
 
             // rx/ry: physical half-axes in pixels (used by procedural path + bbox)
             float maxR = (baseMaskSize * 0.5f - 0.5f) * scale;
@@ -537,8 +556,8 @@ public sealed class BrushEngine : IDisposable
             float ry = isHorizontal ? ryBase * thickMul : ryBase;
 
             // For image tips the effective half-extent is the full mask half-size × scale
-            float bboxHalfX = isImageTip ? halfBms * scaleX : rx;
-            float bboxHalfY = isImageTip ? halfBms * scaleY : ry;
+            float bboxHalfX = isImageTip ? halfBms * MathF.Abs(scaleX) : rx;
+            float bboxHalfY = isImageTip ? halfBms * MathF.Abs(scaleY) : ry;
             if (bboxHalfX < 0.5f || bboxHalfY < 0.5f) continue;
 
             // Always rotate for image tips (texture has directionality); skip for rotationally-symmetric procedural shapes
@@ -1004,6 +1023,12 @@ public sealed class BrushEngine : IDisposable
 
     private void RenderPreparedStamps(ActiveStroke stroke, SKCanvas canvas)
     {
+        using var colorStampPaint = new SKPaint
+        {
+            IsAntialias = true,
+            BlendMode = stroke.Paint.BlendMode
+        };
+
         for (var i = 0; i < _stamps.Count; i++)
         {
             var stamp = _stamps[i];
@@ -1018,7 +1043,21 @@ public sealed class BrushEngine : IDisposable
 
             stroke.UpdateOpacity(stamp.Opacity);
             stroke.UpdateMatrix(stamp);
-            var mask = stroke.MaskFor(stamp.Hardness);
+            var tip = stroke.TipFor(stamp.TipIndex);
+
+            if (tip.HasColor && tip.GenerateColorStamp(stroke.BaseMaskSize) is { } colorStamp)
+            {
+                var alpha = (byte)Math.Clamp((int)(stamp.Opacity * 255), 0, 255);
+                colorStampPaint.BlendMode = stroke.Paint.BlendMode;
+                colorStampPaint.Color = new SKColor(255, 255, 255, alpha);
+                canvas.Save();
+                canvas.Concat(in stroke.Matrix);
+                canvas.DrawBitmap(colorStamp, 0f, 0f, colorStampPaint);
+                canvas.Restore();
+                continue;
+            }
+
+            var mask = stroke.MaskFor(stamp);
 
             canvas.Save();
             canvas.Concat(in stroke.Matrix);
@@ -1331,10 +1370,11 @@ public sealed class BrushEngine : IDisposable
         private const int MaxCachedMasks = 16;
         private const int MaxCachedDabs = 64;
         private const int MaxCachedDabPixels = 512 * 512;
-        private readonly Dictionary<int, SKBitmap> _maskCache = new();
+        private readonly Dictionary<(int TipIndex, int Hardness), SKBitmap> _maskCache = new();
         private readonly Dictionary<CachedDabKey, CachedDab> _dabCache = new();
         private readonly Queue<CachedDabKey> _dabCacheOrder = new();
         private readonly HashSet<SKBitmap> _ownedMasks = new();
+        private readonly List<IBrushTip>? _ownedTipSet;
 
         private readonly SKColor _baseColor;
         private SKColor _currentColor;
@@ -1343,6 +1383,8 @@ public sealed class BrushEngine : IDisposable
         public ActiveStroke(BrushPreset brush, CanvasInputSample sample)
         {
             _brush = brush;
+            if (brush.TipSelectionMode != BrushTipSelectionMode.Single && brush.Tips.Count > 0)
+                _ownedTipSet = brush.Tips.Select(t => t.CreateTip()).ToList();
 
             StrokeRandom = Hash01((int)(sample.X * 997), (int)(sample.Y * 991));
             State = new StrokeState(
@@ -1362,7 +1404,7 @@ public sealed class BrushEngine : IDisposable
                 * Math.Clamp(initSpacingMul, 0.05f, 4f));
 
             BaseMaskSize = Math.Max(1, Math.Min(256, (int)Math.Ceiling(brush.Size)));
-            Mask = brush.Tip.GenerateMask(BaseMaskSize, (float)brush.Hardness);
+            Mask = TipFor(0).GenerateMask(BaseMaskSize, (float)brush.Hardness);
             _baseColor = ToSkColor(brush.Color);
             _currentColor = _baseColor;
             var initDensity = (float)brush.DensityOfPaint;
@@ -1419,6 +1461,8 @@ public sealed class BrushEngine : IDisposable
                 scaleY *= thickness;
             else
                 scaleX *= thickness;
+            if (_brush.FlipHorizontal) scaleX = -scaleX;
+            if (_brush.FlipVertical) scaleY = -scaleY;
             Matrix = SKMatrix.CreateTranslation(-BaseMaskSize * 0.5f, -BaseMaskSize * 0.5f);
             Matrix = Matrix.PostConcat(SKMatrix.CreateScale(scaleX, scaleY));
             if (Math.Abs(stamp.Angle) > 0.001f)
@@ -1426,21 +1470,36 @@ public sealed class BrushEngine : IDisposable
             Matrix = Matrix.PostConcat(SKMatrix.CreateTranslation(stamp.X, stamp.Y));
         }
 
-        public SKBitmap MaskFor(float hardness)
+        public IBrushTip TipFor(int tipIndex)
         {
-            var key = QuantizeHardness(hardness);
+            if (_ownedTipSet is { Count: > 0 })
+                return _ownedTipSet[Math.Clamp(tipIndex, 0, _ownedTipSet.Count - 1)];
+            return _brush.Tip;
+        }
+
+        public bool IsImageTip(int tipIndex) => TipFor(tipIndex) is ImageBrushTip;
+
+        public SKBitmap MaskFor(StampSample stamp)
+            => MaskFor(stamp.TipIndex, stamp.Hardness);
+
+        public SKBitmap MaskFor(float hardness)
+            => MaskFor(0, hardness);
+
+        private SKBitmap MaskFor(int tipIndex, float hardness)
+        {
+            tipIndex = _ownedTipSet is { Count: > 0 } ? Math.Clamp(tipIndex, 0, _ownedTipSet.Count - 1) : 0;
+            var hardnessKey = QuantizeHardness(hardness);
+            var key = (tipIndex, hardnessKey);
             if (_maskCache.TryGetValue(key, out var cached))
                 return cached;
 
-            var normalizedHardness = key / 255f;
-            var tipMask = key == QuantizeHardness((float)_brush.Hardness)
+            var normalizedHardness = hardnessKey / 255f;
+            var tip = TipFor(tipIndex);
+            var tipMask = tipIndex == 0 && hardnessKey == QuantizeHardness((float)_brush.Hardness)
                 ? Mask
-                : _brush.Tip.GenerateMask(BaseMaskSize, normalizedHardness);
+                : tip.GenerateMask(BaseMaskSize, normalizedHardness);
 
-            // CompoundBrushTip allocates a fresh bitmap each call; caller owns it.
-            // Procedural/ImageBrushTip return their internal cache; tip owns it.
-            if (!ReferenceEquals(tipMask, Mask) && _brush.Tip is CompoundBrushTip)
-                _ownedMasks.Add(tipMask);
+            // All tips cache internally; the stroke never owns tip masks.
 
             if (_brush.Shape == null)
                 return CacheOrReturnTemporary(key, tipMask);
@@ -1471,7 +1530,7 @@ public sealed class BrushEngine : IDisposable
             if (_dabCache.TryGetValue(key, out dab!))
                 return true;
 
-            var mask = MaskFor(key.Hardness / 255f);
+            var mask = MaskFor(key.TipIndex, key.Hardness / 255f);
             var baseSize = Math.Max(1, BaseMaskSize);
             var scale = key.Size / (float)baseSize;
             var thickness = key.Thickness / 256f;
@@ -1481,6 +1540,8 @@ public sealed class BrushEngine : IDisposable
                 scaleY *= thickness;
             else
                 scaleX *= thickness;
+            if (_brush.FlipHorizontal) scaleX = -scaleX;
+            if (_brush.FlipVertical) scaleY = -scaleY;
 
             var halfW = baseSize * 0.5f * MathF.Abs(scaleX);
             var halfH = baseSize * 0.5f * MathF.Abs(scaleY);
@@ -1542,7 +1603,7 @@ public sealed class BrushEngine : IDisposable
                 mask.Dispose();
         }
 
-        private SKBitmap CacheOrReturnTemporary(int key, SKBitmap mask)
+        private SKBitmap CacheOrReturnTemporary((int TipIndex, int Hardness) key, SKBitmap mask)
         {
             if (_maskCache.Count >= MaxCachedMasks)
                 return mask;
@@ -1586,13 +1647,17 @@ public sealed class BrushEngine : IDisposable
                 mask.Dispose();
             foreach (var dab in _dabCache.Values)
                 dab.Mask.Dispose();
+            if (_ownedTipSet != null)
+            {
+                foreach (var tip in _ownedTipSet)
+                    if (tip is IDisposable disposable)
+                        disposable.Dispose();
+                _ownedTipSet.Clear();
+            }
             _maskCache.Clear();
             _dabCache.Clear();
             _dabCacheOrder.Clear();
             _ownedMasks.Clear();
-            // Mask is caller-owned only when Tip is CompoundBrushTip (creates fresh each call)
-            if (_brush.Tip is CompoundBrushTip)
-                Mask.Dispose();
             Paint.Dispose();
         }
 
@@ -1617,7 +1682,7 @@ public sealed class BrushEngine : IDisposable
             public int OffsetY { get; } = offsetY;
         }
 
-        private readonly record struct CachedDabKey(int Size, int Hardness, int Thickness, int Angle)
+        private readonly record struct CachedDabKey(int Size, int Hardness, int Thickness, int Angle, int FlipBits, int TipIndex)
         {
             public static CachedDabKey From(BrushPreset brush, StampSample stamp)
             {
@@ -1625,7 +1690,8 @@ public sealed class BrushEngine : IDisposable
                 var hardness = Math.Clamp((int)MathF.Round(Math.Clamp(stamp.Hardness, 0.001f, 1f) * 255f), 0, 255);
                 var thickness = Math.Clamp((int)MathF.Round(Math.Clamp((float)brush.TipThickness * stamp.TipThicknessMultiplier, 0.01f, 4f) * 256f), 3, 1024);
                 var angle = QuantizeAngle(stamp.Angle, brush);
-                return new CachedDabKey(size, hardness, thickness, angle);
+                var flipBits = (brush.FlipHorizontal ? 1 : 0) | (brush.FlipVertical ? 2 : 0);
+                return new CachedDabKey(size, hardness, thickness, angle, flipBits, Math.Max(0, stamp.TipIndex));
             }
 
             private static int QuantizeAngle(float angle, BrushPreset brush)
@@ -1665,6 +1731,9 @@ public sealed class BrushEngine : IDisposable
         }
     }
 
+    private static bool HasMultiTipSelection(BrushPreset brush)
+        => brush.TipSelectionMode != BrushTipSelectionMode.Single && brush.Tips.Count > 1;
+
     private readonly record struct StampSample(
         float X,
         float Y,
@@ -1673,7 +1742,8 @@ public sealed class BrushEngine : IDisposable
         float Angle,
         float Hardness,
         float SpacingMultiplier,
-        float TipThicknessMultiplier);
+        float TipThicknessMultiplier,
+        int TipIndex);
     private readonly record struct PlacedDab(
         StampSample Stamp,
         ActiveStroke.CachedDab Dab,

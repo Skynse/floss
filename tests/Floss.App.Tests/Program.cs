@@ -17,6 +17,7 @@ using Floss.App.Psd;
 using Floss.App.Processes;
 using Floss.App.Processes.Input;
 using Floss.App.Processes.Output;
+using Floss.App.Timelapse;
 using Floss.App.Tools;
 using Microsoft.Data.Sqlite;
 using SkiaSharp;
@@ -82,12 +83,14 @@ internal static class Program
         ("Composite tool deactivation cancels only active input", BrushTests.CompositeTool_DeactivateCancelsActiveInput),
         ("Image brush tips preserve source aspect ratio", BrushTests.ImageBrushTip_PreservesAspectRatio),
         ("Image brush tips keep cached masks stable across sizes", BrushTests.ImageBrushTip_MasksRemainStableAcrossSizes),
+        ("Image brush tips with color paint as colored stamps", BrushTests.ImageBrushTip_ColorStampPreservesColor),
         ("ABR preset mapping keeps usable brush dynamics", BrushTests.AbrPresetMapping_KeepsDynamics),
         ("ABR mask cleanup inverts dark-on-light stamps", BrushTests.AbrMaskCleanup_InvertsDarkOnLightMasks),
         ("Preset store round-trips tool groups", PresetStoreTests.ToolGroups_RoundTrip),
         ("Default tool groups have categories", PresetStoreTests.ToolGroups_DefaultsHaveCategories),
         ("Tool group sync categorizes brush assets", PresetStoreTests.ToolGroups_SyncCategorizesBrushAssets),
         ("Preset store round-trips brush assets", PresetStoreTests.BrushAssets_RoundTrip),
+        ("Brush file format round-trips material tip state", PresetStoreTests.BrushFileFormat_RoundTripsMaterialTipState),
         ("Preset store round-trips all brush fields via Capture/Apply", PresetStoreTests.BrushPresetOverride_RoundTrip),
         ("Preset store isolates overrides between presets", PresetStoreTests.BrushPresetOverride_Isolation),
         ("Preset store does not override Tip/Angle/Kind from Capture", PresetStoreTests.BrushPresetOverride_PreservesTipAndAngle),
@@ -105,10 +108,13 @@ internal static class Program
         ("DrawingDocument clear active layer records tile history", DrawingDocumentTests.ClearActiveLayer_UndoRedoRestoresPixels),
         ("DrawingDocument move layer validates invalid targets", DrawingDocumentTests.MoveLayer_ValidatesTargetsAndMoves),
         ("DrawingDocument grouping keeps children and can undo", DrawingDocumentTests.GroupSelectedLayers_CreatesGroupAndUndoRestores),
+        ("DrawingDocument history kind marks undo and redo", DrawingDocumentTests.HistoryKind_MarksUndoAndRedo),
         ("DrawingDocument import lifecycle resets state", DrawingDocumentTests.ImportLifecycle_ReplacesDocumentState),
         ("DrawingLayer clones tile state through duplicate", DrawingDocumentTests.DuplicateActiveLayer_CopiesPixels),
         ("DrawingDocument background layer fills white without cross-tile bleed", DrawingDocumentTests.AddBackgroundLayer_FillsWhiteAndTilesStayIndependent),
         ("ToolFactory maps eyedropper sampling options", DrawingDocumentTests.ToolFactory_EyedropperOptions),
+        ("Timelapse frame selection samples requested duration", TimelapseTests.SelectFrames_SamplesRequestedDuration),
+        ("Timelapse export composition respects portrait and landscape", TimelapseTests.ComposeFrame_RespectsAspectModes),
 
         ("PSD exporter writes parseable layer records", PsdExporterTests.Export_CanBeReadBack),
         ("PSD exporter aligns layer extra data and channel blocks", PsdExporterTests.Export_WritesValidLayerInfoStructure),
@@ -261,6 +267,11 @@ internal static class PresetStoreTests
                 Kind = BrushTipStorageKind.EmbeddedPng,
                 PngBytes = TestPngBytes()
             };
+            var materialTip = new BrushTipData
+            {
+                Kind = BrushTipStorageKind.EmbeddedPng,
+                PngBytes = TestPngBytes()
+            };
             var preset = new BrushPreset("Loaded ABR Stamp", 77, 0.63, 0.38, 0.17, Color.Parse("#123456"), 24)
             {
                 Dynamics = new BrushDynamics
@@ -279,12 +290,18 @@ internal static class PresetStoreTests
                 AmountOfPaint = 0.84,
                 DensityOfPaint = 0.95,
                 TipDensity = 0.66,
+                TipThickness = 0.42,
+                TipDirection = BrushTipDirection.Vertical,
+                TipSelectionMode = BrushTipSelectionMode.Random,
                 Grain = 0.37,
                 Smoothing = 0.48,
                 BlendMode = SKBlendMode.Multiply,
                 BaseAngleSource = BrushDynamics.AngleSource.DirectionOfLine,
                 AngleJitter = 0.19f,
+                FlipHorizontal = true,
+                FlipVertical = true,
                 Tip = tip.CreateTip(),
+                Tips = [materialTip],
                 Shape = new ProceduralBrushTip(BrushTipShape.Ellipse, 0.5f)
             };
             var asset = new BrushAsset
@@ -311,8 +328,8 @@ internal static class PresetStoreTests
                 AssertEx.True(reader.Read());
                 AssertEx.True(reader.GetInt32(0) > 0, "Brush asset JSON should still store preset parameters.");
                 AssertEx.Equal(0, reader.GetInt32(1), "Brush asset JSON should not contain PNG byte payload fields.");
-                AssertEx.Equal(1, reader.GetInt32(2), "Embedded brush tips should be stored as resource BLOBs.");
-                AssertEx.Equal(tip.PngBytes.Length, reader.GetInt32(3));
+                AssertEx.Equal(2, reader.GetInt32(2), "Embedded brush tips should be stored as resource BLOBs.");
+                AssertEx.Equal(tip.PngBytes.Length + materialTip.PngBytes.Length, reader.GetInt32(3));
             }
 
             var loaded = store.LoadBrushAssets().Single();
@@ -324,11 +341,19 @@ internal static class PresetStoreTests
             AssertEx.Near(77, loaded.Preset.Size);
             AssertEx.Near(0.42, loaded.Preset.Flow);
             AssertEx.Near(0.73, loaded.Preset.ColorStretch);
+            AssertEx.Near(0.66, loaded.Preset.TipDensity);
+            AssertEx.Near(0.42, loaded.Preset.TipThickness);
+            AssertEx.Equal(BrushTipDirection.Vertical, loaded.Preset.TipDirection);
+            AssertEx.Equal(BrushTipSelectionMode.Random, loaded.Preset.TipSelectionMode);
             AssertEx.Equal(SmudgeMode.Smear, loaded.Preset.SmudgeMode);
             AssertEx.Equal(MixingMode.Perceptual, loaded.Preset.MixingMode);
             AssertEx.Equal(SKBlendMode.Multiply, loaded.Preset.BlendMode);
             AssertEx.Equal(BrushDynamics.AngleSource.DirectionOfLine, loaded.Preset.BaseAngleSource);
             AssertEx.Near(0.19, loaded.Preset.AngleJitter);
+            AssertEx.True(loaded.Preset.FlipHorizontal);
+            AssertEx.True(loaded.Preset.FlipVertical);
+            AssertEx.Equal(1, loaded.Preset.Tips.Count);
+            AssertEx.Equal(materialTip.PngBytes.Length, loaded.Preset.Tips[0].PngBytes.Length);
             AssertEx.True(loaded.Preset.Tip is ImageBrushTip);
             AssertEx.True(loaded.Preset.Shape is { Shape: BrushTipShape.Ellipse, AspectRatio: 0.5f });
             AssertEx.True(loaded.Preset.Dynamics.Size.IsEnabled);
@@ -473,6 +498,57 @@ internal static class PresetStoreTests
             AssertEx.Equal(3, groups[0].Presets.Count);
             AssertEx.SequenceEqual(["preset-one", "preset-two", "fill"], groups[0].Categories[0].PresetIds);
             AssertEx.SequenceEqual(["asset-one", "asset-two"], assets.Select(a => a.Id));
+        }
+        finally
+        {
+            TryDeleteDatabase(path);
+        }
+    }
+
+    public static void BrushFileFormat_RoundTripsMaterialTipState()
+    {
+        var path = TempPackagePath(BrushFileFormat.Extension);
+        try
+        {
+            var tip = new BrushTipData
+            {
+                Kind = BrushTipStorageKind.EmbeddedPng,
+                PngBytes = TestPngBytes()
+            };
+            var material = new BrushTipData
+            {
+                Kind = BrushTipStorageKind.EmbeddedPng,
+                PngBytes = TestPngBytes()
+            };
+            var asset = new BrushAsset
+            {
+                Id = "material-tip-brush",
+                Tip = tip,
+                Preset = new BrushPreset("Material Tip", 42, 0.8, 0.6, 0.12, Color.Parse("#101010"), 18)
+                {
+                    Tip = tip.CreateTip(),
+                    TipDensity = 0.57,
+                    TipThickness = 0.33,
+                    TipDirection = BrushTipDirection.Vertical,
+                    TipSelectionMode = BrushTipSelectionMode.Sequential,
+                    FlipHorizontal = true,
+                    FlipVertical = true,
+                    Tips = [material]
+                }
+            };
+
+            BrushFileFormat.Save(path, asset);
+            var loaded = BrushFileFormat.Load(path);
+
+            AssertEx.True(loaded.Preset.Tip is ImageBrushTip);
+            AssertEx.Near(0.57, loaded.Preset.TipDensity);
+            AssertEx.Near(0.33, loaded.Preset.TipThickness);
+            AssertEx.Equal(BrushTipDirection.Vertical, loaded.Preset.TipDirection);
+            AssertEx.Equal(BrushTipSelectionMode.Sequential, loaded.Preset.TipSelectionMode);
+            AssertEx.True(loaded.Preset.FlipHorizontal);
+            AssertEx.True(loaded.Preset.FlipVertical);
+            AssertEx.Equal(1, loaded.Preset.Tips.Count);
+            AssertEx.Equal(material.PngBytes.Length, loaded.Preset.Tips[0].PngBytes.Length);
         }
         finally
         {
@@ -1573,6 +1649,34 @@ internal static class BrushTests
         AssertEx.Equal(firstHandle, firstAgain.Handle, "The original mask should remain cached for its size/hardness key.");
     }
 
+    public static void ImageBrushTip_ColorStampPreservesColor()
+    {
+        using var engine = new BrushEngine();
+        var layer = new DrawingLayer("Layer", 80, 80);
+        var brush = new BrushPreset("Red stamp", 24, 1, 1, 0.1, Colors.Black, 0)
+        {
+            Tip = new ImageBrushTip(ColoredTipPngBytes(SKColors.Red)),
+            Shape = null
+        };
+        var sample = Sample(40, 40, 0);
+
+        engine.BeginStroke(brush, sample);
+        engine.RasterizeDab(layer, brush, sample, velocity: 0);
+
+        layer.Pixels.GetPixel(40, 40, out var b, out var g, out var r, out var a);
+        AssertEx.True(a > 0, "Colored stamp should deposit alpha.");
+        AssertEx.True(r > 180 && g < 80 && b < 80, $"Colored image tip should preserve red pixels, got BGRA=({b},{g},{r},{a}).");
+    }
+
+    private static byte[] ColoredTipPngBytes(SKColor color)
+    {
+        using var bitmap = new SKBitmap(new SKImageInfo(8, 8, SKColorType.Bgra8888, SKAlphaType.Premul));
+        bitmap.Erase(color);
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        return data.ToArray();
+    }
+
     public static void AbrPresetMapping_KeepsDynamics()
     {
         var importer = typeof(AbrImporter);
@@ -1854,6 +1958,19 @@ internal static class DrawingDocumentTests
         AssertEx.False(document.Layers.Any(layer => layer.IsGroup));
     }
 
+    public static void HistoryKind_MarksUndoAndRedo()
+    {
+        var document = new DrawingDocument(4, 4);
+        document.AddLayer();
+        AssertEx.Equal(DocumentHistoryChangeKind.Mutation, document.LastHistoryChangeKind);
+
+        document.Undo();
+        AssertEx.Equal(DocumentHistoryChangeKind.Undo, document.LastHistoryChangeKind);
+
+        document.Redo();
+        AssertEx.Equal(DocumentHistoryChangeKind.Redo, document.LastHistoryChangeKind);
+    }
+
     public static void ImportLifecycle_ReplacesDocumentState()
     {
         var document = new DrawingDocument(4, 4);
@@ -1924,6 +2041,44 @@ internal static class DrawingDocumentTests
         AssertEx.Equal(EyedropperSampleMode.CurrentLayer, output.SampleMode);
         AssertEx.True(output.ExcludeLockedLayers);
         AssertEx.True(output.ExcludeReferenceLayers);
+    }
+}
+
+internal static class TimelapseTests
+{
+    public static void SelectFrames_SamplesRequestedDuration()
+    {
+        var frames = Enumerable.Range(0, 500)
+            .Select(i => $"frame_{i:D6}.png")
+            .ToArray();
+
+        var selected = TimelapseSession.SelectFrames(frames, TimelapseLength.Seconds15);
+
+        AssertEx.Equal(180, selected.Count);
+        AssertEx.Equal("frame_000000.png", selected[0]);
+        AssertEx.Equal("frame_000499.png", selected[^1]);
+    }
+
+    public static void ComposeFrame_RespectsAspectModes()
+    {
+        using var source = new SKBitmap(new SKImageInfo(200, 100, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+        source.Erase(SKColors.Red);
+
+        using var landscape = TimelapseSession.ComposeFrame(source, new TimelapseExportSettings
+        {
+            Aspect = TimelapseAspect.Landscape,
+            LongestSidePixels = 160
+        });
+        using var portrait = TimelapseSession.ComposeFrame(source, new TimelapseExportSettings
+        {
+            Aspect = TimelapseAspect.Portrait,
+            LongestSidePixels = 160
+        });
+
+        AssertEx.Equal(160, landscape.Width);
+        AssertEx.Equal(90, landscape.Height);
+        AssertEx.Equal(90, portrait.Width);
+        AssertEx.Equal(160, portrait.Height);
     }
 }
 

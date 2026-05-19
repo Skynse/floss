@@ -9,16 +9,6 @@ public enum BrushTipStorageKind
 {
     Procedural = 0,
     EmbeddedPng = 1,
-    Compound = 2
-}
-
-public sealed class StampLayerData
-{
-    public BrushTipData Tip { get; set; } = new();
-    public StampLayerBlend Blend { get; set; } = StampLayerBlend.Replace;
-    public float Opacity { get; set; } = 1.0f;
-    public float Scale { get; set; } = 1.0f;
-    public float Rotation { get; set; } = 0.0f;
 }
 
 public sealed class BrushTipData
@@ -27,21 +17,11 @@ public sealed class BrushTipData
     public BrushTipShape Shape { get; set; } = BrushTipShape.Circle;
     public float AspectRatio { get; set; } = 1.0f;
     public byte[] PngBytes { get; set; } = [];
-    public List<StampLayerData> SubLayers { get; set; } = [];
 
     public IBrushTip CreateTip() => Kind switch
     {
         BrushTipStorageKind.EmbeddedPng when PngBytes.Length > 0
             => new ImageBrushTip(PngBytes),
-        BrushTipStorageKind.Compound when SubLayers.Count > 0
-            => new CompoundBrushTip(SubLayers.Select(l => new StampLayer
-            {
-                Tip = l.Tip.CreateTip(),
-                Blend = l.Blend,
-                Opacity = l.Opacity,
-                Scale = l.Scale,
-                Rotation = l.Rotation
-            }).ToList()),
         _ => new ProceduralBrushTip(Shape, AspectRatio)
     };
 
@@ -51,18 +31,6 @@ public sealed class BrushTipData
         {
             Kind = BrushTipStorageKind.EmbeddedPng,
             PngBytes = img.GetPngBytes()
-        },
-        CompoundBrushTip compound => new BrushTipData
-        {
-            Kind = BrushTipStorageKind.Compound,
-            SubLayers = compound.Layers.Select(l => new StampLayerData
-            {
-                Tip = FromTip(l.Tip),
-                Blend = l.Blend,
-                Opacity = l.Opacity,
-                Scale = l.Scale,
-                Rotation = l.Rotation
-            }).ToList()
         },
         ProceduralBrushTip proc => new BrushTipData
         {
@@ -80,20 +48,33 @@ public sealed class BrushTipData
             Kind = Kind,
             PngBytes = PngBytes.ToArray()
         },
-        BrushTipStorageKind.Compound => new BrushTipData
-        {
-            Kind = Kind,
-            SubLayers = SubLayers.Select(l => new StampLayerData
-            {
-                Tip = l.Tip.DeepClone(),
-                Blend = l.Blend,
-                Opacity = l.Opacity,
-                Scale = l.Scale,
-                Rotation = l.Rotation
-            }).ToList()
-        },
         _ => new BrushTipData { Kind = Kind, Shape = Shape, AspectRatio = AspectRatio }
     };
+}
+
+public sealed class BrushShapePreset
+{
+    public string Name { get; set; } = "";
+    public BrushTipData Tip { get; set; } = new();
+    public BrushTipData? ShapeData { get; set; }
+
+    public static BrushShapePreset FromPreset(BrushPreset preset, string name) => new()
+    {
+        Name = name,
+        Tip = BrushTipData.FromTip(preset.Tip),
+        ShapeData = preset.Shape != null
+            ? new BrushTipData { Kind = BrushTipStorageKind.Procedural, Shape = preset.Shape.Shape, AspectRatio = preset.Shape.AspectRatio }
+            : null
+    };
+
+    public BrushPreset Apply(BrushPreset source)
+    {
+        var tip = Tip.CreateTip();
+        ProceduralBrushTip? shape = ShapeData is { Kind: BrushTipStorageKind.Procedural }
+            ? new ProceduralBrushTip(ShapeData.Shape, ShapeData.AspectRatio)
+            : null;
+        return source with { Tip = tip, Shape = shape };
+    }
 }
 
 public sealed class BrushAsset
@@ -109,7 +90,7 @@ public sealed class BrushAsset
 
     public BrushPreset ToPreset()
     {
-        var preset = Preset with { Tip = Tip.CreateTip() };
+        var preset = Preset with { Tip = Tip.CreateTip(), Tips = Preset.Tips };
         if (ShapeData is { Kind: BrushTipStorageKind.Procedural })
             preset = preset with { Shape = new ProceduralBrushTip(ShapeData.Shape, ShapeData.AspectRatio) };
         return preset;
