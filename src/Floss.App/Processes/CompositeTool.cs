@@ -24,7 +24,10 @@ public sealed class CompositeTool : ITool
     public void Deactivate(ToolContext ctx)
     {
         if (Input.IsActive)
+        {
             Cancel(ctx);
+            ctx.InvalidateRender();
+        }
         else
             Input.Cancel();
     }

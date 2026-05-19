@@ -59,7 +59,19 @@ public sealed class LiquifyInputProcess : IInputProcess
     {
         if (!_active) return;
         _samples.Add(s);
+        FinishStroke();
+    }
+
+    public void Commit()
+    {
+        if (!_active) return;
+        FinishStroke();
+    }
+
+    private void FinishStroke()
+    {
         _active = false;
+        if (_samples.Count == 0) return;
         _straightLineAnchor = _samples[^1];
         _straightLineAnchorSet = true;
     }

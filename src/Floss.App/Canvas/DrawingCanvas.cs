@@ -24,6 +24,8 @@ namespace Floss.App.Canvas;
 public sealed class DrawingCanvas : Control, IDisposable
 {
     private const double PenPressureThreshold = 0.02;
+    private const double CursorDirectionDeadZone = 1.25;
+    private const float CursorAngleLerp = 0.35f;
 
     private readonly DrawingDocument _document = new();
     private readonly LayerCompositor _compositor;
@@ -39,6 +41,10 @@ public sealed class DrawingCanvas : Control, IDisposable
     private long _activePointerId = -1;
     private Point _pointerPos;
     private Point _prevPointerPos;
+    private Point _lastCursorDirectionPos;
+    private bool _hasCursorDirectionPos;
+    private bool _hasStableCursorDirection;
+    private float _stableCursorDirectionDeg;
     private float _pointerTiltX;
     private float _pointerTiltY;
     private float _pointerTwist;
@@ -1217,16 +1223,30 @@ public sealed class DrawingCanvas : Control, IDisposable
         };
 
         var target = (float)_brush.Angle + directionContrib;
-        _cursorAngle = LerpAngleDeg(_cursorAngle, target, 0.5f);
+        _cursorAngle = LerpAngleDeg(_cursorAngle, target, CursorAngleLerp);
         return _cursorAngle;
     }
 
     private float DirectionDeg()
     {
-        var dx = _pointerPos.X - _prevPointerPos.X;
-        var dy = _pointerPos.Y - _prevPointerPos.Y;
-        if (Math.Abs(dx) < 0.001 && Math.Abs(dy) < 0.001) return _cursorAngle;
-        return MathF.Atan2((float)dy, (float)dx) * (180f / MathF.PI);
+        if (!_hasCursorDirectionPos)
+        {
+            _lastCursorDirectionPos = _pointerPos;
+            _hasCursorDirectionPos = true;
+            return _hasStableCursorDirection ? _stableCursorDirectionDeg : _cursorAngle;
+        }
+
+        var dx = _pointerPos.X - _lastCursorDirectionPos.X;
+        var dy = _pointerPos.Y - _lastCursorDirectionPos.Y;
+        var distanceSquared = dx * dx + dy * dy;
+        var threshold = Math.Max(CursorDirectionDeadZone, 0.75 / Math.Max(CanvasZoom, 0.001));
+        if (distanceSquared < threshold * threshold)
+            return _hasStableCursorDirection ? _stableCursorDirectionDeg : _cursorAngle;
+
+        _lastCursorDirectionPos = _pointerPos;
+        _stableCursorDirectionDeg = MathF.Atan2((float)dy, (float)dx) * (180f / MathF.PI);
+        _hasStableCursorDirection = true;
+        return _stableCursorDirectionDeg;
     }
 
     private static float LerpAngleDeg(float a, float b, float t)
@@ -1465,6 +1485,9 @@ public sealed class DrawingCanvas : Control, IDisposable
         var pt = e.GetCurrentPoint(this);
         _pointerPos = pt.Position;
         _prevPointerPos = pt.Position;
+        _lastCursorDirectionPos = pt.Position;
+        _hasCursorDirectionPos = true;
+        _hasStableCursorDirection = false;
         _pointerTiltX = (float)pt.Properties.XTilt;
         _pointerTiltY = (float)pt.Properties.YTilt;
         _pointerTwist = (float)pt.Properties.Twist;

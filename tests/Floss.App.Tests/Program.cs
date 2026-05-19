@@ -10,6 +10,7 @@ using Avalonia.Input;
 using Avalonia.Media;
 using Floss.App;
 using Floss.App.Brushes;
+using Floss.App.Canvas;
 using Floss.App.Document;
 using Floss.App.Input;
 using Floss.App.Psd;
@@ -43,6 +44,7 @@ internal static class Program
         ("TiledPixelBuffer restores truncated byte arrays defensively", TiledPixelBufferTests.Restore_TruncatedBytesDoesNotThrowOrOverread),
         ("TiledPixelBuffer solid fills isolate tile mutations", TiledPixelBufferTests.FillSolid_SharedTemplatesDoNotLeakMutations),
         ("TiledPixelBuffer scratch disk round-trips tiles through disk", TiledPixelBufferTests.ScratchDisk_RoundTripsTilesThroughDisk),
+        ("Layer compositor monochrome expression thresholds coverage", LayerCompositorTests.MonochromeExpression_ThresholdsCoverageBeforePaperComposite),
 
         ("KeyBinding parses friendly names and modifiers", KeyBindingTests.Parse_HandlesFriendlyNamesAndModifiers),
         ("KeyBinding formats and displays shortcuts", KeyBindingTests.ToStringAndDisplay_ReturnExpectedText),
@@ -51,6 +53,12 @@ internal static class Program
         ("KeyBinding JSON converter round-trips strings", KeyBindingTests.JsonConverter_RoundTrips),
         ("Brush size adjustment scales smoothly across sizes", BrushSizeAdjustmentTests.ScalesSmoothlyAcrossSizes),
         ("Brush size adjustment clamps boundaries", BrushSizeAdjustmentTests.ClampsBoundaries),
+
+        ("Input router: modifier release does not end running stroke", CanvasInputRouterTests.ModifierReleaseDoesNotEndRunningStroke),
+        ("Input router: modifier press during stroke does not change active tool", CanvasInputRouterTests.ModifierPressDuringStrokeDoesNotChangeActiveTool),
+        ("Input router: completed stroke is not cancelled by later temp tool activation", CanvasInputRouterTests.CompletedStrokeIsNotCancelledByLaterTempToolActivation),
+        ("Input router: after stroke release, still-held Space becomes ready/pan", CanvasInputRouterTests.AfterStrokeReleaseHeldSpaceBecomesReadyPan),
+        ("Input router: capture lost cancels only active transaction", CanvasInputRouterTests.CaptureLostCancelsOnlyActiveTransaction),
 
         ("CubicCurve identity and linear evaluation", BrushTests.CubicCurve_EvaluatesIdentityAndLinearCurves),
         ("CubicCurve clamps, sorts, serializes, and clones points", BrushTests.CubicCurve_PointManagementAndSerialization),
@@ -68,6 +76,8 @@ internal static class Program
         ("Brush engine does not dispose tip-owned cached masks", BrushTests.BrushEngine_DoesNotDisposeTipOwnedCachedMasks),
         ("Tool controller does not restore stale engine brush state", BrushTests.ToolController_DoesNotOverridePresetBrushState),
         ("Composite tool deactivation keeps completed output intact", BrushTests.CompositeTool_DeactivateDoesNotCancelCompletedOutput),
+        ("Composite tool deactivation does not cancel completed output with moves", BrushTests.CompositeTool_DeactivateDoesNotCancelCompletedOutputWithMoves),
+        ("Composite tool commit preserves direct draw pixels before temp switch", BrushTests.CompositeTool_CommitPreservesDirectDrawPixelsBeforeTempSwitch),
         ("Composite tool deactivation cancels only active input", BrushTests.CompositeTool_DeactivateCancelsActiveInput),
         ("Image brush tips preserve source aspect ratio", BrushTests.ImageBrushTip_PreservesAspectRatio),
         ("Image brush tips keep cached masks stable across sizes", BrushTests.ImageBrushTip_MasksRemainStableAcrossSizes),
@@ -878,6 +888,35 @@ internal static class TiledPixelBufferTests
     }
 }
 
+internal static class LayerCompositorTests
+{
+    public static void MonochromeExpression_ThresholdsCoverageBeforePaperComposite()
+    {
+        using var layer = new DrawingLayer("Ink", 4, 1)
+        {
+            ExpressionColor = ExpressionColorMode.Monochrome
+        };
+
+        layer.Pixels.SetPixel(0, 0, 0, 0, 0, 127);
+        layer.Pixels.SetPixel(1, 0, 0, 0, 0, 128);
+        layer.Pixels.SetPixel(2, 0, 200, 200, 200, 255);
+
+        using var compositor = new LayerCompositor();
+        var pixels = compositor.CompositeToBgra([layer], 4, 1, 0xFFFFFFFF);
+
+        AssertPixel(pixels, 0, 255, 255, 255, 255);
+        AssertPixel(pixels, 1, 0, 0, 0, 255);
+        AssertPixel(pixels, 2, 255, 255, 255, 255);
+    }
+
+    private static void AssertPixel(byte[] pixels, int x, byte b, byte g, byte r, byte a)
+    {
+        var offset = x * 4;
+        AssertEx.SequenceEqual(new[] { b, g, r, a },
+            new[] { pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3] });
+    }
+}
+
 internal static class KeyBindingTests
 {
     public static void Parse_HandlesFriendlyNamesAndModifiers()
@@ -1215,6 +1254,54 @@ internal static class BrushTests
         tool.Deactivate(ctx);
 
         AssertEx.Equal(0, output.CancelCount, "Deactivating an idle tool must not cancel/restore the already completed stroke.");
+    }
+
+    public static void CompositeTool_DeactivateDoesNotCancelCompletedOutputWithMoves()
+    {
+        var ctx = new ToolContext(new DrawingDocument()) { Brush = new BrushPreset("Ink", 8, 1, 1, 1, Colors.Black, 0) };
+        var output = new RecordingOutputProcess();
+        var tool = new CompositeTool(new BrushStrokeInputProcess(), output);
+
+        // Full stroke with multiple moves, as in real drawing
+        tool.PointerDown(ctx, Sample(10, 10, 0));
+        tool.PointerMove(ctx, Sample(20, 20, 1_000));
+        tool.PointerMove(ctx, Sample(30, 25, 2_000));
+        tool.PointerUp(ctx, Sample(40, 30, 3_000));
+
+        AssertEx.Equal(1, output.ExecuteCount, "Up should fire Execute once");
+        AssertEx.False(tool.HasPendingOperation, "Tool should be idle after Up");
+
+        // Simulate selecting another tool — calls Deactivate on the old one
+        tool.Deactivate(ctx);
+
+        AssertEx.Equal(0, output.CancelCount, "Deactivating a completed-with-moves stroke must NOT cancel it");
+    }
+
+    public static void CompositeTool_CommitPreservesDirectDrawPixelsBeforeTempSwitch()
+    {
+        using var engine = new BrushEngine();
+        var document = new DrawingDocument();
+        document.AddLayer();
+        var layer = document.ActiveLayer!;
+        var brush = new BrushPreset("Ink", 12, 1, 1, 0.2, Colors.Black, 0)
+        {
+            Tip = new CountingBrushTip(),
+            Shape = null
+        };
+        var ctx = new ToolContext(document) { Brush = brush, PaintColor = Colors.Black };
+        var tool = new CompositeTool(new BrushStrokeInputProcess(), new DirectDrawOutput(engine, document));
+
+        tool.PointerDown(ctx, Sample(20, 20, 0));
+        tool.PointerMove(ctx, Sample(30, 20, 1_000));
+        tool.Commit(ctx);
+
+        layer.Pixels.GetPixel(25, 20, out _, out _, out _, out var committedAlpha);
+        AssertEx.True(committedAlpha > 0, "Commit should finalize the live direct-draw stroke before a temporary tool switch.");
+
+        tool.Deactivate(ctx);
+
+        layer.Pixels.GetPixel(25, 20, out _, out _, out _, out var afterDeactivateAlpha);
+        AssertEx.True(afterDeactivateAlpha > 0, "Deactivating after commit must not restore pre-stroke tiles.");
     }
 
     public static void CompositeTool_DeactivateCancelsActiveInput()

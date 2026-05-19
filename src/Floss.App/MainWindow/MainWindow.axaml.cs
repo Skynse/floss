@@ -227,23 +227,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private ToolGroup? _recordingToolGroup;
     private Button? _recordingToolGroupButton;
 
-    private readonly HashSet<Avalonia.Input.Key> _heldBaseKeys = [];
     private Panel _toolRailStack = null!;
-
-    private bool _isBrushSizeActive;
-    private bool _isToolDispatchActive;
-    private bool _isPanning;
-    private bool _isMiddleButtonPanning;
-    private KeyModifiers _currentModifierState;
-    private Point _lastPanPoint;
-    private Point _brushSizeGestureStartCanvasPoint;
-    private Point _brushSizeGestureCenterCanvasPoint;
-    private double _brushSizeGestureStartSize;
-    private bool _brushSizeGestureHasCenter;
-    private double _brushSizeLastDirX;
-    private double _brushSizeLastDirY;
-    private bool _brushSizeHasLastDir;
-    private bool _hadAlternateBeforeBrushSize;
     private SettingsWindow? _settingsWindow;
     private Floss.App.Windows.ModifierKeySettingsWindow? _modifierKeySettingsWindow;
 
@@ -442,6 +426,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     {
         base.OnKeyDown(e);
         if (e.Handled) return;
+        if (_inputRouter.IsTransactionActive) return;
 
         var key = e.Key;
         var mods = Input.KeyBinding.ModifiersWithKeyDown(key, e.KeyModifiers);
@@ -465,9 +450,7 @@ public partial class MainWindow : Window, Tools.IViewportController
 
     private static readonly Cursor CursorArrow = new(StandardCursorType.Arrow);
     private static readonly Cursor CursorNone = new(StandardCursorType.None);
-    private KeyModifiers _activeModifierCombo;
-    private ModifierAction _activeModifierAction;
-    private Avalonia.Input.Key? _activeModifierKey;
+
 
     private ScaleTransform _canvasFlip = null!;
     private ScaleTransform _canvasScale = null!;
@@ -500,6 +483,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         _brushLibrary = new BrushLibrary(AppPaths.BrushesDirectory);
         _showRulers = App.Config.ShowRulers;
         BuildUi();
+        InitInputRouter();
         WireControls();
         RestoreFromConfig();
         BuildSwatches();
@@ -2449,6 +2433,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         {
             var preset = group.Presets.FirstOrDefault(p => p.Id == presetId);
             if (preset == null) continue;
+            if (_canvas.ActiveTool.HasPendingOperation)
+                _canvas.CommitActiveTool();
             _savedPresetTemp = _activeToolGroup?.ActivePreset;
             _temporaryPresetActive = true;
             _canvas.SetActiveTool(ToolForPreset(preset), preset);

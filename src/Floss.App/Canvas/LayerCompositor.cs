@@ -12,6 +12,8 @@ namespace Floss.App.Canvas;
 
 public sealed class LayerCompositor : IDisposable
 {
+    private const int MonochromeThreshold = 128;
+
     public void Dispose()
     {
         ClearAllTiles();
@@ -633,7 +635,7 @@ public sealed class LayerCompositor : IDisposable
                     for (int j = 0, docX = tileLeft; docX < tileRight; docX++, j++)
                     {
                         var tileOffset = tileRowBase + j * 4;
-                        var rawA = tile[tileOffset + 3];
+                        uint rawA = tile[tileOffset + 3];
                         if (rawA == 0) continue;
 
                         var srcA = rawA / 255.0 * opacity;
@@ -687,6 +689,12 @@ public sealed class LayerCompositor : IDisposable
         if (!layer.Pixels.HasContentTiles(sourceRegion)) return;
 
         var blendMode = layer.BlendMode;
+        var layerColor = layer.LayerColor;
+        var hasLayerColor = layerColor.HasValue;
+        var expressionColor = layer.ExpressionColor;
+        var applyExpr = expressionColor != ExpressionColorMode.Color;
+        byte lcR = 255, lcG = 255, lcB = 255;
+        if (layerColor is { } lc) { lcR = lc.R; lcG = lc.G; lcB = lc.B; }
         const int ts = TiledPixelBuffer.TileSize;
 
         var firstTileX = FloorDiv(sourceRegion.X, ts);
@@ -729,7 +737,7 @@ public sealed class LayerCompositor : IDisposable
                     for (int j = 0, srcX = clipLeft; srcX < clipRight; srcX++, j++)
                     {
                         var tileOffset = tileRowBase + j * 4;
-                        var rawA = tile[tileOffset + 3];
+                        uint rawA = tile[tileOffset + 3];
                         if (rawA == 0) continue;
 
                         var docX = srcX + offsetX;
@@ -755,6 +763,12 @@ public sealed class LayerCompositor : IDisposable
 
                         if (isNormal)
                         {
+                            byte srcB = tile[tileOffset + 0], srcG = tile[tileOffset + 1], srcR = tile[tileOffset + 2];
+                            if (hasLayerColor)
+                                ApplyLayerColor(ref srcB, ref srcG, ref srcR, lcB, lcG, lcR);
+                            if (applyExpr && !ApplyExpressionColorToSource(ref srcB, ref srcG, ref srcR, ref rawA, expressionColor))
+                                continue;
+
                             uint srcA = (rawA * opacityInt + 127) / 255;
                             srcA = (srcA * baseAlphaByte + 127) / 255;
                             if (srcA == 0) continue;
@@ -762,9 +776,9 @@ public sealed class LayerCompositor : IDisposable
                             var dstPtr = dstRow + dstIdx;
                             if (srcA == 255)
                             {
-                                dstPtr[0] = tile[tileOffset + 0];
-                                dstPtr[1] = tile[tileOffset + 1];
-                                dstPtr[2] = tile[tileOffset + 2];
+                                dstPtr[0] = srcB;
+                                dstPtr[1] = srcG;
+                                dstPtr[2] = srcR;
                                 dstPtr[3] = 255;
                                 continue;
                             }
@@ -776,19 +790,25 @@ public sealed class LayerCompositor : IDisposable
                             if (outA == 0) continue;
 
                             uint half = outA >> 1;
-                            dstPtr[0] = (byte)((tile[tileOffset + 0] * srcA + dstPtr[0] * dstCont + half) / outA);
-                            dstPtr[1] = (byte)((tile[tileOffset + 1] * srcA + dstPtr[1] * dstCont + half) / outA);
-                            dstPtr[2] = (byte)((tile[tileOffset + 2] * srcA + dstPtr[2] * dstCont + half) / outA);
+                            dstPtr[0] = (byte)((srcB * srcA + dstPtr[0] * dstCont + half) / outA);
+                            dstPtr[1] = (byte)((srcG * srcA + dstPtr[1] * dstCont + half) / outA);
+                            dstPtr[2] = (byte)((srcR * srcA + dstPtr[2] * dstCont + half) / outA);
                             dstPtr[3] = (byte)outA;
                         }
                         else
                         {
+                            byte srcBByte = tile[tileOffset + 0], srcGByte = tile[tileOffset + 1], srcRByte = tile[tileOffset + 2];
+                            if (hasLayerColor)
+                                ApplyLayerColor(ref srcBByte, ref srcGByte, ref srcRByte, lcB, lcG, lcR);
+                            if (applyExpr && !ApplyExpressionColorToSource(ref srcBByte, ref srcGByte, ref srcRByte, ref rawA, expressionColor))
+                                continue;
+
                             var srcA = rawA / 255.0 * opacity * (baseAlphaByte / 255.0);
                             if (srcA <= 0) continue;
 
-                            var srcB = tile[tileOffset + 0] / 255.0;
-                            var srcG = tile[tileOffset + 1] / 255.0;
-                            var srcR = tile[tileOffset + 2] / 255.0;
+                            var srcB = srcBByte / 255.0;
+                            var srcG = srcGByte / 255.0;
+                            var srcR = srcRByte / 255.0;
                             var dstB = dstRow[dstIdx + 0] / 255.0;
                             var dstG = dstRow[dstIdx + 1] / 255.0;
                             var dstR = dstRow[dstIdx + 2] / 255.0;
@@ -1156,24 +1176,14 @@ public sealed class LayerCompositor : IDisposable
                             var tileOffset = tileRowBase + j * 4;
                             uint rawA = tile[tileOffset + 3];
                             if (rawA == 0) continue;
-                            uint srcA = fullOpacity ? rawA : (rawA * opacityByte + 127) / 255;
                             var docX = clipLeft + j + offsetX;
                             var dstPtr = dstRow + (docX - originX) * 4;
                             byte srcB = tile[tileOffset + 0], srcG = tile[tileOffset + 1], srcR = tile[tileOffset + 2];
                             if (hasLayerColor)
-                            {
-                                var lum = (srcR * 299 + srcG * 587 + srcB * 114) / 1000;
-                                var ink = 255 - lum;
-                                srcB = (byte)(lum + (lcB * ink) / 255);
-                                srcG = (byte)(lum + (lcG * ink) / 255);
-                                srcR = (byte)(lum + (lcR * ink) / 255);
-                            }
-                            if (applyExpr)
-                            {
-                                var lum = (srcR * 299 + srcG * 587 + srcB * 114) / 1000;
-                                byte gray = expressionColor == ExpressionColorMode.Gray ? (byte)lum : lum >= 128 ? (byte)255 : (byte)0;
-                                srcB = srcG = srcR = gray;
-                            }
+                                ApplyLayerColor(ref srcB, ref srcG, ref srcR, lcB, lcG, lcR);
+                            if (applyExpr && !ApplyExpressionColorToSource(ref srcB, ref srcG, ref srcR, ref rawA, expressionColor))
+                                continue;
+                            uint srcA = fullOpacity ? rawA : (rawA * opacityByte + 127) / 255;
                             if (srcA == 255) { dstPtr[0] = srcB; dstPtr[1] = srcG; dstPtr[2] = srcR; dstPtr[3] = 255; continue; }
                             uint invSrcA = 255 - srcA, ddA = dstPtr[3];
                             uint dstCont = (ddA * invSrcA + 127) / 255;
@@ -1216,26 +1226,16 @@ public sealed class LayerCompositor : IDisposable
                             var tileOffset = tileRowBase + j * 4;
                             uint rawA = tile[tileOffset + 3];
                             if (rawA == 0) continue;
-                            uint srcA = (rawA * opacityByte + 127) / 255;
-                            if (srcA == 0) continue;
                             var docX = srcX + offsetX;
                             var dstPtr = dstRow + (docX - originX) * 4;
                             byte sb = tile[tileOffset + 0], sg = tile[tileOffset + 1], sr = tile[tileOffset + 2];
                             // layer color & expression
                             if (hasLayerColor)
-                            {
-                                var lum = (sr * 299 + sg * 587 + sb * 114) / 1000;
-                                var ink = 255 - lum;
-                                sb = (byte)(lum + (lcB * ink) / 255);
-                                sg = (byte)(lum + (lcG * ink) / 255);
-                                sr = (byte)(lum + (lcR * ink) / 255);
-                            }
-                            if (applyExpr)
-                            {
-                                var lum = (sr * 299 + sg * 587 + sb * 114) / 1000;
-                                byte gray = expressionColor == ExpressionColorMode.Gray ? (byte)lum : lum >= 128 ? (byte)255 : (byte)0;
-                                sb = sg = sr = gray;
-                            }
+                                ApplyLayerColor(ref sb, ref sg, ref sr, lcB, lcG, lcR);
+                            if (applyExpr && !ApplyExpressionColorToSource(ref sb, ref sg, ref sr, ref rawA, expressionColor))
+                                continue;
+                            uint srcA = (rawA * opacityByte + 127) / 255;
+                            if (srcA == 0) continue;
                             uint db = dstPtr[0], dg = dstPtr[1], dr = dstPtr[2], da = dstPtr[3];
                             BlendPixelInt(dstPtr,
                                 lut[((uint)sr << 8) | dr], lut[((uint)sg << 8) | dg], lut[((uint)sb << 8) | db], srcA,
@@ -1266,15 +1266,16 @@ public sealed class LayerCompositor : IDisposable
                     for (int j = 0, srcX = clipLeft; srcX < clipRight; srcX++, j++)
                     {
                         var tileOffset = tileRowBase + j * 4;
-                        var rawA = tile[tileOffset + 3];
+                        uint rawA = tile[tileOffset + 3];
                         if (rawA == 0) continue;
-                        var srcA = rawA / 255.0 * opacity;
                         var docX = srcX + offsetX;
                         var dstIdx = (docX - originX) * 4;
                         byte tintedB, tintedG, tintedR;
-                        if (hasLayerColor) { var lum = (tile[tileOffset + 2] * 299 + tile[tileOffset + 1] * 587 + tile[tileOffset + 0] * 114) / 1000; var ink = 255 - lum; tintedB = (byte)(lum + (lcB * ink) / 255); tintedG = (byte)(lum + (lcG * ink) / 255); tintedR = (byte)(lum + (lcR * ink) / 255); }
+                        if (hasLayerColor) { tintedB = tile[tileOffset + 0]; tintedG = tile[tileOffset + 1]; tintedR = tile[tileOffset + 2]; ApplyLayerColor(ref tintedB, ref tintedG, ref tintedR, lcB, lcG, lcR); }
                         else { tintedB = tile[tileOffset + 0]; tintedG = tile[tileOffset + 1]; tintedR = tile[tileOffset + 2]; }
-                        if (applyExpr) { var lum = (tintedR * 299 + tintedG * 587 + tintedB * 114) / 1000; byte gray = expressionColor == ExpressionColorMode.Gray ? (byte)lum : lum >= 128 ? (byte)255 : (byte)0; tintedB = tintedG = tintedR = gray; }
+                        if (applyExpr && !ApplyExpressionColorToSource(ref tintedB, ref tintedG, ref tintedR, ref rawA, expressionColor))
+                            continue;
+                        var srcA = rawA / 255.0 * opacity;
                         var sB = tintedB / 255.0; var sG = tintedG / 255.0; var sR = tintedR / 255.0;
                         var dB = dstRow[dstIdx + 0] / 255.0; var dG = dstRow[dstIdx + 1] / 255.0; var dR = dstRow[dstIdx + 2] / 255.0; var dA = dstRow[dstIdx + 3] / 255.0;
                         var (blendR, blendG, blendB) = ApplyBlendMode(sR, sG, sB, srcA, dR, dG, dB, dA, blendMode);
@@ -1282,6 +1283,39 @@ public sealed class LayerCompositor : IDisposable
                     }
                 }
             }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void ApplyLayerColor(ref byte b, ref byte g, ref byte r, byte layerB, byte layerG, byte layerR)
+    {
+        var lum = (r * 299 + g * 587 + b * 114) / 1000;
+        var ink = 255 - lum;
+        b = (byte)(lum + (layerB * ink) / 255);
+        g = (byte)(lum + (layerG * ink) / 255);
+        r = (byte)(lum + (layerR * ink) / 255);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool ApplyExpressionColorToSource(ref byte b, ref byte g, ref byte r, ref uint a, ExpressionColorMode mode)
+    {
+        if (mode == ExpressionColorMode.Color) return a != 0;
+
+        var lum = (r * 299 + g * 587 + b * 114) / 1000;
+        if (mode == ExpressionColorMode.Gray)
+        {
+            b = g = r = (byte)lum;
+            return a != 0;
+        }
+
+        if (a < MonochromeThreshold)
+        {
+            a = 0;
+            return false;
+        }
+
+        a = 255;
+        b = g = r = lum >= MonochromeThreshold ? (byte)255 : (byte)0;
+        return true;
     }
 
     private static unsafe void ApplyExpressionColor(
@@ -1313,7 +1347,13 @@ public sealed class LayerCompositor : IDisposable
                 else // Monochrome
                 {
                     var lum = (r * 299 + g * 587 + b * 114) / 1000;
-                    gray = lum >= 128 ? (byte)255 : (byte)0;
+                    if (a < MonochromeThreshold)
+                    {
+                        p[3] = 0;
+                        continue;
+                    }
+                    p[3] = 255;
+                    gray = lum >= MonochromeThreshold ? (byte)255 : (byte)0;
                 }
 
                 p[0] = gray;

@@ -75,9 +75,13 @@ public sealed class BrushStrokeInputProcess : IInputProcess
 
         _raw.Add(s);
         _smoothed.Add(ApplyStabilization(s));
-        _active = false;
-        _straightLineAnchor = _smoothed[^1];
-        _straightLineAnchorSet = true;
+        FinishStroke();
+    }
+
+    public void Commit()
+    {
+        if (!_active) return;
+        FinishStroke();
     }
 
     public void Cancel()
@@ -120,6 +124,14 @@ public sealed class BrushStrokeInputProcess : IInputProcess
             };
         }
         return null;
+    }
+
+    private void FinishStroke()
+    {
+        _active = false;
+        if (_smoothed.Count == 0) return;
+        _straightLineAnchor = _smoothed[^1];
+        _straightLineAnchorSet = true;
     }
 
     public void RenderOverlay(DrawingContext dc, double zoom)
