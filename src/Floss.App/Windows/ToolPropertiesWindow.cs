@@ -534,85 +534,220 @@ public sealed class ToolPropertiesWindow : Window
         panel.Children.Add(SectionHeader("TIP GRAPH"));
 
         var errors = graph.Validate();
-        var summary = errors.Count == 0
-            ? $"{graph.Nodes.Count} nodes · {graph.OutputNodeId}"
-            : string.Join("\n", errors.Take(3));
-        panel.Children.Add(new TextBlock
-        {
-            Text = summary,
-            FontSize = 10,
-            Foreground = new SolidColorBrush(Color.Parse(errors.Count == 0 ? TextMuted : "#ff8f8f")),
-            TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 1, 0, 4)
-        });
-
-        foreach (var node in EditableGraphNodes(graph))
-        {
-            panel.Children.Add(GraphNodeHeader(node));
-            AddNodeSlider(panel, graph, node, "Opacity", 0, 1, node.Opacity, (_, v) => _.Opacity = (float)v, "f2");
-            switch (node.Kind)
-            {
-                case BrushTipNodeKind.Circle:
-                    AddNodeSlider(panel, graph, node, "Radius", 0.02, 0.75, node.Radius, (_, v) => _.Radius = (float)v, "f2");
-                    AddNodeSlider(panel, graph, node, "Width", 0.05, 2, node.Width, (_, v) => _.Width = (float)v, "f2");
-                    AddNodeSlider(panel, graph, node, "Height", 0.05, 2, node.Height, (_, v) => _.Height = (float)v, "f2");
-                    AddNodeSlider(panel, graph, node, "Edge", 0.001, 1, node.Hardness, (_, v) => _.Hardness = (float)v, "f2");
-                    break;
-                case BrushTipNodeKind.Rectangle:
-                    AddNodeSlider(panel, graph, node, "Width", 0.05, 1.5, node.Width, (_, v) => _.Width = (float)v, "f2");
-                    AddNodeSlider(panel, graph, node, "Height", 0.02, 1.5, node.Height, (_, v) => _.Height = (float)v, "f2");
-                    AddNodeSlider(panel, graph, node, "Edge", 0.001, 1, node.Hardness, (_, v) => _.Hardness = (float)v, "f2");
-                    break;
-                case BrushTipNodeKind.Noise:
-                    AddNodeSlider(panel, graph, node, "Density", 0, 1, node.Density, (_, v) => _.Density = (float)v, "f2");
-                    AddNodeSlider(panel, graph, node, "Scale", 0.05, 8, node.Scale, (_, v) => _.Scale = (float)v, "f2");
-                    break;
-                case BrushTipNodeKind.Bristle:
-                    AddNodeSlider(panel, graph, node, "Density", 0.05, 1, node.Density, (_, v) => _.Density = (float)v, "f2");
-                    AddNodeSlider(panel, graph, node, "Width", 0.1, 1.5, node.Width, (_, v) => _.Width = (float)v, "f2");
-                    AddNodeSlider(panel, graph, node, "Height", 0.1, 1.5, node.Height, (_, v) => _.Height = (float)v, "f2");
-                    break;
-                case BrushTipNodeKind.Threshold:
-                    AddNodeSlider(panel, graph, node, "Threshold", 0, 1, node.Threshold, (_, v) => _.Threshold = (float)v, "f2");
-                    break;
-                case BrushTipNodeKind.LinearGradient:
-                case BrushTipNodeKind.Stripe:
-                    AddNodeSlider(panel, graph, node, "Scale", 0.05, 16, node.Scale, (_, v) => _.Scale = (float)v, "f2");
-                    AddNodeSlider(panel, graph, node, "Density", 0.02, 0.98, node.Density, (_, v) => _.Density = (float)v, "f2");
-                    break;
-            }
-        }
-
-        if (panel.Children.Count == 2)
+        if (errors.Count > 0)
         {
             panel.Children.Add(new TextBlock
             {
-                Text = "No editable primitive nodes in this graph yet.",
+                Text = string.Join("\n", errors.Take(3)),
                 FontSize = 10,
-                Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-                Margin = new Thickness(0, 2, 0, 4)
+                Foreground = new SolidColorBrush(Color.Parse("#ff8f8f")),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 1, 0, 4)
             });
         }
+
+        var nonOutput = graph.Nodes.Where(n => n.Id != graph.OutputNodeId);
+        var outputNode = graph.Nodes.FirstOrDefault(n => n.Id == graph.OutputNodeId);
+        var displayOrder = outputNode == null ? nonOutput : nonOutput.Append(outputNode);
+        foreach (var node in displayOrder)
+            panel.Children.Add(BuildNodeCard(graph, node));
+
+        panel.Children.Add(BuildAddNodeRow(graph));
         return panel;
     }
 
-    private static IEnumerable<BrushTipNode> EditableGraphNodes(BrushTipNodeGraph graph)
-        => graph.Nodes.Where(n => n.Kind is BrushTipNodeKind.Circle
-            or BrushTipNodeKind.Rectangle
-            or BrushTipNodeKind.Noise
-            or BrushTipNodeKind.Bristle
-            or BrushTipNodeKind.Threshold
-            or BrushTipNodeKind.LinearGradient
-            or BrushTipNodeKind.Stripe);
+    private Control BuildNodeCard(BrushTipNodeGraph graph, BrushTipNode node)
+    {
+        var isOutput = node.Id == graph.OutputNodeId;
+        var inner = new StackPanel { Spacing = 1 };
 
-    private static Control GraphNodeHeader(BrushTipNode node)
-        => new TextBlock
+        // Header: kind · id  [×]
+        var kindLabel = new TextBlock
         {
-            Text = $"{node.Kind} · {node.Id}",
+            Text = $"{node.Kind}  ·  {node.Id}",
             FontSize = 10,
-            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            Margin = new Thickness(0, 5, 0, 1)
+            Foreground = new SolidColorBrush(Color.Parse(isOutput ? TextPrimary : TextSecondary)),
+            VerticalAlignment = VerticalAlignment.Center
         };
+        var deleteBtn = new Button
+        {
+            Content = "×",
+            Width = 18,
+            Height = 18,
+            Padding = new Thickness(0),
+            FontSize = 11,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+            IsVisible = !isOutput
+        };
+        deleteBtn.Click += (_, _) =>
+        {
+            var g = graph.DeepClone();
+            g.Nodes.RemoveAll(n => n.Id == node.Id);
+            foreach (var n in g.Nodes)
+                n.Inputs.RemoveAll(id => id == node.Id);
+            CommitGraphTip(g);
+            _contentHost.Child = WrapContent(BuildBrushTipContent());
+        };
+
+        var header = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 3) };
+        DockPanel.SetDock(deleteBtn, Dock.Right);
+        header.Children.Add(deleteBtn);
+        header.Children.Add(kindLabel);
+        inner.Children.Add(header);
+
+        // Input connection ComboBoxes
+        var inputCount = NodeInputCount(node.Kind);
+        var otherIds = graph.Nodes.Where(n => n.Id != node.Id).Select(n => n.Id).ToList();
+        const string NoneOption = "— none —";
+        for (var i = 0; i < inputCount; i++)
+        {
+            var idx = i;
+            var items = new List<string> { NoneOption };
+            items.AddRange(otherIds);
+            var current = idx < node.Inputs.Count && !string.IsNullOrEmpty(node.Inputs[idx])
+                ? node.Inputs[idx] : NoneOption;
+            var combo = new ComboBox
+            {
+                ItemsSource = items,
+                SelectedItem = otherIds.Contains(current) ? current : NoneOption,
+                FontSize = 10,
+                MinHeight = 22,
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            combo.SelectionChanged += (_, _) =>
+            {
+                var g = graph.DeepClone();
+                var n = g.Nodes.FirstOrDefault(x => x.Id == node.Id);
+                if (n == null) return;
+                var chosen = combo.SelectedItem as string ?? NoneOption;
+                while (n.Inputs.Count <= idx) n.Inputs.Add("");
+                n.Inputs[idx] = chosen != NoneOption ? chosen : "";
+                while (n.Inputs.Count > 0 && string.IsNullOrEmpty(n.Inputs[^1]))
+                    n.Inputs.RemoveAt(n.Inputs.Count - 1);
+                CommitGraphTip(g);
+            };
+            var inputLbl = new TextBlock
+            {
+                Text = NodeInputLabel(node.Kind, idx),
+                FontSize = 10,
+                Width = 52,
+                Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var inputRow = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 1, 0, 1) };
+            DockPanel.SetDock(inputLbl, Dock.Left);
+            inputRow.Children.Add(inputLbl);
+            inputRow.Children.Add(combo);
+            inner.Children.Add(inputRow);
+        }
+
+        // Parameter sliders
+        if (node.Kind != BrushTipNodeKind.Output)
+            AddNodeSlider(inner, graph, node, "Opacity", 0, 1, node.Opacity, (n, v) => n.Opacity = (float)v, "f2");
+        switch (node.Kind)
+        {
+            case BrushTipNodeKind.Circle:
+                AddNodeSlider(inner, graph, node, "Radius", 0.02, 0.75, node.Radius, (n, v) => n.Radius = (float)v, "f2");
+                AddNodeSlider(inner, graph, node, "Width", 0.05, 2, node.Width, (n, v) => n.Width = (float)v, "f2");
+                AddNodeSlider(inner, graph, node, "Height", 0.05, 2, node.Height, (n, v) => n.Height = (float)v, "f2");
+                AddNodeSlider(inner, graph, node, "Edge", 0.001, 1, node.Hardness, (n, v) => n.Hardness = (float)v, "f2");
+                AddNodeSlider(inner, graph, node, "Rotation", 0, 360, node.RotationDegrees, (n, v) => n.RotationDegrees = (float)v, "f1");
+                break;
+            case BrushTipNodeKind.Rectangle:
+                AddNodeSlider(inner, graph, node, "Width", 0.05, 1.5, node.Width, (n, v) => n.Width = (float)v, "f2");
+                AddNodeSlider(inner, graph, node, "Height", 0.02, 1.5, node.Height, (n, v) => n.Height = (float)v, "f2");
+                AddNodeSlider(inner, graph, node, "Edge", 0.001, 1, node.Hardness, (n, v) => n.Hardness = (float)v, "f2");
+                AddNodeSlider(inner, graph, node, "Rotation", 0, 360, node.RotationDegrees, (n, v) => n.RotationDegrees = (float)v, "f1");
+                break;
+            case BrushTipNodeKind.Noise:
+                AddNodeSlider(inner, graph, node, "Density", 0, 1, node.Density, (n, v) => n.Density = (float)v, "f2");
+                AddNodeSlider(inner, graph, node, "Scale", 0.05, 8, node.Scale, (n, v) => n.Scale = (float)v, "f2");
+                break;
+            case BrushTipNodeKind.Bristle:
+                AddNodeSlider(inner, graph, node, "Density", 0.05, 1, node.Density, (n, v) => n.Density = (float)v, "f2");
+                AddNodeSlider(inner, graph, node, "Width", 0.1, 1.5, node.Width, (n, v) => n.Width = (float)v, "f2");
+                AddNodeSlider(inner, graph, node, "Height", 0.1, 1.5, node.Height, (n, v) => n.Height = (float)v, "f2");
+                break;
+            case BrushTipNodeKind.Threshold:
+                AddNodeSlider(inner, graph, node, "Threshold", 0, 1, node.Threshold, (n, v) => n.Threshold = (float)v, "f2");
+                break;
+            case BrushTipNodeKind.LinearGradient:
+                AddNodeSlider(inner, graph, node, "Scale", 0.05, 16, node.Scale, (n, v) => n.Scale = (float)v, "f2");
+                AddNodeSlider(inner, graph, node, "Density", 0.02, 0.98, node.Density, (n, v) => n.Density = (float)v, "f2");
+                AddNodeSlider(inner, graph, node, "Rotation", 0, 360, node.RotationDegrees, (n, v) => n.RotationDegrees = (float)v, "f1");
+                break;
+            case BrushTipNodeKind.Stripe:
+                AddNodeSlider(inner, graph, node, "Scale", 0.05, 16, node.Scale, (n, v) => n.Scale = (float)v, "f2");
+                AddNodeSlider(inner, graph, node, "Density", 0.02, 0.98, node.Density, (n, v) => n.Density = (float)v, "f2");
+                AddNodeSlider(inner, graph, node, "Rotation", 0, 360, node.RotationDegrees, (n, v) => n.RotationDegrees = (float)v, "f1");
+                break;
+        }
+
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            BorderBrush = new SolidColorBrush(Color.Parse(isOutput ? Accent : Stroke)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(6, 4),
+            Margin = new Thickness(0, 0, 0, 4),
+            Child = inner
+        };
+    }
+
+    private Control BuildAddNodeRow(BrushTipNodeGraph graph)
+    {
+        var kinds = Enum.GetValues<BrushTipNodeKind>()
+            .Where(k => k != BrushTipNodeKind.Output)
+            .ToList();
+        var kindCombo = new ComboBox
+        {
+            ItemsSource = kinds,
+            SelectedItem = BrushTipNodeKind.Circle,
+            FontSize = 10,
+            MinHeight = 22,
+            Width = 120
+        };
+        var addBtn = SmBtn("Add node");
+        addBtn.Click += (_, _) =>
+        {
+            if (kindCombo.SelectedItem is not BrushTipNodeKind kind) return;
+            var g = graph.DeepClone();
+            var id = $"{kind.ToString().ToLowerInvariant()}-{g.Nodes.Count + 1}";
+            var newNode = new BrushTipNode { Id = id, Kind = kind };
+            var outputIdx = g.Nodes.FindIndex(n => n.Id == g.OutputNodeId);
+            g.Nodes.Insert(outputIdx >= 0 ? outputIdx : g.Nodes.Count, newNode);
+            CommitGraphTip(g);
+            _contentHost.Child = WrapContent(BuildBrushTipContent());
+        };
+        return new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            Margin = new Thickness(0, 4, 0, 0),
+            Children = { kindCombo, addBtn }
+        };
+    }
+
+    private static int NodeInputCount(BrushTipNodeKind kind) => kind switch
+    {
+        BrushTipNodeKind.Output => 1,
+        BrushTipNodeKind.Threshold => 1,
+        BrushTipNodeKind.Add or BrushTipNodeKind.Multiply or BrushTipNodeKind.Max
+            or BrushTipNodeKind.Min or BrushTipNodeKind.Subtract => 2,
+        _ => 0
+    };
+
+    private static string NodeInputLabel(BrushTipNodeKind kind, int index) => kind switch
+    {
+        BrushTipNodeKind.Output => "Input",
+        BrushTipNodeKind.Threshold => "Input",
+        _ => index == 0 ? "A" : "B"
+    };
 
     private void AddNodeSlider(StackPanel panel, BrushTipNodeGraph sourceGraph, BrushTipNode sourceNode, string label,
         double min, double max, float value, Action<BrushTipNode, double> setValue, string fmt)
