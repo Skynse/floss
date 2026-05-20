@@ -215,4 +215,5 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
 
         return min < 250 && max - min > 4;
     }
+
 }

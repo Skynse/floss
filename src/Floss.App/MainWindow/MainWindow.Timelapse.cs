@@ -74,7 +74,8 @@ public partial class MainWindow
             return;
         }
 
-        _ = RunTimelapseCaptureLoopAsync(session, document, snapshot);
+        RunTimelapseCaptureLoopAsync(session, document, snapshot)
+            .FireAndForget("MainWindow.Timelapse.CaptureLoop");
     }
 
     private async Task RunTimelapseCaptureLoopAsync(TimelapseSession session, DrawingDocument document, TimelapseDocumentSnapshot initialSnapshot)

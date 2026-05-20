@@ -33,6 +33,8 @@ public readonly record struct BrushRenderStats(
 
 public sealed class BrushEngine : IDisposable
 {
+    private const int MaxPrecomputedGrainPixels = 256 * 256;
+
     private const int InitialStampCapacity = 256;
     private const float MinStretchCarry = 0.02f;
     private const float MaxStretchCarry = 0.88f;
@@ -523,8 +525,13 @@ public sealed class BrushEngine : IDisposable
         float halfBms = baseMaskSize * 0.5f;
         const int tsz = TiledPixelBuffer.TileSize;
 
+        // Precompute grain noise only for small dirty regions. Large material
+        // tips can produce big dirty rects; allocating a full float table for
+        // those is worse than computing grain inline.
+        var grainTable = PrecomputeGrain(dirty, texPx, texW, texH, texStride, brushGrain);
+
         if (_stamps.Count > 1 &&
-            TryRasterizeCachedDabsTileMajor(layer, stroke, brush, isDstOut, brushB, brushG, brushR, baseAlpha, brushGrain, texPx, texW, texH, texStride, dirty))
+            TryRasterizeCachedDabsTileMajor(layer, stroke, brush, isDstOut, brushB, brushG, brushR, baseAlpha, brushGrain, texPx, texW, texH, texStride, dirty, grainTable))
         {
             _lastRasterPath = "CachedTileMajor";
             layer.Pixels.PruneRegion(dirty);
@@ -536,7 +543,7 @@ public sealed class BrushEngine : IDisposable
             var stamp = _stamps[si];
             if (stamp.Opacity <= 0 || stamp.Size <= 0) continue;
 
-            if (TryRasterizeCachedDab(layer, stroke, brush, stamp, isDstOut, brushB, brushG, brushR, baseAlpha, brushGrain, texPx, texW, texH, texStride))
+            if (TryRasterizeCachedDab(layer, stroke, brush, stamp, isDstOut, brushB, brushG, brushR, baseAlpha, brushGrain, texPx, texW, texH, texStride, grainTable, dirty))
                 continue;
 
             float thickMul = MathF.Max(0.01f, MathF.Min(4f, brushThickness * stamp.TipThicknessMultiplier));
@@ -686,7 +693,11 @@ public sealed class BrushEngine : IDisposable
                                 }
                             }
 
-                            if (brushGrain > 0f)
+                            if (grainTable != null)
+                            {
+                                alpha *= grainTable[(py - dirty.Y) * dirty.Width + (px - dirty.X)];
+                            }
+                            else if (brushGrain > 0f)
                             {
                                 float noise;
                                 if (texPx != null)
@@ -752,7 +763,8 @@ public sealed class BrushEngine : IDisposable
         int texW,
         int texH,
         int texStride,
-        PixelRegion dirty)
+        PixelRegion dirty,
+        float[]? grainTable)
     {
         if (brush.ColorMix || _stamps.Count == 0)
             return false;
@@ -814,8 +826,8 @@ public sealed class BrushEngine : IDisposable
             foreach (var placed in dabs)
             {
                 ApplyCachedDabToTile(
-                    tile, tilePixX, tilePixY, placed,
-                    isDstOut, brushB, brushG, brushR, baseAlpha,
+                    tile, tilePixX, tilePixY, dirty, grainTable,
+                    placed, isDstOut, brushB, brushG, brushR, baseAlpha,
                     brushGrain, texPx, texW, texH, texStride);
             }
         }
@@ -827,6 +839,8 @@ public sealed class BrushEngine : IDisposable
         byte[] tile,
         int tilePixX,
         int tilePixY,
+        PixelRegion dirty,
+        float[]? grainTable,
         PlacedDab placed,
         bool isDstOut,
         int brushB,
@@ -866,7 +880,13 @@ public sealed class BrushEngine : IDisposable
                 if (maskA == 0) continue;
 
                 float alpha = maskA / 255f;
-                if (brushGrain > 0f)
+                if (grainTable != null)
+                {
+                    int gy = py - dirty.Y, gx = px - dirty.X;
+                    if (gy >= 0 && gy < dirty.Height && gx >= 0 && gx < dirty.Width)
+                        alpha *= grainTable[gy * dirty.Width + gx];
+                }
+                else if (brushGrain > 0f)
                 {
                     float noise;
                     if (texPx != null)
@@ -921,7 +941,9 @@ public sealed class BrushEngine : IDisposable
         byte* texPx,
         int texW,
         int texH,
-        int texStride)
+        int texStride,
+        float[]? grainTable,
+        PixelRegion dirty)
     {
         if (!stroke.TryGetCachedDab(stamp, out var dab))
             return false;
@@ -973,7 +995,13 @@ public sealed class BrushEngine : IDisposable
                         if (maskA == 0) continue;
 
                         float alpha = maskA / 255f;
-                        if (brushGrain > 0f)
+                        if (grainTable != null)
+                        {
+                            int gy = py - dirty.Y, gx = px - dirty.X;
+                            if (gy >= 0 && gy < dirty.Height && gx >= 0 && gx < dirty.Width)
+                                alpha *= grainTable[gy * dirty.Width + gx];
+                        }
+                        else if (brushGrain > 0f)
                         {
                             float noise;
                             if (texPx != null)
@@ -1362,6 +1390,38 @@ public sealed class BrushEngine : IDisposable
             h ^= h >> 16;
             return (h & 0xFFFF) / 65535.0f;
         }
+    }
+
+    private unsafe float[]? PrecomputeGrain(PixelRegion region, byte* texPx, int texW, int texH, int texStride, float brushGrain)
+    {
+        if (brushGrain <= 0f) return null;
+        int w = region.Width, h = region.Height;
+        if ((long)w * h > MaxPrecomputedGrainPixels)
+            return null;
+
+        var table = new float[w * h];
+        if (texPx != null)
+        {
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    int px = region.X + x, py = region.Y + y;
+                    int gtx = px % texW; if (gtx < 0) gtx += texW;
+                    int gty = py % texH; if (gty < 0) gty += texH;
+                    float noise = texPx[gty * texStride + gtx] / 255.0f;
+                    table[y * w + x] = 1f - brushGrain + noise * brushGrain;
+                }
+        }
+        else
+        {
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    float noise = GrainNoise(region.X + x, region.Y + y);
+                    table[y * w + x] = 1f - brushGrain + noise * brushGrain;
+                }
+        }
+        return table;
     }
 
     private sealed class ActiveStroke : IDisposable

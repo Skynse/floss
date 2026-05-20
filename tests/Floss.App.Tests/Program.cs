@@ -83,6 +83,8 @@ internal static class Program
         ("Composite tool deactivation cancels only active input", BrushTests.CompositeTool_DeactivateCancelsActiveInput),
         ("Image brush tips preserve source aspect ratio", BrushTests.ImageBrushTip_PreservesAspectRatio),
         ("Image brush tips keep cached masks stable across sizes", BrushTests.ImageBrushTip_MasksRemainStableAcrossSizes),
+        ("Image brush tips do not dispose old cached masks under cache churn", BrushTests.ImageBrushTip_DoesNotDisposeCachedMasksUnderChurn),
+        ("Procedural brush tips do not dispose old cached masks under cache churn", BrushTests.ProceduralBrushTip_DoesNotDisposeCachedMasksUnderChurn),
         ("Image brush tips with color paint as colored stamps", BrushTests.ImageBrushTip_ColorStampPreservesColor),
         ("ABR preset mapping keeps usable brush dynamics", BrushTests.AbrPresetMapping_KeepsDynamics),
         ("ABR mask cleanup inverts dark-on-light stamps", BrushTests.AbrMaskCleanup_InvertsDarkOnLightMasks),
@@ -1647,6 +1649,35 @@ internal static class BrushTests
         AssertEx.True(third.Handle != IntPtr.Zero);
         AssertEx.Equal(firstHandle, first.Handle, "Requesting a different cursor/preview mask must not dispose an active stroke mask.");
         AssertEx.Equal(firstHandle, firstAgain.Handle, "The original mask should remain cached for its size/hardness key.");
+    }
+
+    public static void ImageBrushTip_DoesNotDisposeCachedMasksUnderChurn()
+    {
+        using var bitmap = new SKBitmap(new SKImageInfo(8, 8, SKColorType.Bgra8888, SKAlphaType.Premul));
+        bitmap.Erase(SKColors.White);
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        using var tip = new ImageBrushTip(data.ToArray());
+
+        var first = tip.GenerateMask(16, 1.0f);
+        var firstHandle = first.Handle;
+        for (var size = 17; size < 80; size++)
+            _ = tip.GenerateMask(size, 1.0f);
+
+        AssertEx.Equal(firstHandle, first.Handle, "Image tip cache churn must not dispose a mask that a stroke may still reference.");
+        AssertEx.True(first.GetPixels() != IntPtr.Zero, "Original image tip mask pixels should remain valid after cache churn.");
+    }
+
+    public static void ProceduralBrushTip_DoesNotDisposeCachedMasksUnderChurn()
+    {
+        var tip = new ProceduralBrushTip();
+        var first = tip.GenerateMask(16, 1.0f);
+        var firstHandle = first.Handle;
+        for (var size = 17; size < 80; size++)
+            _ = tip.GenerateMask(size, 1.0f);
+
+        AssertEx.Equal(firstHandle, first.Handle, "Procedural tip cache churn must not dispose a mask that a stroke may still reference.");
+        AssertEx.True(first.GetPixels() != IntPtr.Zero, "Original procedural tip mask pixels should remain valid after cache churn.");
     }
 
     public static void ImageBrushTip_ColorStampPreservesColor()

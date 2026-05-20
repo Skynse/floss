@@ -22,7 +22,9 @@ public sealed class LayerCompositor : IDisposable
         _groupCaches.Clear();
     }
 
-    private const int CmpTileSize = 1024;
+    // Keep compositor cache tiles close to paint tile granularity. 1024px tiles
+    // made small strokes on large documents recomposite up to 1M pixels.
+    private const int CmpTileSize = 256;
 
     private int _currentLod;
     private readonly Dictionary<(int X, int Y, int Lod), WriteableBitmap> _compTiles = [];
@@ -215,7 +217,7 @@ public sealed class LayerCompositor : IDisposable
         // Only cap missing tiles (view-port navigation reveals more than we can
         // composite per frame).  Dirty tiles represent actual pixel changes —
         // capping them would leave stale cache tiles visible (e.g. transform commit).
-        const int MaxMissingTilesPerFrame = 32;
+        const int MaxMissingTilesPerFrame = 96;
         var deferredMissingTiles = false;
         if (missingTileKeys.Count > MaxMissingTilesPerFrame)
         {

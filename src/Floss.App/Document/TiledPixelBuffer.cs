@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Threading;
 using SkiaSharp;
 
 namespace Floss.App.Document;
@@ -105,22 +106,25 @@ public sealed class TiledPixelBuffer : IDisposable
 
     public void CompressTiles()
     {
-        List<((int X, int Y) Key, byte[] Tile)> toCompress;
+        List<((int X, int Y) Key, byte[] Copy)> toCompress;
         lock (_lock)
         {
             if (_tiles.Count == 0) return;
-            toCompress = new List<((int X, int Y) Key, byte[] Tile)>(_tiles.Count);
+            toCompress = new List<((int X, int Y) Key, byte[] Copy)>(_tiles.Count);
             foreach (var (key, tile) in _tiles)
-                toCompress.Add((key, tile));
+            {
+                var copy = new byte[tile.Length];
+                Buffer.BlockCopy(tile, 0, copy, 0, tile.Length);
+                toCompress.Add((key, copy));
+            }
             _tiles.Clear();
         }
 
         var compressedList = new List<((int X, int Y) Key, byte[] Data)>(toCompress.Count);
-        foreach (var (key, tile) in toCompress)
+        foreach (var (key, copy) in toCompress)
         {
-            var compressed = Deflate(tile);
-            var data = compressed.Length < tile.Length ? compressed : tile;
-            compressedList.Add((key, data));
+            var compressed = Deflate(copy);
+            compressedList.Add((key, compressed));
         }
 
         long addedBytes = 0;

@@ -59,9 +59,8 @@ class Program
         // ── Unobserved task exceptions ─────────────────────────────────────
         TaskScheduler.UnobservedTaskException += (_, e) =>
         {
-            CrashLog.Write(e.Exception, $"TaskScheduler.UnobservedTaskException (observed={e.Observed})", flushToDisk: true);
-            CrashReport.Write(e.Exception, "TaskScheduler.UnobservedTaskException");
             e.SetObserved();
+            CrashLog.Write(e.Exception, $"TaskScheduler.UnobservedTaskException (observed={e.Observed})", flushToDisk: true);
         };
 
         // ── Shutdown marker ────────────────────────────────────────────────

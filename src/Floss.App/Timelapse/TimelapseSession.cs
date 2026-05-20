@@ -8,7 +8,6 @@ using System.Threading.Tasks;
 using Floss.App.Canvas;
 using Floss.App.Document;
 using Floss.App.ImageFiles;
-using LibVLCSharp.Shared;
 using SkiaSharp;
 
 namespace Floss.App.Timelapse;
@@ -300,7 +299,7 @@ public sealed class TimelapseSession
         try
         {
             ExportSequence(tempDir, settings);
-            await TranscodeImageSequenceWithVlcAsync(tempDir, outputPath, cancellationToken).ConfigureAwait(false);
+            await Task.Run(() => TranscodeImageSequence(tempDir, outputPath, cancellationToken), cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -308,53 +307,65 @@ public sealed class TimelapseSession
         }
     }
 
-    private static Task TranscodeImageSequenceWithVlcAsync(string frameDirectory, string outputPath, CancellationToken cancellationToken)
+    private static void TranscodeImageSequence(string frameDirectory, string outputPath, CancellationToken cancellationToken)
     {
         var frames = Directory.EnumerateFiles(frameDirectory, "timelapse_*.png").OrderBy(p => p).ToArray();
         if (frames.Length == 0)
             throw new InvalidOperationException("No timelapse frames were rendered for video export.");
 
-        var playlistPath = Path.Combine(frameDirectory, "frames.m3u8");
-        File.WriteAllLines(playlistPath, BuildVlcPlaylist(frames));
-
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? ".");
         if (File.Exists(outputPath))
             File.Delete(outputPath);
 
-        Core.Initialize();
-        using var libVlc = new LibVLC("--no-video-title-show", "--quiet");
-        using var media = new Media(libVlc, new Uri(playlistPath));
-        var escapedOutput = outputPath.Replace("\\", "\\\\").Replace("'", "\\'");
-        media.AddOption($":sout=#transcode{{vcodec=h264,vb=8000,fps={ExportFps},acodec=none}}:std{{access=file,mux=mp4,dst='{escapedOutput}'}}");
-        media.AddOption(":sout-keep");
-        media.AddOption(":no-sout-all");
-        media.AddOption(":sout-transcode-high-priority");
-
-        using var player = new MediaPlayer(media);
-        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var registration = cancellationToken.Register(() =>
+        using var fs = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None);
+        Mp4WriteCallback writeCb = (long offset, ReadOnlySpan<byte> data, object? token) =>
         {
-            try { player.Stop(); } catch { }
-            tcs.TrySetCanceled(cancellationToken);
-        });
+            var stream = (FileStream)token!;
+            if (stream.Position != offset)
+                stream.Seek(offset, SeekOrigin.Begin);
+            stream.Write(data);
+            return false;
+        };
 
-        player.EndReached += (_, _) => tcs.TrySetResult();
-        player.EncounteredError += (_, _) => tcs.TrySetException(new InvalidOperationException("LibVLC failed to encode the timelapse video."));
+        using var mux = Mp4Muxer.Open(sequentialMode: true, fragmentation: false, writeCb, fs)
+            ?? throw new InvalidOperationException("Failed to initialize MP4 muxer.");
 
-        if (!player.Play())
-            throw new InvalidOperationException("LibVLC could not start timelapse video export.");
-
-        return tcs.Task.WaitAsync(TimeSpan.FromMinutes(10), cancellationToken);
-    }
-
-    private static IEnumerable<string> BuildVlcPlaylist(IReadOnlyList<string> frames)
-    {
-        yield return "#EXTM3U";
-        foreach (var frame in frames)
+        // Use the first frame to get dimensions
+        using var firstFrame = SKBitmap.Decode(frames[0]);
+        var tr = new Mp4TrackInfo
         {
-            yield return $"#EXTINF:{1.0 / ExportFps:0.########},";
-            yield return new Uri(frame).AbsoluteUri;
+            ObjectTypeIndication = Mp4ObjectType.Mjpeg,
+            Language0 = (byte)'u',
+            Language1 = (byte)'n',
+            Language2 = (byte)'d',
+            TrackMediaKind = TrackMediaKind.Video,
+            TimeScale = ExportFps,
+            DefaultDuration = 1
+        };
+        tr.U.VideoWidth = firstFrame.Width;
+        tr.U.VideoHeight = firstFrame.Height;
+
+        var trackId = mux.AddTrack(tr);
+        var frameDuration = 1;
+
+        foreach (var framePath in frames)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            using var bitmap = SKBitmap.Decode(framePath)
+                ?? throw new InvalidDataException($"Could not decode frame: {framePath}");
+
+            using var image = SKImage.FromBitmap(bitmap);
+            using var jpegData = image.Encode(SKEncodedImageFormat.Jpeg, 92)
+                ?? throw new InvalidDataException("Failed to encode JPEG frame.");
+
+            var jpegBytes = jpegData.ToArray();
+
+            var err = mux.PutSample(trackId, jpegBytes, frameDuration, Mp4SampleKind.RandomAccess);
+            if (err != Mp4Status.Ok)
+                throw new InvalidOperationException($"MP4 muxer error: {err}");
         }
+
     }
 
     public static IReadOnlyList<string> SelectFrames(IReadOnlyList<string> framePaths, TimelapseLength length)

@@ -888,13 +888,13 @@ public partial class MainWindow : Window
             item.Set(PresetIdDragFormat, presetId);
             var data = new DataTransfer();
             data.Add(item);
-            _ = DragDrop.DoDragDropAsync(savedPress, data, DragDropEffects.Move)
+            DragDrop.DoDragDropAsync(savedPress, data, DragDropEffects.Move)
                 .ContinueWith(t =>
                 {
-                    if (t.IsFaulted)
-                        CrashLog.Write(t.Exception!, "MainWindow.BrushLibrary.DragDrop");
+                    if (t.Exception != null)
+                        CrashLog.Write(t.Exception, "MainWindow.BrushLibrary.DragDrop");
                     dragging = false;
-                });
+                }, TaskContinuationOptions.ExecuteSynchronously);
         };
 
         row.PointerReleased += (_, _) => { pressEvent = null; dragging = false; };
@@ -1168,7 +1168,8 @@ public partial class MainWindow : Window
             item.Set(CategoryGroupDragFormat, $"{group.Id}\0{cat}");
             var data = new DataTransfer();
             data.Add(item);
-            _ = DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
+            DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move)
+                .FireAndForget("MainWindow.BrushLibrary.CategoryDragDrop");
         };
         btn.AddHandler(DragDrop.DragOverEvent, (_, e) =>
         {

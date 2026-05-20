@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using Avalonia.Threading;
 using Floss.App.Brushes;
 using Floss.App.Document;
 using Floss.App.Input;
@@ -7,26 +9,26 @@ using Floss.App.Tools;
 
 namespace Floss.App.Processes.Output;
 
-// Paints a stroke onto the active layer using the brush engine.
-// All rasterization runs synchronously on the UI thread — no background worker,
-// no shared mutable state, no locking needed.
+// Paints strokes onto the active layer using bounded UI-thread work slices.
+// Each pen stroke is a transaction. Finished strokes can continue rendering
+// while later pointer events queue new transactions instead of blocking pen-up.
 public sealed class DirectDrawOutput : IOutputProcess
 {
     private const long PreviewNotifyIntervalMs = 12;
+    private const double RenderSliceBudgetMs = 5.0;
+    private const int MaxSegmentsPerSlice = 24;
+    private const int SynchronousFinishSegmentLimit = 4;
 
     public bool IsPaintOutput => true;
     private readonly BrushEngine _brushEngine;
+    private readonly Queue<StrokeTransaction> _pendingTransactions = new();
 
     public bool Antialiasing { get; set; } = true;
 
-    private int _lastProcessedIndex = -1;
-    private Dictionary<(int, int), byte[]?>? _beforeTiles;
-    private PixelRegion _dirtyRegion;
-    private PixelRegion _pendingPreviewDirty;
-    private DrawingLayer? _currentLayer;
-    private bool _strokeActive;
-    private ToolContext? _currentCtx;
-    private long _lastPreviewNotifyMs;
+    private StrokeTransaction? _active;
+    private StrokeTransaction? _accepting;
+    private bool _processingScheduled;
+    private bool _processing;
 
     public DirectDrawOutput(BrushEngine brushEngine, DrawingDocument _)
     {
@@ -41,156 +43,244 @@ public sealed class DirectDrawOutput : IOutputProcess
         if (layer == null || layer.IsGroup || layer.IsLocked) return;
 
         var samples = stroke.SmoothedSamples;
-        var brush = ctx.Brush;
-        var selection = ctx.Selection;
-        var batchDirty = PixelRegion.Empty;
+        var tx = _accepting is { FinalizeRequested: false }
+            ? _accepting
+            : BeginTransaction(ctx, layer, samples[0]);
 
-        if (!_strokeActive)
+        QueueNewSamples(tx, layer, samples);
+        if (tx.NextSegmentIndex == 1 &&
+            tx.QueuedSamples.Count == 1 &&
+            tx.QueuedSamples[0].Source is CanvasInputSource.Mouse or CanvasInputSource.Unknown)
         {
-            _strokeActive = true;
-            _lastProcessedIndex = -1;
-            _beforeTiles = new Dictionary<(int, int), byte[]?>();
-            _dirtyRegion = PixelRegion.Empty;
-            _currentLayer = layer;
-            _currentCtx = ctx;
-            _brushEngine.BeginStroke(brush, ToLayerSample(layer, samples[0]));
-
-            if (samples[0].Source is CanvasInputSource.Mouse or CanvasInputSource.Unknown)
-            {
-                batchDirty = batchDirty.Union(ProcessSegment(layer, brush, selection, ToLayerSample(layer, samples[0]), ToLayerSample(layer, samples[0])));
-                _lastProcessedIndex = 0;
-            }
+            tx.QueuedSamples.Add(tx.QueuedSamples[0]);
         }
 
-        var startIdx = Math.Max(1, _lastProcessedIndex + 1);
-        for (int i = startIdx; i < samples.Count; i++)
-        {
-            batchDirty = batchDirty.Union(ProcessSegment(layer, brush, selection, ToLayerSample(layer, samples[i - 1]), ToLayerSample(layer, samples[i])));
-            _lastProcessedIndex = i;
-        }
-
-        if (!batchDirty.IsEmpty)
-        {
-            _pendingPreviewDirty = _pendingPreviewDirty.Union(batchDirty);
-            FlushPreviewDirty(ctx, force: false);
-        }
+        EnsureActiveTransaction();
+        ScheduleProcessQueued();
     }
 
     public void Execute(ToolContext ctx, IProcessedInput input)
     {
         if (input is not StrokeInput stroke || stroke.SmoothedSamples.Count == 0)
         {
-            Cleanup();
+            _accepting = null;
             return;
         }
 
         var layer = ctx.ActiveLayer;
         if (layer == null || layer.IsGroup || layer.IsLocked)
         {
-            Cleanup();
+            _accepting = null;
             return;
         }
 
         Preview(ctx, input);
-        FlushPreviewDirty(ctx, force: true);
-        _brushEngine.EndStroke();
-        Commit();
+        if (_accepting != null)
+        {
+            _accepting.FinalizeRequested = true;
+            _accepting = null;
+        }
+
+        EnsureActiveTransaction();
+        if (_active is { } active && active.RemainingSegments <= SynchronousFinishSegmentLimit)
+            ProcessQueuedSegments(force: true);
+        else
+            ScheduleProcessQueued();
     }
 
-    private void FlushPreviewDirty(ToolContext ctx, bool force)
+    private StrokeTransaction BeginTransaction(ToolContext ctx, DrawingLayer layer, CanvasInputSample firstSample)
     {
-        if (_pendingPreviewDirty.IsEmpty) return;
+        var tx = new StrokeTransaction(ctx, layer, ctx.ActiveLayerIndex, ctx.Brush, ToLayerSample(layer, firstSample));
+        if (_active == null)
+            _active = tx;
+        else
+            _pendingTransactions.Enqueue(tx);
+        _accepting = tx;
+        return tx;
+    }
 
-        var now = Environment.TickCount64;
-        if (!force && now - _lastPreviewNotifyMs < PreviewNotifyIntervalMs)
+    private static void QueueNewSamples(StrokeTransaction tx, DrawingLayer layer, IReadOnlyList<CanvasInputSample> samples)
+    {
+        var start = Math.Max(0, tx.LastQueuedInputIndex + 1);
+        for (var i = start; i < samples.Count; i++)
+        {
+            tx.QueuedSamples.Add(ToLayerSample(layer, samples[i]));
+            tx.LastQueuedInputIndex = i;
+        }
+    }
+
+    private void EnsureActiveTransaction()
+    {
+        if (_active != null)
             return;
 
-        ctx.Document.NotifyChanged(_pendingPreviewDirty, ctx.ActiveLayerIndex);
-        ctx.InvalidateRender();
-        _pendingPreviewDirty = PixelRegion.Empty;
-        _lastPreviewNotifyMs = now;
+        if (_pendingTransactions.Count > 0)
+            _active = _pendingTransactions.Dequeue();
     }
 
-    private PixelRegion ProcessSegment(DrawingLayer layer, BrushPreset brush, SelectionMask selection, CanvasInputSample from, CanvasInputSample to)
+    private void ScheduleProcessQueued()
     {
-        var region = _brushEngine.EstimateSegmentRegion(layer, brush, from, to);
-        if (!region.IsEmpty && _beforeTiles != null)
-            layer.CaptureTiles(region, _beforeTiles);
+        if (_processingScheduled || _processing)
+            return;
 
-        var dirty = _brushEngine.RasterizeSegment(layer, brush, from, to,
-            (x, y, out b, out g, out r, out a) => ReadBeforeStrokePixelFrom(_beforeTiles, layer, x, y, out b, out g, out r, out a));
+        _processingScheduled = true;
+        Dispatcher.UIThread.Post(() => ProcessQueuedSegments(force: false), DispatcherPriority.Background);
+    }
+
+    private void ProcessQueuedSegments(bool force)
+    {
+        _processingScheduled = false;
+        if (_processing)
+            return;
+
+        EnsureActiveTransaction();
+        var tx = _active;
+        if (tx == null)
+            return;
+
+        _processing = true;
+        var started = Stopwatch.GetTimestamp();
+        var processed = 0;
+        var batchDirty = PixelRegion.Empty;
+
+        try
+        {
+            if (!tx.StrokeStarted)
+            {
+                _brushEngine.BeginStroke(tx.Brush, tx.FirstSample);
+                tx.StrokeStarted = true;
+            }
+
+            while (tx.NextSegmentIndex < tx.QueuedSamples.Count)
+            {
+                var from = tx.QueuedSamples[tx.NextSegmentIndex - 1];
+                var to = tx.QueuedSamples[tx.NextSegmentIndex];
+                batchDirty = batchDirty.Union(ProcessSegment(tx, from, to));
+                tx.NextSegmentIndex++;
+                processed++;
+
+                if (!force && processed >= MaxSegmentsPerSlice)
+                    break;
+                if (!force && ElapsedMs(started) >= RenderSliceBudgetMs)
+                    break;
+            }
+
+            if (!batchDirty.IsEmpty)
+            {
+                tx.PendingPreviewDirty = tx.PendingPreviewDirty.Union(batchDirty);
+                FlushPreviewDirty(tx, force: force || tx.FinalizeRequested);
+            }
+        }
+        finally
+        {
+            _processing = false;
+        }
+
+        if (tx.NextSegmentIndex < tx.QueuedSamples.Count)
+        {
+            ScheduleProcessQueued();
+            return;
+        }
+
+        if (tx.FinalizeRequested)
+        {
+            FlushPreviewDirty(tx, force: true);
+            _brushEngine.EndStroke();
+            Commit(tx);
+            _active = null;
+            EnsureActiveTransaction();
+            if (_active != null)
+                ScheduleProcessQueued();
+        }
+    }
+
+    private void FlushPreviewDirty(StrokeTransaction tx, bool force)
+    {
+        if (tx.PendingPreviewDirty.IsEmpty) return;
+
+        var now = Environment.TickCount64;
+        if (!force && now - tx.LastPreviewNotifyMs < PreviewNotifyIntervalMs)
+            return;
+
+        tx.Ctx.Document.NotifyChanged(tx.PendingPreviewDirty, tx.LayerIndex);
+        tx.Ctx.InvalidateRender();
+        tx.PendingPreviewDirty = PixelRegion.Empty;
+        tx.LastPreviewNotifyMs = now;
+    }
+
+    private PixelRegion ProcessSegment(StrokeTransaction tx, CanvasInputSample from, CanvasInputSample to)
+    {
+        var region = _brushEngine.EstimateSegmentRegion(tx.Layer, tx.Brush, from, to);
+        if (!region.IsEmpty)
+            tx.Layer.CaptureTiles(region, tx.BeforeTiles);
+
+        var dirty = _brushEngine.RasterizeSegment(tx.Layer, tx.Brush, from, to,
+            (x, y, out b, out g, out r, out a) => ReadBeforeStrokePixelFrom(tx.BeforeTiles, tx.Layer, x, y, out b, out g, out r, out a));
 
         if (!dirty.IsEmpty)
         {
-            if (_beforeTiles != null)
-                RestoreUnselectedPixels(layer, dirty, selection, _beforeTiles);
+            RestoreUnselectedPixels(tx.Layer, dirty, tx.Ctx.Selection, tx.BeforeTiles);
 
-            var translatedDirty = dirty.Translate(layer.OffsetX, layer.OffsetY);
-            _dirtyRegion = _dirtyRegion.Union(translatedDirty);
+            var translatedDirty = dirty.Translate(tx.Layer.OffsetX, tx.Layer.OffsetY);
+            tx.DirtyRegion = tx.DirtyRegion.Union(translatedDirty);
             return translatedDirty;
         }
 
         return PixelRegion.Empty;
     }
 
-    private void Commit()
+    private static void Commit(StrokeTransaction tx)
     {
         try
         {
-            if (_beforeTiles != null && _beforeTiles.Count > 0 && _currentLayer != null && _currentCtx != null)
+            if (tx.BeforeTiles.Count > 0)
             {
-                var tileDirty = ComputeTileDirtyRegion(_beforeTiles).Translate(_currentLayer.OffsetX, _currentLayer.OffsetY);
+                var tileDirty = ComputeTileDirtyRegion(tx.BeforeTiles).Translate(tx.Layer.OffsetX, tx.Layer.OffsetY);
                 if (!tileDirty.IsEmpty)
                 {
-                    _currentLayer.MarkThumbnailDirty();
-                    _currentCtx.Document.CommitLayerTileMutation(_currentCtx.ActiveLayerIndex, _beforeTiles, tileDirty);
+                    tx.Layer.MarkThumbnailDirty();
+                    tx.Ctx.Document.CommitLayerTileMutation(tx.LayerIndex, tx.BeforeTiles, tileDirty);
                 }
             }
 
-            if (_currentCtx != null)
-                _currentCtx.Document.CommitStroke();
+            tx.Ctx.Document.CommitStroke();
         }
         catch (Exception ex)
         {
             CrashLog.Write(ex, "DirectDrawOutput.Commit");
         }
-        finally
-        {
-            Cleanup();
-        }
-    }
-
-    private void Cleanup()
-    {
-        _strokeActive = false;
-        _lastProcessedIndex = -1;
-        _beforeTiles = null;
-        _dirtyRegion = PixelRegion.Empty;
-        _pendingPreviewDirty = PixelRegion.Empty;
-        _currentLayer = null;
-        _currentCtx = null;
-        _lastPreviewNotifyMs = 0;
     }
 
     public void Cancel()
     {
         _brushEngine.EndStroke();
 
-        if (_strokeActive && _beforeTiles != null && _currentLayer != null && _currentCtx != null)
+        if (_active != null)
+            RestoreTransaction(_active);
+
+        while (_pendingTransactions.Count > 0)
+            RestoreTransaction(_pendingTransactions.Dequeue());
+
+        _active = null;
+        _accepting = null;
+        _processingScheduled = false;
+    }
+
+    private static void RestoreTransaction(StrokeTransaction tx)
+    {
+        if (tx.BeforeTiles.Count == 0)
+            return;
+
+        foreach (var ((tileX, tileY), tile) in tx.BeforeTiles)
+            tx.Layer.RestoreTile(tileX, tileY, tile);
+
+        var tileDirty = ComputeTileDirtyRegion(tx.BeforeTiles).Translate(tx.Layer.OffsetX, tx.Layer.OffsetY);
+        if (!tileDirty.IsEmpty)
         {
-            foreach (var ((tx, ty), tile) in _beforeTiles)
-                _currentLayer.RestoreTile(tx, ty, tile);
-
-            var tileDirty = ComputeTileDirtyRegion(_beforeTiles).Translate(_currentLayer.OffsetX, _currentLayer.OffsetY);
-            if (!tileDirty.IsEmpty)
-            {
-                _currentLayer.MarkThumbnailDirty();
-                _currentCtx.Document.NotifyChanged(tileDirty, _currentCtx.ActiveLayerIndex);
-                _currentCtx.InvalidateRender();
-            }
+            tx.Layer.MarkThumbnailDirty();
+            tx.Ctx.Document.NotifyChanged(tileDirty, tx.LayerIndex);
+            tx.Ctx.InvalidateRender();
         }
-
-        Cleanup();
     }
 
     private static PixelRegion ComputeTileDirtyRegion(Dictionary<(int, int), byte[]?> tiles)
@@ -215,23 +305,17 @@ public sealed class DirectDrawOutput : IOutputProcess
     private static int FloorDiv(int value, int divisor)
         => (int)Math.Floor(value / (double)divisor);
 
-    private static void ReadBeforeStrokePixelFrom(Dictionary<(int, int), byte[]?>? beforeTiles, DrawingLayer? currentLayer, int x, int y, out byte b, out byte g, out byte r, out byte a)
-    {
-        if (beforeTiles == null)
-        {
-            if (currentLayer != null)
-                currentLayer.Pixels.GetPixel(x, y, out b, out g, out r, out a);
-            else
-                b = g = r = a = 0;
-            return;
-        }
+    private static double ElapsedMs(long started)
+        => (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
 
+    private static void ReadBeforeStrokePixelFrom(Dictionary<(int, int), byte[]?> beforeTiles, DrawingLayer currentLayer, int x, int y, out byte b, out byte g, out byte r, out byte a)
+    {
         const int ts = TiledPixelBuffer.TileSize;
         var tx = FloorDiv(x, ts);
         var ty = FloorDiv(y, ts);
         if (!beforeTiles.TryGetValue((tx, ty), out var tile) || tile == null)
         {
-            b = g = r = a = 0;
+            currentLayer.Pixels.GetPixel(x, y, out b, out g, out r, out a);
             return;
         }
 
@@ -244,7 +328,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         a = tile[offset + 3];
     }
 
-    private void RestoreUnselectedPixels(DrawingLayer layer, PixelRegion dirty, SelectionMask selection, Dictionary<(int, int), byte[]?> beforeTiles)
+    private static void RestoreUnselectedPixels(DrawingLayer layer, PixelRegion dirty, SelectionMask selection, Dictionary<(int, int), byte[]?> beforeTiles)
     {
         if (dirty.IsEmpty) return;
 
@@ -253,10 +337,10 @@ public sealed class DirectDrawOutput : IOutputProcess
         if (!hasSelection && !alphaLocked) return;
 
         const int ts = TiledPixelBuffer.TileSize;
-        int firstTileX = dirty.X / ts;
-        int firstTileY = dirty.Y / ts;
-        int lastTileX = (dirty.Right - 1) / ts;
-        int lastTileY = (dirty.Bottom - 1) / ts;
+        int firstTileX = FloorDiv(dirty.X, ts);
+        int firstTileY = FloorDiv(dirty.Y, ts);
+        int lastTileX = FloorDiv(dirty.Right - 1, ts);
+        int lastTileY = FloorDiv(dirty.Bottom - 1, ts);
 
         for (int ty = firstTileY; ty <= lastTileY; ty++)
         {
@@ -303,5 +387,33 @@ public sealed class DirectDrawOutput : IOutputProcess
                 if (w[i] != 0) return false;
         }
         return true;
+    }
+
+    private sealed class StrokeTransaction
+    {
+        public StrokeTransaction(ToolContext ctx, DrawingLayer layer, int layerIndex, BrushPreset brush, CanvasInputSample firstSample)
+        {
+            Ctx = ctx;
+            Layer = layer;
+            LayerIndex = layerIndex;
+            Brush = brush;
+            FirstSample = firstSample;
+        }
+
+        public ToolContext Ctx { get; }
+        public DrawingLayer Layer { get; }
+        public int LayerIndex { get; }
+        public BrushPreset Brush { get; }
+        public CanvasInputSample FirstSample { get; }
+        public Dictionary<(int, int), byte[]?> BeforeTiles { get; } = new();
+        public List<CanvasInputSample> QueuedSamples { get; } = [];
+        public int LastQueuedInputIndex { get; set; } = -1;
+        public int NextSegmentIndex { get; set; } = 1;
+        public bool StrokeStarted { get; set; }
+        public bool FinalizeRequested { get; set; }
+        public PixelRegion DirtyRegion { get; set; } = PixelRegion.Empty;
+        public PixelRegion PendingPreviewDirty { get; set; } = PixelRegion.Empty;
+        public long LastPreviewNotifyMs { get; set; }
+        public int RemainingSegments => Math.Max(0, QueuedSamples.Count - NextSegmentIndex);
     }
 }
