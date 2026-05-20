@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Threading.Tasks;
 using Avalonia.Threading;
 using Floss.App.Brushes;
 using Floss.App.Document;
@@ -182,7 +183,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         Dispatcher.UIThread.Post(() => ProcessQueuedSegments(force: false), DispatcherPriority.Background);
     }
 
-    private void ProcessQueuedSegments(bool force)
+    private async void ProcessQueuedSegments(bool force)
     {
         _processingScheduled = false;
         if (_processing)
@@ -207,6 +208,14 @@ public sealed class DirectDrawOutput : IOutputProcess
                 tx.StrokeStarted = true;
             }
 
+            // Fast path: small remaining segments run synchronously to avoid
+            // async overhead for the final 1-4 segments.
+            if (force && tx.RemainingSegments <= SynchronousFinishSegmentLimit)
+            {
+                ProcessSegmentsSync(tx, force, ref started, ref processed, ref batchDirty, ref scheduleAfterProcessing);
+                return;
+            }
+
             while (tx.NextSegmentIndex < tx.QueuedSamples.Count)
             {
                 var remaining = tx.QueuedSamples.Count - tx.NextSegmentIndex;
@@ -214,11 +223,22 @@ public sealed class DirectDrawOutput : IOutputProcess
                     ? remaining
                     : Math.Min(remaining, tx.SuggestedSegmentCount(RenderSliceBudgetMs, InitialSegmentsPerSlice, MaxSegmentsPerSlice));
 
-                var segmentStarted = Stopwatch.GetTimestamp();
-                batchDirty = batchDirty.Union(ProcessSegmentBatch(tx, tx.NextSegmentIndex, segmentCount));
-                tx.NextSegmentIndex += segmentCount;
-                processed += segmentCount;
-                tx.RecordSegmentTime(ElapsedMs(segmentStarted), segmentCount);
+                // Offload heavy rasterization to thread pool. The DocumentRenderLock
+                // and TiledPixelBuffer internal locks provide cross-thread safety.
+                // The continuation runs on the captured SynchronizationContext (UI thread).
+                var result = await Task.Run(() =>
+                {
+                    var segStarted = Stopwatch.GetTimestamp();
+                    var dirty = ProcessSegmentBatch(tx, tx.NextSegmentIndex, segmentCount);
+                    return (dirty, segmentCount, ElapsedMs(segStarted));
+                });
+
+                tx.NextSegmentIndex += result.segmentCount;
+                processed += result.segmentCount;
+                tx.RecordSegmentTime(result.Item3, result.segmentCount);
+
+                if (!result.dirty.IsEmpty)
+                    batchDirty = batchDirty.Union(result.dirty);
 
                 if (!force && processed >= MaxSegmentsPerSlice)
                     break;
@@ -265,6 +285,53 @@ public sealed class DirectDrawOutput : IOutputProcess
             _processing = false;
             if (scheduleAfterProcessing)
                 ScheduleProcessQueued();
+        }
+    }
+
+    private void ProcessSegmentsSync(StrokeTransaction tx, bool force,
+        ref long started, ref int processed, ref PixelRegion batchDirty,
+        ref bool scheduleAfterProcessing)
+    {
+        while (tx.NextSegmentIndex < tx.QueuedSamples.Count)
+        {
+            var remaining = tx.QueuedSamples.Count - tx.NextSegmentIndex;
+            var segmentCount = force
+                ? remaining
+                : Math.Min(remaining, tx.SuggestedSegmentCount(RenderSliceBudgetMs, InitialSegmentsPerSlice, MaxSegmentsPerSlice));
+
+            var segmentStarted = Stopwatch.GetTimestamp();
+            batchDirty = batchDirty.Union(ProcessSegmentBatch(tx, tx.NextSegmentIndex, segmentCount));
+            tx.NextSegmentIndex += segmentCount;
+            processed += segmentCount;
+            tx.RecordSegmentTime(ElapsedMs(segmentStarted), segmentCount);
+
+            if (!force && processed >= MaxSegmentsPerSlice)
+                break;
+            if (!force && ElapsedMs(started) >= RenderSliceBudgetMs)
+                break;
+        }
+
+        if (!batchDirty.IsEmpty)
+        {
+            tx.PendingPreviewDirty = tx.PendingPreviewDirty.Union(batchDirty);
+            FlushPreviewDirty(tx, force: force || tx.FinalizeRequested);
+        }
+
+        if (tx.NextSegmentIndex < tx.QueuedSamples.Count)
+        {
+            scheduleAfterProcessing = true;
+            return;
+        }
+
+        if (tx.FinalizeRequested)
+        {
+            FlushPreviewDirty(tx, force: true);
+            _brushEngine.EndStroke();
+            Commit(tx);
+            _active = null;
+            EnsureActiveTransaction();
+            if (_active != null)
+                scheduleAfterProcessing = true;
         }
     }
 
