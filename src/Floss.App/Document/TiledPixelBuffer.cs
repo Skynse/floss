@@ -22,6 +22,7 @@ public sealed class TiledPixelBuffer : IDisposable
 
     private readonly string _scratchDir;
     private readonly object _lock = new();
+    private readonly ReaderWriterLockSlim _pixelLock = new(LockRecursionPolicy.NoRecursion);
     private long _compressedBytes;
     private bool _disposed;
 
@@ -39,7 +40,13 @@ public sealed class TiledPixelBuffer : IDisposable
         if (_disposed) return;
         _disposed = true;
         TileSwapManager.UnregisterBuffer(this, _scratchDir);
+        _pixelLock.Dispose();
     }
+
+    internal void EnterPixelReadLock() => _pixelLock.EnterReadLock();
+    internal void ExitPixelReadLock() => _pixelLock.ExitReadLock();
+    internal void EnterPixelWriteLock() => _pixelLock.EnterWriteLock();
+    internal void ExitPixelWriteLock() => _pixelLock.ExitWriteLock();
 
     public int Width => Math.Max(1, MaxX - MinX);
     public int Height => Math.Max(1, MaxY - MinY);
@@ -538,22 +545,30 @@ public sealed class TiledPixelBuffer : IDisposable
     {
         if (region.IsEmpty) return;
 
-        ForEachTile(region, (tileX, tileY, tile, tileRegion) =>
+        _pixelLock.EnterWriteLock();
+        try
         {
-            fixed (byte* tilePtr = tile)
+            ForEachTile(region, (tileX, tileY, tile, tileRegion) =>
             {
-                var info = new SKImageInfo(TileSize, TileSize, SKColorType.Bgra8888, SKAlphaType.Unpremul);
-                using var bitmap = new SKBitmap();
-                if (!bitmap.InstallPixels(info, (IntPtr)tilePtr, TileSize * BytesPerPixel))
-                    return;
+                fixed (byte* tilePtr = tile)
+                {
+                    var info = new SKImageInfo(TileSize, TileSize, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+                    using var bitmap = new SKBitmap();
+                    if (!bitmap.InstallPixels(info, (IntPtr)tilePtr, TileSize * BytesPerPixel))
+                        return;
 
-                using var canvas = new SKCanvas(bitmap);
-                canvas.Translate(-tileX * TileSize, -tileY * TileSize);
-                canvas.ClipRect(new SKRect(tileRegion.X, tileRegion.Y, tileRegion.Right, tileRegion.Bottom));
-                render(canvas);
-                canvas.Flush();
-            }
-        }, create: true);
+                    using var canvas = new SKCanvas(bitmap);
+                    canvas.Translate(-tileX * TileSize, -tileY * TileSize);
+                    canvas.ClipRect(new SKRect(tileRegion.X, tileRegion.Y, tileRegion.Right, tileRegion.Bottom));
+                    render(canvas);
+                    canvas.Flush();
+                }
+            }, create: true);
+        }
+        finally
+        {
+            _pixelLock.ExitWriteLock();
+        }
 
         PruneTransparentTiles(region);
     }

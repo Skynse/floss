@@ -19,6 +19,9 @@ public sealed class DirectDrawOutput : IOutputProcess
     private const int MaxSegmentsPerSlice = 24;
     private const int InitialSegmentsPerSlice = 8;
     private const int SynchronousFinishSegmentLimit = 4;
+    private const int TargetMaxDabsPerQueuedSegment = 96;
+    private const double MinQueuedSegmentLength = 8.0;
+    private const double MaxQueuedSegmentLength = 96.0;
 
     public bool IsPaintOutput => true;
     private readonly BrushEngine _brushEngine;
@@ -49,7 +52,7 @@ public sealed class DirectDrawOutput : IOutputProcess
             ? _accepting
             : BeginTransaction(ctx, layer, samples[0]);
 
-        QueueNewSamples(tx, layer, samples);
+        QueueNewSamples(tx, layer, ctx.Brush, samples);
         if (tx.NextSegmentIndex == 1 &&
             tx.QueuedSamples.Count == 1 &&
             tx.QueuedSamples[0].Source is CanvasInputSource.Mouse or CanvasInputSource.Unknown)
@@ -102,14 +105,63 @@ public sealed class DirectDrawOutput : IOutputProcess
         return tx;
     }
 
-    private static void QueueNewSamples(StrokeTransaction tx, DrawingLayer layer, IReadOnlyList<CanvasInputSample> samples)
+    private static void QueueNewSamples(StrokeTransaction tx, DrawingLayer layer, BrushPreset brush, IReadOnlyList<CanvasInputSample> samples)
     {
         var start = Math.Max(0, tx.LastQueuedInputIndex + 1);
         for (var i = start; i < samples.Count; i++)
         {
-            tx.QueuedSamples.Add(ToLayerSample(layer, samples[i]));
+            var sample = ToLayerSample(layer, samples[i]);
+            AppendBoundedSample(tx, brush, sample);
             tx.LastQueuedInputIndex = i;
         }
+    }
+
+    private static void AppendBoundedSample(StrokeTransaction tx, BrushPreset brush, CanvasInputSample sample)
+    {
+        if (tx.QueuedSamples.Count == 0)
+        {
+            tx.QueuedSamples.Add(sample);
+            return;
+        }
+
+        var previous = tx.QueuedSamples[^1];
+        var distance = previous.DistanceTo(sample);
+        var maxLength = QueuedSegmentLength(brush);
+        if (distance <= maxLength)
+        {
+            tx.QueuedSamples.Add(sample);
+            return;
+        }
+
+        var pieces = Math.Clamp((int)Math.Ceiling(distance / maxLength), 1, 4096);
+        for (var i = 1; i <= pieces; i++)
+        {
+            var t = i / (double)pieces;
+            tx.QueuedSamples.Add(LerpSample(previous, sample, t));
+        }
+    }
+
+    private static double QueuedSegmentLength(BrushPreset brush)
+    {
+        var flow = Math.Clamp(brush.Flow, 0.01, 1.0);
+        var spacing = Math.Clamp(brush.Spacing, 0.005, 4.0);
+        var dabSpacing = Math.Max(0.5, brush.Size * spacing * Math.Sqrt(flow));
+        return Math.Clamp(dabSpacing * TargetMaxDabsPerQueuedSegment, MinQueuedSegmentLength, MaxQueuedSegmentLength);
+    }
+
+    private static CanvasInputSample LerpSample(CanvasInputSample from, CanvasInputSample to, double t)
+    {
+        return new CanvasInputSample(
+            from.X + (to.X - from.X) * t,
+            from.Y + (to.Y - from.Y) * t,
+            from.Pressure + (to.Pressure - from.Pressure) * t,
+            from.TiltX + (to.TiltX - from.TiltX) * t,
+            from.TiltY + (to.TiltY - from.TiltY) * t,
+            from.Twist + (to.Twist - from.Twist) * t,
+            (long)(from.TimeMicros + (to.TimeMicros - from.TimeMicros) * t),
+            to.PointerId,
+            to.Source,
+            to.Phase);
     }
 
     private void EnsureActiveTransaction()
@@ -145,6 +197,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         var started = Stopwatch.GetTimestamp();
         var processed = 0;
         var batchDirty = PixelRegion.Empty;
+        var scheduleAfterProcessing = false;
 
         try
         {
@@ -178,26 +231,39 @@ public sealed class DirectDrawOutput : IOutputProcess
                 tx.PendingPreviewDirty = tx.PendingPreviewDirty.Union(batchDirty);
                 FlushPreviewDirty(tx, force: force || tx.FinalizeRequested);
             }
+
+            if (tx.NextSegmentIndex < tx.QueuedSamples.Count)
+            {
+                scheduleAfterProcessing = true;
+                return;
+            }
+
+            if (tx.FinalizeRequested)
+            {
+                FlushPreviewDirty(tx, force: true);
+                _brushEngine.EndStroke();
+                Commit(tx);
+                _active = null;
+                EnsureActiveTransaction();
+                if (_active != null)
+                    scheduleAfterProcessing = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write(ex, "DirectDrawOutput.ProcessQueuedSegments", flushToDisk: true);
+            _brushEngine.EndStroke();
+            RestoreTransaction(tx);
+            _active = null;
+            _accepting = ReferenceEquals(_accepting, tx) ? null : _accepting;
+            EnsureActiveTransaction();
+            if (_active != null)
+                scheduleAfterProcessing = true;
         }
         finally
         {
             _processing = false;
-        }
-
-        if (tx.NextSegmentIndex < tx.QueuedSamples.Count)
-        {
-            ScheduleProcessQueued();
-            return;
-        }
-
-        if (tx.FinalizeRequested)
-        {
-            FlushPreviewDirty(tx, force: true);
-            _brushEngine.EndStroke();
-            Commit(tx);
-            _active = null;
-            EnsureActiveTransaction();
-            if (_active != null)
+            if (scheduleAfterProcessing)
                 ScheduleProcessQueued();
         }
     }

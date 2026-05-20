@@ -823,6 +823,11 @@ public sealed class LayerCompositor : IDisposable
         var sourceRegion = new PixelRegion(docLeft - offsetX, docTop - offsetY, docRight - docLeft, docBottom - docTop);
         if (!layer.Pixels.HasContentTiles(sourceRegion)) return;
 
+        layer.Pixels.EnterPixelReadLock();
+        baseLayer.Pixels.EnterPixelReadLock();
+        try
+        {
+
         var blendMode = layer.BlendMode;
         var layerColor = layer.LayerColor;
         var hasLayerColor = layerColor.HasValue;
@@ -956,6 +961,12 @@ public sealed class LayerCompositor : IDisposable
                 }
             }
         }
+        }
+        finally
+        {
+            baseLayer.Pixels.ExitPixelReadLock();
+            layer.Pixels.ExitPixelReadLock();
+        }
     }
 
     private unsafe void CompositeClippedGroup(
@@ -1008,6 +1019,9 @@ public sealed class LayerCompositor : IDisposable
 
         const int ts = TiledPixelBuffer.TileSize;
 
+        baseLayer.Pixels.EnterPixelReadLock();
+        try
+        {
         for (int docY = clip.Y; docY < clip.Bottom; docY++)
         {
             var baseY = docY - baseOffsetY;
@@ -1061,6 +1075,8 @@ public sealed class LayerCompositor : IDisposable
                 BlendPixel(dstRow + dstIdx, srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendR, blendG, blendB);
             }
         }
+        }
+        finally { baseLayer.Pixels.ExitPixelReadLock(); }
     }
 
     // ── Blend LUTs ─────────────────────────────────────────────────────────--
@@ -1151,6 +1167,10 @@ public sealed class LayerCompositor : IDisposable
         if (docLeft >= docRight || docTop >= docBottom) return;
         var sourceRegion = new PixelRegion(docLeft - offsetX, docTop - offsetY, docRight - docLeft, docBottom - docTop);
         if (!layer.Pixels.HasContentTiles(sourceRegion)) return;
+
+        layer.Pixels.EnterPixelReadLock();
+        try
+        {
 
         var blendMode = layer.BlendMode;
         var layerColor = layer.LayerColor;
@@ -1418,6 +1438,9 @@ public sealed class LayerCompositor : IDisposable
                     }
                 }
             }
+
+        }
+        finally { layer.Pixels.ExitPixelReadLock(); }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

@@ -75,8 +75,12 @@ internal static class Program
         ("Brush engine applies tip density and thickness dynamics", BrushTests.BrushEngine_AppliesTipDensityAndThicknessDynamics),
         ("Brush engine blend mode does not drag paint across empty canvas", BrushTests.BrushEngine_BlendModeDoesNotCarryPaint),
         ("Brush engine low-spacing simple brushes use cached tile-major path", BrushTests.BrushEngine_LowSpacingUsesCachedTileMajorPath),
+        ("Brush engine shaped tips use cached tile-major path", BrushTests.BrushEngine_ShapedTipsUseCachedTileMajorPath),
+        ("Brush engine multi-tips use cached tile-major path", BrushTests.BrushEngine_MultiTipsUseCachedTileMajorPath),
+        ("Brush engine color image tips use cached tile-major path", BrushTests.BrushEngine_ColorImageTipsUseCachedTileMajorPath),
         ("Brush engine batched segments match sequential dry stroke", BrushTests.BrushEngine_BatchedSegmentsMatchSequentialDryStroke),
         ("Brush engine color mix uses cached tile-major path", BrushTests.BrushEngine_ColorMixUsesCachedTileMajorPath),
+        ("Direct draw splits fast long brush segments before rendering", BrushTests.DirectDraw_SplitsFastLongBrushSegments),
         ("Direct draw color mixing samples pre-stroke pixels", BrushTests.DirectDraw_ColorMixingDoesNotSampleOwnStroke),
         ("Brush engine color mixing amount controls deposited color", BrushTests.BrushEngine_ColorMixAmountControlsDepositedColor),
         ("Brush engine does not dispose tip-owned cached masks", BrushTests.BrushEngine_DoesNotDisposeTipOwnedCachedMasks),
@@ -1330,6 +1334,85 @@ internal static class BrushTests
         AssertEx.True(engine.LastStats.TileBucketCount > 0);
     }
 
+    public static void BrushEngine_ShapedTipsUseCachedTileMajorPath()
+    {
+        using var engine = new BrushEngine();
+        using var layer = new DrawingLayer("Layer", 512, 256);
+        var brush = new BrushPreset("Shaped", 44, 1, 0.8, 0.02, Colors.Black, 0)
+        {
+            Tip = new ProceduralBrushTip(BrushTipShape.Chalk),
+            Shape = new ProceduralBrushTip(BrushTipShape.Rectangle),
+            ColorMix = false,
+            Grain = 0,
+            Dynamics = new BrushDynamics()
+        };
+        var from = Sample(40, 128, 0);
+        var to = Sample(430, 128, 16_000);
+
+        engine.BeginStroke(brush, from);
+        var dirty = engine.RasterizeSegment(layer, brush, from, to);
+
+        AssertEx.False(dirty.IsEmpty);
+        AssertEx.Equal("CachedTileMajor", engine.LastStats.Path);
+        AssertEx.True(engine.LastStats.CachedDabCount > 10);
+        AssertEx.True(engine.LastStats.TileBucketCount > 0);
+    }
+
+    public static void BrushEngine_MultiTipsUseCachedTileMajorPath()
+    {
+        using var engine = new BrushEngine();
+        using var layer = new DrawingLayer("Layer", 512, 256);
+        var brush = new BrushPreset("Multi-tip", 42, 1, 0.85, 0.02, Colors.Black, 0)
+        {
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Tips =
+            [
+                new BrushTipData { Kind = BrushTipStorageKind.Procedural, Shape = BrushTipShape.Circle },
+                new BrushTipData { Kind = BrushTipStorageKind.Procedural, Shape = BrushTipShape.Chalk }
+            ],
+            TipSelectionMode = BrushTipSelectionMode.Sequential,
+            ColorMix = false,
+            Grain = 0,
+            Dynamics = new BrushDynamics()
+        };
+        var from = Sample(40, 128, 0);
+        var to = Sample(430, 128, 16_000);
+
+        engine.BeginStroke(brush, from);
+        var dirty = engine.RasterizeSegment(layer, brush, from, to);
+
+        AssertEx.False(dirty.IsEmpty);
+        AssertEx.Equal("CachedTileMajor", engine.LastStats.Path);
+        AssertEx.True(engine.LastStats.CachedDabCount > 10);
+        AssertEx.True(engine.LastStats.TileBucketCount > 0);
+    }
+
+    public static void BrushEngine_ColorImageTipsUseCachedTileMajorPath()
+    {
+        using var engine = new BrushEngine();
+        using var layer = new DrawingLayer("Layer", 512, 256);
+        var brush = new BrushPreset("Color material", 36, 1, 1, 0.02, Colors.Black, 0)
+        {
+            Tip = new ImageBrushTip(ColoredTipPngBytes(SKColors.Red)),
+            Shape = null,
+            ColorMix = false,
+            Grain = 0,
+            Dynamics = new BrushDynamics()
+        };
+        var from = Sample(40, 128, 0);
+        var to = Sample(430, 128, 16_000);
+
+        engine.BeginStroke(brush, from);
+        var dirty = engine.RasterizeSegment(layer, brush, from, to);
+
+        AssertEx.False(dirty.IsEmpty);
+        AssertEx.Equal("CachedColorTileMajor", engine.LastStats.Path);
+        AssertEx.True(engine.LastStats.CachedDabCount > 10);
+        layer.Pixels.GetPixel(240, 128, out var b, out var g, out var r, out var a);
+        AssertEx.True(a > 0, "Colored image tip should deposit alpha.");
+        AssertEx.True(r > 180 && g < 80 && b < 80, $"Colored image tip should preserve red pixels, got BGRA=({b},{g},{r},{a}).");
+    }
+
     public static void BrushEngine_BatchedSegmentsMatchSequentialDryStroke()
     {
         using var sequentialEngine = new BrushEngine();
@@ -1390,6 +1473,38 @@ internal static class BrushTests
         AssertEx.True(engine.LastStats.CachedDabCount > 10);
         layer.Pixels.GetPixel(240, 128, out _, out _, out _, out var alpha);
         AssertEx.True(alpha > 0);
+    }
+
+    public static void DirectDraw_SplitsFastLongBrushSegments()
+    {
+        var document = new DrawingDocument();
+        document.AddLayer();
+        var layer = document.ActiveLayer!;
+        var ctx = new ToolContext(document);
+        var brush = new BrushPreset("Fast low spacing", 36, 1, 1, 0.005, Colors.Black, 0)
+        {
+            Dynamics = new BrushDynamics()
+        };
+        var first = Sample(0, 0, 0);
+        var txType = typeof(DirectDrawOutput).GetNestedType("StrokeTransaction", BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Missing StrokeTransaction.");
+        var tx = Activator.CreateInstance(txType, ctx, layer, document.ActiveLayerIndex, brush, first)
+            ?? throw new InvalidOperationException("Could not create StrokeTransaction.");
+        var queue = typeof(DirectDrawOutput).GetMethod("QueueNewSamples", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException("Missing QueueNewSamples.");
+        var samples = new List<CanvasInputSample>
+        {
+            Sample(0, 0, 0),
+            Sample(15_000, 0, 16_000)
+        };
+
+        queue.Invoke(null, [tx, layer, brush, samples]);
+        var queued = (List<CanvasInputSample>)(txType.GetProperty("QueuedSamples")?.GetValue(tx)
+            ?? throw new InvalidOperationException("Missing QueuedSamples."));
+
+        AssertEx.True(queued.Count > 100, $"Expected long fast input to be split, got {queued.Count} queued samples.");
+        for (var i = 1; i < queued.Count; i++)
+            AssertEx.True(queued[i - 1].DistanceTo(queued[i]) <= 96.001, "Queued brush segment exceeded render budget length.");
     }
 
     public static void DirectDraw_ColorMixingDoesNotSampleOwnStroke()
