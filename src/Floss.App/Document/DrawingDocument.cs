@@ -11,6 +11,7 @@ public enum DocumentHistoryChangeKind { Mutation, Undo, Redo }
 
 public sealed class DrawingDocument : IDisposable
 {
+    public DocumentRenderLock RenderLock { get; } = new();
     public void Dispose()
     {
         foreach (var l in _layers) l.Dispose();
@@ -20,6 +21,7 @@ public sealed class DrawingDocument : IDisposable
         _undoIds.Clear();
         _redoIds.Clear();
         Selection.Clear();
+        RenderLock.Dispose();
     }
 
     // --- History & State Tracking ---

@@ -18,6 +18,7 @@ public enum BrushTipShape
 
 public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circle, float aspectRatio = 1.0f) : IBrushTip
 {
+    private readonly object _cacheLock = new();
     private readonly Dictionary<(int Size, int Hardness), SKBitmap> _maskCache = [];
 
     public BrushTipShape Shape { get; } = shape;
@@ -28,8 +29,9 @@ public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circl
         var size = Math.Max(1, baseSize);
         var h = Math.Clamp(hardness, 0.001f, 1.0f);
         var key = (size, QuantizeHardness(h));
-        if (_maskCache.TryGetValue(key, out var cached))
-            return cached;
+        lock (_cacheLock)
+            if (_maskCache.TryGetValue(key, out var cached))
+                return cached;
 
         var mask = Shape switch
         {
@@ -38,7 +40,15 @@ public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circl
             BrushTipShape.Scatter => GenerateScatter(size, h),
             _ => GenerateSmooth(size, h),
         };
-        _maskCache[key] = mask;
+        lock (_cacheLock)
+        {
+            if (_maskCache.TryGetValue(key, out var existing))
+            {
+                mask.Dispose();
+                return existing;
+            }
+            _maskCache[key] = mask;
+        }
         return mask;
     }
 

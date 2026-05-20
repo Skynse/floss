@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Threading.Tasks;
 using Avalonia;
@@ -30,6 +31,7 @@ public sealed class DrawingCanvas : Control, IDisposable
 
     private readonly DrawingDocument _document = new();
     private readonly LayerCompositor _compositor;
+    private readonly ProjectionUpdateScheduler _projectionScheduler;
     private readonly ToolContext _ctx;
     private readonly ToolController _toolController;
 
@@ -95,6 +97,7 @@ public sealed class DrawingCanvas : Control, IDisposable
 
         BrushEngine = new BrushEngine();
         _compositor = new LayerCompositor();
+        _projectionScheduler = new ProjectionUpdateScheduler(InvalidateVisual);
 
         _ctx = new ToolContext(_document)
         {
@@ -123,22 +126,21 @@ public sealed class DrawingCanvas : Control, IDisposable
 
         _document.Changed += (_, e) =>
         {
-            _compositor.Invalidate(e.DirtyRegion, _document.Layers, e.LayerIndex);
-            InvalidateVisual();
+            _projectionScheduler.Invalidate(e.DirtyRegion, _document.Layers, e.LayerIndex);
             StatsChanged?.Invoke(this, EventArgs.Empty);
         };
         _document.HistoryChanged += (_, _) => HistoryChanged?.Invoke(this, EventArgs.Empty);
         _document.SelectionChanged += (_, _) => NotifySelectionChanged();
         _document.LayersChanged += (_, _) =>
         {
-            _compositor.Invalidate(null);
+            _projectionScheduler.Invalidate(null);
             LayersChanged?.Invoke(this, EventArgs.Empty);
         };
         _document.LayerRemoved += (_, layer) => _compositor.RemoveGroupCache(layer);
         _document.LayerMetadataChanged += (_, e) => LayerMetadataChanged?.Invoke(this, e);
     }
 
-    public void InvalidateCompositor() => _compositor.Invalidate(null);
+    public void InvalidateCompositor() => _projectionScheduler.Invalidate(null);
 
     public void SetCurrentModifiers(Avalonia.Input.KeyModifiers mods) => _ctx.CurrentModifiers = mods;
     public void SetToolAuxMode(ToolAuxOperationType mode)
@@ -1097,6 +1099,7 @@ public sealed class DrawingCanvas : Control, IDisposable
         // full-canvas WriteableBitmap (900MB+ for 15k²) when nothing is drawn.
         var viewport = ComputeVisibleViewport();
         var canvasBounds = new Rect(Bounds.Size);
+        _projectionScheduler.ApplyPending(_compositor);
         {
             var paper = _document.PaperLayer;
             bool hasSolidPaper = paper is { IsVisible: true } && _document.PaperColor.A == 255;
@@ -1109,16 +1112,19 @@ public sealed class DrawingCanvas : Control, IDisposable
         {
             var paper = _document.PaperLayer;
             uint paperUint = paper is { IsVisible: true } ? ColorToBgraUint(_document.PaperColor) : 0u;
-            if (_compositor.Composite(_document.Layers, _document.Width, _document.Height, paperUint, viewport, CanvasZoom))
-                QueueDeferredTileRender();
-            using (context.PushClip(new RoundedRect(canvasBounds)))
-            using (context.PushRenderOptions(new RenderOptions
+            using (_document.RenderLock.Read())
             {
-                BitmapInterpolationMode = CanvasZoom >= 1.0 ? BitmapInterpolationMode.None : BitmapInterpolationMode.HighQuality,
-                EdgeMode = EdgeMode.Aliased
-            }))
-            {
-                _compositor.DrawTiles(context, canvasBounds, viewport);
+                if (_compositor.Composite(_document.Layers, _document.Width, _document.Height, paperUint, viewport, CanvasZoom))
+                    QueueDeferredTileRender();
+                using (context.PushClip(new RoundedRect(canvasBounds)))
+                using (context.PushRenderOptions(new RenderOptions
+                {
+                    BitmapInterpolationMode = CanvasZoom >= 1.0 ? BitmapInterpolationMode.None : BitmapInterpolationMode.HighQuality,
+                    EdgeMode = EdgeMode.Aliased
+                }))
+                {
+                    _compositor.DrawTiles(context, canvasBounds, viewport);
+                }
             }
         }
         else
@@ -1183,6 +1189,28 @@ public sealed class DrawingCanvas : Control, IDisposable
                 context.DrawEllipse(null, new Pen(CursorInnerBrush, t), swatchPos, swatchR, swatchR);
             }
         }
+
+        DrawTelemetryOverlay(context);
+    }
+
+    private static readonly IBrush TelemetryOverlayBrush = new SolidColorBrush(Color.FromArgb(150, 18, 18, 18));
+    private static readonly IBrush TelemetryTextBrush = new SolidColorBrush(Color.FromArgb(230, 235, 238, 242));
+
+    private static void DrawTelemetryOverlay(DrawingContext context)
+    {
+        if (!App.Config.ShowRenderTelemetry) return;
+
+        var s = RenderTelemetry.Snapshot;
+        if (s.BrushMs <= 0 && s.CompositeMs <= 0) return;
+
+        var text =
+            $"brush {s.BrushMs:0.0}ms {s.BrushPath} dabs {s.BrushCachedDabs}/{s.BrushStamps}\n" +
+            $"comp {s.CompositeMs:0.0}ms dirty {s.CompositeDirtyTiles} miss {s.CompositeMissingTiles} lod {s.Lod} q {s.PendingProjectionUpdates}";
+        var ft = new FormattedText(text, CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight, Typeface.Default, 11, TelemetryTextBrush);
+        var rect = new Rect(8, 8, ft.Width + 12, ft.Height + 8);
+        context.FillRectangle(TelemetryOverlayBrush, rect);
+        context.DrawText(ft, new Point(rect.X + 6, rect.Y + 4));
     }
 
     private void QueueDeferredTileRender()

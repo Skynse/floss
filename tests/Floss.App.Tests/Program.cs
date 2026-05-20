@@ -46,6 +46,8 @@ internal static class Program
         ("TiledPixelBuffer solid fills isolate tile mutations", TiledPixelBufferTests.FillSolid_SharedTemplatesDoNotLeakMutations),
         ("TiledPixelBuffer scratch disk round-trips tiles through disk", TiledPixelBufferTests.ScratchDisk_RoundTripsTilesThroughDisk),
         ("Layer compositor monochrome expression thresholds coverage", LayerCompositorTests.MonochromeExpression_ThresholdsCoverageBeforePaperComposite),
+        ("Layer compositor budgets dirty tile projection", LayerCompositorTests.Composite_BudgetsDirtyTiles),
+        ("Layer compositor selects LOD for huge low zoom canvas", LayerCompositorTests.Composite_SelectsLodForHugeLowZoomCanvas),
 
         ("KeyBinding parses friendly names and modifiers", KeyBindingTests.Parse_HandlesFriendlyNamesAndModifiers),
         ("KeyBinding formats and displays shortcuts", KeyBindingTests.ToStringAndDisplay_ReturnExpectedText),
@@ -988,6 +990,21 @@ internal static class LayerCompositorTests
         AssertPixel(pixels, 0, 255, 255, 255, 255);
         AssertPixel(pixels, 1, 0, 0, 0, 255);
         AssertPixel(pixels, 2, 255, 255, 255, 255);
+    }
+
+    public static void Composite_BudgetsDirtyTiles()
+    {
+        var dirtyTileCount = LayerCompositor.CountTilesForRegion(new PixelRegion(0, 0, 4096, 4096), lod: 0);
+
+        AssertEx.True(dirtyTileCount > LayerCompositor.DirtyTileBudget);
+        AssertEx.Equal(32, LayerCompositor.DirtyTileBudget);
+    }
+
+    public static void Composite_SelectsLodForHugeLowZoomCanvas()
+    {
+        AssertEx.Equal(2, LayerCompositor.SelectLod(6000, 4080, 0.1));
+        AssertEx.Equal(1, LayerCompositor.SelectLod(6000, 4080, 0.3));
+        AssertEx.Equal(0, LayerCompositor.SelectLod(6000, 4080, 1.0));
     }
 
     private static void AssertPixel(byte[] pixels, int x, byte b, byte g, byte r, byte a)

@@ -16,6 +16,7 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
     private readonly SKBitmap _source;
     private readonly bool _hasColor;
     private readonly bool _sourceHasUsefulAlpha;
+    private readonly object _cacheLock = new();
     private readonly Dictionary<(int Size, int Hardness), SKBitmap> _maskCache = [];
     private readonly Dictionary<int, SKBitmap> _colorStampCache = [];
 
@@ -42,8 +43,9 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
         var clampedHardness = Math.Clamp(hardness, 0.001f, 1.0f);
         var key = (size, QuantizeHardness(clampedHardness));
 
-        if (_maskCache.TryGetValue(key, out var cached))
-            return cached;
+        lock (_cacheLock)
+            if (_maskCache.TryGetValue(key, out var cached))
+                return cached;
 
         // Step 1: scale source to target size with optional blur for hardness.
         using var scaled = new SKBitmap(new SKImageInfo(size, size, SKColorType.Bgra8888, SKAlphaType.Premul));
@@ -100,7 +102,15 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
             }
         }
 
-        _maskCache[key] = mask;
+        lock (_cacheLock)
+        {
+            if (_maskCache.TryGetValue(key, out var existing))
+            {
+                mask.Dispose();
+                return existing;
+            }
+            _maskCache[key] = mask;
+        }
         return mask;
     }
 
@@ -114,8 +124,9 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
             return GenerateMask(baseSize, 1.0f);
 
         var size = Math.Clamp(baseSize, 1, MaxGeneratedSize);
-        if (_colorStampCache.TryGetValue(size, out var cached))
-            return cached;
+        lock (_cacheLock)
+            if (_colorStampCache.TryGetValue(size, out var cached))
+                return cached;
 
         var stamp = new SKBitmap(new SKImageInfo(size, size, SKColorType.Bgra8888, SKAlphaType.Unpremul));
         using (var canvas = new SKCanvas(stamp))
@@ -129,19 +140,30 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
             canvas.DrawBitmap(_source, dst, paint);
         }
 
-        _colorStampCache[size] = stamp;
+        lock (_cacheLock)
+        {
+            if (_colorStampCache.TryGetValue(size, out var existing))
+            {
+                stamp.Dispose();
+                return existing;
+            }
+            _colorStampCache[size] = stamp;
+        }
         return stamp;
     }
 
     public void Dispose()
     {
-        _source.Dispose();
-        foreach (var mask in _maskCache.Values)
-            mask.Dispose();
-        _maskCache.Clear();
-        foreach (var stamp in _colorStampCache.Values)
-            stamp.Dispose();
-        _colorStampCache.Clear();
+        lock (_cacheLock)
+        {
+            _source.Dispose();
+            foreach (var mask in _maskCache.Values)
+                mask.Dispose();
+            _maskCache.Clear();
+            foreach (var stamp in _colorStampCache.Values)
+                stamp.Dispose();
+            _colorStampCache.Clear();
+        }
     }
 
     private static unsafe bool DetectColor(SKBitmap bitmap)

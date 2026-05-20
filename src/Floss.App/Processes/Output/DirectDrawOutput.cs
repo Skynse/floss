@@ -22,6 +22,7 @@ public sealed class DirectDrawOutput : IOutputProcess
 
     public bool IsPaintOutput => true;
     private readonly BrushEngine _brushEngine;
+    private readonly BrushPreparationScheduler _preparationScheduler = new();
     private readonly Queue<StrokeTransaction> _pendingTransactions = new();
 
     public bool Antialiasing { get; set; } = true;
@@ -91,6 +92,7 @@ public sealed class DirectDrawOutput : IOutputProcess
 
     private StrokeTransaction BeginTransaction(ToolContext ctx, DrawingLayer layer, CanvasInputSample firstSample)
     {
+        _preparationScheduler.QueuePrepare(ctx.Brush, firstSample);
         var tx = new StrokeTransaction(ctx, layer, ctx.ActiveLayerIndex, ctx.Brush, ToLayerSample(layer, firstSample));
         if (_active == null)
             _active = tx;
@@ -216,12 +218,17 @@ public sealed class DirectDrawOutput : IOutputProcess
 
     private PixelRegion ProcessSegmentBatch(StrokeTransaction tx, int startSegmentIndex, int segmentCount)
     {
+        using var mutation = tx.Ctx.Document.RenderLock.Write();
+        using var telemetry = RenderTelemetry.Scope("Brush");
+
         var region = EstimateSegmentBatchRegion(tx, startSegmentIndex, segmentCount);
         if (!region.IsEmpty)
             tx.Layer.CaptureTiles(region, tx.BeforeTiles);
 
+        var started = Stopwatch.GetTimestamp();
         var dirty = _brushEngine.RasterizeSegments(tx.Layer, tx.Brush, tx.QueuedSamples, startSegmentIndex, segmentCount,
             (x, y, out b, out g, out r, out a) => ReadBeforeStrokePixelFrom(tx.BeforeTiles, tx.Layer, x, y, out b, out g, out r, out a));
+        RenderTelemetry.RecordBrush(ElapsedMs(started), _brushEngine.LastStats.Path, _brushEngine.LastStats.StampCount, _brushEngine.LastStats.CachedDabCount);
 
         if (!dirty.IsEmpty)
         {
@@ -248,6 +255,7 @@ public sealed class DirectDrawOutput : IOutputProcess
     {
         try
         {
+            using var mutation = tx.Ctx.Document.RenderLock.Write();
             if (tx.BeforeTiles.Count > 0)
             {
                 var tileDirty = ComputeTileDirtyRegion(tx.BeforeTiles).Translate(tx.Layer.OffsetX, tx.Layer.OffsetY);
@@ -286,6 +294,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         if (tx.BeforeTiles.Count == 0)
             return;
 
+        using var mutation = tx.Ctx.Document.RenderLock.Write();
         foreach (var ((tileX, tileY), tile) in tx.BeforeTiles)
             tx.Layer.RestoreTile(tileX, tileY, tile);
 

@@ -31,6 +31,7 @@ public sealed class AppConfig
     public double LastBrushHardness { get; set; } = 0.95;
     public double LastBrushSpacing { get; set; } = 0.10;
     public bool RecordTimelapse { get; set; } = false;
+    public bool ShowRenderTelemetry { get; set; } = false;
     public BrushCursorMode BrushCursorMode { get; set; } = BrushCursorMode.Outline;
     public BrushCursorMode PenCursorMode { get; set; } = BrushCursorMode.Outline;
     public BrushCursorMode EraserCursorMode { get; set; } = BrushCursorMode.Outline;
