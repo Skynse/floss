@@ -499,7 +499,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         UpdateTimelapseMenuState();
         BuildLayerList();
         UpdateStatus();
-        Closing += (_, _) => SaveToConfig();
+        Closing += MainWindow_Closing;
         Deactivated += (_, _) => ResetTransientInputState();
         LostFocus += (_, _) => ResetTransientInputState();
         Loaded += (_, _) => { UpdateTabBar(); SyncCanvasViewport(); };
@@ -2231,9 +2231,12 @@ public partial class MainWindow : Window, Tools.IViewportController
     }
 
     private readonly HashSet<string> _dirtyBrushAssetIds = new();
+    private bool _closeConfirmed;
+    private bool _closePromptRunning;
 
     private void SaveToConfig()
     {
+        FlushBrushPresetAutosave();
         CaptureActiveBrushToPreset();
 
         // Persist brush asset so curve edits, slider changes, etc. survive restart
@@ -2264,6 +2267,33 @@ public partial class MainWindow : Window, Tools.IViewportController
         cfg.LastBrushName = _activePreset?.Name ?? "";
         cfg.Save();
         App.ToolGroups.Save();
+    }
+
+    private async void MainWindow_Closing(object? sender, WindowClosingEventArgs e)
+    {
+        if (_closeConfirmed)
+        {
+            SaveToConfig();
+            return;
+        }
+
+        e.Cancel = true;
+        if (_closePromptRunning)
+            return;
+
+        _closePromptRunning = true;
+        try
+        {
+            if (!await ResolveUnsavedDocumentsBeforeCloseAsync())
+                return;
+
+            _closeConfirmed = true;
+            Close();
+        }
+        finally
+        {
+            _closePromptRunning = false;
+        }
     }
 
     // ── Wire-up ───────────────────────────────────────────────────────────────

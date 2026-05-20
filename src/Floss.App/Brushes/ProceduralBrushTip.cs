@@ -91,6 +91,13 @@ public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circl
                     {
                         alpha = 0f;
                     }
+                    else if (isSoft)
+                    {
+                        var k = 2.2f + hardness * 2.8f;
+                        var edge = MathF.Exp(-k);
+                        var raw = MathF.Exp(-t * t * k);
+                        alpha = (raw - edge) / (1f - edge);
+                    }
                     else if (t <= hardness)
                     {
                         alpha = 1f;
@@ -110,20 +117,20 @@ public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circl
         }
         else
         {
-            // Flat, Rectangle — Gaussian blur is fine; no risk of clipping at edge
-            // because these shapes are rectilinear and intentionally hard-edged.
             var bmp = NewAlpha8(size);
             using var canvas = new SKCanvas(bmp);
             canvas.Clear(SKColors.Transparent);
-            var aspect = Shape == BrushTipShape.Flat ? 4.0f : Math.Clamp(AspectRatio, 0.05f, 20f);
+            var aspect = Shape == BrushTipShape.Flat ? 4.5f : Math.Clamp(AspectRatio, 0.05f, 20f);
             using var paint = new SKPaint { IsAntialias = true, Color = SKColors.White, Style = SKPaintStyle.Fill };
-            var sigma = (1f - hardness) * size * 0.22f;
+            var sigma = Shape == BrushTipShape.Flat
+                ? (1f - hardness) * size * 0.045f
+                : (1f - hardness) * size * 0.06f;
             paint.MaskFilter = sigma > 0.01f ? SKMaskFilter.CreateBlur(SKBlurStyle.Normal, sigma) : null;
-            DrawEllipse(canvas, paint, cx, cy, maxR, Shape, aspect);
+            DrawRectangularShape(canvas, paint, cx, cy, maxR, Shape, aspect);
             if (hardness < 0.999f)
             {
                 paint.MaskFilter = null;
-                DrawEllipse(canvas, paint, cx, cy, maxR * hardness, Shape, aspect);
+                DrawRectangularShape(canvas, paint, cx, cy, maxR * hardness, Shape, aspect);
             }
             return bmp;
         }
@@ -158,20 +165,35 @@ public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circl
         var bmp = NewAlpha8(size);
         using var canvas = new SKCanvas(bmp);
         canvas.Clear(SKColors.Transparent);
-        const int strands = 7;
+        var strands = Math.Clamp(size / 5, 7, 28);
         var rng = new Random(42);
-        using var paint = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke };
-        var sigma = (1f - hardness) * size * 0.04f;
+        using var paint = new SKPaint
+        {
+            IsAntialias = true,
+            Style = SKPaintStyle.Stroke,
+            StrokeCap = SKStrokeCap.Round
+        };
+        var sigma = (1f - hardness) * size * 0.018f;
         paint.MaskFilter = sigma > 0.5f ? SKMaskFilter.CreateBlur(SKBlurStyle.Normal, sigma) : null;
+
+        var left = size * 0.08f;
+        var right = size * 0.92f;
+        var halfHeight = size * 0.32f;
+        var centerY = size * 0.5f;
         for (var i = 0; i < strands; i++)
         {
             var t = (i + 0.5f) / strands;
-            var y = t * size;
-            var env = (float)Math.Sin(t * Math.PI);
-            var xOff = (float)(rng.NextDouble() - 0.5) * size * 0.05f;
-            paint.Color = new SKColor(255, 255, 255, (byte)Math.Clamp((0.45f + 0.55f * env) * 255, 60, 255));
-            paint.StrokeWidth = MathF.Max(0.5f, size * (0.008f + 0.018f * env));
-            canvas.DrawLine(xOff, y, size + xOff, y, paint);
+            var localY = (t * 2f - 1f) * halfHeight;
+            var env = MathF.Max(0f, 1f - MathF.Pow(MathF.Abs(localY) / halfHeight, 2.2f));
+            var y = centerY + localY + (float)(rng.NextDouble() - 0.5) * size * 0.035f;
+            var xJitter = (float)(rng.NextDouble() - 0.5) * size * 0.06f;
+            var bow = (float)(rng.NextDouble() - 0.5) * size * 0.06f;
+            paint.Color = new SKColor(255, 255, 255, (byte)Math.Clamp((0.24f + 0.76f * env) * 255, 24, 255));
+            paint.StrokeWidth = MathF.Max(0.75f, size * (0.006f + 0.018f * env));
+            using var path = new SKPath();
+            path.MoveTo(left + xJitter, y);
+            path.CubicTo(size * 0.34f, y - bow, size * 0.66f, y + bow, right + xJitter, y);
+            canvas.DrawPath(path, paint);
         }
         return bmp;
     }
@@ -201,17 +223,17 @@ public sealed class ProceduralBrushTip(BrushTipShape shape = BrushTipShape.Circl
         return bmp;
     }
 
-    private static void DrawEllipse(SKCanvas canvas, SKPaint paint, float cx, float cy, float r, BrushTipShape shape, float aspect)
+    private static void DrawRectangularShape(SKCanvas canvas, SKPaint paint, float cx, float cy, float r, BrushTipShape shape, float aspect)
     {
         var rx = r;
         var ry = r;
         if (aspect > 1) ry /= aspect;
         else rx *= aspect;
         var rect = SKRect.Create(cx - rx, cy - ry, rx * 2, ry * 2);
-        if (shape == BrushTipShape.Rectangle)
-            canvas.DrawRect(rect, paint);
+        if (shape == BrushTipShape.Flat)
+            canvas.DrawRoundRect(rect, MathF.Min(ry * 0.18f, 2f), MathF.Min(ry * 0.18f, 2f), paint);
         else
-            canvas.DrawOval(rect, paint);
+            canvas.DrawRect(rect, paint);
     }
 
     private static SKBitmap NewAlpha8(int size) =>

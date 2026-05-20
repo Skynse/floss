@@ -234,6 +234,38 @@ internal static class CanvasInputRouterTests
         AssertEx.Equal(CanvasAction.PanCanvas, router.ReadyAction, "Held Space should resolve to pan.");
     }
 
+    public static void CtrlShiftFallsThroughStaleSpecificNone()
+    {
+        var settings = new ModifierKeySettings
+        {
+            GeneralAssignments =
+            [
+                new ModifierKeyAssignment
+                {
+                    Modifiers = KeyModifiers.Control | KeyModifiers.Shift,
+                    Action = ModifierAction.ChangeToolTemporarily,
+                    TemporaryToolPresetId = "custom-select-layer"
+                }
+            ],
+            ToolSpecificAssignments =
+            {
+                ["1:1"] =
+                [
+                    new ModifierKeyAssignment
+                    {
+                        Modifiers = KeyModifiers.Control | KeyModifiers.Shift,
+                        Action = ModifierAction.None
+                    }
+                ]
+            }
+        };
+
+        var resolved = settings.Resolve(1, 1, null, KeyModifiers.Control | KeyModifiers.Shift);
+
+        AssertEx.True(resolved != null, "Stale tool-specific None should not shadow a real general Ctrl+Shift assignment.");
+        AssertEx.Equal("custom-select-layer", resolved!.TemporaryToolPresetId);
+    }
+
     public static void CaptureLostCancelsOnlyActiveTransaction()
     {
         var host = new MockHost();

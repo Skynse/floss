@@ -579,6 +579,7 @@ public partial class MainWindow : ICanvasInputHost
             _activeBrushAsset.Preset = updated;
             _dirtyBrushAssetIds.Add(_activeBrushAsset.Id);
         }
+        ScheduleBrushPresetAutosave();
 
         var applied = updated with { Color = _canvas.PaintColor };
         _canvas.SetBrush(applied);

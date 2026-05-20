@@ -61,6 +61,7 @@ internal static class Program
         ("Input router: modifier press during stroke does not change active tool", CanvasInputRouterTests.ModifierPressDuringStrokeDoesNotChangeActiveTool),
         ("Input router: completed stroke is not cancelled by later temp tool activation", CanvasInputRouterTests.CompletedStrokeIsNotCancelledByLaterTempToolActivation),
         ("Input router: after stroke release, still-held Space becomes ready/pan", CanvasInputRouterTests.AfterStrokeReleaseHeldSpaceBecomesReadyPan),
+        ("Input router: Ctrl+Shift resolves through stale tool-specific None", CanvasInputRouterTests.CtrlShiftFallsThroughStaleSpecificNone),
         ("Input router: capture lost cancels only active transaction", CanvasInputRouterTests.CaptureLostCancelsOnlyActiveTransaction),
 
         ("CubicCurve identity and linear evaluation", BrushTests.CubicCurve_EvaluatesIdentityAndLinearCurves),
@@ -93,6 +94,9 @@ internal static class Program
         ("Image brush tips keep cached masks stable across sizes", BrushTests.ImageBrushTip_MasksRemainStableAcrossSizes),
         ("Image brush tips do not dispose old cached masks under cache churn", BrushTests.ImageBrushTip_DoesNotDisposeCachedMasksUnderChurn),
         ("Procedural brush tips do not dispose old cached masks under cache churn", BrushTests.ProceduralBrushTip_DoesNotDisposeCachedMasksUnderChurn),
+        ("Procedural brush tips make soft distinct from round", BrushTests.ProceduralBrushTip_SoftRoundDiffersFromRound),
+        ("Procedural brush tips make flat rectangular", BrushTests.ProceduralBrushTip_FlatIsRectangular),
+        ("Procedural brush tips generate bristle strands", BrushTests.ProceduralBrushTip_BristleHasSeparatedStrands),
         ("Image brush tips with color paint as colored stamps", BrushTests.ImageBrushTip_ColorStampPreservesColor),
         ("ABR preset mapping keeps usable brush dynamics", BrushTests.AbrPresetMapping_KeepsDynamics),
         ("ABR mask cleanup inverts dark-on-light stamps", BrushTests.AbrMaskCleanup_InvertsDarkOnLightMasks),
@@ -1876,6 +1880,38 @@ internal static class BrushTests
         AssertEx.True(first.GetPixels() != IntPtr.Zero, "Original procedural tip mask pixels should remain valid after cache churn.");
     }
 
+    public static void ProceduralBrushTip_SoftRoundDiffersFromRound()
+    {
+        var round = new ProceduralBrushTip(BrushTipShape.Circle).GenerateMask(64, 0.85f);
+        var soft = new ProceduralBrushTip(BrushTipShape.SoftRound).GenerateMask(64, 0.85f);
+
+        var roundAlpha = AlphaAt(round, 51, 32);
+        var softAlpha = AlphaAt(soft, 51, 32);
+
+        AssertEx.True(roundAlpha > 240, $"Round should keep a hard body at this radius, got {roundAlpha}.");
+        AssertEx.True(softAlpha < roundAlpha - 80, $"Soft round should fall off before the edge, got round={roundAlpha}, soft={softAlpha}.");
+    }
+
+    public static void ProceduralBrushTip_FlatIsRectangular()
+    {
+        var flat = new ProceduralBrushTip(BrushTipShape.Flat).GenerateMask(96, 0.95f);
+        var bounds = AlphaBounds(flat, threshold: 64);
+        var width = bounds.MaxX - bounds.MinX + 1;
+        var height = bounds.MaxY - bounds.MinY + 1;
+
+        AssertEx.True(width > height * 3.5, $"Flat tip should be a wide rectangle, got {width}x{height}.");
+        AssertEx.True(AlphaAt(flat, 48, bounds.MinY + 1) > 180, "Flat top edge should be filled, not oval-tapered.");
+        AssertEx.True(AlphaAt(flat, 48, bounds.MaxY - 1) > 180, "Flat bottom edge should be filled, not oval-tapered.");
+    }
+
+    public static void ProceduralBrushTip_BristleHasSeparatedStrands()
+    {
+        var bristle = new ProceduralBrushTip(BrushTipShape.Bristle).GenerateMask(96, 0.9f);
+        var runs = CountVerticalAlphaRuns(bristle, x: 48, threshold: 32);
+
+        AssertEx.True(runs >= 5, $"Bristle tip should contain separated strands, got {runs} alpha runs.");
+    }
+
     public static void ImageBrushTip_ColorStampPreservesColor()
     {
         using var engine = new BrushEngine();
@@ -1902,6 +1938,48 @@ internal static class BrushTests
         using var image = SKImage.FromBitmap(bitmap);
         using var data = image.Encode(SKEncodedImageFormat.Png, 100);
         return data.ToArray();
+    }
+
+    private static unsafe byte AlphaAt(SKBitmap bitmap, int x, int y)
+    {
+        var ptr = (byte*)bitmap.GetPixels().ToPointer();
+        return ptr[y * bitmap.RowBytes + x];
+    }
+
+    private static unsafe (int MinX, int MinY, int MaxX, int MaxY) AlphaBounds(SKBitmap bitmap, byte threshold)
+    {
+        var ptr = (byte*)bitmap.GetPixels().ToPointer();
+        var minX = bitmap.Width;
+        var minY = bitmap.Height;
+        var maxX = -1;
+        var maxY = -1;
+        for (var y = 0; y < bitmap.Height; y++)
+        {
+            var row = ptr + y * bitmap.RowBytes;
+            for (var x = 0; x < bitmap.Width; x++)
+            {
+                if (row[x] <= threshold) continue;
+                minX = Math.Min(minX, x);
+                minY = Math.Min(minY, y);
+                maxX = Math.Max(maxX, x);
+                maxY = Math.Max(maxY, y);
+            }
+        }
+        return (minX, minY, maxX, maxY);
+    }
+
+    private static int CountVerticalAlphaRuns(SKBitmap bitmap, int x, byte threshold)
+    {
+        var runs = 0;
+        var inRun = false;
+        for (var y = 0; y < bitmap.Height; y++)
+        {
+            var on = AlphaAt(bitmap, x, y) > threshold;
+            if (on && !inRun)
+                runs++;
+            inRun = on;
+        }
+        return runs;
     }
 
     public static void AbrPresetMapping_KeepsDynamics()

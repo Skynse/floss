@@ -286,7 +286,7 @@ public partial class MainWindow
         if (tab.Canvas.IsDirty)
         {
             SwitchToTab(tab);
-            var save = await new UnsavedChangesDialog().ShowDialog<bool?>(this);
+            var save = await new UnsavedChangesDialog(tab.DisplayTitle).ShowDialog<bool?>(this);
             if (save == null) return;
             if (save == true)
             {
@@ -335,6 +335,29 @@ public partial class MainWindow
         }
         tab.Canvas.Dispose();
         ScheduleDocumentGc();
+    }
+
+    private async System.Threading.Tasks.Task<bool> ResolveUnsavedDocumentsBeforeCloseAsync()
+    {
+        foreach (var tab in _tabs.ToList())
+        {
+            if (!tab.HasDocument || !tab.Canvas.IsDirty)
+                continue;
+
+            SwitchToTab(tab);
+            var save = await new UnsavedChangesDialog(tab.DisplayTitle).ShowDialog<bool?>(this);
+            if (save == null)
+                return false;
+
+            if (save == true)
+            {
+                await SaveDocumentAsync();
+                if (tab.Canvas.IsDirty)
+                    return false;
+            }
+        }
+
+        return true;
     }
 
     private static void ScheduleDocumentGc()

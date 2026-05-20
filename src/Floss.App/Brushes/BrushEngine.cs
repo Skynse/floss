@@ -186,17 +186,19 @@ public sealed class BrushEngine : IDisposable
         // composited onto the layer with SrcOver once.
         // Skip scratch for few stamps (large brushes) — the overhead of allocating
         // and blitting a huge scratch bitmap exceeds the cost of direct per-stamp draw.
+        bool isMultiTipSingle = brush.Tips.Count > 1 && brush.TipSelectionMode == BrushTipSelectionMode.Single;
+        var primaryTip = stroke.TipFor(0);
         bool canDirect = _stampColors.Count == 0
             && (brush.BlendMode == SKBlendMode.SrcOver || brush.BlendMode == SKBlendMode.DstOut)
             && brush.Shape == null
             && !HasMultiTipSelection(brush)
-            && !brush.Tip.HasColor
-            && brush.Tip is
+            && !primaryTip.HasColor
+            && primaryTip is
                 (ProceduralBrushTip { Shape: BrushTipShape.Circle or BrushTipShape.SoftRound or BrushTipShape.Ellipse }
                  or ImageBrushTip);
 
         bool blendModeCanRasterize = brush.BlendMode == SKBlendMode.SrcOver || brush.BlendMode == SKBlendMode.DstOut;
-        bool canCachedTileMajor = blendModeCanRasterize && !stroke.HasAnyColorTip;
+        bool canCachedTileMajor = blendModeCanRasterize && !stroke.HasAnyColorTip && !isMultiTipSingle;
 
         if (!canDirect && blendModeCanRasterize)
         {
@@ -214,7 +216,7 @@ public sealed class BrushEngine : IDisposable
             }
 
             var grainTable = PrecomputeGrain(dirty, texPx, texW, texH, texStride, brushGrain);
-            if (_stampColors.Count == 0 &&
+            if (!isMultiTipSingle && _stampColors.Count == 0 &&
                 TryRasterizeCachedColorDabsTileMajor(layer, stroke, brush, brush.BlendMode == SKBlendMode.DstOut,
                     brushGrain, texPx, texW, texH, texStride, dirty, grainTable))
             {
@@ -1358,6 +1360,11 @@ public sealed class BrushEngine : IDisposable
             IsAntialias = true,
             BlendMode = stroke.Paint.BlendMode
         };
+        using var stackingPaint = new SKPaint
+        {
+            IsAntialias = true,
+            BlendMode = SKBlendMode.SrcOver
+        };
 
         for (var i = 0; i < _stamps.Count; i++)
         {
@@ -1373,28 +1380,40 @@ public sealed class BrushEngine : IDisposable
 
             stroke.UpdateOpacity(stamp.Opacity);
             stroke.UpdateMatrix(stamp);
-            var tip = stroke.TipFor(stamp.TipIndex);
 
-            if (tip.HasColor && tip.GenerateColorStamp(stroke.BaseMaskSize) is { } colorStamp)
+            var tipIndices = stroke.TipIndicesFor(stamp.TipIndex);
+            for (var ti = 0; ti < tipIndices.Length; ti++)
             {
-                var alpha = (byte)Math.Clamp((int)(stamp.Opacity * 255), 0, 255);
-                colorStampPaint.BlendMode = stroke.Paint.BlendMode;
-                colorStampPaint.Color = new SKColor(255, 255, 255, alpha);
+                var tipIndex = tipIndices[ti];
+                var tip = stroke.TipFor(tipIndex);
+
+                if (tip.HasColor && tip.GenerateColorStamp(stroke.BaseMaskSize) is { } colorStamp)
+                {
+                    var alpha = (byte)Math.Clamp((int)(stamp.Opacity * 255), 0, 255);
+                    colorStampPaint.BlendMode = ti == 0 ? stroke.Paint.BlendMode : SKBlendMode.SrcOver;
+                    colorStampPaint.Color = new SKColor(255, 255, 255, alpha);
+                    canvas.Save();
+                    canvas.Concat(in stroke.Matrix);
+                    canvas.DrawBitmap(colorStamp, 0f, 0f, colorStampPaint);
+                    canvas.Restore();
+                    continue;
+                }
+
+                if (ti > 0)
+                {
+                    stackingPaint.Color = stroke.Paint.Color;
+                    stackingPaint.ColorFilter = stroke.Paint.ColorFilter;
+                }
+                var mask = stroke.MaskFor(tipIndex, stamp);
+                var paint = ti == 0 ? stroke.Paint : stackingPaint;
+
                 canvas.Save();
                 canvas.Concat(in stroke.Matrix);
-                canvas.DrawBitmap(colorStamp, 0f, 0f, colorStampPaint);
+                canvas.DrawBitmap(mask, 0f, 0f, paint);
                 canvas.Restore();
-                continue;
+
+                stroke.ReleaseMask(mask);
             }
-
-            var mask = stroke.MaskFor(stamp);
-
-            canvas.Save();
-            canvas.Concat(in stroke.Matrix);
-            canvas.DrawBitmap(mask, 0f, 0f, stroke.Paint);
-            canvas.Restore();
-
-            stroke.ReleaseMask(mask);
         }
     }
 
@@ -1740,6 +1759,7 @@ public sealed class BrushEngine : IDisposable
         private readonly Queue<CachedDabKey> _colorDabCacheOrder = new();
         private readonly HashSet<SKBitmap> _ownedMasks = new();
         private readonly List<IBrushTip>? _ownedTipSet;
+        private int[]? _cachedTipIndices;
 
         private readonly SKColor _baseColor;
         private SKColor _currentColor;
@@ -1748,7 +1768,7 @@ public sealed class BrushEngine : IDisposable
         public ActiveStroke(BrushPreset brush, CanvasInputSample sample)
         {
             _brush = brush;
-            if (brush.TipSelectionMode != BrushTipSelectionMode.Single && brush.Tips.Count > 0)
+            if (brush.Tips.Count > 0)
                 _ownedTipSet = brush.Tips.Select(t => t.CreateTip()).ToList();
             HasAnyColorTip = _ownedTipSet is { Count: > 0 }
                 ? _ownedTipSet.Any(t => t.HasColor)
@@ -1846,10 +1866,20 @@ public sealed class BrushEngine : IDisposable
             return _brush.Tip;
         }
 
+        public int[] TipIndicesFor(int stampTipIndex)
+        {
+            if (_ownedTipSet is { Count: > 1 } && _brush.TipSelectionMode == BrushTipSelectionMode.Single)
+                return _cachedTipIndices ??= Enumerable.Range(0, _ownedTipSet.Count).ToArray();
+            return [stampTipIndex];
+        }
+
         public bool IsImageTip(int tipIndex) => TipFor(tipIndex) is ImageBrushTip;
 
         public SKBitmap MaskFor(StampSample stamp)
             => MaskFor(stamp.TipIndex, stamp.Hardness);
+
+        public SKBitmap MaskFor(int tipIndex, StampSample stamp)
+            => MaskFor(tipIndex, stamp.Hardness);
 
         public SKBitmap MaskFor(float hardness)
             => MaskFor(0, hardness);
@@ -2190,7 +2220,7 @@ public sealed class BrushEngine : IDisposable
     }
 
     private static bool HasMultiTipSelection(BrushPreset brush)
-        => brush.TipSelectionMode != BrushTipSelectionMode.Single && brush.Tips.Count > 1;
+        => brush.Tips.Count > 1;
 
     private readonly record struct StampSample(
         float X,

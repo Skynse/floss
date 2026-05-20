@@ -48,7 +48,7 @@ public sealed class ModifierKeySettings
                 new() { Modifiers = KeyModifiers.Control, Action = ModifierAction.None },
                 new() { Modifiers = KeyModifiers.Alt, Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = ToolGroupConfig.EyedropperPresetId },
                 new() { Modifiers = KeyModifiers.Control | KeyModifiers.Alt, Action = ModifierAction.ChangeBrushSize },
-                new() { Modifiers = KeyModifiers.Control | KeyModifiers.Shift, Action = ModifierAction.None },
+                new() { Modifiers = KeyModifiers.Control | KeyModifiers.Shift, Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = ToolGroupConfig.SelectLayerPresetId },
                 new() { Modifiers = KeyModifiers.Alt | KeyModifiers.Shift, Action = ModifierAction.None },
                 new() { Modifiers = KeyModifiers.Control | KeyModifiers.Alt | KeyModifiers.Shift, Action = ModifierAction.None },
 
@@ -75,7 +75,7 @@ public sealed class ModifierKeySettings
                 new() { Modifiers = KeyModifiers.Alt, Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = ToolGroupConfig.EyedropperPresetId },
                 new() { Modifiers = KeyModifiers.Control | KeyModifiers.Alt, Action = ModifierAction.ChangeBrushSize },
                 new() { Modifiers = KeyModifiers.Shift, Action = ModifierAction.ToolAux, ToolAuxOper = ToolAuxOperationType.StraightLine },
-                new() { Modifiers = KeyModifiers.Control | KeyModifiers.Shift, Action = ModifierAction.None },
+                new() { Modifiers = KeyModifiers.Control | KeyModifiers.Shift, Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = ToolGroupConfig.SelectLayerPresetId },
                 new() { Modifiers = KeyModifiers.Alt | KeyModifiers.Shift, Action = ModifierAction.None },
                 new() { Modifiers = KeyModifiers.Control | KeyModifiers.Alt | KeyModifiers.Shift, Action = ModifierAction.None },
 
@@ -101,6 +101,12 @@ public sealed class ModifierKeySettings
             key.HasValue && a.Modifiers == mods && a.Key.HasValue && a.Key.Value == key.Value;
         bool AnyKeyMatch(ModifierKeyAssignment a) =>
             a.Modifiers == mods && !a.Key.HasValue;
+        ModifierKeyAssignment? ResolveGeneral()
+        {
+            var match = GeneralAssignments.FirstOrDefault(ExactKeyMatch)
+                     ?? GeneralAssignments.FirstOrDefault(AnyKeyMatch);
+            return match?.Action == ModifierAction.None ? null : match;
+        }
 
         var specificKey = KeyFor(inputProcessType, outputProcessType);
         if (ToolSpecificAssignments.TryGetValue(specificKey, out var specific))
@@ -109,17 +115,14 @@ public sealed class ModifierKeySettings
             if (match != null)
             {
                 if (match.Action == ModifierAction.None)
-                    return null;
+                    return ResolveGeneral();
                 if (match.Action == ModifierAction.Common)
-                    return GeneralAssignments.FirstOrDefault(ExactKeyMatch)
-                        ?? GeneralAssignments.FirstOrDefault(AnyKeyMatch);
+                    return ResolveGeneral();
                 return match;
             }
         }
 
-        var gm = GeneralAssignments.FirstOrDefault(ExactKeyMatch)
-              ?? GeneralAssignments.FirstOrDefault(AnyKeyMatch);
-        return gm?.Action == ModifierAction.None ? null : gm;
+        return ResolveGeneral();
     }
 
     private static readonly JsonSerializerOptions JsonOpts = new()

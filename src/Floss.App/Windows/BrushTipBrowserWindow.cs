@@ -202,6 +202,8 @@ public sealed class BrushTipBrowserWindow : Window
     private static Bitmap? RenderShapePreview(BrushTipShape shape)
     {
         const int size = 64;
+        var tip = new ProceduralBrushTip(shape, shape == BrushTipShape.Ellipse ? 2.4f : 1.0f);
+        var mask = tip.GenerateMask(48, 0.85f);
         var info = new SKImageInfo(size, size, SKColorType.Bgra8888, SKAlphaType.Premul);
         using var bitmap = new SKBitmap(info);
         using var canvas = new SKCanvas(bitmap);
@@ -214,19 +216,7 @@ public sealed class BrushTipBrowserWindow : Window
             Style = SKPaintStyle.Fill
         };
 
-        var rect = SKRect.Create(4, 4, size - 8, size - 8);
-        switch (shape)
-        {
-            case BrushTipShape.Rectangle:
-                canvas.DrawRoundRect(rect, 2, 2, paint);
-                break;
-            case BrushTipShape.Ellipse:
-                canvas.DrawOval(rect, paint);
-                break;
-            default:
-                canvas.DrawOval(rect, paint);
-                break;
-        }
+        canvas.DrawBitmap(mask, (size - mask.Width) * 0.5f, (size - mask.Height) * 0.5f, paint);
 
         using var image = SKImage.FromBitmap(bitmap);
         using var data = image.Encode(SKEncodedImageFormat.Png, 100);

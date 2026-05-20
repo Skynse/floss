@@ -601,6 +601,7 @@ public sealed class ToolGroupConfig
     internal const string ViewZoomOutPresetId = "builtin-zoomout";
     internal const string EyedropperPresetId = "builtin-eyedropper";
     internal const string MoveLayerPresetId = "builtin-movelayer";
+    internal const string SelectLayerPresetId = "builtin-selectlayer";
 
     // ── Factory defaults ──────────────────────────────────────────────────────
 
@@ -644,7 +645,7 @@ public sealed class ToolGroupConfig
             Presets =
             [
                 new() { Id = MoveLayerPresetId, Name = "Move Layer", Engine = ToolPresetEngine.MoveLayer, InputProcess = InputProcessType.MoveLayer, OutputProcess = OutputProcessType.MoveLayer },
-                new() { Name = "Select Layer", Engine = ToolPresetEngine.MoveLayer, InputProcess = InputProcessType.Rect, OutputProcess = OutputProcessType.SelectLayer }
+                new() { Id = SelectLayerPresetId, Name = "Select Layer", Engine = ToolPresetEngine.MoveLayer, InputProcess = InputProcessType.Rect, OutputProcess = OutputProcessType.SelectLayer }
             ]
         }),
         WithDefaultCategory(new()

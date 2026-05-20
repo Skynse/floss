@@ -9,6 +9,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using Floss.App.Brushes;
 using Floss.App.Canvas;
 using Floss.App.Document;
@@ -20,6 +21,9 @@ using static Floss.App.AppColors;
 public partial class MainWindow : Window
 {
     // ── Brush section ─────────────────────────────────────────────────────────
+    private const int BrushPresetAutosaveDebounceMs = 700;
+    private DispatcherTimer? _brushPresetAutosaveTimer;
+
     private Control BuildBrushSection()
     {
         _brushCategoryPanel = new WrapPanel
@@ -1650,9 +1654,10 @@ public partial class MainWindow : Window
                     Kind = BrushTipStorageKind.Procedural,
                     Shape = updated.Shape.Shape,
                     AspectRatio = updated.Shape.AspectRatio
-                };
+            };
             _dirtyBrushAssetIds.Add(_activeBrushAsset.Id);
         }
+        ScheduleBrushPresetAutosave();
         ApplyBrushSettings(updated, syncSliders: false);
         RefreshGroupPresets();
     }
@@ -1681,9 +1686,10 @@ public partial class MainWindow : Window
                     Kind = BrushTipStorageKind.Procedural,
                     Shape = updated.Shape.Shape,
                     AspectRatio = updated.Shape.AspectRatio
-                };
+            };
             _dirtyBrushAssetIds.Add(_activeBrushAsset.Id);
         }
+        ScheduleBrushPresetAutosave();
         ApplyBrushSettings(updated, syncSliders: false, syncToolPropertiesWindow: false);
         RefreshGroupPresets();
     }
@@ -1781,6 +1787,7 @@ public partial class MainWindow : Window
         _activeBrushAsset.Tip = tip;
         _activeBrushAsset.Preset = CurrentBrushFromUi() with { Tip = tip.CreateTip() };
         _dirtyBrushAssetIds.Add(_activeBrushAsset.Id);
+        ScheduleBrushPresetAutosave();
         ApplyBrushSettings(_activeBrushAsset.ToPreset(), syncSliders: false);
         RefreshGroupPresets();
         _footerStatusText.Text = $"Embedded PNG tip in {_activeBrushAsset.Preset.Name}";
@@ -1884,5 +1891,48 @@ public partial class MainWindow : Window
         };
     }
 
+    private void ScheduleBrushPresetAutosave()
+    {
+        if (_brushPresetAutosaveTimer == null)
+        {
+            _brushPresetAutosaveTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(BrushPresetAutosaveDebounceMs)
+            };
+            _brushPresetAutosaveTimer.Tick += (_, _) =>
+            {
+                _brushPresetAutosaveTimer.Stop();
+                FlushBrushPresetAutosave();
+            };
+        }
+
+        _brushPresetAutosaveTimer.Stop();
+        _brushPresetAutosaveTimer.Start();
+    }
+
+    private void FlushBrushPresetAutosave()
+    {
+        _brushPresetAutosaveTimer?.Stop();
+
+        CaptureActiveBrushToPreset();
+
+        if (_activeBrushAsset != null && _dirtyBrushAssetIds.Contains(_activeBrushAsset.Id))
+        {
+            if (_activePreset != null)
+                _activeBrushAsset.WithPreset(_activePreset);
+            _brushLibrary.Save(_activeBrushAsset);
+            _dirtyBrushAssetIds.Remove(_activeBrushAsset.Id);
+        }
+
+        foreach (var assetId in _dirtyBrushAssetIds.ToList())
+        {
+            var asset = _brushAssets.FirstOrDefault(a => a.Id == assetId);
+            if (asset == null) continue;
+            _brushLibrary.Save(asset);
+            _dirtyBrushAssetIds.Remove(assetId);
+        }
+
+        App.ToolGroups.Save();
+    }
 
 }

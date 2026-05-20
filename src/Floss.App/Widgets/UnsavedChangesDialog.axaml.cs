@@ -10,6 +10,13 @@ public partial class UnsavedChangesDialog : Window
         InitializeComponent();
     }
 
+    public UnsavedChangesDialog(string documentName)
+        : this()
+    {
+        var name = string.IsNullOrWhiteSpace(documentName) ? "Untitled" : documentName.Trim();
+        MessageText.Text = $"Save changes to \"{name}\" before closing?";
+    }
+
     private void OnSaveClick(object? sender, RoutedEventArgs e)
     {
         Close(true); // User wants to save

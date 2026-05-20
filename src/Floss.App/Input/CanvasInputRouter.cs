@@ -127,6 +127,7 @@ public sealed class CanvasInputRouter
     private ModifierAction _activeModifierAction;
     private KeyModifiers _activeModifierCombo;
     private Key? _activeModifierKey;
+    private string? _activeModifierPresetId;
     private bool _modifierTemporaryPresetActive;
     private bool _modifierAlternateActive;
 
@@ -257,20 +258,6 @@ public sealed class CanvasInputRouter
             }
             _host.LockCursorPreview(_brushSizeGestureCenterCanvasPoint, forceBrushOutline: true);
             EnterRunning(CanvasAction.BrushSize, pointerId, false);
-            if (eventArgs is PointerPressedEventArgs e)
-            {
-                _host.CapturePointer(e.Pointer);
-                e.Handled = true;
-            }
-            return;
-        }
-
-        // Ctrl+Shift+Left → layer-pick drag
-        if (isPrimaryDown && ctrlHeld && shiftHeld)
-        {
-            _host.StartLayerPickDrag(viewportPos);
-            EnterRunning(CanvasAction.LayerPick, pointerId, false);
-            _lastViewportPos = viewportPos;
             if (eventArgs is PointerPressedEventArgs e)
             {
                 _host.CapturePointer(e.Pointer);
@@ -638,6 +625,7 @@ public sealed class CanvasInputRouter
         _activeModifierAction = ModifierAction.None;
         _activeModifierCombo = KeyModifiers.None;
         _activeModifierKey = null;
+        _activeModifierPresetId = null;
         _modifierTemporaryPresetActive = false;
         _modifierAlternateActive = false;
         _readyAction = CanvasAction.None;
@@ -678,6 +666,7 @@ public sealed class CanvasInputRouter
         _activeModifierAction = assignment?.Action ?? ModifierAction.None;
         _activeModifierCombo = assignment?.Modifiers ?? KeyModifiers.None;
         _activeModifierKey = assignment?.Key;
+        _activeModifierPresetId = assignment?.TemporaryToolPresetId;
 
         if (assignment != null)
             ApplyModifierAction(assignment);
@@ -759,7 +748,7 @@ public sealed class CanvasInputRouter
     {
         var presetId = _activeModifierKey.HasValue
             ? FindPresetIdForKey(_activeModifierKey.Value, _activeModifierCombo)
-            : null;
+            : _activeModifierPresetId;
 
         return presetId switch
         {
@@ -768,6 +757,7 @@ public sealed class CanvasInputRouter
             ToolGroupConfig.ViewZoomInPresetId or ToolGroupConfig.ViewZoomOutPresetId => CanvasAction.ZoomCanvas,
             ToolGroupConfig.EyedropperPresetId => CanvasAction.Eyedropper,
             ToolGroupConfig.MoveLayerPresetId => CanvasAction.MoveLayer,
+            ToolGroupConfig.SelectLayerPresetId => CanvasAction.LayerPick,
             _ => CanvasAction.PrimaryTool,
         };
     }

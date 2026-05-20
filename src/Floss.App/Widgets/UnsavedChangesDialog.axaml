@@ -7,7 +7,8 @@
         Background="#202226" Foreground="#d8dbe0">
 
     <StackPanel Margin="20" Spacing="20">
-        <TextBlock Text="Save changes to the current document before closing?"
+        <TextBlock x:Name="MessageText"
+                   Text="Save changes to the current document before closing?"
                    FontSize="14"
                    TextWrapping="Wrap"/>
 
