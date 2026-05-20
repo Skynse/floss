@@ -97,6 +97,11 @@ internal static class Program
         ("Procedural brush tips make soft distinct from round", BrushTests.ProceduralBrushTip_SoftRoundDiffersFromRound),
         ("Procedural brush tips make flat rectangular", BrushTests.ProceduralBrushTip_FlatIsRectangular),
         ("Procedural brush tips generate bristle strands", BrushTests.ProceduralBrushTip_BristleHasSeparatedStrands),
+        ("Procedural brush tips are graph backed", BrushTests.ProceduralBrushTip_IsGraphBacked),
+        ("Procedural brush tip data stores graph payloads", BrushTests.ProceduralBrushTipData_StoresGraphPayload),
+        ("Brush tip graphs validate bad topology", BrushTests.BrushTipNodeGraph_ValidatesBadTopology),
+        ("Node brush tips evaluate deterministic graphs", BrushTests.NodeBrushTip_EvaluatesDeterministicGraph),
+        ("Node brush tips compose procedural primitives", BrushTests.NodeBrushTip_ComposesProceduralPrimitives),
         ("Image brush tips with color paint as colored stamps", BrushTests.ImageBrushTip_ColorStampPreservesColor),
         ("ABR preset mapping keeps usable brush dynamics", BrushTests.AbrPresetMapping_KeepsDynamics),
         ("ABR mask cleanup inverts dark-on-light stamps", BrushTests.AbrMaskCleanup_InvertsDarkOnLightMasks),
@@ -104,7 +109,9 @@ internal static class Program
         ("Default tool groups have categories", PresetStoreTests.ToolGroups_DefaultsHaveCategories),
         ("Tool group sync categorizes brush assets", PresetStoreTests.ToolGroups_SyncCategorizesBrushAssets),
         ("Preset store round-trips brush assets", PresetStoreTests.BrushAssets_RoundTrip),
+        ("Preset store round-trips node brush tips", PresetStoreTests.BrushAssets_RoundTripNodeBrushTip),
         ("Brush file format round-trips material tip state", PresetStoreTests.BrushFileFormat_RoundTripsMaterialTipState),
+        ("Brush file format round-trips node brush tips", PresetStoreTests.BrushFileFormat_RoundTripsNodeBrushTip),
         ("Preset store round-trips all brush fields via Capture/Apply", PresetStoreTests.BrushPresetOverride_RoundTrip),
         ("Preset store isolates overrides between presets", PresetStoreTests.BrushPresetOverride_Isolation),
         ("Preset store does not override Tip/Angle/Kind from Capture", PresetStoreTests.BrushPresetOverride_PreservesTipAndAngle),
@@ -379,6 +386,49 @@ internal static class PresetStoreTests
         }
     }
 
+    public static void BrushAssets_RoundTripNodeBrushTip()
+    {
+        var path = TempDatabasePath();
+        try
+        {
+            var store = PresetStore.Open(path);
+            var tip = new BrushTipData
+            {
+                Kind = BrushTipStorageKind.NodeGraph,
+                NodeGraph = BrushTipNodeGraph.BristleRound()
+            };
+            var asset = new BrushAsset
+            {
+                Id = "node-tip-brush",
+                Tip = tip,
+                Preset = new BrushPreset("Node Tip", 32, 1, 0.8, 0.1, Color.Parse("#222222"), 0)
+                {
+                    Tip = tip.CreateTip(),
+                    ParameterGraphs =
+                    [
+                        BrushParameterGraph.FromDynamics(BrushParameterTarget.Size,
+                            CurveOption.Pressure(1f, min: 0.25f, max: 1f))
+                    ]
+                }
+            };
+
+            store.SaveBrushAsset(asset);
+            var loaded = store.LoadBrushAssets().Single();
+
+            AssertEx.Equal(BrushTipStorageKind.NodeGraph, loaded.Tip.Kind);
+            AssertEx.True(loaded.Tip.NodeGraph != null);
+            AssertEx.True(loaded.Preset.Tip is NodeBrushTip);
+            AssertEx.Equal("output", loaded.Tip.NodeGraph!.OutputNodeId);
+            AssertEx.Equal(4, loaded.Tip.NodeGraph.Nodes.Count);
+            AssertEx.Equal(1, loaded.Preset.ParameterGraphs.Count);
+            AssertEx.Equal(BrushParameterTarget.Size, loaded.Preset.ParameterGraphs[0].Target);
+        }
+        finally
+        {
+            TryDeleteDatabase(path);
+        }
+    }
+
     public static void ToolGroups_SyncCategorizesBrushAssets()
     {
         var config = new ToolGroupConfig
@@ -563,6 +613,50 @@ internal static class PresetStoreTests
             AssertEx.True(loaded.Preset.FlipVertical);
             AssertEx.Equal(1, loaded.Preset.Tips.Count);
             AssertEx.Equal(material.PngBytes.Length, loaded.Preset.Tips[0].PngBytes.Length);
+        }
+        finally
+        {
+            TryDeleteDatabase(path);
+        }
+    }
+
+    public static void BrushFileFormat_RoundTripsNodeBrushTip()
+    {
+        var path = TempPackagePath(BrushFileFormat.Extension);
+        try
+        {
+            var tip = new BrushTipData
+            {
+                Kind = BrushTipStorageKind.NodeGraph,
+                NodeGraph = BrushTipNodeGraph.BristleRound()
+            };
+            var asset = new BrushAsset
+            {
+                Id = "node-file-brush",
+                Tip = tip,
+                Preset = new BrushPreset("Node File Tip", 41, 0.9, 0.7, 0.08, Color.Parse("#202020"), 0)
+                {
+                    Tip = tip.CreateTip(),
+                    Tips = [tip.DeepClone()],
+                    ParameterGraphs =
+                    [
+                        BrushParameterGraph.FromDynamics(BrushParameterTarget.Opacity,
+                            CurveOption.Pressure(1f, min: 0.1f, max: 0.9f))
+                    ]
+                }
+            };
+
+            BrushFileFormat.Save(path, asset);
+            var loaded = BrushFileFormat.Load(path);
+
+            AssertEx.Equal(BrushTipStorageKind.NodeGraph, loaded.Tip.Kind);
+            AssertEx.True(loaded.Tip.NodeGraph != null);
+            AssertEx.True(loaded.Preset.Tip is NodeBrushTip);
+            AssertEx.Equal(1, loaded.Preset.Tips.Count);
+            AssertEx.Equal(BrushTipStorageKind.NodeGraph, loaded.Preset.Tips[0].Kind);
+            AssertEx.Equal(loaded.Tip.NodeGraph!.CacheKey(), loaded.Preset.Tips[0].NodeGraph!.CacheKey());
+            AssertEx.Equal(1, loaded.Preset.ParameterGraphs.Count);
+            AssertEx.Equal(BrushParameterTarget.Opacity, loaded.Preset.ParameterGraphs[0].Target);
         }
         finally
         {
@@ -1912,6 +2006,81 @@ internal static class BrushTests
         AssertEx.True(runs >= 5, $"Bristle tip should contain separated strands, got {runs} alpha runs.");
     }
 
+    public static void ProceduralBrushTip_IsGraphBacked()
+    {
+        var procedural = new ProceduralBrushTip(BrushTipShape.Flat, 1.0f);
+        var fromGraph = new NodeBrushTip(procedural.Graph);
+
+        AssertEx.Equal(BrushTipNodeKind.Rectangle, procedural.Graph.Nodes.Single(n => n.Id == "flat").Kind);
+        AssertEx.SequenceEqual(AlphaBytes(procedural.GenerateMask(80, 0.82f)), AlphaBytes(fromGraph.GenerateMask(80, 0.82f)));
+    }
+
+    public static void ProceduralBrushTipData_StoresGraphPayload()
+    {
+        var tip = new ProceduralBrushTip(BrushTipShape.Bristle, 1.0f);
+        var data = BrushTipData.FromTip(tip);
+        var restored = data.CreateTip();
+
+        AssertEx.Equal(BrushTipStorageKind.NodeGraph, data.Kind);
+        AssertEx.True(data.NodeGraph != null, "Procedural brush tips should save their graph payload.");
+        AssertEx.True(restored is ProceduralBrushTip, "Built-in graph metadata should restore a procedural UI tip.");
+        AssertEx.SequenceEqual(AlphaBytes(tip.GenerateMask(72, 0.74f)), AlphaBytes(restored.GenerateMask(72, 0.74f)));
+    }
+
+    public static void BrushTipNodeGraph_ValidatesBadTopology()
+    {
+        var graph = new BrushTipNodeGraph
+        {
+            OutputNodeId = "output",
+            Nodes =
+            [
+                new BrushTipNode { Id = "output", Kind = BrushTipNodeKind.Output, Inputs = ["missing"] },
+                new BrushTipNode { Id = "cycle-a", Kind = BrushTipNodeKind.Add, Inputs = ["cycle-b", "output"] },
+                new BrushTipNode { Id = "cycle-b", Kind = BrushTipNodeKind.Add, Inputs = ["cycle-a", "output"] }
+            ]
+        };
+        var errors = graph.Validate();
+
+        AssertEx.True(errors.Any(e => e.Contains("missing", StringComparison.Ordinal)), "Validator should report missing input ids.");
+        graph.OutputNodeId = "cycle-a";
+        errors = graph.Validate();
+        AssertEx.True(errors.Any(e => e.Contains("cycle", StringComparison.OrdinalIgnoreCase)), "Validator should report cycles reachable from output.");
+    }
+
+    public static void NodeBrushTip_EvaluatesDeterministicGraph()
+    {
+        var tip = new NodeBrushTip(BrushTipNodeGraph.BristleRound());
+        var first = tip.GenerateMask(96, 0.8f);
+        var second = tip.GenerateMask(96, 0.8f);
+        var third = new NodeBrushTip(BrushTipNodeGraph.BristleRound()).GenerateMask(96, 0.8f);
+
+        AssertEx.Equal(first.Handle, second.Handle, "Node tips should reuse cached masks for identical size/hardness/graph.");
+        AssertEx.SequenceEqual(AlphaBytes(first), AlphaBytes(third));
+    }
+
+    public static void NodeBrushTip_ComposesProceduralPrimitives()
+    {
+        var graph = new BrushTipNodeGraph
+        {
+            OutputNodeId = "output",
+            Nodes =
+            [
+                new BrushTipNode { Id = "round", Kind = BrushTipNodeKind.Circle, Radius = 0.48f, Hardness = 0.9f },
+                new BrushTipNode { Id = "noise", Kind = BrushTipNodeKind.Noise, Density = 0.45f, Opacity = 1f, Scale = 1.5f, Seed = 123 },
+                new BrushTipNode { Id = "grain", Kind = BrushTipNodeKind.Multiply, Inputs = ["round", "noise"] },
+                new BrushTipNode { Id = "cut", Kind = BrushTipNodeKind.Threshold, Inputs = ["grain"], Threshold = 0.08f },
+                new BrushTipNode { Id = "output", Kind = BrushTipNodeKind.Output, Inputs = ["cut"] }
+            ]
+        };
+        var mask = new NodeBrushTip(graph).GenerateMask(96, 0.85f);
+        var bounds = AlphaBounds(mask, threshold: 16);
+        var center = AlphaAt(mask, 48, 48);
+        var corner = AlphaAt(mask, 3, 3);
+
+        AssertEx.True(bounds.MaxX > bounds.MinX && bounds.MaxY > bounds.MinY, "Composed node tip should render visible coverage.");
+        AssertEx.True(center > corner, $"Circle multiplied by noise should stay stronger near center than corner, got center={center}, corner={corner}.");
+    }
+
     public static void ImageBrushTip_ColorStampPreservesColor()
     {
         using var engine = new BrushEngine();
@@ -1944,6 +2113,19 @@ internal static class BrushTests
     {
         var ptr = (byte*)bitmap.GetPixels().ToPointer();
         return ptr[y * bitmap.RowBytes + x];
+    }
+
+    private static unsafe byte[] AlphaBytes(SKBitmap bitmap)
+    {
+        var bytes = new byte[bitmap.Width * bitmap.Height];
+        var ptr = (byte*)bitmap.GetPixels().ToPointer();
+        for (var y = 0; y < bitmap.Height; y++)
+        {
+            var row = ptr + y * bitmap.RowBytes;
+            for (var x = 0; x < bitmap.Width; x++)
+                bytes[y * bitmap.Width + x] = row[x];
+        }
+        return bytes;
     }
 
     private static unsafe (int MinX, int MinY, int MaxX, int MaxY) AlphaBounds(SKBitmap bitmap, byte threshold)

@@ -261,6 +261,13 @@ public sealed class ToolPropertiesWindow : Window
         };
     }
 
+    public void SelectBrushTipCategory()
+    {
+        var index = Array.IndexOf(_categories, "Brush tip");
+        if (index >= 0)
+            SelectCategory(index);
+    }
+
     private static ScrollViewer WrapContent(Control content) => new()
     {
         HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
@@ -308,21 +315,23 @@ public sealed class ToolPropertiesWindow : Window
     private Control BuildBrushTipContent(bool forceImageMode = false)
     {
         var mainTip = _brushPreset.Tip;
-        var isProc = mainTip is ProceduralBrushTip && !forceImageMode;
-        var procTip = mainTip as ProceduralBrushTip ?? new ProceduralBrushTip();
+        var isProc = IsGraphTip(mainTip) && !forceImageMode;
+        var procTip = BuiltInProceduralTipFor(mainTip);
+        var activeShape = procTip?.Shape;
+        var activeAspect = procTip?.AspectRatio ?? 1.0f;
 
         var result = new StackPanel { Spacing = 0 };
 
         // ── Circle / Material toggle ──────────────────────────────────────────
         var circleBtn = MkToggleBtn("Procedural", isProc, () =>
         {
-            if (forceImageMode && _brushPreset.Tip is ProceduralBrushTip)
+            if (forceImageMode && IsGraphTip(_brushPreset.Tip))
             {
                 _contentHost.Child = WrapContent(BuildBrushTipContent());
                 return;
             }
 
-            if (_brushPreset.Tip is not ProceduralBrushTip)
+            if (!IsGraphTip(_brushPreset.Tip))
             {
                 var shape = _brushPreset.Shape?.Shape ?? BrushTipShape.Circle;
                 CommitMainTip(new ProceduralBrushTip(shape));
@@ -330,7 +339,7 @@ public sealed class ToolPropertiesWindow : Window
         });
         var materialBtn = MkToggleBtn("Material", !isProc, () =>
         {
-            if (_brushPreset.Tip is ProceduralBrushTip)
+            if (IsGraphTip(_brushPreset.Tip))
             {
                 var materialTips = MaterialTipsFor(_brushPreset);
                 if (materialTips.Count > 0)
@@ -386,8 +395,8 @@ public sealed class ToolPropertiesWindow : Window
             foreach (var (shape, label) in shapes)
             {
                 var s = shape;
-                galleryPanel.Children.Add(MkShapeCell(label, s, procTip.Shape == s,
-                    () => CommitMainTip(new ProceduralBrushTip(s, procTip.AspectRatio))));
+                galleryPanel.Children.Add(MkShapeCell(label, s, activeShape == s,
+                    () => CommitMainTip(new ProceduralBrushTip(s, activeAspect))));
             }
         }
         else
@@ -482,9 +491,11 @@ public sealed class ToolPropertiesWindow : Window
         result.Children.Add(galleryScroll);
         if (!isProc)
             result.Children.Add(BuildTipSelectionModeRow());
+        else
+            result.Children.Add(BuildTipGraphControls());
 
         // ── Oval aspect ratio ─────────────────────────────────────────────────
-        if (isProc && procTip.Shape == BrushTipShape.Ellipse)
+        if (isProc && procTip?.Shape == BrushTipShape.Ellipse)
         {
             var aspectSlider = MkSlider(0.1, 8.0, Math.Clamp(procTip.AspectRatio, 0.1, 8.0), "Oval width/height ratio");
             WireSlider(aspectSlider, v => CommitMainTip(new ProceduralBrushTip(procTip.Shape, (float)v)));
@@ -515,6 +526,124 @@ public sealed class ToolPropertiesWindow : Window
 
         return result;
     }
+
+    private Control BuildTipGraphControls()
+    {
+        var graph = GraphForTip(_brushPreset.Tip);
+        var panel = new StackPanel { Spacing = 0 };
+        panel.Children.Add(SectionHeader("TIP GRAPH"));
+
+        var errors = graph.Validate();
+        var summary = errors.Count == 0
+            ? $"{graph.Nodes.Count} nodes · {graph.OutputNodeId}"
+            : string.Join("\n", errors.Take(3));
+        panel.Children.Add(new TextBlock
+        {
+            Text = summary,
+            FontSize = 10,
+            Foreground = new SolidColorBrush(Color.Parse(errors.Count == 0 ? TextMuted : "#ff8f8f")),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 1, 0, 4)
+        });
+
+        foreach (var node in EditableGraphNodes(graph))
+        {
+            panel.Children.Add(GraphNodeHeader(node));
+            AddNodeSlider(panel, graph, node, "Opacity", 0, 1, node.Opacity, (_, v) => _.Opacity = (float)v, "f2");
+            switch (node.Kind)
+            {
+                case BrushTipNodeKind.Circle:
+                    AddNodeSlider(panel, graph, node, "Radius", 0.02, 0.75, node.Radius, (_, v) => _.Radius = (float)v, "f2");
+                    AddNodeSlider(panel, graph, node, "Width", 0.05, 2, node.Width, (_, v) => _.Width = (float)v, "f2");
+                    AddNodeSlider(panel, graph, node, "Height", 0.05, 2, node.Height, (_, v) => _.Height = (float)v, "f2");
+                    AddNodeSlider(panel, graph, node, "Edge", 0.001, 1, node.Hardness, (_, v) => _.Hardness = (float)v, "f2");
+                    break;
+                case BrushTipNodeKind.Rectangle:
+                    AddNodeSlider(panel, graph, node, "Width", 0.05, 1.5, node.Width, (_, v) => _.Width = (float)v, "f2");
+                    AddNodeSlider(panel, graph, node, "Height", 0.02, 1.5, node.Height, (_, v) => _.Height = (float)v, "f2");
+                    AddNodeSlider(panel, graph, node, "Edge", 0.001, 1, node.Hardness, (_, v) => _.Hardness = (float)v, "f2");
+                    break;
+                case BrushTipNodeKind.Noise:
+                    AddNodeSlider(panel, graph, node, "Density", 0, 1, node.Density, (_, v) => _.Density = (float)v, "f2");
+                    AddNodeSlider(panel, graph, node, "Scale", 0.05, 8, node.Scale, (_, v) => _.Scale = (float)v, "f2");
+                    break;
+                case BrushTipNodeKind.Bristle:
+                    AddNodeSlider(panel, graph, node, "Density", 0.05, 1, node.Density, (_, v) => _.Density = (float)v, "f2");
+                    AddNodeSlider(panel, graph, node, "Width", 0.1, 1.5, node.Width, (_, v) => _.Width = (float)v, "f2");
+                    AddNodeSlider(panel, graph, node, "Height", 0.1, 1.5, node.Height, (_, v) => _.Height = (float)v, "f2");
+                    break;
+                case BrushTipNodeKind.Threshold:
+                    AddNodeSlider(panel, graph, node, "Threshold", 0, 1, node.Threshold, (_, v) => _.Threshold = (float)v, "f2");
+                    break;
+                case BrushTipNodeKind.LinearGradient:
+                case BrushTipNodeKind.Stripe:
+                    AddNodeSlider(panel, graph, node, "Scale", 0.05, 16, node.Scale, (_, v) => _.Scale = (float)v, "f2");
+                    AddNodeSlider(panel, graph, node, "Density", 0.02, 0.98, node.Density, (_, v) => _.Density = (float)v, "f2");
+                    break;
+            }
+        }
+
+        if (panel.Children.Count == 2)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = "No editable primitive nodes in this graph yet.",
+                FontSize = 10,
+                Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+                Margin = new Thickness(0, 2, 0, 4)
+            });
+        }
+        return panel;
+    }
+
+    private static IEnumerable<BrushTipNode> EditableGraphNodes(BrushTipNodeGraph graph)
+        => graph.Nodes.Where(n => n.Kind is BrushTipNodeKind.Circle
+            or BrushTipNodeKind.Rectangle
+            or BrushTipNodeKind.Noise
+            or BrushTipNodeKind.Bristle
+            or BrushTipNodeKind.Threshold
+            or BrushTipNodeKind.LinearGradient
+            or BrushTipNodeKind.Stripe);
+
+    private static Control GraphNodeHeader(BrushTipNode node)
+        => new TextBlock
+        {
+            Text = $"{node.Kind} · {node.Id}",
+            FontSize = 10,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            Margin = new Thickness(0, 5, 0, 1)
+        };
+
+    private void AddNodeSlider(StackPanel panel, BrushTipNodeGraph sourceGraph, BrushTipNode sourceNode, string label,
+        double min, double max, float value, Action<BrushTipNode, double> setValue, string fmt)
+    {
+        var slider = MkSlider(min, max, Math.Clamp(value, (float)min, (float)max), label);
+        WireSlider(slider, v =>
+        {
+            var graph = sourceGraph.DeepClone();
+            var node = graph.Nodes.FirstOrDefault(n => n.Id == sourceNode.Id);
+            if (node == null) return;
+            setValue(node, v);
+            CommitGraphTip(graph);
+        });
+        panel.Children.Add(BuildSliderRow(label, slider, fmt, extra: null));
+    }
+
+    private void CommitGraphTip(BrushTipNodeGraph graph)
+    {
+        if (graph.Validate().Count > 0)
+            return;
+        var tip = graph.ToBuiltInProceduralTip() ?? (IBrushTip)new NodeBrushTip(graph);
+        Commit(p => p with { Tip = tip, Tips = PreserveMaterialTipsWithActiveFirst(p) });
+    }
+
+    private static BrushTipNodeGraph GraphForTip(IBrushTip tip)
+        => tip switch
+        {
+            ProceduralBrushTip proc => proc.Graph.DeepClone(),
+            NodeBrushTip node => node.Graph.DeepClone(),
+            _ => BrushTipNodeGraph.FromProceduralShape(BrushTipShape.Circle)
+        };
 
     private Button MkImageCell(Bitmap? bmp, string label, bool active, Action onClick)
     {
@@ -1601,7 +1730,7 @@ public sealed class ToolPropertiesWindow : Window
         var tipData = BrushTipData.FromTip(tip);
         Commit(p =>
         {
-            if (tipData.Kind == BrushTipStorageKind.Procedural)
+            if (tipData.Kind != BrushTipStorageKind.EmbeddedPng)
                 return p with { Tip = tip, Tips = PreserveMaterialTipsWithActiveFirst(p) };
 
             var tips = MaterialTipsFor(p)
@@ -1630,18 +1759,35 @@ public sealed class ToolPropertiesWindow : Window
 
     private static IReadOnlyList<BrushTipData> MaterialTipsFor(BrushPreset preset)
     {
-        if (preset.Tips.Count > 0)
-            return preset.Tips;
+        var tips = preset.Tips
+            .Where(t => t.Kind == BrushTipStorageKind.EmbeddedPng)
+            .Select(t => t.DeepClone())
+            .ToList();
+        if (tips.Count > 0)
+            return tips;
         return preset.Tip is ImageBrushTip
             ? [BrushTipData.FromTip(preset.Tip)]
             : [];
     }
+
+    private static bool IsGraphTip(IBrushTip tip)
+        => tip is ProceduralBrushTip or NodeBrushTip;
+
+    private static ProceduralBrushTip? BuiltInProceduralTipFor(IBrushTip tip)
+        => tip switch
+        {
+            ProceduralBrushTip proc => proc,
+            NodeBrushTip node => node.Graph.ToBuiltInProceduralTip(),
+            _ => null
+        };
 
     private static bool TipDataEquals(BrushTipData a, BrushTipData b)
     {
         if (a.Kind != b.Kind) return false;
         if (a.Kind == BrushTipStorageKind.Procedural)
             return a.Shape == b.Shape && Math.Abs(a.AspectRatio - b.AspectRatio) < 0.0001f;
+        if (a.Kind == BrushTipStorageKind.NodeGraph)
+            return a.NodeGraph?.CacheKey() == b.NodeGraph?.CacheKey();
         return a.PngBytes.AsSpan().SequenceEqual(b.PngBytes);
     }
 

@@ -516,6 +516,7 @@ public sealed class PresetStore
         public BrushTipShape Shape { get; set; } = BrushTipShape.Circle;
         public float AspectRatio { get; set; } = 1.0f;
         public string? ResourceId { get; set; }
+        public BrushTipNodeGraph? NodeGraph { get; set; }
 
         public static BrushTipDocument FromTipData(BrushTipData tip, string prefix, List<BrushResourceDocument> resources)
         {
@@ -523,7 +524,8 @@ public sealed class PresetStore
             {
                 Kind = tip.Kind,
                 Shape = tip.Shape,
-                AspectRatio = tip.AspectRatio
+                AspectRatio = tip.AspectRatio,
+                NodeGraph = tip.NodeGraph?.DeepClone()
             };
 
             if (tip.Kind == BrushTipStorageKind.EmbeddedPng && tip.PngBytes.Length > 0)
@@ -550,6 +552,11 @@ public sealed class PresetStore
                     PngBytes = ResourceId != null && resources.TryGetValue(ResourceId, out var bytes)
                         ? bytes.ToArray()
                         : []
+                },
+                BrushTipStorageKind.NodeGraph => new BrushTipData
+                {
+                    Kind = BrushTipStorageKind.NodeGraph,
+                    NodeGraph = NodeGraph?.DeepClone()
                 },
                 _ => new BrushTipData
                 {
@@ -590,6 +597,7 @@ public sealed class PresetStore
         public float AngleJitter { get; set; }
         public bool FlipHorizontal { get; set; }
         public bool FlipVertical { get; set; }
+        public List<BrushParameterGraph> ParameterGraphs { get; set; } = [];
 
         public static BrushPresetDocument FromPreset(BrushPreset preset) => new()
         {
@@ -620,7 +628,8 @@ public sealed class PresetStore
             BaseAngleSource = preset.BaseAngleSource,
             AngleJitter = preset.AngleJitter,
             FlipHorizontal = preset.FlipHorizontal,
-            FlipVertical = preset.FlipVertical
+            FlipVertical = preset.FlipVertical,
+            ParameterGraphs = preset.ParameterGraphs.Select(g => g.DeepClone()).ToList()
         };
 
         public BrushPreset ToPreset(BrushTipData tip, BrushTipData? shapeData)
@@ -648,6 +657,7 @@ public sealed class PresetStore
                 AngleJitter = AngleJitter,
                 FlipHorizontal = FlipHorizontal,
                 FlipVertical = FlipVertical,
+                ParameterGraphs = ParameterGraphs.Select(g => g.DeepClone()).ToList(),
                 Tip = tip.CreateTip()
             };
 

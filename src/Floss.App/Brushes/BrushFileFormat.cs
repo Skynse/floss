@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
+using System.Text.Json;
 using Avalonia.Media;
 using static Floss.App.Brushes.BrushDynamics;
 
@@ -12,8 +14,8 @@ public static class BrushFileFormat
     public const string Extension = ".flbr";
     private const uint Magic = 0x52424C46; // FLBR, little endian
 
-    // Version 10 adds CSP-style material tip list and tip transform state.
-    private const int Version = 10;
+    // Version 12 adds parameter graph storage groundwork.
+    private const int Version = 12;
 
     public static BrushAsset Load(string path)
     {
@@ -67,7 +69,7 @@ public static class BrushFileFormat
 
             var dynJson = reader.ReadString();
             var dynamics = BrushDynamics.Deserialize(dynJson);
-            asset.Tip = ReadTip(reader);
+            asset.Tip = ReadTip(reader, version);
             var tipDensity = 1.0;
             var tipThickness = 1.0;
             var tipDirection = BrushTipDirection.Horizontal;
@@ -85,8 +87,9 @@ public static class BrushFileFormat
                 flipVertical = reader.ReadBoolean();
                 var tipCount = Math.Clamp(reader.ReadInt32(), 0, 256);
                 for (var i = 0; i < tipCount; i++)
-                    tips.Add(ReadTip(reader));
+                    tips.Add(ReadTip(reader, version));
             }
+            var parameterGraphs = ReadParameterGraphs(reader, version);
             asset.Preset = new BrushPreset(name, size, opacity, hardness, spacing, color, angle)
             {
                 Dynamics = dynamics,
@@ -104,6 +107,7 @@ public static class BrushFileFormat
                 FlipHorizontal = flipHorizontal,
                 FlipVertical = flipVertical,
                 Tips = tips,
+                ParameterGraphs = parameterGraphs,
                 Tip = asset.Tip.CreateTip()
             };
         }
@@ -116,7 +120,7 @@ public static class BrushFileFormat
             var smoothing = reader.ReadDouble();
             var sizeDyn = ReadParameterDynamics(reader);
             var opacDyn = ReadParameterDynamics(reader);
-            asset.Tip = ReadTip(reader);
+            asset.Tip = ReadTip(reader, version);
             asset.Preset = new BrushPreset(name, size, opacity, hardness, spacing, color, angle)
             {
                 Dynamics = BrushDynamics.FromLegacy(sizeDyn, opacDyn),
@@ -166,7 +170,7 @@ public static class BrushFileFormat
             var opacDyn = OldParamsToNew(pressToOpac, curveKind, (float)pressureCurve, bx1, by1, bx2, by2,
                 (float)prOpMin, (float)prOpMax, velToOpac, (float)velocityOpac);
 
-            asset.Tip = ReadTip(reader);
+            asset.Tip = ReadTip(reader, version);
             asset.Preset = new BrushPreset(name, size, opacity, hardness, spacing, color, angle)
             {
                 Dynamics = BrushDynamics.FromLegacy(sizeDyn, opacDyn),
@@ -188,7 +192,7 @@ public static class BrushFileFormat
         var p = asset.Preset;
 
         writer.Write(Magic);
-        writer.Write(Version); // Writes Version 7
+        writer.Write(Version);
         writer.Write(string.IsNullOrWhiteSpace(asset.Id) ? Guid.NewGuid().ToString("N") : asset.Id);
         writer.Write(p.Name);
         writer.Write(0); // legacy BrushKind, now removed — write 0 for compat
@@ -223,6 +227,7 @@ public static class BrushFileFormat
         writer.Write(p.Tips.Count);
         foreach (var tip in p.Tips)
             WriteTip(writer, tip);
+        WriteParameterGraphs(writer, p.ParameterGraphs);
     }
 
     // ── Helpers (kept exactly the same) ────────────────────────────────────
@@ -290,15 +295,29 @@ public static class BrushFileFormat
         return inv * inv * inv * p0 + 3 * inv * inv * t * p1 + 3 * inv * t * t * p2 + t * t * t * p3;
     }
 
-    private static BrushTipData ReadTip(BinaryReader reader)
+    private static BrushTipData ReadTip(BinaryReader reader, int version)
     {
         var kind = (BrushTipStorageKind)reader.ReadInt32();
         var shape = (BrushTipShape)reader.ReadInt32();
         var aspect = reader.ReadSingle();
         var pngLen = reader.ReadInt32();
         var png = pngLen > 0 ? reader.ReadBytes(pngLen) : [];
+        BrushTipNodeGraph? nodeGraph = null;
+        if (version >= 11)
+        {
+            var graphJson = reader.ReadString();
+            if (!string.IsNullOrWhiteSpace(graphJson))
+                nodeGraph = JsonSerializer.Deserialize<BrushTipNodeGraph>(graphJson);
+        }
 
-        var tip = new BrushTipData { Kind = kind, Shape = shape, AspectRatio = aspect, PngBytes = png };
+        var tip = new BrushTipData
+        {
+            Kind = kind,
+            Shape = shape,
+            AspectRatio = aspect,
+            PngBytes = png,
+            NodeGraph = nodeGraph
+        };
 
         if ((int)kind == 2) // legacy Compound — no longer exists
         {
@@ -309,10 +328,13 @@ public static class BrushFileFormat
                 reader.ReadSingle(); // opacity
                 reader.ReadSingle(); // scale
                 reader.ReadSingle(); // rotation
-                ReadTip(reader); // sub-tip (recursive)
+                ReadTip(reader, version); // sub-tip (recursive)
             }
             kind = BrushTipStorageKind.Procedural;
         }
+        if (kind == BrushTipStorageKind.NodeGraph && nodeGraph == null)
+            kind = BrushTipStorageKind.Procedural;
+        tip.Kind = kind;
         return tip;
     }
 
@@ -325,5 +347,33 @@ public static class BrushFileFormat
         writer.Write(pngLen);
         if (pngLen > 0)
             writer.Write(tip.PngBytes!);
+        writer.Write(tip.Kind == BrushTipStorageKind.NodeGraph && tip.NodeGraph != null
+            ? JsonSerializer.Serialize(tip.NodeGraph)
+            : string.Empty);
     }
+
+    private static IReadOnlyList<BrushParameterGraph> ReadParameterGraphs(BinaryReader reader, int version)
+    {
+        if (version < 12)
+            return [];
+        var json = reader.ReadString();
+        if (string.IsNullOrWhiteSpace(json))
+            return [];
+        try
+        {
+            return JsonSerializer.Deserialize<List<BrushParameterGraph>>(json)?
+                .Where(g => g.Validate().Count == 0)
+                .Select(g => g.DeepClone())
+                .ToList() ?? [];
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static void WriteParameterGraphs(BinaryWriter writer, IReadOnlyList<BrushParameterGraph> graphs)
+        => writer.Write(graphs.Count == 0
+            ? string.Empty
+            : JsonSerializer.Serialize(graphs.Select(g => g.DeepClone()).ToList()));
 }

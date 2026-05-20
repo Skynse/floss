@@ -275,7 +275,7 @@ public sealed class SettingsWindow : Window
             new("Remove Dust",            "Filters",          () => sc.FilterRemoveDust,       v => sc.FilterRemoveDust = v),
             // Misc
             new("Open settings",          "Misc",             () => sc.OpenSettings,           v => sc.OpenSettings = v),
-            new("Open brush editor",      "Misc",             () => sc.OpenBrushEditor,        v => sc.OpenBrushEditor = v),
+            new("Open brush tip graph",   "Brush — Tip",      () => sc.OpenBrushEditor,        v => sc.OpenBrushEditor = v),
         ];
     }
 

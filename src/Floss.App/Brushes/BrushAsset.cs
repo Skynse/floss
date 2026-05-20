@@ -9,6 +9,7 @@ public enum BrushTipStorageKind
 {
     Procedural = 0,
     EmbeddedPng = 1,
+    NodeGraph = 3,
 }
 
 public sealed class BrushTipData
@@ -17,11 +18,14 @@ public sealed class BrushTipData
     public BrushTipShape Shape { get; set; } = BrushTipShape.Circle;
     public float AspectRatio { get; set; } = 1.0f;
     public byte[] PngBytes { get; set; } = [];
+    public BrushTipNodeGraph? NodeGraph { get; set; }
 
     public IBrushTip CreateTip() => Kind switch
     {
         BrushTipStorageKind.EmbeddedPng when PngBytes.Length > 0
             => new ImageBrushTip(PngBytes),
+        BrushTipStorageKind.NodeGraph when NodeGraph != null
+            => (IBrushTip?)NodeGraph.ToBuiltInProceduralTip() ?? new NodeBrushTip(NodeGraph),
         _ => new ProceduralBrushTip(Shape, AspectRatio)
     };
 
@@ -34,9 +38,15 @@ public sealed class BrushTipData
         },
         ProceduralBrushTip proc => new BrushTipData
         {
-            Kind = BrushTipStorageKind.Procedural,
+            Kind = BrushTipStorageKind.NodeGraph,
             Shape = proc.Shape,
-            AspectRatio = proc.AspectRatio
+            AspectRatio = proc.AspectRatio,
+            NodeGraph = proc.Graph.DeepClone()
+        },
+        NodeBrushTip node => new BrushTipData
+        {
+            Kind = BrushTipStorageKind.NodeGraph,
+            NodeGraph = node.Graph.DeepClone()
         },
         _ => new BrushTipData()
     };
@@ -47,6 +57,11 @@ public sealed class BrushTipData
         {
             Kind = Kind,
             PngBytes = PngBytes.ToArray()
+        },
+        BrushTipStorageKind.NodeGraph => new BrushTipData
+        {
+            Kind = Kind,
+            NodeGraph = NodeGraph?.DeepClone()
         },
         _ => new BrushTipData { Kind = Kind, Shape = Shape, AspectRatio = AspectRatio }
     };
@@ -113,7 +128,7 @@ public sealed class BrushAsset
             Category = Category,
             Preset = Preset with { Name = name },
             Tip = Tip.DeepClone(),
-            ShapeData = ShapeData == null ? null : new BrushTipData { Kind = BrushTipStorageKind.Procedural, Shape = ShapeData.Shape, AspectRatio = ShapeData.AspectRatio }
+            ShapeData = ShapeData?.DeepClone()
         };
 
     public static BrushAsset FromPreset(BrushPreset preset, string? category = null)

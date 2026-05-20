@@ -339,7 +339,7 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         // Misc
         AddShortcut(s.OpenSettings, () => OpenSettings());
-        AddShortcut(s.OpenBrushEditor, () => OpenToolProperties());
+        AddShortcut(s.OpenBrushEditor, () => OpenBrushTipGraphEditor());
         AddShortcut(s.ToggleCanvasOnly, () => ToggleCanvasOnly());
         AddShortcut(s.ToggleRulers, () => ToggleRulers());
 
@@ -879,6 +879,8 @@ public partial class MainWindow : Window, Tools.IViewportController
             Header = "_Brush",
             ItemsSource = new object[]
             {
+                MenuAction("_Brush Tip Graph...", new KeyGesture(Key.B, KeyModifiers.Control | KeyModifiers.Shift), OpenBrushTipGraphEditor),
+                new Separator(),
                 MenuAction("_Save Brush", SaveActiveBrush),
                 MenuAction("_Duplicate Brush", DuplicateActiveBrush),
                 MenuAction("_Import Tip PNG...", async () => await ImportBrushTipPngAsync()),

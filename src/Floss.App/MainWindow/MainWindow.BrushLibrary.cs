@@ -1746,6 +1746,12 @@ public partial class MainWindow : Window
         _toolPropsWindow.Show(this);
     }
 
+    private void OpenBrushTipGraphEditor()
+    {
+        OpenToolProperties();
+        _toolPropsWindow?.SelectBrushTipCategory();
+    }
+
     private void SaveActiveBrush()
     {
         if (_activeBrushAsset == null || _activePreset == null) return;

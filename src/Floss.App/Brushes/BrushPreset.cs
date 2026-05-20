@@ -46,6 +46,7 @@ public sealed record BrushPreset(
     public bool FlipVertical { get; init; } = false;
     public IReadOnlyList<BrushTipData> Tips { get; init; } = [];
     public BrushTipSelectionMode TipSelectionMode { get; init; } = BrushTipSelectionMode.Single;
+    public IReadOnlyList<BrushParameterGraph> ParameterGraphs { get; init; } = [];
 
     public ParameterDynamics SizeDynamics
     {
