@@ -376,36 +376,13 @@ public sealed class ToolPropertiesWindow : Window
         modeRow.Children.Add(modePanel);
         result.Children.Add(modeRow);
 
-        // ── Tip gallery (horizontal scroll) ──────────────────────────────────
-        var galleryPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
-
-        if (isProc)
+        // ── Material tip gallery (only for image-based tips) ─────────────────
+        if (!isProc)
         {
-            var shapes = new (BrushTipShape shape, string label)[]
-            {
-                (BrushTipShape.Circle,    "Round"),
-                (BrushTipShape.SoftRound, "Soft"),
-                (BrushTipShape.Flat,      "Flat"),
-                (BrushTipShape.Ellipse,   "Oval"),
-                (BrushTipShape.Rectangle, "Square"),
-                (BrushTipShape.Chalk,     "Chalk"),
-                (BrushTipShape.Bristle,   "Bristle"),
-                (BrushTipShape.Scatter,   "Scatter"),
-            };
-            foreach (var (shape, label) in shapes)
-            {
-                var s = shape;
-                galleryPanel.Children.Add(MkShapeCell(label, s, activeShape == s,
-                    () => CommitMainTip(new ProceduralBrushTip(s, activeAspect))));
-            }
-        }
-        else
-        {
+            var galleryPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
             var materialTips = MaterialTipsFor(_brushPreset);
             var activeTipData = BrushTipData.FromTip(_brushPreset.Tip);
 
-            // CSP-style material tips: the strip is the registered material set,
-            // and the highlighted cell is the active brush tip used by the engine.
             foreach (var tipData in materialTips)
             {
                 var td = tipData;
@@ -461,7 +438,6 @@ public sealed class ToolPropertiesWindow : Window
                 galleryPanel.Children.Add(cell);
             }
 
-            // "New" button — opens material browser to add an image tip
             var newCell = MkGalleryNewBtn(() =>
             {
                 var browser = new BrushTipBrowserWindow(this, tip =>
@@ -479,18 +455,19 @@ public sealed class ToolPropertiesWindow : Window
                 browser.Show(this);
             });
             galleryPanel.Children.Add(newCell);
+
+            var galleryScroll = new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                Content = galleryPanel,
+                Margin = new Thickness(0, 0, 0, 2)
+            };
+            result.Children.Add(galleryScroll);
+            result.Children.Add(BuildTipSelectionModeRow());
         }
 
-        var galleryScroll = new ScrollViewer
-        {
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            Content = galleryPanel,
-            Margin = new Thickness(0, 0, 0, 2)
-        };
-        result.Children.Add(galleryScroll);
-        if (!isProc)
-            result.Children.Add(BuildTipSelectionModeRow());
+        // For procedural tips, shape gallery replaced by node graph editor above.
         else
             result.Children.Add(BuildTipGraphControls());
 
@@ -533,6 +510,42 @@ public sealed class ToolPropertiesWindow : Window
         var panel = new StackPanel { Spacing = 0 };
         panel.Children.Add(SectionHeader("TIP GRAPH"));
 
+        var openEditorBtn = new Button
+        {
+            Content = "Open Node Graph Editor",
+            Background = new SolidColorBrush(Color.Parse(AccentSoft)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Accent)),
+            BorderThickness = new Thickness(1),
+            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
+            FontSize = 11,
+            MinHeight = 26,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+        openEditorBtn.Click += (_, _) =>
+        {
+            var editor = new NodeGraphEditorWindow(graph.DeepClone(), g =>
+            {
+                if (g.Validate().Count > 0) return;
+                var tip = g.ToBuiltInProceduralTip() ?? (IBrushTip)new NodeBrushTip(g);
+                Commit(p => p with { Tip = tip, Tips = PreserveMaterialTipsWithActiveFirst(p) });
+            }, (g, name) =>
+            {
+                if (g.Validate().Count > 0) return;
+                var clone = g.DeepClone();
+                clone.BuiltInShape = null;
+                clone.BuiltInAspectRatio = 1.0f;
+                var tip = (IBrushTip)new NodeBrushTip(clone);
+                Commit(p => p with { Name = name, Tip = tip, Tips = PreserveMaterialTipsWithActiveFirst(p) });
+            });
+            editor.Closed += (_, _) =>
+            {
+                _contentHost.Child = WrapContent(BuildBrushTipContent());
+            };
+            editor.Show(this);
+        };
+        panel.Children.Add(openEditorBtn);
+
         var errors = graph.Validate();
         if (errors.Count > 0)
         {
@@ -546,13 +559,14 @@ public sealed class ToolPropertiesWindow : Window
             });
         }
 
-        var nonOutput = graph.Nodes.Where(n => n.Id != graph.OutputNodeId);
-        var outputNode = graph.Nodes.FirstOrDefault(n => n.Id == graph.OutputNodeId);
-        var displayOrder = outputNode == null ? nonOutput : nonOutput.Append(outputNode);
-        foreach (var node in displayOrder)
-            panel.Children.Add(BuildNodeCard(graph, node));
-
-        panel.Children.Add(BuildAddNodeRow(graph));
+        var nodeCount = graph.Nodes.Count;
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"{nodeCount} node{(nodeCount == 1 ? "" : "s")} — edit above",
+            FontSize = 10,
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+            Margin = new Thickness(0, 2, 0, 2)
+        });
         return panel;
     }
 

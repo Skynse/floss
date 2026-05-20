@@ -43,6 +43,19 @@
 
 ## Important Files
 
+### Node Graph Editor (Brush Tip Graph Visual Editor)
+Popup window with draggable nodes, connection wires, pan/zoom canvas.
+- `Brushes/NodeGraphView.cs` — Custom `Control` that renders nodes/wires/ports via `DrawingContext`. Handles pan/zoom/drag/connect interaction. `AutoLayout()` uses topological depth sort.
+- `Brushes/NodeGraphEditorWindow.cs` — Popup `Window` hosting the `NodeGraphView`, toolbar (Apply, Save as New), and a right-side property panel with sliders and connection ComboBoxes. Commits graph changes via `Action<BrushTipNodeGraph>` callback.
+- `Windows/ToolPropertiesWindow.cs` — `BuildTipGraphControls()` shows "Open Node Graph Editor" button + validation errors only. Shape gallery removed (moved to editor's "New from Preset" button) to prevent accidental graph replacement.
+
+**Interaction:** Middle-click pan, scroll zoom (proportional, about cursor), drag header to move, drag port→port to connect (bidirectional), right-click canvas → add node, right-click node → context menu (Delete / Add Node), right-click input port → disconnect, Delete key to remove selected, Ctrl+Z/Y undo/redo (per-editor-session history, 300 entries max). Nodes have inline sliders (drag to scrub) and a bottom preview bar.
+
+**New nodes (V1 operator additions):** Mix (2-input lerp with Density as blend factor), Invert (1-input complement), RoundedRectangle (generator with corner radius via Radius field).
+
+**Bidirectional connection:** Drag from input port to output port also works — uses reverse hit-testing and separate `ConnectFromInput` drag state.
+
+### Viewport
 - `MainWindow.Viewport.cs` — viewport transforms, pointer event handlers, `IViewportController`, `SyncViewportStateToCanvas()`
 - `MainWindow.Tabs.cs` — tab switching, canvas swapping, **must call `SyncCanvasViewport()`**
 - `Canvas/DrawingCanvas.cs` — `HandlePointerInput`, `HandleViewportPointerInput`, `Render`
@@ -112,7 +125,6 @@ Reduces maintenance burden and ensures consistency.
 - [x] ~~HandOutput debug `Console.WriteLine("fuck")`~~ — Removed
 - [x] ~~Console.WriteLine in FileIO.cs~~ — Removed
 - [x] ~~Commented-out code in BrushEngine.cs line 164~~ — Removed
-- [x] ~~Unused `CursorPan` field~~ — Removed
 - [x] ~~Duplicate viewport state sync pattern~~ — Extracted into `SyncViewportStateToCanvas()`
 - [x] ~~Scattered viewport invalidations~~ — Centralized into `InvalidateViewport()` helper
 - [x] ~~Cursor flickering during drawing~~ — Workspace viewport cursor managed during captured strokes
@@ -120,6 +132,8 @@ Reduces maintenance burden and ensures consistency.
 - [ ] `InvalidateCompositor()` added but may not be used everywhere needed
 - [ ] `PaintInputSuspended` flag is set in multiple places, potential for desync
 - [ ] `MainWindow.axaml.cs` is 2589 lines — consider further splitting
+- [ ] LOD transitions still flush all compositor tiles — adds hysteresis (0.42 to leave LOD 1, 0.24 to leave LOD 2) and triples missing-tile budget after a switch, but the real fix would be pre-computing LOD tiles in the background or downscaling existing LOD 0 tiles instead of re-compositing from scratch. Also `CompositeTileLodCpu` does full-resolution compositing + nearest-neighbor point-sampling per tile; a bilinear mipchain approach would be both faster and look better at deep zoom-out.
+- [ ] Node graph V2 — the evaluator is single-channel (one float per pixel). To support true procedural geometry (Coord → Distance → Step), it needs multi-channel output (X,Y) and domain warping (using one input as coordinates for another). Current V1 adds operator nodes (Mix, Invert, RoundedRectangle) within the existing single-channel architecture. Also, "Save as New Preset" strips BuiltInShape and commits as a custom NodeBrushTip but doesn't yet add to BrushLibrary as an independently selectable preset — needs plumbing from ToolPropertiesWindow → MainWindow's brush asset store.
 
 ## Shortcuts
 - Input/KeyBinding.cs — data model for key+modifiers, parsing, formatting, modifier-state helpers

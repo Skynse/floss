@@ -170,7 +170,30 @@ public sealed class LayerCompositor : IDisposable
 
         if (lodChanged)
         {
-            _pendingDirtyTiles.Clear();
+            // Re-key pending dirty tiles to the new LOD instead of discarding them.
+            if (_pendingDirtyTiles.Count > 0)
+            {
+                var rekeyed = new List<(int X, int Y, int Lod)>(_pendingDirtyTiles.Count);
+                foreach (var key in _pendingDirtyTiles)
+                    rekeyed.Add(key);
+                _pendingDirtyTiles.Clear();
+                foreach (var key in rekeyed)
+                {
+                    if (key.Lod == lod) { _pendingDirtyTiles.Add(key); continue; }
+                    var oldTileStride = CmpTileSize * (1 << key.Lod);
+                    var region = new PixelRegion(key.X * oldTileStride, key.Y * oldTileStride,
+                        oldTileStride, oldTileStride).ClipTo(width, height);
+                    if (region.IsEmpty) continue;
+                    var firstTX = FloorDiv(region.X, stride);
+                    var firstTY = FloorDiv(region.Y, stride);
+                    var lastTX = FloorDiv(region.Right - 1, stride);
+                    var lastTY = FloorDiv(region.Bottom - 1, stride);
+                    for (var ty = firstTY; ty <= lastTY; ty++)
+                        for (var tx = firstTX; tx <= lastTX; tx++)
+                            _pendingDirtyTiles.Add((tx, ty, lod));
+                }
+            }
+
             var oldKeys = new List<(int X, int Y, int Lod)>();
             foreach (var k in _compTiles.Keys)
                 if (k.Lod != lod) oldKeys.Add(k);
@@ -233,7 +256,10 @@ public sealed class LayerCompositor : IDisposable
 
         // Cap both dirty and missing tiles. Dirty tiles are persistent in
         // _pendingDirtyTiles; missing tiles are naturally rediscovered next frame.
+        // Boost the missing tile budget when recovering from an LOD switch to
+        // repopulate the viewport faster.
         const int MaxMissingTilesPerFrame = 96;
+        var maxMissing = lodChanged ? MaxMissingTilesPerFrame * 3 : MaxMissingTilesPerFrame;
         var deferredMissingTiles = _pendingDirtyTiles.Count > 0;
         if (tileKeys.Count > DirtyTileBudget)
         {
@@ -247,7 +273,7 @@ public sealed class LayerCompositor : IDisposable
             tileKeys.RemoveRange(DirtyTileBudget, extra);
         }
 
-        if (missingTileKeys.Count > MaxMissingTilesPerFrame)
+        if (missingTileKeys.Count > maxMissing)
         {
             deferredMissingTiles = true;
             var cx = viewportClip is { } vp ? vp.X + vp.Width / 2 : _width / 2;
@@ -258,7 +284,7 @@ public sealed class LayerCompositor : IDisposable
                 var db = Math.Abs(b.tx * stride + stride / 2 - cx) + Math.Abs(b.ty * stride + stride / 2 - cy);
                 return da.CompareTo(db);
             });
-            missingTileKeys.RemoveRange(MaxMissingTilesPerFrame, missingTileKeys.Count - MaxMissingTilesPerFrame);
+            missingTileKeys.RemoveRange(maxMissing, missingTileKeys.Count - maxMissing);
         }
 
         if (tileKeys.Count == 0 && missingTileKeys.Count == 0)
@@ -337,12 +363,25 @@ public sealed class LayerCompositor : IDisposable
         return result;
     }
 
-    public static int SelectLod(int width, int height, double zoom)
+    public int SelectLod(int width, int height, double zoom)
     {
         var pixels = (long)width * height;
-        if (zoom < 0.18 && pixels > 16_000_000) return 2;
-        if (zoom < 0.35 && pixels > 8_000_000) return 1;
-        return 0;
+        var candidate = 0;
+        if (zoom < 0.18 && pixels > 16_000_000) candidate = 2;
+        else if (zoom < 0.35 && pixels > 8_000_000) candidate = 1;
+
+        // Hysteresis: require a wider margin to switch LOD, preventing rapid
+        // oscillation when zooming in/out near the boundary.
+        if (candidate > _currentLod)
+            return candidate; // zooming out → switch eagerly
+        if (candidate < _currentLod)
+        {
+            // zooming in → require more evidence before dropping LOD
+            var leaveThreshold = _currentLod == 1 ? 0.42 : 0.24;
+            if (zoom > leaveThreshold)
+                return candidate;
+        }
+        return _currentLod;
     }
 
     public static int CountTilesForRegion(PixelRegion region, int lod)

@@ -12,6 +12,7 @@ public enum BrushTipNodeKind
     Output,
     Circle,
     Rectangle,
+    RoundedRectangle,
     LinearGradient,
     Stripe,
     Noise,
@@ -22,6 +23,8 @@ public enum BrushTipNodeKind
     Min,
     Subtract,
     Threshold,
+    Mix,
+    Invert,
 }
 
 public sealed class BrushTipNode
@@ -417,6 +420,9 @@ public static class BrushTipNodeGraphEvaluator
                 BrushTipNodeKind.Min => Combine(node, stack, MathF.Min),
                 BrushTipNodeKind.Subtract => Combine(node, stack, (a, b) => Math.Clamp(a - b, 0f, 1f)),
                 BrushTipNodeKind.Threshold => Threshold(node, stack),
+                BrushTipNodeKind.Mix => Mix(node, stack),
+                BrushTipNodeKind.Invert => Invert(node, stack),
+                BrushTipNodeKind.RoundedRectangle => RoundedRect(node),
                 _ => new float[size * size]
             };
             stack.Remove(id);
@@ -444,6 +450,26 @@ public static class BrushTipNodeGraphEvaluator
             var threshold = Math.Clamp(node.Threshold, 0f, 1f);
             for (var i = 0; i < result.Length; i++)
                 result[i] = input[i] >= threshold ? Math.Clamp(node.Opacity, 0f, 1f) : 0f;
+            return result;
+        }
+
+        float[] Mix(BrushTipNode node, HashSet<string> stack)
+        {
+            var a = EvalInput(node, 0, stack);
+            var b = EvalInput(node, 1, stack);
+            var factor = Math.Clamp(node.Density, 0f, 1f);
+            var result = new float[size * size];
+            for (var i = 0; i < result.Length; i++)
+                result[i] = Math.Clamp(a[i] * (1f - factor) + b[i] * factor, 0f, 1f);
+            return result;
+        }
+
+        float[] Invert(BrushTipNode node, HashSet<string> stack)
+        {
+            var input = EvalInput(node, 0, stack);
+            var result = new float[size * size];
+            for (var i = 0; i < result.Length; i++)
+                result[i] = 1f - input[i];
             return result;
         }
 
@@ -475,6 +501,32 @@ public static class BrushTipNodeGraphEvaluator
                 var dy = MathF.Abs(y - node.Y) / halfH;
                 var t = MathF.Max(dx, dy);
                 return Falloff(t, hard) * Math.Clamp(node.Opacity, 0f, 1f);
+            });
+            return result;
+        }
+
+        float[] RoundedRect(BrushTipNode node)
+        {
+            var result = new float[size * size];
+            var halfW = Math.Max(0.001f, node.Width * 0.5f);
+            var halfH = Math.Max(0.001f, node.Height * 0.5f);
+            var corner = Math.Clamp(node.Radius, 0f, Math.Min(halfW, halfH));
+            var hard = CombinedHardness(node, brushHardness);
+            var invRange = 1f / Math.Max(0.001f, Math.Min(halfW, halfH));
+            FillAnalytic(node, result, (x, y) =>
+            {
+                var ax = MathF.Abs(x - node.X);
+                var ay = MathF.Abs(y - node.Y);
+                if (ax <= halfW - corner || ay <= halfH - corner)
+                {
+                    var flatT = MathF.Max(ax / halfW, ay / halfH);
+                    return Falloff(flatT, hard) * Math.Clamp(node.Opacity, 0f, 1f);
+                }
+                var cx = MathF.Max(ax - (halfW - corner), 0f);
+                var cy = MathF.Max(ay - (halfH - corner), 0f);
+                var cornerDist = MathF.Sqrt(cx * cx + cy * cy);
+                var cornerT = (cornerDist - corner) * invRange + 1f;
+                return Falloff(Math.Clamp(cornerT, 0f, 1f), hard) * Math.Clamp(node.Opacity, 0f, 1f);
             });
             return result;
         }
