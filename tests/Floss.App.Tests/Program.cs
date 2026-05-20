@@ -73,6 +73,8 @@ internal static class Program
         ("Brush engine applies tip density and thickness dynamics", BrushTests.BrushEngine_AppliesTipDensityAndThicknessDynamics),
         ("Brush engine blend mode does not drag paint across empty canvas", BrushTests.BrushEngine_BlendModeDoesNotCarryPaint),
         ("Brush engine low-spacing simple brushes use cached tile-major path", BrushTests.BrushEngine_LowSpacingUsesCachedTileMajorPath),
+        ("Brush engine batched segments match sequential dry stroke", BrushTests.BrushEngine_BatchedSegmentsMatchSequentialDryStroke),
+        ("Brush engine color mix uses cached tile-major path", BrushTests.BrushEngine_ColorMixUsesCachedTileMajorPath),
         ("Direct draw color mixing samples pre-stroke pixels", BrushTests.DirectDraw_ColorMixingDoesNotSampleOwnStroke),
         ("Brush engine color mixing amount controls deposited color", BrushTests.BrushEngine_ColorMixAmountControlsDepositedColor),
         ("Brush engine does not dispose tip-owned cached masks", BrushTests.BrushEngine_DoesNotDisposeTipOwnedCachedMasks),
@@ -1309,6 +1311,68 @@ internal static class BrushTests
         AssertEx.True(engine.LastStats.StampCount > 10, $"Expected low spacing to generate many dabs, got {engine.LastStats.StampCount}.");
         AssertEx.Equal(engine.LastStats.StampCount, engine.LastStats.CachedDabCount);
         AssertEx.True(engine.LastStats.TileBucketCount > 0);
+    }
+
+    public static void BrushEngine_BatchedSegmentsMatchSequentialDryStroke()
+    {
+        using var sequentialEngine = new BrushEngine();
+        using var batchedEngine = new BrushEngine();
+        using var sequentialLayer = new DrawingLayer("Sequential", 320, 180);
+        using var batchedLayer = new DrawingLayer("Batched", 320, 180);
+        var brush = new BrushPreset("Dry", 32, 1, 0.75, 0.05, Colors.Black, 0)
+        {
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null,
+            ColorMix = false,
+            Dynamics = new BrushDynamics()
+        };
+        var samples = new List<CanvasInputSample>
+        {
+            Sample(30, 90, 0),
+            Sample(80, 84, 1_000),
+            Sample(130, 98, 2_000),
+            Sample(180, 82, 3_000),
+            Sample(240, 94, 4_000)
+        };
+
+        sequentialEngine.BeginStroke(brush, samples[0]);
+        for (var i = 1; i < samples.Count; i++)
+            sequentialEngine.RasterizeSegment(sequentialLayer, brush, samples[i - 1], samples[i]);
+
+        batchedEngine.BeginStroke(brush, samples[0]);
+        var dirty = batchedEngine.RasterizeSegments(batchedLayer, brush, samples, 1, samples.Count - 1);
+
+        AssertEx.False(dirty.IsEmpty);
+        var bounds = new PixelRegion(0, 0, 320, 180);
+        AssertEx.SequenceEqual(sequentialLayer.Pixels.Capture(bounds), batchedLayer.Pixels.Capture(bounds));
+    }
+
+    public static void BrushEngine_ColorMixUsesCachedTileMajorPath()
+    {
+        using var engine = new BrushEngine();
+        using var layer = new DrawingLayer("Layer", 512, 256);
+        var brush = new BrushPreset("Wet cached", 36, 1, 0.75, 0.02, Colors.Black, 0)
+        {
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null,
+            ColorMix = true,
+            SmudgeMode = SmudgeMode.Blend,
+            AmountOfPaint = 1,
+            DensityOfPaint = 1,
+            Grain = 0,
+            Dynamics = new BrushDynamics()
+        };
+        var from = Sample(40, 128, 0);
+        var to = Sample(430, 128, 16_000);
+
+        engine.BeginStroke(brush, from);
+        var dirty = engine.RasterizeSegment(layer, brush, from, to);
+
+        AssertEx.False(dirty.IsEmpty);
+        AssertEx.Equal("CachedTileMajor", engine.LastStats.Path);
+        AssertEx.True(engine.LastStats.CachedDabCount > 10);
+        layer.Pixels.GetPixel(240, 128, out _, out _, out _, out var alpha);
+        AssertEx.True(alpha > 0);
     }
 
     public static void DirectDraw_ColorMixingDoesNotSampleOwnStroke()

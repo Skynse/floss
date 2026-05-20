@@ -74,6 +74,59 @@ public sealed class BrushEngine : IDisposable
         return RasterizeSegmentInternal(layer, brush, from, to, ensureEndpoint: false, sampleSource);
     }
 
+    public PixelRegion RasterizeSegments(
+        DrawingLayer layer,
+        BrushPreset brush,
+        IReadOnlyList<CanvasInputSample> samples,
+        int startSegmentIndex,
+        int segmentCount,
+        PixelSampler? sampleSource = null)
+    {
+        if (segmentCount <= 0 || samples.Count < 2) return PixelRegion.Empty;
+        if (startSegmentIndex <= 0 || startSegmentIndex >= samples.Count) return PixelRegion.Empty;
+
+        var started = Stopwatch.GetTimestamp();
+        _lastRasterPath = "None";
+        _lastCachedDabCount = 0;
+        _lastTileBucketCount = 0;
+
+        EnsureStroke(brush, samples[startSegmentIndex - 1]);
+        var stroke = _activeStroke!;
+        _stamps.Clear();
+        _stampColors.Clear();
+
+        var lastSegmentIndex = Math.Min(samples.Count - 1, startSegmentIndex + segmentCount - 1);
+        var dirty = PixelRegion.Empty;
+        for (var i = startSegmentIndex; i <= lastSegmentIndex; i++)
+            dirty = dirty.Union(BuildStamps(stroke, brush, samples[i - 1], samples[i], ensureEndpoint: false));
+
+        if (dirty.IsEmpty || _stamps.Count == 0)
+        {
+            LastStats = BrushRenderStats.From("Empty", 0, 0, 0, 0, ElapsedMs(started));
+            return PixelRegion.Empty;
+        }
+
+        if (brush.BlendMode != SKBlendMode.DstOut && brush.ColorMix)
+            PrepareStampColors(layer, brush, stroke, sampleSource);
+
+        if (dirty.IsEmpty)
+        {
+            LastStats = BrushRenderStats.From("Empty", _stamps.Count, 0, 0, 0, ElapsedMs(started));
+            return PixelRegion.Empty;
+        }
+
+        RenderCurrentStamps(layer, stroke, brush, dirty);
+
+        LastStats = BrushRenderStats.From(
+            _lastRasterPath,
+            _stamps.Count,
+            _lastCachedDabCount,
+            _lastTileBucketCount,
+            dirty.Width * dirty.Height,
+            ElapsedMs(started));
+        return dirty;
+    }
+
     public PixelRegion RasterizeFinalSegment(
         DrawingLayer layer, BrushPreset brush,
         CanvasInputSample from, CanvasInputSample to,
@@ -113,9 +166,23 @@ public sealed class BrushEngine : IDisposable
             return PixelRegion.Empty;
         }
 
+        RenderCurrentStamps(layer, stroke, brush, dirty);
+
+        LastStats = BrushRenderStats.From(
+            _lastRasterPath,
+            _stamps.Count,
+            _lastCachedDabCount,
+            _lastTileBucketCount,
+            dirty.Width * dirty.Height,
+            ElapsedMs(started));
+        return dirty;
+    }
+
+    private unsafe void RenderCurrentStamps(DrawingLayer layer, ActiveStroke stroke, BrushPreset brush, PixelRegion dirty)
+    {
         // For standard SrcOver brushes without color mixing, render stamps to a
         // temporary scratch with Lighten blend so overlapping stamps within this
-        // segment take the MAX alpha rather than compounding. The scratch is then
+        // batch take the MAX alpha rather than compounding. The scratch is then
         // composited onto the layer with SrcOver once.
         // Skip scratch for few stamps (large brushes) — the overhead of allocating
         // and blitting a huge scratch bitmap exceeds the cost of direct per-stamp draw.
@@ -127,6 +194,40 @@ public sealed class BrushEngine : IDisposable
             && brush.Tip is
                 (ProceduralBrushTip { Shape: BrushTipShape.Circle or BrushTipShape.SoftRound or BrushTipShape.Ellipse }
                  or ImageBrushTip);
+
+        bool canCachedTileMajor = (brush.BlendMode == SKBlendMode.SrcOver || brush.BlendMode == SKBlendMode.DstOut)
+            && brush.Shape == null
+            && !HasMultiTipSelection(brush)
+            && !brush.Tip.HasColor
+            && brush.Tip is
+                (ProceduralBrushTip { Shape: BrushTipShape.Circle or BrushTipShape.SoftRound or BrushTipShape.Ellipse }
+                 or ImageBrushTip);
+
+        if (!canDirect && canCachedTileMajor)
+        {
+            var baseColor = stroke.BaseColor;
+            float brushGrain = (float)brush.Grain;
+            byte* texPx = null;
+            int texW = 0, texH = 0, texStride = 0;
+            SKBitmap? texBmp = brushGrain > 0f && brush.Texture != null ? GetOrLoadTexture(brush.Texture) : null;
+            if (texBmp != null)
+            {
+                texPx = (byte*)texBmp.GetPixels().ToPointer();
+                texW = texBmp.Width;
+                texH = texBmp.Height;
+                texStride = texBmp.RowBytes;
+            }
+
+            var grainTable = PrecomputeGrain(dirty, texPx, texW, texH, texStride, brushGrain);
+            if (TryRasterizeCachedDabsTileMajor(layer, stroke, brush, brush.BlendMode == SKBlendMode.DstOut,
+                    baseColor.Blue, baseColor.Green, baseColor.Red, baseColor.Alpha,
+                    brushGrain, texPx, texW, texH, texStride, dirty, grainTable))
+            {
+                _lastRasterPath = "CachedTileMajor";
+                layer.Pixels.PruneRegion(dirty);
+                return;
+            }
+        }
 
         bool useScratch = !canDirect
             && brush.BlendMode == SKBlendMode.SrcOver
@@ -146,15 +247,6 @@ public sealed class BrushEngine : IDisposable
             _lastRasterPath = "SkiaFallback";
             layer.Pixels.RenderWithSkia(dirty, canvas => RenderPreparedStamps(stroke, canvas));
         }
-
-        LastStats = BrushRenderStats.From(
-            _lastRasterPath,
-            _stamps.Count,
-            _lastCachedDabCount,
-            _lastTileBucketCount,
-            dirty.Width * dirty.Height,
-            ElapsedMs(started));
-        return dirty;
     }
 
     public PixelRegion RasterizeDab(
@@ -766,7 +858,7 @@ public sealed class BrushEngine : IDisposable
         PixelRegion dirty,
         float[]? grainTable)
     {
-        if (brush.ColorMix || _stamps.Count == 0)
+        if (_stamps.Count == 0)
             return false;
 
         const int tsz = TiledPixelBuffer.TileSize;
@@ -776,6 +868,21 @@ public sealed class BrushEngine : IDisposable
         {
             var stamp = _stamps[i];
             if (stamp.Opacity <= 0 || stamp.Size <= 0) continue;
+
+            var colorB = brushB;
+            var colorG = brushG;
+            var colorR = brushR;
+            var colorA = baseAlpha;
+            if (!isDstOut && _stampColors.Count > i)
+            {
+                var color = _stampColors[i];
+                if (color.Alpha == 0) continue;
+                colorB = color.Blue;
+                colorG = color.Green;
+                colorR = color.Red;
+                colorA = color.Alpha;
+            }
+
             if (!stroke.TryGetCachedDab(stamp, out var dab))
                 return false;
             _lastCachedDabCount++;
@@ -787,7 +894,7 @@ public sealed class BrushEngine : IDisposable
             if (right <= dirty.X || bottom <= dirty.Y || left >= dirty.Right || top >= dirty.Bottom)
                 continue;
 
-            var placed = new PlacedDab(stamp, dab, left, top, right, bottom);
+            var placed = new PlacedDab(stamp, dab, left, top, right, bottom, colorB, colorG, colorR, colorA);
             var firstTx = FloorDiv(left, tsz);
             var firstTy = FloorDiv(top, tsz);
             var lastTx = FloorDiv(right - 1, tsz);
@@ -827,7 +934,7 @@ public sealed class BrushEngine : IDisposable
             {
                 ApplyCachedDabToTile(
                     tile, tilePixX, tilePixY, dirty, grainTable,
-                    placed, isDstOut, brushB, brushG, brushR, baseAlpha,
+                    placed, isDstOut,
                     brushGrain, texPx, texW, texH, texStride);
             }
         }
@@ -843,10 +950,6 @@ public sealed class BrushEngine : IDisposable
         float[]? grainTable,
         PlacedDab placed,
         bool isDstOut,
-        int brushB,
-        int brushG,
-        int brushR,
-        float baseAlpha,
         float brushGrain,
         byte* texPx,
         int texW,
@@ -854,7 +957,7 @@ public sealed class BrushEngine : IDisposable
         int texStride)
     {
         var stamp = placed.Stamp;
-        float stampOpacity255 = isDstOut ? stamp.Opacity * 255f : stamp.Opacity * baseAlpha;
+        float stampOpacity255 = isDstOut ? stamp.Opacity * 255f : stamp.Opacity * placed.ColorA;
         if (stampOpacity255 <= 0) return;
 
         const int tsz = TiledPixelBuffer.TileSize;
@@ -918,9 +1021,9 @@ public sealed class BrushEngine : IDisposable
                     int dstA = tile[offset + 3];
                     int dstW = dstA * (255 - stampA) / 255;
                     int outA = stampA + dstW;
-                    tile[offset + 0] = (byte)((brushB * stampA + tile[offset + 0] * dstW) / outA);
-                    tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * dstW) / outA);
-                    tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * dstW) / outA);
+                    tile[offset + 0] = (byte)((placed.ColorB * stampA + tile[offset + 0] * dstW) / outA);
+                    tile[offset + 1] = (byte)((placed.ColorG * stampA + tile[offset + 1] * dstW) / outA);
+                    tile[offset + 2] = (byte)((placed.ColorR * stampA + tile[offset + 2] * dstW) / outA);
                     tile[offset + 3] = (byte)outA;
                 }
             }
@@ -1583,9 +1686,6 @@ public sealed class BrushEngine : IDisposable
         {
             dab = null!;
 
-            if (_brush.ColorMix)
-                return false;
-
             var key = CachedDabKey.From(_brush, stamp);
             if (_dabCache.TryGetValue(key, out dab!))
                 return true;
@@ -1810,6 +1910,10 @@ public sealed class BrushEngine : IDisposable
         int Left,
         int Top,
         int Right,
-        int Bottom);
+        int Bottom,
+        int ColorB,
+        int ColorG,
+        int ColorR,
+        float ColorA);
     private readonly record struct SplinePoint(float X, float Y, float Pressure, float TiltX, float TiltY, float Twist);
 }

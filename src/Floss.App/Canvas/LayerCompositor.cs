@@ -242,6 +242,7 @@ public sealed class LayerCompositor : IDisposable
 
         _fullDirty = false;
         _dirtyRegion = null;
+        var renderList = FlattenForRender(rootLayers);
 
         var dirtySet = new HashSet<(int tx, int ty)>(tileKeys);
 
@@ -257,13 +258,13 @@ public sealed class LayerCompositor : IDisposable
         {
             var tileRect = new PixelRegion(tx * stride, ty * stride, stride, stride).Intersect(dirtyClip);
             if (tileRect.IsEmpty) tileRect = new PixelRegion(tx * stride, ty * stride, 1, 1);
-            CompositeTileCpu(_compTiles[(tx, ty, lod)], tileRect, rootLayers, tx * stride, ty * stride, paperColor);
+            CompositeTileCpu(_compTiles[(tx, ty, lod)], tileRect, renderList, tx * stride, ty * stride, paperColor);
         }
         foreach (var (tx, ty) in missingTileKeys)
         {
             var tileRect = new PixelRegion(tx * stride, ty * stride, stride, stride).ClipTo(width, height);
             if (tileRect.IsEmpty) tileRect = new PixelRegion(tx * stride, ty * stride, 1, 1);
-            CompositeTileCpu(_compTiles[(tx, ty, lod)], tileRect, rootLayers, tx * stride, ty * stride, paperColor);
+            CompositeTileCpu(_compTiles[(tx, ty, lod)], tileRect, renderList, tx * stride, ty * stride, paperColor);
         }
 
         foreach (var cache in _groupCaches.Values)
@@ -303,11 +304,10 @@ public sealed class LayerCompositor : IDisposable
     }
 
     private unsafe void CompositeTileCpu(WriteableBitmap tile, PixelRegion tileRect,
-        IReadOnlyList<DrawingLayer> rootLayers, int originX, int originY, uint paperColor = 0)
+        IReadOnlyList<RenderItem> renderList, int originX, int originY, uint paperColor = 0)
     {
         var tw = tile.PixelSize.Width;
         var th = tile.PixelSize.Height;
-        var renderList = FlattenForRender(rootLayers);
         using var frame = tile.Lock();
         var dst = (byte*)frame.Address;
         var dstStride = frame.RowBytes;

@@ -17,6 +17,7 @@ public sealed class DirectDrawOutput : IOutputProcess
     private const long PreviewNotifyIntervalMs = 12;
     private const double RenderSliceBudgetMs = 5.0;
     private const int MaxSegmentsPerSlice = 24;
+    private const int InitialSegmentsPerSlice = 8;
     private const int SynchronousFinishSegmentLimit = 4;
 
     public bool IsPaintOutput => true;
@@ -153,11 +154,16 @@ public sealed class DirectDrawOutput : IOutputProcess
 
             while (tx.NextSegmentIndex < tx.QueuedSamples.Count)
             {
-                var from = tx.QueuedSamples[tx.NextSegmentIndex - 1];
-                var to = tx.QueuedSamples[tx.NextSegmentIndex];
-                batchDirty = batchDirty.Union(ProcessSegment(tx, from, to));
-                tx.NextSegmentIndex++;
-                processed++;
+                var remaining = tx.QueuedSamples.Count - tx.NextSegmentIndex;
+                var segmentCount = force
+                    ? remaining
+                    : Math.Min(remaining, tx.SuggestedSegmentCount(RenderSliceBudgetMs, InitialSegmentsPerSlice, MaxSegmentsPerSlice));
+
+                var segmentStarted = Stopwatch.GetTimestamp();
+                batchDirty = batchDirty.Union(ProcessSegmentBatch(tx, tx.NextSegmentIndex, segmentCount));
+                tx.NextSegmentIndex += segmentCount;
+                processed += segmentCount;
+                tx.RecordSegmentTime(ElapsedMs(segmentStarted), segmentCount);
 
                 if (!force && processed >= MaxSegmentsPerSlice)
                     break;
@@ -208,13 +214,13 @@ public sealed class DirectDrawOutput : IOutputProcess
         tx.LastPreviewNotifyMs = now;
     }
 
-    private PixelRegion ProcessSegment(StrokeTransaction tx, CanvasInputSample from, CanvasInputSample to)
+    private PixelRegion ProcessSegmentBatch(StrokeTransaction tx, int startSegmentIndex, int segmentCount)
     {
-        var region = _brushEngine.EstimateSegmentRegion(tx.Layer, tx.Brush, from, to);
+        var region = EstimateSegmentBatchRegion(tx, startSegmentIndex, segmentCount);
         if (!region.IsEmpty)
             tx.Layer.CaptureTiles(region, tx.BeforeTiles);
 
-        var dirty = _brushEngine.RasterizeSegment(tx.Layer, tx.Brush, from, to,
+        var dirty = _brushEngine.RasterizeSegments(tx.Layer, tx.Brush, tx.QueuedSamples, startSegmentIndex, segmentCount,
             (x, y, out b, out g, out r, out a) => ReadBeforeStrokePixelFrom(tx.BeforeTiles, tx.Layer, x, y, out b, out g, out r, out a));
 
         if (!dirty.IsEmpty)
@@ -227,6 +233,15 @@ public sealed class DirectDrawOutput : IOutputProcess
         }
 
         return PixelRegion.Empty;
+    }
+
+    private PixelRegion EstimateSegmentBatchRegion(StrokeTransaction tx, int startSegmentIndex, int segmentCount)
+    {
+        var endSegmentIndex = Math.Min(tx.QueuedSamples.Count - 1, startSegmentIndex + segmentCount - 1);
+        var region = PixelRegion.Empty;
+        for (var i = startSegmentIndex; i <= endSegmentIndex; i++)
+            region = region.Union(_brushEngine.EstimateSegmentRegion(tx.Layer, tx.Brush, tx.QueuedSamples[i - 1], tx.QueuedSamples[i]));
+        return region;
     }
 
     private static void Commit(StrokeTransaction tx)
@@ -414,6 +429,24 @@ public sealed class DirectDrawOutput : IOutputProcess
         public PixelRegion DirtyRegion { get; set; } = PixelRegion.Empty;
         public PixelRegion PendingPreviewDirty { get; set; } = PixelRegion.Empty;
         public long LastPreviewNotifyMs { get; set; }
+        public double AverageSegmentMs { get; private set; }
         public int RemainingSegments => Math.Max(0, QueuedSamples.Count - NextSegmentIndex);
+
+        public int SuggestedSegmentCount(double targetMs, int initial, int max)
+        {
+            if (AverageSegmentMs <= 0.001)
+                return Math.Clamp(initial, 1, max);
+
+            return Math.Clamp((int)Math.Floor(targetMs / AverageSegmentMs), 1, max);
+        }
+
+        public void RecordSegmentTime(double elapsedMs, int segmentCount)
+        {
+            if (segmentCount <= 0 || elapsedMs <= 0) return;
+            var perSegment = elapsedMs / segmentCount;
+            AverageSegmentMs = AverageSegmentMs <= 0.001
+                ? perSegment
+                : AverageSegmentMs * 0.75 + perSegment * 0.25;
+        }
     }
 }
