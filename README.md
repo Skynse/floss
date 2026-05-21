@@ -22,3 +22,7 @@ dotnet run --project src/Floss.App
 ## Performance Direction
 
 The first canvas backend is CPU raster into one `WriteableBitmap`. That is not the final architecture. The next pass should split the document into dirty tiles, update only changed tile regions, and introduce a real tool/brush pipeline before adding layers and transforms.
+
+# Builds (Windows)
+
+dotnet publish src/Floss.App/Floss.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:PublishTrimmed=false -o artifacts/floss-win-x64-compact

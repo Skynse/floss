@@ -312,6 +312,15 @@ public sealed class DrawingCanvas : Control, IDisposable
         if (point.Properties.IsEraser)
             return CanvasInputSource.Eraser;
 
+        // Some tablet drivers report the pen as a generic mouse but still send
+        // pressure/tilt data. Detect that and treat it as a pen so dynamics work.
+        if (point.Pointer.Type == PointerType.Mouse)
+        {
+            var p = point.Properties;
+            if (p.Pressure > 0 || p.XTilt != 0 || p.YTilt != 0 || p.Twist != 0)
+                return CanvasInputSource.Pen;
+        }
+
         return point.Pointer.Type switch
         {
             PointerType.Pen => CanvasInputSource.Pen,
@@ -1758,7 +1767,7 @@ public sealed class DrawingCanvas : Control, IDisposable
         {
             PointerType.Pen => properties.Pressure >= PenPressureThreshold,
             PointerType.Touch => properties.IsLeftButtonPressed || properties.Pressure >= PenPressureThreshold,
-            PointerType.Mouse => properties.IsLeftButtonPressed,
+            PointerType.Mouse => properties.IsLeftButtonPressed || properties.Pressure >= PenPressureThreshold,
             _ => false
         };
     }

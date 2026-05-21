@@ -26,9 +26,9 @@ public sealed class SplashWindow : Window
         Background = new SolidColorBrush(Color.Parse(Bg0));
         TransparencyLevelHint = [WindowTransparencyLevel.None];
 
-        Icon = new WindowIcon(AssetLoader.Open(new Uri("avares://Floss.App/Assets/icon.png")));
+        Icon = new WindowIcon(AssetLoader.Open(new Uri(AppAssets.IconUri)));
 
-        using var iconStream = AssetLoader.Open(new Uri("avares://Floss.App/Assets/icon.png"));
+        using var iconStream = AssetLoader.Open(new Uri(AppAssets.IconUri));
         var icon = new Image
         {
             Source = new Bitmap(iconStream),

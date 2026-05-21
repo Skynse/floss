@@ -18,7 +18,6 @@ using static Floss.App.AppColors;
 
 public partial class MainWindow : ICanvasInputHost
 {
-    private const double PenPressureThreshold = 0.02;
     private CanvasInputRouter _inputRouter = null!;
 
     // ── Viewport ──────────────────────────────────────────────────────────────

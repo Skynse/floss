@@ -491,7 +491,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     public MainWindow()
     {
         InitializeComponent();
-        Icon = new WindowIcon(AssetLoader.Open(new Uri("avares://Floss.App/Assets/icon.png")));
+        Icon = new WindowIcon(AssetLoader.Open(new Uri(AppAssets.IconUri)));
         _brushLibrary = new BrushLibrary(AppPaths.BrushesDirectory);
         _showRulers = App.Config.ShowRulers;
         BuildUi();

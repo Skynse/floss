@@ -59,28 +59,34 @@ public partial class MainWindow
         _tabBar = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 0,
-            VerticalAlignment = VerticalAlignment.Stretch
+            Spacing = 1,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(4, 3, 0, 0)
         };
 
         var newTabBtn = new Button
         {
             Content = "+",
-            Width = 26,
-            Height = 26,
+            Width = 24,
+            Height = 23,
             Padding = new Thickness(0),
-            FontSize = 14,
+            FontSize = 13,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(Bg0)),
+            Background = new SolidColorBrush(Color.Parse(Bg1)),
             BorderThickness = new Thickness(0),
             CornerRadius = new CornerRadius(0),
-            Foreground = new SolidColorBrush(Color.Parse(TextMuted))
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+            Margin = new Thickness(2, 2, 4, 1)
         };
         ToolTip.SetTip(newTabBtn, "New document  (Ctrl+N)");
         newTabBtn.Click += (_, _) => _ = NewDocumentAsync();
 
-        var bar = new DockPanel { LastChildFill = false };
+        var bar = new DockPanel
+        {
+            LastChildFill = true,
+            Background = new SolidColorBrush(Color.Parse(Bg0))
+        };
         DockPanel.SetDock(newTabBtn, Dock.Right);
         bar.Children.Add(newTabBtn);
         bar.Children.Add(_tabBar);
@@ -115,10 +121,10 @@ public partial class MainWindow
         var title = new TextBlock
         {
             Text = tab.DisplayTitle + (tab.Canvas.IsDirty ? " ●" : ""),
-            FontSize = 10,
+            FontSize = 11,
             VerticalAlignment = VerticalAlignment.Center,
             Foreground = new SolidColorBrush(Color.Parse(isActive ? TextPrimary : TextSecondary)),
-            Margin = new Thickness(8, 0, 4, 0)
+            TextTrimming = TextTrimming.CharacterEllipsis
         };
 
         var close = new Button
@@ -127,35 +133,39 @@ public partial class MainWindow
             Width = 16,
             Height = 16,
             Padding = new Thickness(0),
-            FontSize = 13,
+            FontSize = 12,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
             Background = Avalonia.Media.Brushes.Transparent,
             BorderThickness = new Thickness(0),
             CornerRadius = new CornerRadius(2),
             Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-            Margin = new Thickness(0, 0, 5, 0)
+            Margin = new Thickness(4, 0, 0, 0)
         };
         close.Click += (_, e) => { _ = CloseTabAsync(tab); e.Handled = true; };
 
-        var panel = new StackPanel
+        var panel = new Grid
         {
-            Orientation = Orientation.Horizontal,
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
             VerticalAlignment = VerticalAlignment.Center,
-            Children = { title, close }
+            Margin = new Thickness(8, 0, 6, 0)
         };
+        Grid.SetColumn(title, 0);
+        Grid.SetColumn(close, 1);
+        panel.Children.Add(title);
+        panel.Children.Add(close);
 
         var border = new Border
         {
             Child = panel,
-            MinWidth = 80,
-            MaxWidth = 200,
-            Height = 26,
-            Background = new SolidColorBrush(Color.Parse(isActive ? Bg2 : Bg0)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = isActive
-                ? new Thickness(1, 0, 1, 0)
-                : new Thickness(0, 0, 1, 0),
+            MinWidth = 96,
+            MaxWidth = 220,
+            Height = 23,
+            Background = new SolidColorBrush(Color.Parse(isActive ? Bg2 : Bg1)),
+            BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke)),
+            BorderThickness = new Thickness(1, 1, 1, isActive ? 0 : 1),
+            CornerRadius = new CornerRadius(2, 2, 0, 0),
+            Margin = new Thickness(0, 0, 0, 0),
             Cursor = new Cursor(StandardCursorType.Arrow)
         };
 

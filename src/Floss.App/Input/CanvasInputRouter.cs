@@ -795,7 +795,7 @@ public sealed class CanvasInputRouter
                 ? CanvasAction.PrimaryTool
                 : CanvasAction.None;
 
-        if (props.IsLeftButtonPressed)
+        if (props.IsLeftButtonPressed || props.Pressure >= PenPressureThreshold)
             return CanvasAction.PrimaryTool;
         if (props.IsMiddleButtonPressed)
             return (CanvasAction)App.Shortcuts.MiddleButtonAction;
