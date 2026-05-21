@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
@@ -21,6 +22,9 @@ public sealed class NodeGraphView : Control
     private const float PortRadius = 5f;
     private const float PortHitRadius = 8f;
     private const float SliderRowHeight = 22f;
+    private const float SliderLabelWidth = 48f;
+    private const float SliderValueWidth = 36f;
+    private const float SliderBarGap = 4f;
     private const float ImageSelectorRowHeight = 26f;
     private const float PreviewBarHeight = 38f;
     private const float ImageTipPreviewSize = 72f;
@@ -76,7 +80,7 @@ public sealed class NodeGraphView : Control
     private double _panY;
     private double _zoom = 1.2;
 
-    private enum DragAction { None, Pan, Zoom, MoveNode, Connect, ConnectFromInput, ScrubParam }
+    private enum DragAction { None, Pan, Zoom, MoveNode, Connect, ConnectFromInput, DisconnectWire, ScrubParam }
     private DragAction _dragAction;
     private bool _spaceHeld;
     private CanvasAction _shortcutAction;
@@ -93,7 +97,6 @@ public sealed class NodeGraphView : Control
     private Point _connectTempEnd;
     private string _scrubNodeId = null!;
     private int _scrubParamIdx;
-    private float _scrubStartValue;
 
     private string? _selectedNodeId;
     private static readonly Typeface SemiBoldTypeface = new(FontFamily.Default, FontStyle.Normal, FontWeight.SemiBold);
@@ -107,6 +110,12 @@ public sealed class NodeGraphView : Control
     // Preview cache
     private readonly Dictionary<string, IImage> _previewCache = new();
     private List<ImageSamplerOption> _imageSamplers = [];
+
+    private Popup? _paramEditPopup;
+    private TextBox? _paramEditBox;
+    private string? _paramEditNodeId;
+    private int _paramEditParamIdx = -1;
+    private float _paramEditOriginalValue;
 
     public event Action<BrushTipNode?>? NodeSelected;
     public event Action<BrushTipNode>? NodeRightClicked;
@@ -168,6 +177,7 @@ public sealed class NodeGraphView : Control
 
     private void ReleaseTransientCaches()
     {
+        CloseParamEdit(revert: true);
         InvalidatePreviews();
         _history.Clear();
         _historyIndex = -1;
@@ -178,6 +188,8 @@ public sealed class NodeGraphView : Control
         if (_previewCache.TryGetValue(node.Id, out var cached))
             return cached;
 
+        const int prevSize = 32;
+
         if (node.Kind == BrushTipNodeKind.ImageSampler && node.PngBytes.Length > 0)
         {
             var thumb = DecodeImagePreview(node.PngBytes);
@@ -185,7 +197,13 @@ public sealed class NodeGraphView : Control
             return thumb;
         }
 
-        const int prevSize = 32;
+        if (node.Kind == BrushTipNodeKind.Coordinates)
+        {
+            var uv = CreateUvPreview(prevSize);
+            _previewCache[node.Id] = uv;
+            return uv;
+        }
+
         var tempGraph = _graph.DeepClone();
         tempGraph.OutputNodeId = node.Id;
         using var bitmap = BrushTipNodeGraphEvaluator.EvaluateColor(tempGraph, prevSize, 1.0f)
@@ -212,6 +230,26 @@ public sealed class NodeGraphView : Control
             throw new InvalidDataException("Brush tip PNG could not be scaled.");
 
         using var skImg = SKImage.FromBitmap(scaled);
+        using var png = skImg.Encode(SKEncodedImageFormat.Png, 80);
+        using var stream = new MemoryStream(png.ToArray());
+        return new Bitmap(stream);
+    }
+
+    private static Bitmap CreateUvPreview(int size)
+    {
+        size = Math.Max(8, size);
+        using var bitmap = new SKBitmap(new SKImageInfo(size, size, SKColorType.Bgra8888, SKAlphaType.Opaque));
+        for (var y = 0; y < size; y++)
+        {
+            for (var x = 0; x < size; x++)
+            {
+                var u = (byte)((x / (float)(size - 1)) * 255f + 0.5f);
+                var v = (byte)((y / (float)(size - 1)) * 255f + 0.5f);
+                bitmap.SetPixel(x, y, new SKColor(u, v, 128));
+            }
+        }
+
+        using var skImg = SKImage.FromBitmap(bitmap);
         using var png = skImg.Encode(SKEncodedImageFormat.Png, 80);
         using var stream = new MemoryStream(png.ToArray());
         return new Bitmap(stream);
@@ -293,6 +331,8 @@ public sealed class NodeGraphView : Control
         {
             var source = _graph.Nodes.FirstOrDefault(n => n.Id == sourceNodeId);
             if (source == null || source.Kind == BrushTipNodeKind.Output || source.Id == nodeId)
+                return false;
+            if (!BrushTipNodePorts.CanConnect(source.Kind, node.Kind, inputIndex))
                 return false;
             if (WouldCreateCycle(source.Id, nodeId))
                 return false;
@@ -502,6 +542,16 @@ public sealed class NodeGraphView : Control
             h);
     }
 
+    private static bool HasStandalonePreview(BrushTipNode node)
+        => node.Kind == BrushTipNodeKind.Coordinates;
+
+    private static bool ShowsPreviewBar(BrushTipNode node)
+    {
+        var paramCount = GetNodeParams(node.Kind).Length;
+        var inputCount = NodeInputCount(node.Kind);
+        return paramCount > 0 || inputCount > 0 || HasImageSelector(node) || HasStandalonePreview(node);
+    }
+
     private float GetNodeHeight(BrushTipNode node)
     {
         var inputCount = NodeInputCount(node.Kind);
@@ -519,7 +569,7 @@ public sealed class NodeGraphView : Control
             bodyHeight += paramCount * SliderRowHeight;
             bodyHeight += previewHeight + 4;
         }
-        else if (inputCount > 0 || hasImageSelector)
+        else if (ShowsPreviewBar(node))
         {
             bodyHeight += previewHeight + 4;
         }
@@ -682,6 +732,7 @@ public sealed class NodeGraphView : Control
 
     private static string NodeKindDisplayName(BrushTipNodeKind kind) => kind switch
     {
+        BrushTipNodeKind.Coordinates => "UV Map",
         BrushTipNodeKind.LinearGradient => "Linear Grad",
         BrushTipNodeKind.ImageSampler => "Image Sampler",
         BrushTipNodeKind.RoundedRectangle => "Round Rect",
@@ -708,7 +759,157 @@ public sealed class NodeGraphView : Control
         if (HasImageSelector(node))
             y += ImageSelectorRowHeight + BodyPadding;
         y += paramIndex * SliderRowHeight + 4;
-        return new Rect(pos.X + 58, y, NodeWidth - 98, 14);
+        var x = pos.X + SliderLabelWidth + SliderBarGap;
+        var width = NodeWidth - SliderLabelWidth - SliderValueWidth - SliderBarGap * 2;
+        return new Rect(x, y, width, 14);
+    }
+
+    private static Rect SliderValueRect(Point pos, BrushTipNode node, int paramIndex)
+    {
+        var bar = SliderBarRect(pos, node, paramIndex);
+        return new Rect(pos.X + NodeWidth - SliderValueWidth - 2, bar.Y - 3, SliderValueWidth, SliderRowHeight);
+    }
+
+    private Point WorldToLocal(Point world)
+        => new(world.X * _zoom + _panX, world.Y * _zoom + _panY);
+
+    private Rect WorldToLocalRect(Rect worldRect)
+    {
+        var topLeft = WorldToLocal(new Point(worldRect.X, worldRect.Y));
+        return new Rect(topLeft, new Size(worldRect.Width * _zoom, worldRect.Height * _zoom));
+    }
+
+    private void EnsureParamEditPopup()
+    {
+        if (_paramEditPopup != null) return;
+
+        _paramEditBox = new TextBox
+        {
+            FontSize = 10,
+            MinWidth = 52,
+            Padding = new Thickness(4, 2),
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+            Background = NodeBgBrush,
+            Foreground = BodyTextBrush,
+            BorderBrush = SelectionBorderPen.Brush,
+            BorderThickness = new Thickness(1),
+        };
+
+        _paramEditPopup = new Popup
+        {
+            Child = _paramEditBox,
+            IsLightDismissEnabled = false,
+            Placement = PlacementMode.Bottom,
+        };
+
+        _paramEditBox.KeyDown += (_, e) =>
+        {
+            if (e.Key is Key.Enter or Key.Return)
+            {
+                CommitParamEdit();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                CloseParamEdit(revert: true);
+                e.Handled = true;
+            }
+        };
+
+        _paramEditBox.LostFocus += (_, _) =>
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                if (_paramEditPopup?.IsOpen == true)
+                    CommitParamEdit();
+            }, Avalonia.Threading.DispatcherPriority.Input);
+        };
+    }
+
+    private void OpenParamEditor(string nodeId, int paramIdx, Rect valueWorldRect)
+    {
+        if (_graph == null) return;
+        EnsureParamEditPopup();
+        if (_paramEditBox == null || _paramEditPopup == null)
+            return;
+
+        var editBox = _paramEditBox;
+        var editPopup = _paramEditPopup;
+
+        var node = _graph.Nodes.FirstOrDefault(n => n.Id == nodeId);
+        if (node == null) return;
+        var nodeParams = GetNodeParams(node.Kind);
+        if (paramIdx >= nodeParams.Length) return;
+        var param = nodeParams[paramIdx];
+
+        _paramEditNodeId = nodeId;
+        _paramEditParamIdx = paramIdx;
+        _paramEditOriginalValue = param.Get(node);
+        editBox.Text = BrushTipNodePorts.FormatDisplayValue(_paramEditOriginalValue);
+
+        var localRect = WorldToLocalRect(valueWorldRect);
+        editBox.Width = Math.Max(52, localRect.Width);
+        editPopup.PlacementTarget = this;
+        editPopup.HorizontalOffset = localRect.X;
+        editPopup.VerticalOffset = localRect.Y;
+        editPopup.IsOpen = true;
+        editBox.Focus();
+        editBox.SelectAll();
+    }
+
+    private static string FormatParamValue(float value)
+        => BrushTipNodePorts.FormatDisplayValue(value);
+
+    private void CommitParamEdit()
+    {
+        if (_graph == null || _paramEditNodeId == null)
+            return;
+
+        var editBox = _paramEditBox;
+        var editPopup = _paramEditPopup;
+        if (editBox == null || editPopup == null || !editPopup.IsOpen)
+            return;
+
+        var node = _graph.Nodes.FirstOrDefault(n => n.Id == _paramEditNodeId);
+        if (node == null)
+        {
+            CloseParamEdit(revert: true);
+            return;
+        }
+
+        var nodeParams = GetNodeParams(node.Kind);
+        if (_paramEditParamIdx >= nodeParams.Length)
+        {
+            CloseParamEdit(revert: true);
+            return;
+        }
+
+        var param = nodeParams[_paramEditParamIdx];
+        if (!float.TryParse((editBox.Text ?? "").Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+            parsed = _paramEditOriginalValue;
+        parsed = Math.Clamp(parsed, param.Min, param.Max);
+
+        var changed = Math.Abs(parsed - param.Get(node)) > 0.0001f;
+        if (changed)
+        {
+            param.Set(node, parsed);
+            PushHistory();
+            InvalidatePreviews();
+            InvalidateVisual();
+            GraphModified?.Invoke();
+        }
+
+        CloseParamEdit(revert: false);
+    }
+
+    private void CloseParamEdit(bool revert)
+    {
+        if (_paramEditPopup != null)
+            _paramEditPopup.IsOpen = false;
+        if (revert && _paramEditBox != null && _paramEditNodeId != null)
+            _paramEditBox.Text = BrushTipNodePorts.FormatDisplayValue(_paramEditOriginalValue);
+        _paramEditNodeId = null;
+        _paramEditParamIdx = -1;
     }
 
     // ── Preview bar bounds ─────────────────────────────────────────────────────
@@ -720,7 +921,15 @@ public sealed class NodeGraphView : Control
             y += ImageSelectorRowHeight + BodyPadding;
         if (paramCount > 0)
             y += paramCount * SliderRowHeight + 4;
+        else if (HasStandalonePreview(node))
+            y = (float)pos.Y + HeaderHeight + BodyPadding;
         return new Rect(pos.X + 4, y, NodeWidth - 8, PreviewBarHeightFor(node));
+    }
+
+    private static float ScrubValueFromWorldX(Rect barRect, NodeParam param, double worldX)
+    {
+        var fraction = Math.Clamp((worldX - barRect.Left) / Math.Max(1.0, barRect.Width), 0.0, 1.0);
+        return (float)(param.Min + fraction * (param.Max - param.Min));
     }
 
     public override void Render(DrawingContext context)
@@ -760,6 +969,11 @@ public sealed class NodeGraphView : Control
             {
                 var srcId = node.Inputs[i];
                 if (string.IsNullOrEmpty(srcId)) continue;
+                if (_dragAction == DragAction.DisconnectWire
+                    && node.Id == _connectTgtId
+                    && i == _connectTgtIdx)
+                    continue;
+
                 if (!_positions.TryGetValue(srcId, out var srcPos)) continue;
                 var srcNode = _graph.Nodes.FirstOrDefault(n => n.Id == srcId);
                 if (srcNode == null) continue;
@@ -796,6 +1010,12 @@ public sealed class NodeGraphView : Control
             if (_graph.Nodes.FirstOrDefault(n => n.Id == _connectSrcId) is { } srcNode
                 && _positions.TryGetValue(_connectSrcId, out var srcPos))
                 DrawBezier(context, GetOutputPortPos(srcNode, srcPos), _connectTempEnd, WireTempPen);
+        }
+        else if (_dragAction == DragAction.DisconnectWire && _connectSrcId != null)
+        {
+            if (_graph.Nodes.FirstOrDefault(n => n.Id == _connectSrcId) is { } srcNode
+                && _positions.TryGetValue(_connectSrcId, out var srcPos))
+                DrawBezier(context, GetOutputPortPos(srcNode, srcPos), _connectTempEnd, WirePen);
         }
         else if (_dragAction == DragAction.ConnectFromInput && _connectTgtId != null)
         {
@@ -854,19 +1074,18 @@ public sealed class NodeGraphView : Control
                 connected ? PortConnectedBrush : PortDefaultBrush, null,
                 ip, PortRadius, PortRadius);
 
-            var inputLabel = node.Kind switch
+            var inputLabel = BrushTipNodePorts.InputLabel(node.Kind, i);
+            if (node.Kind is BrushTipNodeKind.Threshold or BrushTipNodeKind.Invert)
             {
-                BrushTipNodeKind.Output => "output",
-                BrushTipNodeKind.DistanceField or BrushTipNodeKind.BoxDistanceField
-                    or BrushTipNodeKind.LinearGradient or BrushTipNodeKind.Stripe
-                    or BrushTipNodeKind.Noise => "coord",
-                BrushTipNodeKind.RotateCoordinates or BrushTipNodeKind.PolarRadius
-                    or BrushTipNodeKind.PolarAngle => "coord",
-                BrushTipNodeKind.WarpCoordinates => i == 0 ? "coord" : "warp",
-                BrushTipNodeKind.Threshold => "mask",
-                BrushTipNodeKind.Invert => "input",
-                _ => i == 0 ? "A" : "B"
-            };
+                inputLabel = node.Kind switch
+                {
+                    BrushTipNodeKind.Threshold => "mask",
+                    BrushTipNodeKind.Invert => "input",
+                    _ => inputLabel
+                };
+            }
+            else if (node.Kind == BrushTipNodeKind.Output)
+                inputLabel = "output";
             var lft = new FormattedText(inputLabel, CultureInfo.InvariantCulture,
                 FlowDirection.LeftToRight, DefaultTypeface, 10, MutedTextBrush);
             context.DrawText(lft,
@@ -923,19 +1142,29 @@ public sealed class NodeGraphView : Control
                 context.DrawRectangle(SliderFillBrush, null, fillRect, 3, 3);
             }
 
-            // Value text
-            var valText = new FormattedText(value.ToString("F2"), CultureInfo.InvariantCulture,
+            // Value (click to edit)
+            var valueRect = SliderValueRect(pos, node, Array.IndexOf(nodeParams, param));
+            var valText = new FormattedText(FormatParamValue(value), CultureInfo.InvariantCulture,
                 FlowDirection.LeftToRight, DefaultTypeface, 9, BodyTextBrush);
-            context.DrawText(valText, new Point(pos.X + NodeWidth - 36, y + (SliderRowHeight - valText.Height) / 2));
+            context.DrawText(valText, new Point(
+                valueRect.X + (valueRect.Width - valText.Width) / 2,
+                valueRect.Y + (valueRect.Height - valText.Height) / 2));
 
             y += SliderRowHeight;
         }
 
         // Preview bar at bottom
-        if (nodeParams.Length > 0 || inputCount > 0 || HasImageSelector(node))
+        if (ShowsPreviewBar(node))
         {
             var prev = PreviewBarRect(pos, node);
             context.DrawRectangle(PreviewBgBrush, null, prev, 3, 3);
+
+            if (HasStandalonePreview(node))
+            {
+                var hint = new FormattedText("Per-pixel UV 0–1", CultureInfo.InvariantCulture,
+                    FlowDirection.LeftToRight, DefaultTypeface, 8, MutedTextBrush);
+                context.DrawText(hint, new Point(prev.X + 4, prev.Y + 2));
+            }
 
             try
             {
@@ -1078,7 +1307,7 @@ public sealed class NodeGraphView : Control
                 if (node.Kind == BrushTipNodeKind.Output) continue;
                 if (!_positions.TryGetValue(node.Id, out var np)) continue;
                 var op = GetOutputPortPos(node, np);
-                if (Dist(worldPos, op) < PortHitRadius)
+                if (HitPort(worldPos, op))
                 {
                     _dragAction = DragAction.Connect;
                     _connectSrcId = node.Id;
@@ -1098,11 +1327,22 @@ public sealed class NodeGraphView : Control
                 for (var i = 0; i < inputCount; i++)
                 {
                     var ip = GetInputPortPos(node, np, i);
-                    if (Dist(worldPos, ip) < PortHitRadius)
+                    if (HitPort(worldPos, ip))
                     {
-                        _dragAction = DragAction.ConnectFromInput;
-                        _connectTgtId = node.Id;
-                        _connectTgtIdx = i;
+                        var existing = i < node.Inputs.Count ? node.Inputs[i] : "";
+                        if (!string.IsNullOrEmpty(existing))
+                        {
+                            _dragAction = DragAction.DisconnectWire;
+                            _connectSrcId = existing;
+                            _connectTgtId = node.Id;
+                            _connectTgtIdx = i;
+                        }
+                        else
+                        {
+                            _dragAction = DragAction.ConnectFromInput;
+                            _connectTgtId = node.Id;
+                            _connectTgtIdx = i;
+                        }
                         _connectTempEnd = worldPos;
                         e.Pointer.Capture(this);
                         e.Handled = true;
@@ -1133,14 +1373,23 @@ public sealed class NodeGraphView : Control
                 var nodeParams = GetNodeParams(node.Kind);
                 for (var pi = 0; pi < nodeParams.Length; pi++)
                 {
+                    var valueRect = SliderValueRect(np, node, pi);
+                    if (valueRect.Contains(worldPos))
+                    {
+                        OpenParamEditor(node.Id, pi, valueRect);
+                        e.Handled = true;
+                        return;
+                    }
+
                     var bar = SliderBarRect(np, node, pi);
                     if (bar.Contains(worldPos))
                     {
                         _dragAction = DragAction.ScrubParam;
                         _scrubNodeId = node.Id;
                         _scrubParamIdx = pi;
-                        _scrubStartValue = nodeParams[pi].Get(node);
-                        _dragStartScreen = screenPos;
+                        var param = nodeParams[pi];
+                        param.Set(node, ScrubValueFromWorldX(bar, param, worldPos.X));
+                        InvalidatePreviews();
                         e.Pointer.Capture(this);
                         e.Handled = true;
                         return;
@@ -1203,7 +1452,7 @@ public sealed class NodeGraphView : Control
                 for (var i = 0; i < inputCount; i++)
                 {
                     var ip = GetInputPortPos(node, np, i);
-                    if (Dist(worldPos, ip) < PortHitRadius)
+                    if (HitPort(worldPos, ip))
                     {
                         if (i < node.Inputs.Count && !string.IsNullOrEmpty(node.Inputs[i]))
                         {
@@ -1275,6 +1524,7 @@ public sealed class NodeGraphView : Control
 
             case DragAction.Connect:
             case DragAction.ConnectFromInput:
+            case DragAction.DisconnectWire:
                 _connectTempEnd = worldPos;
                 InvalidateVisual();
                 break;
@@ -1283,13 +1533,12 @@ public sealed class NodeGraphView : Control
                 if (_scrubNodeId != null)
                 {
                     var node = _graph.Nodes.FirstOrDefault(n => n.Id == _scrubNodeId);
-                    if (node == null) break;
+                    if (node == null || !_positions.TryGetValue(node.Id, out var np)) break;
                     var nodeParams = GetNodeParams(node.Kind);
                     if (_scrubParamIdx >= nodeParams.Length) break;
                     var param = nodeParams[_scrubParamIdx];
-                    var scrubDx = (screenPos.X - _dragStartScreen.X) / Math.Max(1.0, _zoom * 150.0);
-                    var range = param.Max - param.Min;
-                    var newValue = (float)Math.Clamp(_scrubStartValue + scrubDx * range, param.Min, param.Max);
+                    var bar = SliderBarRect(np, node, _scrubParamIdx);
+                    var newValue = ScrubValueFromWorldX(bar, param, worldPos.X);
                     if (Math.Abs(newValue - param.Get(node)) > 0.0001f)
                     {
                         param.Set(node, newValue);
@@ -1307,47 +1556,61 @@ public sealed class NodeGraphView : Control
 
         if (_dragAction == DragAction.Connect && _connectSrcId != null)
         {
-            for (var ni = _graph.Nodes.Count - 1; ni >= 0; ni--)
+            if (_graph.Nodes.FirstOrDefault(n => n.Id == _connectSrcId) is { } srcNode
+                && TryPickInputPort(worldPos, out var tgtNode, out var inputIdx)
+                && BrushTipNodePorts.CanConnect(srcNode.Kind, tgtNode.Kind, inputIdx))
             {
-                var node = _graph.Nodes[ni];
-                if (node.Id == _connectSrcId) continue;
-                if (!_positions.TryGetValue(node.Id, out var np)) continue;
-                var inputCount = NodeInputCount(node.Kind);
-                for (var i = 0; i < inputCount; i++)
+                SetNodeInput(tgtNode.Id, inputIdx, _connectSrcId);
+            }
+        }
+        else if (_dragAction == DragAction.DisconnectWire && _connectTgtId != null)
+        {
+            var tgtNode = _graph.Nodes.FirstOrDefault(n => n.Id == _connectTgtId);
+            var prevSrcNode = _graph.Nodes.FirstOrDefault(n => n.Id == _connectSrcId);
+            if (tgtNode != null && _positions.TryGetValue(tgtNode.Id, out var tgtPos))
+            {
+                var reconnected = false;
+                var droppedOnPort = false;
+
+                // Dropped back on the same input — keep the existing wire.
+                if (HitPort(worldPos, GetInputPortPos(tgtNode, tgtPos, _connectTgtIdx)))
                 {
-                    if (Dist(worldPos, GetInputPortPos(node, np, i)) < PortHitRadius)
-                    {
-                        SetNodeInput(node.Id, i, _connectSrcId);
-                        goto done;
-                    }
+                    reconnected = true;
+                }
+                // Dropped on another output — patch a new source into the original input.
+                else if (TryPickOutputPort(worldPos, out var newSrc, excludeNodeId: _connectTgtId))
+                {
+                    droppedOnPort = true;
+                    if (BrushTipNodePorts.CanConnect(newSrc.Kind, tgtNode.Kind, _connectTgtIdx))
+                        reconnected = SetNodeInput(tgtNode.Id, _connectTgtIdx, newSrc.Id);
+                }
+                // Dropped on another compatible input — move the wire to that slot.
+                else if (prevSrcNode != null
+                         && TryPickInputPort(worldPos, out var newTgt, out var newIdx,
+                             excludeNodeId: _connectTgtId, excludeInputIndex: _connectTgtIdx)
+                         && BrushTipNodePorts.CanConnect(prevSrcNode.Kind, newTgt.Kind, newIdx))
+                {
+                    droppedOnPort = true;
+                    SetNodeInput(tgtNode.Id, _connectTgtIdx, "", notify: false);
+                    reconnected = SetNodeInput(newTgt.Id, newIdx, _connectSrcId);
+                }
+
+                if (!reconnected && !droppedOnPort
+                    && _connectTgtIdx < tgtNode.Inputs.Count
+                    && !string.IsNullOrEmpty(tgtNode.Inputs[_connectTgtIdx]))
+                {
+                    SetNodeInput(tgtNode.Id, _connectTgtIdx, "");
                 }
             }
         }
         else if (_dragAction == DragAction.ConnectFromInput && _connectTgtId != null)
         {
-            // Input → output: find output port to connect from.
-            for (var ni = _graph.Nodes.Count - 1; ni >= 0; ni--)
+            var tgtNode = _graph.Nodes.FirstOrDefault(n => n.Id == _connectTgtId);
+            if (tgtNode != null
+                && TryPickOutputPort(worldPos, out var srcNode, excludeNodeId: _connectTgtId)
+                && BrushTipNodePorts.CanConnect(srcNode.Kind, tgtNode.Kind, _connectTgtIdx))
             {
-                var node = _graph.Nodes[ni];
-                if (node.Id == _connectTgtId || node.Kind == BrushTipNodeKind.Output) continue;
-                if (!_positions.TryGetValue(node.Id, out var np)) continue;
-                if (Dist(worldPos, GetOutputPortPos(node, np)) < PortHitRadius)
-                {
-                    PushHistory();
-                    var tgtNode = _graph.Nodes.FirstOrDefault(n => n.Id == _connectTgtId);
-                    if (tgtNode != null)
-                    {
-                        SetNodeInput(tgtNode.Id, _connectTgtIdx, node.Id);
-                    }
-                    goto done;
-                }
-            }
-            // Released on empty space: disconnect the input's existing wire.
-            var tgtN = _graph.Nodes.FirstOrDefault(n => n.Id == _connectTgtId);
-            if (tgtN != null && _connectTgtIdx < tgtN.Inputs.Count
-                && !string.IsNullOrEmpty(tgtN.Inputs[_connectTgtIdx]))
-            {
-                SetNodeInput(tgtN.Id, _connectTgtIdx, "");
+                SetNodeInput(tgtNode.Id, _connectTgtIdx, srcNode.Id);
             }
         }
         else if (_dragAction == DragAction.ScrubParam && _scrubNodeId != null)
@@ -1369,7 +1632,6 @@ public sealed class NodeGraphView : Control
             PushHistory();
         }
 
-        done:
         if (_dragAction != DragAction.None)
             e.Pointer.Capture(null);
         _dragAction = DragAction.None;
@@ -1471,6 +1733,55 @@ public sealed class NodeGraphView : Control
             return;
         }
         base.OnKeyUp(e);
+    }
+
+    private bool HitPort(Point worldPos, Point portWorldPos)
+        => Dist(worldPos, portWorldPos) * _zoom < PortHitRadius;
+
+    private bool TryPickOutputPort(Point worldPos, out BrushTipNode pickedNode, string? excludeNodeId = null)
+    {
+        pickedNode = null!;
+        for (var ni = _graph.Nodes.Count - 1; ni >= 0; ni--)
+        {
+            var node = _graph.Nodes[ni];
+            if (node.Kind == BrushTipNodeKind.Output) continue;
+            if (excludeNodeId != null && node.Id == excludeNodeId) continue;
+            if (!_positions.TryGetValue(node.Id, out var np)) continue;
+            if (!HitPort(worldPos, GetOutputPortPos(node, np))) continue;
+            pickedNode = node;
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryPickInputPort(
+        Point worldPos,
+        out BrushTipNode pickedNode,
+        out int inputIndex,
+        string? excludeNodeId = null,
+        int? excludeInputIndex = null)
+    {
+        pickedNode = null!;
+        inputIndex = -1;
+        for (var ni = _graph.Nodes.Count - 1; ni >= 0; ni--)
+        {
+            var node = _graph.Nodes[ni];
+            if (!_positions.TryGetValue(node.Id, out var np)) continue;
+            var inputCount = NodeInputCount(node.Kind);
+            for (var i = 0; i < inputCount; i++)
+            {
+                if (excludeNodeId != null && excludeInputIndex != null
+                    && node.Id == excludeNodeId && i == excludeInputIndex.Value)
+                    continue;
+                if (!HitPort(worldPos, GetInputPortPos(node, np, i))) continue;
+                pickedNode = node;
+                inputIndex = i;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static double Dist(Point a, Point b)

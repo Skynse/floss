@@ -105,6 +105,7 @@ internal static class Program
         ("Procedural brush tip data stores graph payloads", BrushTests.ProceduralBrushTipData_StoresGraphPayload),
         ("Brush tip graphs validate bad topology", BrushTests.BrushTipNodeGraph_ValidatesBadTopology),
         ("Brush tip graph cache keys change with graph content", BrushTests.BrushTipNodeGraph_CacheKeyChangesWithContent),
+        ("Node graph ports enforce scalar vs vector compatibility", BrushTests.BrushTipNodePorts_EnforceCompatibility),
         ("Node brush tips evaluate deterministic graphs", BrushTests.NodeBrushTip_EvaluatesDeterministicGraph),
         ("Node brush tips compose procedural primitives", BrushTests.NodeBrushTip_ComposesProceduralPrimitives),
         ("Node brush tips support coordinate warping", BrushTests.NodeBrushTip_SupportsCoordinateWarping),
@@ -2197,6 +2198,22 @@ internal static class BrushTests
         var edited = circle.DeepClone();
         edited.Nodes[0].Hardness = 0.42f;
         AssertEx.False(circle.CacheKey() == edited.CacheKey(), "Graph edits should change the cache key.");
+    }
+
+    public static void BrushTipNodePorts_EnforceCompatibility()
+    {
+        AssertEx.True(BrushTipNodePorts.CanConnect(
+            BrushTipNodeKind.Coordinates, BrushTipNodeKind.DistanceField, 0));
+        AssertEx.False(BrushTipNodePorts.CanConnect(
+            BrushTipNodeKind.Coordinates, BrushTipNodeKind.SmoothStep, 0));
+        AssertEx.True(BrushTipNodePorts.CanConnect(
+            BrushTipNodeKind.Circle, BrushTipNodeKind.SmoothStep, 0));
+        AssertEx.False(BrushTipNodePorts.CanConnect(
+            BrushTipNodeKind.Circle, BrushTipNodeKind.RotateCoordinates, 0));
+        AssertEx.True(BrushTipNodePorts.CanConnect(
+            BrushTipNodeKind.Noise, BrushTipNodeKind.WarpCoordinates, 1));
+        AssertEx.False(BrushTipNodePorts.CanConnect(
+            BrushTipNodeKind.Coordinates, BrushTipNodeKind.WarpCoordinates, 1));
     }
 
     public static void NodeBrushTip_EvaluatesDeterministicGraph()

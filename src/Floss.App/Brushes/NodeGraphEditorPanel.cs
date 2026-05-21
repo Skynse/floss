@@ -29,6 +29,7 @@ public sealed class NodeGraphEditorPanel : UserControl
     private BrushTipNode? _selectedNode;
     private bool _isCommitting;
     private int _saveCounter;
+    private bool _syncingPropertyParams;
     private ContextMenu? _openMenu;
     private Point _pendingAddPosition;
 
@@ -481,36 +482,36 @@ public sealed class NodeGraphEditorPanel : UserControl
                 Margin = new Thickness(0, 4, 0, 2)
             });
 
-            var sourceOptions = _graph.Nodes
-                .Where(n => n.Id != _graph.OutputNodeId && n.Id != _selectedNode.Id)
-                .Select(n => n.Id)
-                .Prepend("— none —")
-                .ToList();
-
             for (var i = 0; i < inputCount; i++)
             {
                 var idx = i;
-                var inputLabel = _selectedNode.Kind switch
+                var inputLabel = BrushTipNodePorts.InputLabel(_selectedNode.Kind, idx);
+                if (_selectedNode.Kind is BrushTipNodeKind.Threshold or BrushTipNodeKind.Invert)
                 {
-                    BrushTipNodeKind.Output => "Input",
-                    BrushTipNodeKind.DistanceField or BrushTipNodeKind.BoxDistanceField
-                        or BrushTipNodeKind.LinearGradient or BrushTipNodeKind.Stripe
-                        or BrushTipNodeKind.Noise => "Coord",
-                    BrushTipNodeKind.RotateCoordinates or BrushTipNodeKind.PolarRadius
-                        or BrushTipNodeKind.PolarAngle => "Coord",
-                    BrushTipNodeKind.WarpCoordinates => idx == 0 ? "Coord" : "Warp",
-                    BrushTipNodeKind.Threshold => "Mask",
-                    BrushTipNodeKind.Invert => "Input",
-                    _ => idx == 0 ? "A" : "B"
-                };
+                    inputLabel = _selectedNode.Kind switch
+                    {
+                        BrushTipNodeKind.Threshold => "Mask",
+                        BrushTipNodeKind.Invert => "Input",
+                        _ => inputLabel
+                    };
+                }
+                else if (_selectedNode.Kind == BrushTipNodeKind.Output)
+                    inputLabel = "Input";
+
+                var compatibleSources = _graph.Nodes
+                    .Where(n => n.Id != _graph.OutputNodeId && n.Id != _selectedNode.Id)
+                    .Where(n => BrushTipNodePorts.CanConnect(n.Kind, _selectedNode.Kind, idx))
+                    .Select(n => n.Id)
+                    .Prepend("— none —")
+                    .ToList();
 
                 var current = idx < _selectedNode.Inputs.Count
                     ? _selectedNode.Inputs[idx] ?? ""
                     : "";
                 var combo = new ComboBox
                 {
-                    ItemsSource = sourceOptions,
-                    SelectedItem = sourceOptions.Contains(current) ? current : "— none —",
+                    ItemsSource = compatibleSources,
+                    SelectedItem = compatibleSources.Contains(current) ? current : "— none —",
                     FontSize = 10,
                     MinHeight = 22,
                     HorizontalAlignment = HorizontalAlignment.Stretch
@@ -564,52 +565,111 @@ public sealed class NodeGraphEditorPanel : UserControl
 
             foreach (var param in nodeParams)
             {
+                var range = param.Max - param.Min;
+                var current = Math.Clamp(param.Get(_selectedNode), param.Min, param.Max);
                 var slider = new Slider
                 {
                     Minimum = param.Min,
                     Maximum = param.Max,
-                    Value = Math.Clamp(param.Get(_selectedNode), param.Min, param.Max),
-                    Height = 20
+                    Value = current,
+                    MinHeight = 20,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    SmallChange = Math.Max(range / 200.0, 0.001),
+                    LargeChange = Math.Max(range / 20.0, 0.01),
                 };
-                var valueText = new TextBlock
+                var valueBox = new TextBox
                 {
-                    Text = param.Get(_selectedNode).ToString("F2", CultureInfo.InvariantCulture),
+                    Text = FormatParamValue(current),
+                    Width = 52,
+                    MinWidth = 52,
                     FontSize = 10,
-                    Width = 36,
-                    Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-                    VerticalAlignment = VerticalAlignment.Center,
-                    HorizontalAlignment = HorizontalAlignment.Right
+                    Padding = new Thickness(4, 1),
+                    HorizontalContentAlignment = HorizontalAlignment.Right,
+                    Background = new SolidColorBrush(Color.Parse(Bg0)),
+                    Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
+                    BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+                    BorderThickness = new Thickness(1),
+                    VerticalContentAlignment = VerticalAlignment.Center,
                 };
                 var capturedParam = param;
-                slider.ValueChanged += (_, args) =>
+                var selectedId = _selectedNode.Id;
+
+                void ApplyParamValue(float val)
                 {
-                    var val = (float)args.NewValue;
-                    var selectedId = _selectedNode.Id;
+                    val = Math.Clamp(val, capturedParam.Min, capturedParam.Max);
+                    _syncingPropertyParams = true;
+                    try
+                    {
+                        slider.Value = val;
+                        valueBox.Text = FormatParamValue(val);
+                    }
+                    finally
+                    {
+                        _syncingPropertyParams = false;
+                    }
+
                     _view.UpdateNode(selectedId, n => capturedParam.Set(n, val), notify: false);
                     _graph = _view.Graph;
                     _selectedNode = _graph.Nodes.FirstOrDefault(x => x.Id == selectedId) ?? _selectedNode;
-                    valueText.Text = val.ToString("F2", CultureInfo.InvariantCulture);
                     DoCommit();
+                }
+
+                slider.ValueChanged += (_, args) =>
+                {
+                    if (_syncingPropertyParams) return;
+                    ApplyParamValue((float)args.NewValue);
                 };
 
-                var row = new StackPanel
+                void CommitValueBox()
                 {
-                    Orientation = Orientation.Horizontal,
-                    Spacing = 6,
-                    Children =
+                    if (_syncingPropertyParams) return;
+                    if (!float.TryParse(valueBox.Text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+                        parsed = capturedParam.Get(_selectedNode);
+                    ApplyParamValue(parsed);
+                }
+
+                valueBox.KeyDown += (_, e) =>
+                {
+                    if (e.Key is Key.Enter or Key.Return)
                     {
-                        new TextBlock
-                        {
-                            Text = param.Name,
-                            FontSize = 10,
-                            Width = 56,
-                            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-                            VerticalAlignment = VerticalAlignment.Center
-                        },
-                        slider,
-                        valueText
+                        CommitValueBox();
+                        e.Handled = true;
+                    }
+                    else if (e.Key == Key.Escape)
+                    {
+                        valueBox.Text = FormatParamValue(capturedParam.Get(_selectedNode));
+                        e.Handled = true;
                     }
                 };
+                valueBox.LostFocus += (_, _) => CommitValueBox();
+
+                var row = new Grid
+                {
+                    ColumnDefinitions =
+                    {
+                        new ColumnDefinition(GridLength.Auto),
+                        new ColumnDefinition(1, GridUnitType.Star),
+                        new ColumnDefinition(GridLength.Auto),
+                    },
+                    ColumnSpacing = 6,
+                };
+
+                var label = new TextBlock
+                {
+                    Text = param.Name,
+                    FontSize = 10,
+                    MinWidth = 56,
+                    MaxWidth = 72,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                Grid.SetColumn(label, 0);
+                Grid.SetColumn(slider, 1);
+                Grid.SetColumn(valueBox, 2);
+                row.Children.Add(label);
+                row.Children.Add(slider);
+                row.Children.Add(valueBox);
                 _propertyContent.Children.Add(row);
             }
         }
@@ -793,8 +853,12 @@ public sealed class NodeGraphEditorPanel : UserControl
             ])
         ];
 
+    private static string FormatParamValue(float value)
+        => BrushTipNodePorts.FormatDisplayValue(value);
+
     private static string NodeKindDisplayName(BrushTipNodeKind kind) => kind switch
     {
+        BrushTipNodeKind.Coordinates => "UV Map",
         BrushTipNodeKind.DistanceField => "Ellipse Distance",
         BrushTipNodeKind.BoxDistanceField => "Box Distance",
         BrushTipNodeKind.RotateCoordinates => "Rotate Coordinates",

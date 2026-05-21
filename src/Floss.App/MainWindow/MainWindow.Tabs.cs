@@ -196,6 +196,7 @@ public partial class MainWindow
 
         // Cancel any in-progress tool operation before leaving
         _canvas?.CancelActiveTool();
+        ResetTransientInputState();
 
         var currentColor = _canvas?.PaintColor;
 
@@ -219,6 +220,7 @@ public partial class MainWindow
         _activeTab = tab;
         _canvas = tab.Canvas;
         _currentFilePath = tab.FilePath;
+        _canvas.PaintInputSuspended = false;
 
         // Swap canvas into the frame
         _canvasFrame.Child = _canvas;
@@ -281,6 +283,7 @@ public partial class MainWindow
         _checkerboardOverlay?.InvalidateVisual();
         _resizeOverlay?.InvalidateVisual();
         SyncCanvasViewport();
+        ResetTransientInputState();
         _workspaceViewport?.Focus();
     }
 
