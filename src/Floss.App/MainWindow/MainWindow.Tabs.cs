@@ -66,13 +66,13 @@ public partial class MainWindow
         var newTabBtn = new Button
         {
             Content = "+",
-            Width = 28,
-            Height = 28,
+            Width = 26,
+            Height = 26,
             Padding = new Thickness(0),
             FontSize = 14,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(Bg1)),
+            Background = new SolidColorBrush(Color.Parse(Bg0)),
             BorderThickness = new Thickness(0),
             CornerRadius = new CornerRadius(0),
             Foreground = new SolidColorBrush(Color.Parse(TextMuted))
@@ -90,7 +90,7 @@ public partial class MainWindow
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Hidden,
             VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
             Content = bar,
-            Background = new SolidColorBrush(Color.Parse(Bg1)),
+            Background = new SolidColorBrush(Color.Parse(Bg0)),
             IsVisible = false,
         };
         return _tabBarContainer;
@@ -115,26 +115,26 @@ public partial class MainWindow
         var title = new TextBlock
         {
             Text = tab.DisplayTitle + (tab.Canvas.IsDirty ? " ●" : ""),
-            FontSize = 11,
+            FontSize = 10,
             VerticalAlignment = VerticalAlignment.Center,
             Foreground = new SolidColorBrush(Color.Parse(isActive ? TextPrimary : TextSecondary)),
-            Margin = new Thickness(10, 0, 4, 0)
+            Margin = new Thickness(8, 0, 4, 0)
         };
 
         var close = new Button
         {
             Content = "×",
-            Width = 18,
-            Height = 18,
+            Width = 16,
+            Height = 16,
             Padding = new Thickness(0),
             FontSize = 13,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
             Background = Avalonia.Media.Brushes.Transparent,
             BorderThickness = new Thickness(0),
-            CornerRadius = new CornerRadius(3),
+            CornerRadius = new CornerRadius(2),
             Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-            Margin = new Thickness(0, 0, 6, 0)
+            Margin = new Thickness(0, 0, 5, 0)
         };
         close.Click += (_, e) => { _ = CloseTabAsync(tab); e.Handled = true; };
 
@@ -150,8 +150,8 @@ public partial class MainWindow
             Child = panel,
             MinWidth = 80,
             MaxWidth = 200,
-            Height = 28,
-            Background = new SolidColorBrush(Color.Parse(isActive ? Bg3 : Bg1)),
+            Height = 26,
+            Background = new SolidColorBrush(Color.Parse(isActive ? Bg2 : Bg0)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = isActive
                 ? new Thickness(1, 0, 1, 0)

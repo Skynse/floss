@@ -27,34 +27,34 @@ public partial class MainWindow
     // ── Pre-Allocated Layer Brushes (Performance Optimization) ──────────────
 
     // Row Backgrounds
-    private static readonly IBrush RowBgActive = new SolidColorBrush(Color.Parse("#1a2a50"));
-    private static readonly IBrush RowBgSelected = new SolidColorBrush(Color.Parse("#141e38"));
-    private static readonly IBrush RowBgDefault = new SolidColorBrush(Color.Parse("#16181f"));
+    private static readonly IBrush RowBgActive = new SolidColorBrush(Color.Parse(AccentSoft));
+    private static readonly IBrush RowBgSelected = new SolidColorBrush(Color.Parse("#2f3a48"));
+    private static readonly IBrush RowBgDefault = new SolidColorBrush(Color.Parse(Bg2));
 
     // Row Borders
-    private static readonly IBrush RowBorderActive = new SolidColorBrush(Color.Parse("#2e5fb8"));
-    private static readonly IBrush RowBorderSelected = new SolidColorBrush(Color.Parse("#2a4a88"));
-    private static readonly IBrush RowBorderDefault = new SolidColorBrush(Color.Parse("#1e2128"));
+    private static readonly IBrush RowBorderActive = new SolidColorBrush(Color.Parse(Accent));
+    private static readonly IBrush RowBorderSelected = new SolidColorBrush(Color.Parse("#485566"));
+    private static readonly IBrush RowBorderDefault = new SolidColorBrush(Color.Parse(Stroke));
 
     // Text Colors
-    private static readonly IBrush TextFgActive = new SolidColorBrush(Color.Parse("#d8e0f0"));
-    private static readonly IBrush TextFgSelected = new SolidColorBrush(Color.Parse("#a8c0e0"));
-    private static readonly IBrush TextFgDefault = new SolidColorBrush(Color.Parse("#7a8494"));
+    private static readonly IBrush TextFgActive = new SolidColorBrush(Color.Parse(TextPrimary));
+    private static readonly IBrush TextFgSelected = new SolidColorBrush(Color.Parse(TextPrimary));
+    private static readonly IBrush TextFgDefault = new SolidColorBrush(Color.Parse(TextSecondary));
 
-    private static readonly IBrush TextDimActive = new SolidColorBrush(Color.Parse("#5a80c8"));
-    private static readonly IBrush TextDimSelected = new SolidColorBrush(Color.Parse("#4a6090"));
-    private static readonly IBrush TextDimDefault = new SolidColorBrush(Color.Parse("#383d47"));
+    private static readonly IBrush TextDimActive = new SolidColorBrush(Color.Parse("#9fb6d6"));
+    private static readonly IBrush TextDimSelected = new SolidColorBrush(Color.Parse(TextSecondary));
+    private static readonly IBrush TextDimDefault = new SolidColorBrush(Color.Parse(TextMuted));
 
     // Icon Colors
-    private static readonly IBrush IconOff = new SolidColorBrush(Color.Parse("#404550"));
-    private static readonly IBrush IconVisOn = new SolidColorBrush(Color.Parse("#6a9fd8"));
-    private static readonly IBrush GroupIconFg = new SolidColorBrush(Color.Parse("#6a7a96"));
-    private static readonly IBrush IconStandard = new SolidColorBrush(Color.Parse("#30343d"));
+    private static readonly IBrush IconOff = new SolidColorBrush(Color.Parse("#5b5b5b"));
+    private static readonly IBrush IconVisOn = new SolidColorBrush(Color.Parse("#8aa6cc"));
+    private static readonly IBrush GroupIconFg = new SolidColorBrush(Color.Parse(TextMuted));
+    private static readonly IBrush IconStandard = new SolidColorBrush(Color.Parse(TextMuted));
 
     // Miscellaneous UI Elements
-    private static readonly IBrush PreviewFrameBg = new SolidColorBrush(Color.Parse("#1e2028"));
-    private static readonly IBrush PreviewFrameBorder = new SolidColorBrush(Color.Parse("#2e3340"));
-    private static readonly IBrush SwatchBorder = new SolidColorBrush(Color.Parse("#3a4050"));
+    private static readonly IBrush PreviewFrameBg = new SolidColorBrush(Color.Parse(Bg0));
+    private static readonly IBrush PreviewFrameBorder = new SolidColorBrush(Color.Parse(Stroke));
+    private static readonly IBrush SwatchBorder = new SolidColorBrush(Color.Parse(Stroke));
 
     // Clipping strip
     private static readonly IBrush ClipIndicatorBrush = new SolidColorBrush(Color.Parse("#e8527a"));
@@ -74,7 +74,7 @@ public partial class MainWindow
             Background = new SolidColorBrush(Color.Parse(Bg0)),
             Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
             CaretBrush = new SolidColorBrush(Color.Parse(TextPrimary)),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3a4250")),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
             Padding = new Thickness(5, 0),
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
@@ -374,7 +374,7 @@ public partial class MainWindow
             Background = isActive ? RowBgActive : isSelected ? RowBgSelected : RowBgDefault,
             BorderBrush = isActive ? RowBorderActive : isSelected ? RowBorderSelected : RowBorderDefault,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
+            CornerRadius = new CornerRadius(2),
             Padding = new Thickness(2, 1),
             Margin = new Thickness(layer.IndentLevel * 10, 0, 0, 0),
             Tag = i,

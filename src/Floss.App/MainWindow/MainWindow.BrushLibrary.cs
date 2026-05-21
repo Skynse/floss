@@ -79,7 +79,7 @@ public partial class MainWindow : Window
 
         var root = new Grid
         {
-            Margin = new Thickness(8, 3, 8, 6),
+            Margin = new Thickness(6, 2, 6, 5),
         };
         root.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         root.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
@@ -132,13 +132,13 @@ public partial class MainWindow : Window
             {
                 Content = catName,
                 HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-                Padding = new Thickness(6, 2),
-                Height = 22,
+                Padding = new Thickness(6, 1),
+                Height = 20,
                 Background = new SolidColorBrush(selected ? Color.Parse(AccentSoft) : Color.Parse(Bg2)),
                 Foreground = new SolidColorBrush(selected ? Color.Parse(TextPrimary) : Color.Parse(TextSecondary)),
                 BorderBrush = new SolidColorBrush(selected ? Color.Parse(Accent) : Color.Parse(Stroke)),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(4),
+                CornerRadius = new CornerRadius(2),
                 FontSize = 10,
                 Tag = catName,
                 Margin = new Thickness(0, 0, 2, 2)
@@ -178,13 +178,13 @@ public partial class MainWindow : Window
         {
             Content = Icons.Make(Icons.Plus, 12, new SolidColorBrush(Color.Parse(TextSecondary))),
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            Padding = new Thickness(6, 2),
-            Height = 22,
+            Padding = new Thickness(6, 1),
+            Height = 20,
             Background = new SolidColorBrush(Color.Parse(Bg2)),
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
+            CornerRadius = new CornerRadius(2),
             FontSize = 10
         };
         newCatBtn.Click += async (_, _) =>
@@ -285,7 +285,7 @@ public partial class MainWindow : Window
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
             Background = new SolidColorBrush(Color.Parse(Bg2)),
             BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke)),
-            BorderThickness = new Thickness(isActive ? 2 : 1),
+            BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(3),
             Content = panel,
             Tag = preset.Id,
@@ -330,7 +330,7 @@ public partial class MainWindow : Window
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
             Background = new SolidColorBrush(Color.Parse(isActive ? AccentSoft : Bg2)),
             BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke)),
-            BorderThickness = new Thickness(isActive ? 2 : 1),
+            BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(3),
             Content = content,
             Tag = preset.Id,
@@ -508,7 +508,7 @@ public partial class MainWindow : Window
             Height = 28,
             FontSize = 11,
             Padding = new Thickness(6, 0),
-            Background = new SolidColorBrush(Color.Parse("#1a1c22")),
+            Background = new SolidColorBrush(Color.Parse(Bg0)),
             Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),

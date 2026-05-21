@@ -14,17 +14,19 @@
     <Application.Styles>
         <FluentTheme />
 
-        <!-- ══════════════════════════════════════════════════════════════════
-             BUTTON — modern rounded card with subtle elevation.
-             Transparent bg so explicit button backgrounds show through;
-             hover adds a light overlay, pressed adds a deeper overlay.
-        ══════════════════════════════════════════════════════════════════ -->
+        <Style Selector="Window">
+            <Setter Property="FontFamily" Value="Inter, Segoe UI, Noto Sans, Ubuntu, Cantarell, Arial"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Background" Value="{StaticResource Bg0}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+        </Style>
+
         <Style Selector="Button">
             <Setter Property="Background"    Value="Transparent"/>
             <Setter Property="BorderBrush"   Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="CornerRadius"  Value="6"/>
-            <Setter Property="Padding"       Value="10,6"/>
+            <Setter Property="CornerRadius"  Value="2"/>
+            <Setter Property="Padding"       Value="7,3"/>
             <Setter Property="Cursor"        Value="Hand"/>
             <Setter Property="Foreground"    Value="{StaticResource TextSecondary}"/>
             <Setter Property="Template">
@@ -50,10 +52,10 @@
             </Setter>
         </Style>
         <Style Selector="Button:pointerover /template/ Border#Overlay">
-            <Setter Property="Background" Value="#18ffffff"/>
+            <Setter Property="Background" Value="#14ffffff"/>
         </Style>
         <Style Selector="Button:pressed /template/ Border#Overlay">
-            <Setter Property="Background" Value="#2cffffff"/>
+            <Setter Property="Background" Value="#24ffffff"/>
         </Style>
         <Style Selector="Button:disabled">
             <Setter Property="Opacity" Value="0.35"/>
@@ -64,8 +66,8 @@
             <Setter Property="Background"    Value="Transparent"/>
             <Setter Property="BorderBrush"   Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="CornerRadius"  Value="6"/>
-            <Setter Property="Padding"       Value="10,6"/>
+            <Setter Property="CornerRadius"  Value="2"/>
+            <Setter Property="Padding"       Value="7,3"/>
             <Setter Property="Cursor"        Value="Hand"/>
             <Setter Property="Foreground"    Value="{StaticResource TextSecondary}"/>
             <Setter Property="Template">
@@ -91,23 +93,22 @@
             </Setter>
         </Style>
         <Style Selector="ToggleButton:pointerover /template/ Border#Overlay">
-            <Setter Property="Background" Value="#18ffffff"/>
+            <Setter Property="Background" Value="#14ffffff"/>
         </Style>
         <Style Selector="ToggleButton:pressed /template/ Border#Overlay">
-            <Setter Property="Background" Value="#2cffffff"/>
+            <Setter Property="Background" Value="#24ffffff"/>
         </Style>
 
-        <!-- ── TextBox — rounded, focused glow ───────────────────────────── -->
         <Style Selector="TextBox">
-            <Setter Property="CornerRadius"     Value="6"/>
+            <Setter Property="CornerRadius"     Value="2"/>
             <Setter Property="Foreground"       Value="{StaticResource TextPrimary}"/>
             <Setter Property="CaretBrush"       Value="{StaticResource TextPrimary}"/>
             <Setter Property="SelectionBrush"    Value="{StaticResource Accent}"/>
             <Setter Property="SelectionForegroundBrush" Value="#ffffff"/>
             <Setter Property="BorderBrush"       Value="{StaticResource Stroke}"/>
             <Setter Property="BorderThickness"   Value="1"/>
-            <Setter Property="Background"        Value="{StaticResource Bg1}"/>
-            <Setter Property="FontSize"          Value="13"/>
+            <Setter Property="Background"        Value="{StaticResource Bg0}"/>
+            <Setter Property="FontSize"          Value="12"/>
         </Style>
         <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
             <Setter Property="BorderBrush"   Value="{StaticResource Accent}"/>
@@ -117,15 +118,14 @@
             <Setter Property="BorderBrush" Value="{StaticResource TextMuted}"/>
         </Style>
 
-        <!-- ── ComboBox — rounded, consistent with TextBox ──────────────── -->
         <Style Selector="ComboBox">
-            <Setter Property="CornerRadius"    Value="6"/>
+            <Setter Property="CornerRadius"    Value="2"/>
             <Setter Property="Foreground"      Value="{StaticResource TextSecondary}"/>
-            <Setter Property="Background"      Value="{StaticResource Bg1}"/>
+            <Setter Property="Background"      Value="{StaticResource Bg0}"/>
             <Setter Property="BorderBrush"     Value="{StaticResource Stroke}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding"         Value="8,2"/>
-            <Setter Property="FontSize"        Value="13"/>
+            <Setter Property="Padding"         Value="6,1"/>
+            <Setter Property="FontSize"        Value="12"/>
         </Style>
         <Style Selector="ComboBox:pointerover">
             <Setter Property="BorderBrush" Value="{StaticResource TextMuted}"/>
@@ -136,7 +136,7 @@
         <Style Selector="ComboBoxItem">
             <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Padding"    Value="10,6"/>
+            <Setter Property="Padding"    Value="8,4"/>
             <Setter Property="FontSize"   Value="12"/>
         </Style>
         <Style Selector="ComboBoxItem:selected">
@@ -155,9 +155,9 @@
         <Style Selector="MenuItem">
             <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Padding"    Value="12,7"/>
-            <Setter Property="FontSize"   Value="13"/>
-            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Padding"    Value="8,4"/>
+            <Setter Property="FontSize"   Value="12"/>
+            <Setter Property="CornerRadius" Value="2"/>
         </Style>
         <Style Selector="MenuItem:selected, MenuItem:pointerover">
             <Setter Property="Background" Value="{StaticResource Bg2}"/>
@@ -166,12 +166,12 @@
         <!-- ── Horizontal slider — modern rounded track ─────────────────── -->
         <Style Selector="Slider:horizontal">
             <Setter Property="Background" Value="{StaticResource SliderTrack}"/>
-            <Setter Property="MinHeight" Value="22"/>
+            <Setter Property="MinHeight" Value="18"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <ControlTemplate>
-                    <Grid MinHeight="24" VerticalAlignment="Center">
-                        <Border VerticalAlignment="Center" Height="8" CornerRadius="4"
+                    <Grid MinHeight="20" VerticalAlignment="Center">
+                        <Border VerticalAlignment="Center" Height="4" CornerRadius="2"
                                 Background="{TemplateBinding Background}"
                                 IsHitTestVisible="False"/>
                         <Track Name="PART_Track" Orientation="Horizontal"
@@ -182,21 +182,21 @@
                                 <RepeatButton Name="PART_DecreaseButton" Focusable="False" Cursor="Hand">
                                     <RepeatButton.Template>
                                         <ControlTemplate>
-                                            <Border Name="Fill" Height="8" VerticalAlignment="Center"
-                                                    CornerRadius="4,0,0,4" Background="{StaticResource SliderFill}"/>
+                                            <Border Name="Fill" Height="4" VerticalAlignment="Center"
+                                                    CornerRadius="2,0,0,2" Background="{StaticResource SliderFill}"/>
                                         </ControlTemplate>
                                     </RepeatButton.Template>
                                 </RepeatButton>
                             </Track.DecreaseButton>
                             <Track.Thumb>
-                                <Thumb Cursor="Hand" Width="18" Height="18">
+                                <Thumb Cursor="Hand" Width="14" Height="14">
                                     <Thumb.Template>
                                         <ControlTemplate>
-                                            <Grid Width="18" Height="18">
-                                                <Ellipse Width="16" Height="16"
+                                            <Grid Width="14" Height="14">
+                                                <Ellipse Width="12" Height="12"
                                                          Fill="{StaticResource SliderThumb}"
                                                          Stroke="{StaticResource Bg1}"
-                                                         StrokeThickness="2"/>
+                                                         StrokeThickness="1"/>
                                             </Grid>
                                         </ControlTemplate>
                                     </Thumb.Template>
@@ -238,8 +238,8 @@
         <!-- ── ListBox / ListBoxItem ───────────────────────────────────── -->
         <Style Selector="ListBoxItem">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Padding"    Value="6,4"/>
-            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Padding"    Value="4,2"/>
+            <Setter Property="CornerRadius" Value="2"/>
         </Style>
         <Style Selector="ListBoxItem:selected">
             <Setter Property="Background" Value="{StaticResource AccentSoft}"/>

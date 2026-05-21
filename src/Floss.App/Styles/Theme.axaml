@@ -5,25 +5,25 @@
          Mirror of AppColors.cs; keep in sync.
     ═════════════════════════════════════════════════════════════════════ -->
     <!-- Backgrounds -->
-    <Color x:Key="Bg0">#0f0f10</Color>
-    <Color x:Key="Bg1">#161618</Color>
-    <Color x:Key="Bg2">#1e1e20</Color>
-    <Color x:Key="Bg3">#252527</Color>
-    <Color x:Key="BgSidebar">#121214</Color>
+    <Color x:Key="Bg0">#1b1b1b</Color>
+    <Color x:Key="Bg1">#242424</Color>
+    <Color x:Key="Bg2">#2b2b2b</Color>
+    <Color x:Key="Bg3">#343434</Color>
+    <Color x:Key="BgSidebar">#202020</Color>
 
     <!-- Borders -->
-    <Color x:Key="Stroke">#2e2e32</Color>
+    <Color x:Key="Stroke">#3c3c3c</Color>
 
     <!-- Text -->
-    <Color x:Key="TextPrimary">#dde1e8</Color>
-    <Color x:Key="TextSecondary">#9ea8b4</Color>
-    <Color x:Key="TextMuted">#5e6878</Color>
+    <Color x:Key="TextPrimary">#e2e2e2</Color>
+    <Color x:Key="TextSecondary">#b8b8b8</Color>
+    <Color x:Key="TextMuted">#858585</Color>
 
     <!-- Accents -->
-    <Color x:Key="Accent">#4878d8</Color>
-    <Color x:Key="AccentSoft">#1e2e52</Color>
-    <Color x:Key="AccentWarm">#d87e3d</Color>
-    <Color x:Key="AccentWarmSoft">#3d2415</Color>
+    <Color x:Key="Accent">#4f78b8</Color>
+    <Color x:Key="AccentSoft">#30445f</Color>
+    <Color x:Key="AccentWarm">#d28a45</Color>
+    <Color x:Key="AccentWarmSoft">#4a3524</Color>
 
     <!-- Semantic -->
     <Color x:Key="Success">#3fb950</Color>
@@ -31,9 +31,9 @@
     <Color x:Key="Danger">#da3633</Color>
 
     <!-- Slider -->
-    <Color x:Key="SliderTrack">#161820</Color>
-    <Color x:Key="SliderFill">#3a6fd8</Color>
-    <Color x:Key="SliderThumb">#6a94ec</Color>
+    <Color x:Key="SliderTrack">#181818</Color>
+    <Color x:Key="SliderFill">#4f78b8</Color>
+    <Color x:Key="SliderThumb">#88a6d4</Color>
 
     <!-- ── Brushes (convenience) ────────────────────────────────────────── -->
     <SolidColorBrush x:Key="Bg0Brush"         Color="{StaticResource Bg0}"/>

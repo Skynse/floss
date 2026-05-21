@@ -9,6 +9,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Floss.App.Brushes;
 using Floss.App.Canvas;
@@ -490,6 +491,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     public MainWindow()
     {
         InitializeComponent();
+        Icon = new WindowIcon(AssetLoader.Open(new Uri("avares://Floss.App/Assets/icon.png")));
         _brushLibrary = new BrushLibrary(AppPaths.BrushesDirectory);
         _showRulers = App.Config.ShowRulers;
         BuildUi();
@@ -560,11 +562,11 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         var statusBar = new Border
         {
-            Background = new SolidColorBrush(Color.Parse(Bg1)),
+            Background = new SolidColorBrush(Color.Parse(Bg0)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 0, 0, 1),
-            Height = 26,
-            Padding = new Thickness(12, 0),
+            Height = 22,
+            Padding = new Thickness(8, 0),
             Child = _canvasStatusText,
             IsHitTestVisible = false
         };
@@ -574,14 +576,14 @@ public partial class MainWindow : Window, Tools.IViewportController
             Background = new SolidColorBrush(Color.Parse(Bg1)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 1, 0, 0),
-            Height = 22,
-            Padding = new Thickness(12, 0),
+            Height = 20,
+            Padding = new Thickness(8, 0),
             Child = _footerStatusText,
             IsHitTestVisible = false
         };
 
         BuildTabBar();
-        var centerArea = new Grid { RowDefinitions = new RowDefinitions("28,26,*,22") };
+        var centerArea = new Grid { RowDefinitions = new RowDefinitions("26,22,*,20") };
         Grid.SetRow(_tabBarContainer, 0);
         Grid.SetRow(statusBar, 1);
         Grid.SetRow(_workspaceViewport, 2);
@@ -598,27 +600,27 @@ public partial class MainWindow : Window, Tools.IViewportController
         var rightPanel = BuildRightPanel();
 
         var root = new Grid();
-        root.ColumnDefinitions.Add(new ColumnDefinition(48, GridUnitType.Pixel) { MinWidth = 36 });
-        root.ColumnDefinitions.Add(new ColumnDefinition(5, GridUnitType.Pixel));
+        root.ColumnDefinitions.Add(new ColumnDefinition(42, GridUnitType.Pixel) { MinWidth = 36 });
+        root.ColumnDefinitions.Add(new ColumnDefinition(3, GridUnitType.Pixel));
         root.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 320 });
-        root.ColumnDefinitions.Add(new ColumnDefinition(5, GridUnitType.Pixel));
-        root.ColumnDefinitions.Add(new ColumnDefinition(520, GridUnitType.Pixel) { MinWidth = 300, MaxWidth = 900 });
+        root.ColumnDefinitions.Add(new ColumnDefinition(3, GridUnitType.Pixel));
+        root.ColumnDefinitions.Add(new ColumnDefinition(500, GridUnitType.Pixel) { MinWidth = 300, MaxWidth = 900 });
         _rootGrid = root;
         _rootColumnWidths = [.. root.ColumnDefinitions.Select(c => c.Width)];
 
         var leftSplitter = new GridSplitter
         {
-            Width = 5,
+            Width = 3,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
-            Background = new SolidColorBrush(Color.Parse(Bg2))
+            Background = new SolidColorBrush(Color.Parse(Bg0))
         };
         var rightSplitter = new GridSplitter
         {
-            Width = 5,
+            Width = 3,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
-            Background = new SolidColorBrush(Color.Parse(Bg2))
+            Background = new SolidColorBrush(Color.Parse(Bg0))
         };
 
         Grid.SetColumn(leftRail, 0);
@@ -632,7 +634,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         root.Children.Add(rightSplitter);
         root.Children.Add(rightPanel);
 
-        var shell = new Grid { RowDefinitions = new RowDefinitions("30,34,*") };
+        var shell = new Grid { RowDefinitions = new RowDefinitions("24,28,*") };
         var menu = BuildMenuBar();
         var toolbar = BuildToolbar();
         Grid.SetRow(menu, 0);
@@ -666,7 +668,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private static TextBlock MiniText() => new()
     {
         Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-        FontSize = 11,
+        FontSize = 10,
         VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
     };
 
@@ -709,8 +711,8 @@ public partial class MainWindow : Window, Tools.IViewportController
             IsVisible = false,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top,
-            Background = new SolidColorBrush(Color.Parse("#3c3c3f")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#6a6a70")),
+            Background = new SolidColorBrush(Color.Parse(Bg3)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(2),
             Child = row,
@@ -723,8 +725,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         var btn = new Button
         {
             Content = Icons.Make(icon, 15, new SolidColorBrush(Color.Parse(TextPrimary))),
-            Width = 30,
-            Height = 26,
+            Width = 28,
+            Height = 24,
             Padding = new Thickness(0),
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
@@ -974,7 +976,7 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         return new Border
         {
-            Background = new SolidColorBrush(Color.Parse(Bg1)),
+            Background = new SolidColorBrush(Color.Parse(Bg0)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 0, 0, 1),
             Child = new Menu
@@ -991,8 +993,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         _zoomDisplay = new TextBlock
         {
             Text = "100%",
-            Width = 46,
-            FontSize = 11,
+            Width = 44,
+            FontSize = 10,
             TextAlignment = TextAlignment.Center,
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
@@ -1000,8 +1002,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         _rotDisplay = new TextBlock
         {
             Text = "0°",
-            Width = 36,
-            FontSize = 11,
+            Width = 34,
+            FontSize = 10,
             TextAlignment = TextAlignment.Center,
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
@@ -1039,8 +1041,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            Spacing = 2,
-            Margin = new Thickness(8, 0)
+            Spacing = 1,
+            Margin = new Thickness(6, 0)
         };
         row.Children.Add(openTb);
         row.Children.Add(SaveDocumentTb);
@@ -1062,7 +1064,7 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         return new Border
         {
-            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            Background = new SolidColorBrush(Color.Parse(Bg1)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 0, 0, 1),
             Child = row
@@ -1074,15 +1076,15 @@ public partial class MainWindow : Window, Tools.IViewportController
         var btn = new Button
         {
             Content = MaterialIcon(icon, 16),
-            Width = 28,
-            Height = 26,
+            Width = 26,
+            Height = 24,
             Padding = new Thickness(0),
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
             Background = Avalonia.Media.Brushes.Transparent,
             BorderBrush = Avalonia.Media.Brushes.Transparent,
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            CornerRadius = new CornerRadius(5)
+            CornerRadius = new CornerRadius(2)
         };
         ToolTip.SetTip(btn, tip);
         return btn;
@@ -1116,9 +1118,9 @@ public partial class MainWindow : Window, Tools.IViewportController
     private static Border TbarSep() => new()
     {
         Width = 1,
-        Height = 18,
+        Height = 16,
         Background = new SolidColorBrush(Color.Parse(Stroke)),
-        Margin = new Thickness(6, 0)
+        Margin = new Thickness(5, 0)
     };
 
     private static MenuItem MenuAction(string header, Action action)
@@ -1161,7 +1163,7 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         var splitter = new GridSplitter
         {
-            Width = 5,
+            Width = 3,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
             Background = new SolidColorBrush(Color.Parse(Stroke))
@@ -1171,7 +1173,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         _dockerHostGrid = grid;
         var split = Math.Clamp(layout.RightDockSplit, 0.2, 0.8);
         grid.ColumnDefinitions.Add(new ColumnDefinition(split, GridUnitType.Star));
-        grid.ColumnDefinitions.Add(new ColumnDefinition(5, GridUnitType.Pixel));
+        grid.ColumnDefinitions.Add(new ColumnDefinition(3, GridUnitType.Pixel));
         grid.ColumnDefinitions.Add(new ColumnDefinition(1 - split, GridUnitType.Star));
 
         Grid.SetColumn(leftDock, 0);
@@ -1222,10 +1224,10 @@ public partial class MainWindow : Window, Tools.IViewportController
             grid.Children.Add(section);
 
             if (i == panelIds.Count - 1) continue;
-            grid.RowDefinitions.Add(new RowDefinition(new GridLength(5, GridUnitType.Pixel)));
+            grid.RowDefinitions.Add(new RowDefinition(new GridLength(3, GridUnitType.Pixel)));
             var splitter = new GridSplitter
             {
-                Height = 5,
+                Height = 3,
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
                 ResizeDirection = GridResizeDirection.Rows,
@@ -1256,7 +1258,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         };
         var header = new Border
         {
-            Padding = new Thickness(8, 4, 8, 3),
+            Padding = new Thickness(7, 3, 7, 2),
             Cursor = new Cursor(StandardCursorType.SizeAll),
             Child = headerRow,
             ContextMenu = BuildDockerContextMenu(id)
@@ -2128,6 +2130,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     {
         btn.Background = new SolidColorBrush(Color.Parse(active ? AccentSoft : "Transparent"));
         btn.BorderBrush = new SolidColorBrush(Color.Parse(active ? Accent : "Transparent"));
+        btn.BorderThickness = new Thickness(active ? 1 : 0);
         btn.Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted));
     }
 
@@ -2136,16 +2139,16 @@ public partial class MainWindow : Window, Tools.IViewportController
         var btn = new Button
         {
             Content = glyph,
-            Width = 24,
-            Height = 22,
+            Width = 22,
+            Height = 20,
             Padding = new Thickness(0),
-            FontSize = 11,
+            FontSize = 13,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
             Background = new SolidColorBrush(Color.Parse(Bg2)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
+            CornerRadius = new CornerRadius(2)
         };
         ToolTip.SetTip(btn, tip);
         return btn;
@@ -2165,8 +2168,8 @@ public partial class MainWindow : Window, Tools.IViewportController
             Minimum = min,
             Maximum = max,
             Value = value,
-            Height = 22,
-            MinHeight = 20,
+            Height = 20,
+            MinHeight = 18,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
         ToolTip.SetTip(s, tip);

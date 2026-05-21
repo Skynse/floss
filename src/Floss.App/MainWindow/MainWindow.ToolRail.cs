@@ -19,21 +19,21 @@ public partial class MainWindow
         _toolRailStack = new WrapPanel
         {
             HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 6),
-            ItemWidth = 38,
-            ItemHeight = 36
+            Margin = new Thickness(0, 4),
+            ItemWidth = 34,
+            ItemHeight = 32
         };
 
         BuildToolRail();
 
         _colorWell = new Border
         {
-            Width = 24,
-            Height = 24,
-            CornerRadius = new CornerRadius(12),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3a3a3e")),
-            BorderThickness = new Thickness(1.5),
-            Background = new SolidColorBrush(Color.Parse("#111112"))
+            Width = 22,
+            Height = 22,
+            CornerRadius = new CornerRadius(11),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(1),
+            Background = new SolidColorBrush(Color.Parse(Bg0))
         };
 
 
@@ -58,18 +58,18 @@ public partial class MainWindow
 
         _colorWell = new Border
         {
-            Width = 24,
-            Height = 24,
-            CornerRadius = new CornerRadius(12),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3a3a3e")),
-            BorderThickness = new Thickness(1.5),
-            Background = new SolidColorBrush(Color.Parse("#111112"))
+            Width = 22,
+            Height = 22,
+            CornerRadius = new CornerRadius(11),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(1),
+            Background = new SolidColorBrush(Color.Parse(Bg0))
         };
         var colorBtn = new Button
         {
             Content = _colorWell,
-            Width = 36,
-            Height = 34,
+            Width = 32,
+            Height = 30,
             Background = Avalonia.Media.Brushes.Transparent,
             Padding = new Thickness(5),
             HorizontalContentAlignment = HorizontalAlignment.Center,
@@ -81,9 +81,9 @@ public partial class MainWindow
         _toolRailStack = new WrapPanel
         {
             HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 6),
-            ItemWidth = 38,
-            ItemHeight = 36
+            Margin = new Thickness(0, 4),
+            ItemWidth = 34,
+            ItemHeight = 32
         };
 
         BuildToolRail();
@@ -91,7 +91,7 @@ public partial class MainWindow
         var colorBar = new StackPanel
         {
             HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 4, 0, 8),
+            Margin = new Thickness(0, 3, 0, 6),
             Children = { RailSep(), colorBtn }
         };
 
@@ -105,7 +105,7 @@ public partial class MainWindow
 
         return new Border
         {
-            Background = new SolidColorBrush(Color.Parse(Bg1)),
+            Background = new SolidColorBrush(Color.Parse(BgSidebar)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 0, 1, 0),
             CacheMode = new BitmapCache(),
@@ -135,12 +135,12 @@ public partial class MainWindow
         var addBtn = new Button
         {
             Content = Icons.Make(Icons.Plus, 16, new SolidColorBrush(Color.Parse(TextSecondary))),
-            Width = 36,
-            Height = 34,
+            Width = 32,
+            Height = 30,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
             Background = Avalonia.Media.Brushes.Transparent,
-            CornerRadius = new CornerRadius(4),
+            CornerRadius = new CornerRadius(2),
             Padding = new Thickness(0),
         };
         ToolTip.SetTip(addBtn, "Add tool group");
@@ -272,7 +272,7 @@ public partial class MainWindow
             Height = 24,
             FontSize = 10,
             Padding = new Thickness(4, 2),
-            Background = new SolidColorBrush(Color.Parse("#1a1c22")),
+            Background = new SolidColorBrush(Color.Parse(Bg0)),
             Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
             BorderBrush = new SolidColorBrush(Color.Parse(Accent)),
             BorderThickness = new Thickness(1),
@@ -478,13 +478,13 @@ public partial class MainWindow
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Center
             },
-            Width = 36,
-            Height = 34,
+            Width = 32,
+            Height = 30,
             Margin = new Thickness(2),
             Background = new SolidColorBrush(Color.Parse(group.CustomIcon == null ? AccentSoft : Bg2)),
             BorderBrush = new SolidColorBrush(Color.Parse(group.CustomIcon == null ? Accent : Stroke)),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
+            CornerRadius = new CornerRadius(2),
             Padding = new Thickness(0)
         };
         Window? dlg = null;
@@ -503,13 +503,13 @@ public partial class MainWindow
             var iconBtn = new Button
             {
                 Content = MaterialIcon(p, 18),
-                Width = 36,
-                Height = 34,
+                Width = 32,
+                Height = 30,
                 Margin = new Thickness(2),
                 Background = new SolidColorBrush(Color.Parse(group.CustomIcon == p ? AccentSoft : Bg2)),
                 BorderBrush = new SolidColorBrush(Color.Parse(group.CustomIcon == p ? Accent : Stroke)),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(4),
+                CornerRadius = new CornerRadius(2),
                 Padding = new Thickness(0),
                 HorizontalContentAlignment = HorizontalAlignment.Center,
                 VerticalContentAlignment = VerticalAlignment.Center
@@ -545,13 +545,13 @@ public partial class MainWindow
         var btn = new Button
         {
             Content = MaterialIcon(icon, 18),
-            Width = 36,
-            Height = 34,
+            Width = 32,
+            Height = 30,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
             Background = Avalonia.Media.Brushes.Transparent,
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            CornerRadius = new CornerRadius(4),
+            CornerRadius = new CornerRadius(2),
             Padding = new Thickness(0)
         };
         ToolTip.SetTip(btn, tip);
@@ -561,7 +561,7 @@ public partial class MainWindow
     private static Border RailSep() => new()
     {
         Height = 1,
-        Width = 26,
+        Width = 24,
         Background = new SolidColorBrush(Color.Parse(Stroke)),
         Margin = new Thickness(0, 4)
     };

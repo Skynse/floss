@@ -30,7 +30,7 @@ public partial class MainWindow
             FontFamily = new FontFamily("Consolas, Courier New, monospace"),
             Background = new SolidColorBrush(Color.Parse(Bg0)),
             Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3a4250")),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
             Padding = new Thickness(5, 0),
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
@@ -114,9 +114,9 @@ public partial class MainWindow
                 Height = SwatchSize,
                 Margin = new Thickness(0, 0, 2, 2),
                 Background = new SolidColorBrush(color),
-                BorderBrush = new SolidColorBrush(Color.Parse("#2a2d35")),
+                BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(3),
+                CornerRadius = new CornerRadius(2),
                 Padding = new Thickness(0)
             };
             ToolTip.SetTip(btn, $"#{color.R:X2}{color.G:X2}{color.B:X2}");
