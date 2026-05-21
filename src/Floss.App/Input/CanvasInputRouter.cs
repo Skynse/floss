@@ -175,41 +175,9 @@ public sealed class CanvasInputRouter
 
     public void PointerMoved(PointerEventArgs e)
     {
-        if (_state == RouterState.Running)
-        {
-            var vpt = _host.GetViewportPointerPoint(e);
-            // Tablet-as-mouse: tip lift = pressure drops to 0 with no button held.
-            // Some drivers never fire PointerReleased in this mode.
-            if (vpt.Pointer.Type == PointerType.Mouse
-                && vpt.Properties.Pressure <= 0
-                && !vpt.Properties.IsLeftButtonPressed
-                && _runningAction == CanvasAction.PrimaryTool)
-            {
-                HandlePointerRelease(e);
-                return;
-            }
-            HandlePointerMove(e, vpt.Position);
-            return;
-        }
-
-        if (_state == RouterState.Suppressed) return;
-
-        // Tablet-as-mouse: tip contact fires PointerMoved with pressure > 0
-        // instead of PointerPressed on some drivers.
-        var pt = _host.GetViewportPointerPoint(e);
-        if (pt.Pointer.Type == PointerType.Mouse
-            && pt.Properties.Pressure > 0
-            && !pt.Properties.IsMiddleButtonPressed
-            && !pt.Properties.IsRightButtonPressed)
-        {
-            HandlePointerPress(
-                CanvasAction.PrimaryTool, true, pt.Pointer.Id, pt.Position,
-                null,
-                e.KeyModifiers.HasFlag(KeyModifiers.Control),
-                e.KeyModifiers.HasFlag(KeyModifiers.Shift));
-            if (_state == RouterState.Running)
-                HandlePointerMove(e, pt.Position);
-        }
+        if (_state != RouterState.Running) return;
+        var pt = _host.GetViewportPosition(e);
+        HandlePointerMove(e, pt);
     }
 
     public void PointerReleased(PointerReleasedEventArgs e)
