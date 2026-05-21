@@ -233,41 +233,19 @@ public sealed class CanvasInputRouter
         if (_host.IsOverCanvasUi(viewportPos))
             return;
 
+        var isPointerActivation = IsPointerActivation(isPrimaryDown, eventArgs);
+
         // Brush-size gesture mode
         if (_activeModifierAction == ModifierAction.ChangeBrushSize)
         {
-            if (!isPrimaryDown) return;
-            _brushSizeActive = true;
-            _host.PaintInputSuspended = true;
-            _hadAlternateBeforeBrushSize = _host.IsAlternateActive;
-            _host.SetAlternateActive(false);
-            _brushSizeGestureStartCanvasPoint = _host.GetCanvasPosition((PointerEventArgs)eventArgs!);
-            _brushSizeGestureStartSize = _host.GetActiveToolSize();
-            if (_brushSizeHasLastDir)
-            {
-                var sr = _brushSizeGestureStartSize * 0.5;
-                _brushSizeGestureCenterCanvasPoint = new(
-                    _brushSizeGestureStartCanvasPoint.X - _brushSizeLastDirX * sr,
-                    _brushSizeGestureStartCanvasPoint.Y - _brushSizeLastDirY * sr);
-                _brushSizeGestureHasCenter = true;
-            }
-            else
-            {
-                _brushSizeGestureCenterCanvasPoint = _brushSizeGestureStartCanvasPoint;
-                _brushSizeGestureHasCenter = false;
-            }
-            _host.LockCursorPreview(_brushSizeGestureCenterCanvasPoint, forceBrushOutline: true);
-            EnterRunning(CanvasAction.BrushSize, pointerId, false);
+            if (!isPointerActivation) return;
             if (eventArgs is PointerPressedEventArgs e)
-            {
-                _host.CapturePointer(e.Pointer);
-                e.Handled = true;
-            }
+                BeginBrushSizeGesture(viewportPos, pointerId, e);
             return;
         }
 
         // Primary tool dispatch
-        if (isPrimaryDown)
+        if (isPrimaryDown || (_activeModifierAction != ModifierAction.None && isPointerActivation))
         {
             if (eventArgs != null)
             {
@@ -824,6 +802,17 @@ public sealed class CanvasInputRouter
         if (props.IsRightButtonPressed)
             return (CanvasAction)App.Shortcuts.RightButtonAction;
         return CanvasAction.None;
+    }
+
+    private static bool IsPointerActivation(bool isPrimaryDown, object? eventArgs)
+    {
+        if (isPrimaryDown) return true;
+        if (eventArgs is not PointerPressedEventArgs e) return false;
+
+        // Pen/touch press events can arrive before pressure has ramped above
+        // the draw threshold. Modifier transactions still need to start from
+        // that press; otherwise the next move falls back into the base brush.
+        return e.Pointer.Type is PointerType.Pen or PointerType.Touch;
     }
 
     private static string? PresetIdForAction(CanvasAction action)

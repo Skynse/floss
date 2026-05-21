@@ -433,6 +433,8 @@ public sealed class DrawingCanvas : Control, IDisposable
     public void UnlockCursorPreview()
     {
         if (!_isCursorPreviewLocked) return;
+        _prevPointerPos = _lockedPointerPos;
+        _pointerPos = _lockedPointerPos;
         _isCursorPreviewLocked = false;
         _forceBrushOutlineCursor = false;
         InvalidateVisual();
@@ -810,7 +812,6 @@ public sealed class DrawingCanvas : Control, IDisposable
 
         var pixels = new byte[_document.Width * _document.Height * 4];
         var b = bounds.Value;
-        var copied = false;
 
         for (int docY = b.Top; docY < b.Bottom; docY++)
         {
@@ -826,11 +827,9 @@ public sealed class DrawingCanvas : Control, IDisposable
                 pixels[dst + 1] = pg;
                 pixels[dst + 2] = pr;
                 pixels[dst + 3] = pa;
-                copied = true;
             }
         }
 
-        if (!copied) return false;
         _clipboardPixels = pixels;
         _clipboardW = _document.Width;
         _clipboardH = _document.Height;
@@ -1162,14 +1161,14 @@ public sealed class DrawingCanvas : Control, IDisposable
             var pos = _isCursorPreviewLocked ? _lockedPointerPos : _pointerPos;
             var t = Math.Max(0.5, 1.5 / CanvasZoom);
             bool isBrushLike = _toolController.ActiveTool is CompositeTool ct && ct.Input.HasBrushCursor;
-            if ((_forceBrushOutlineCursor && mode != BrushCursorMode.BrushShape) || (isBrushLike && mode is BrushCursorMode.Outline or BrushCursorMode.DotAndOutline))
+            if (_forceBrushOutlineCursor || (isBrushLike && mode is BrushCursorMode.Outline or BrushCursorMode.DotAndOutline))
             {
                 var r = ActiveToolCursorSize() * 0.5;
                 context.DrawEllipse(null, new Pen(CursorOuterBrush, t * 3), pos, r, r);
                 context.DrawEllipse(null, new Pen(CursorInnerBrush, t), pos, r, r);
             }
 
-            if (isBrushLike && mode == BrushCursorMode.BrushShape)
+            if (!_forceBrushOutlineCursor && isBrushLike && mode == BrushCursorMode.BrushShape)
                 DrawBrushShapeCursor(context, pos, t);
 
             if (!isBrushLike || mode is BrushCursorMode.Dot or BrushCursorMode.DotAndOutline)
@@ -1712,33 +1711,9 @@ public sealed class DrawingCanvas : Control, IDisposable
             return SampleSingleLayer(layer, x, y, applyOpacity: false);
         }
 
-        // Composite sample from all visible layers (bottom to top).
-        double accR = 0, accG = 0, accB = 0, accA = 0;
-        bool any = false;
-
-        foreach (var layer in _document.Layers)
-        {
-            if (ShouldSkipSampleLayer(layer, options)) continue;
-            var color = SampleSingleLayer(layer, x, y, applyOpacity: true);
-            if (color == null) continue;
-            any = true;
-
-            double srcA = color.Value.A / 255.0;
-            if (srcA <= 0) continue;
-
-            double dstA = accA;
-            double outA = srcA + dstA * (1 - srcA);
-            if (outA > 0)
-            {
-                accR = (color.Value.R * srcA + accR * dstA * (1 - srcA)) / outA;
-                accG = (color.Value.G * srcA + accG * dstA * (1 - srcA)) / outA;
-                accB = (color.Value.B * srcA + accB * dstA * (1 - srcA)) / outA;
-                accA = outA;
-            }
-        }
-
-        if (!any) return null;
-        return Color.FromArgb((byte)Math.Clamp(accA * 255, 0, 255), (byte)Math.Clamp(accR, 0, 255), (byte)Math.Clamp(accG, 0, 255), (byte)Math.Clamp(accB, 0, 255));
+        var paper = _document.PaperLayer;
+        var paperUint = paper is { IsVisible: true } ? ColorToBgraUint(_document.PaperColor) : 0u;
+        return _compositor.SampleCompositePixel(_document.Layers, _document.Width, _document.Height, x, y, paperUint);
     }
 
     private static Color? SampleSingleLayer(DrawingLayer layer, int x, int y, bool applyOpacity)

@@ -186,7 +186,7 @@ public sealed class BrushEngine : IDisposable
         // composited onto the layer with SrcOver once.
         // Skip scratch for few stamps (large brushes) — the overhead of allocating
         // and blitting a huge scratch bitmap exceeds the cost of direct per-stamp draw.
-        bool isMultiTipSingle = brush.Tips.Count > 1 && brush.TipSelectionMode == BrushTipSelectionMode.Single;
+        bool isMultiTipSingle = false;
         var primaryTip = stroke.TipFor(0);
         bool canDirect = _stampColors.Count == 0
             && (brush.BlendMode == SKBlendMode.SrcOver || brush.BlendMode == SKBlendMode.DstOut)
@@ -1768,7 +1768,7 @@ public sealed class BrushEngine : IDisposable
         public ActiveStroke(BrushPreset brush, CanvasInputSample sample)
         {
             _brush = brush;
-            if (brush.Tips.Count > 0)
+            if (brush.TipSelectionMode != BrushTipSelectionMode.Single && brush.Tips.Count > 0)
                 _ownedTipSet = brush.Tips.Select(t => t.CreateTip()).ToList();
             HasAnyColorTip = _ownedTipSet is { Count: > 0 }
                 ? _ownedTipSet.Any(t => t.HasColor)
@@ -1868,7 +1868,7 @@ public sealed class BrushEngine : IDisposable
 
         public int[] TipIndicesFor(int stampTipIndex)
         {
-            if (_ownedTipSet is { Count: > 1 } && _brush.TipSelectionMode == BrushTipSelectionMode.Single)
+            if (_ownedTipSet is { Count: > 1 } && _brush.TipSelectionMode != BrushTipSelectionMode.Single)
                 return _cachedTipIndices ??= Enumerable.Range(0, _ownedTipSet.Count).ToArray();
             return [stampTipIndex];
         }
@@ -2220,7 +2220,7 @@ public sealed class BrushEngine : IDisposable
     }
 
     private static bool HasMultiTipSelection(BrushPreset brush)
-        => brush.Tips.Count > 1;
+        => brush.TipSelectionMode != BrushTipSelectionMode.Single && brush.Tips.Count > 1;
 
     private readonly record struct StampSample(
         float X,

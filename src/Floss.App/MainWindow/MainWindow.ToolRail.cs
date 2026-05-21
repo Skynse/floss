@@ -317,7 +317,10 @@ public partial class MainWindow
         btn.Background = new SolidColorBrush(Color.Parse(AccentSoft));
         btn.BorderBrush = new SolidColorBrush(Color.Parse(Accent));
         btn.BorderThickness = new Thickness(1);
-        ToolTip.SetTip(btn, $"Press a key for \"{group.Name}\"… (Esc = cancel, Backspace = clear)");
+        var prompt = $"Press a key for \"{group.Name}\" (Esc cancel, Backspace clear)";
+        ToolTip.SetTip(btn, prompt);
+        _footerStatusText.Text = prompt;
+        Focus();
     }
 
     internal void CommitToolGroupShortcut(Input.KeyBinding kb)
@@ -328,6 +331,9 @@ public partial class MainWindow
         group.Shortcut = kb;
         App.ToolGroups.Save();
         BuildToolRail();
+        _footerStatusText.Text = kb.IsEmpty
+            ? $"Cleared shortcut for {group.Name}"
+            : $"Set {group.Name} shortcut to {kb.Display()}";
     }
 
     internal void CancelToolGroupShortcutRecording()
@@ -343,6 +349,8 @@ public partial class MainWindow
                 ToolTip.SetTip(_recordingToolGroupButton, $"{group.Name}{shortcutHint}");
             }
         }
+        if (_recordingToolGroup != null)
+            _footerStatusText.Text = "Shortcut recording cancelled";
         _recordingToolGroup = null;
         _recordingToolGroupButton = null;
     }

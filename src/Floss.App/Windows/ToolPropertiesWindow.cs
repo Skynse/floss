@@ -32,7 +32,9 @@ public sealed class ToolPropertiesWindow : Window
     // ── State ─────────────────────────────────────────────────────────────────
     private ToolPreset _toolPreset;
     private BrushPreset _brushPreset;
+    private BrushTipData? _lastProceduralTip;
     private readonly Action<ToolPreset, Func<BrushPreset, BrushPreset>?> _onChange;
+    private readonly Action<BrushTipNodeGraph, string>? _onSaveBrushTipGraphAsNew;
     private readonly BrushStrokePreview _preview = new() { Height = 64 };
     private bool _syncing;
 
@@ -78,11 +80,15 @@ public sealed class ToolPropertiesWindow : Window
 
     // ── Constructor ───────────────────────────────────────────────────────────
 
-    public ToolPropertiesWindow(ToolPreset toolPreset, BrushPreset? brushPreset, Action<ToolPreset, Func<BrushPreset, BrushPreset>?> onChange)
+    public ToolPropertiesWindow(ToolPreset toolPreset, BrushPreset? brushPreset,
+        Action<ToolPreset, Func<BrushPreset, BrushPreset>?> onChange,
+        Action<BrushTipNodeGraph, string>? onSaveBrushTipGraphAsNew = null)
     {
         _toolPreset = toolPreset;
         _brushPreset = brushPreset ?? new BrushPreset(toolPreset.Name, 8, 1.0, 0.9, 0.1, Colors.White, 0);
+        RememberProceduralTip(_brushPreset.Tip);
         _onChange = onChange;
+        _onSaveBrushTipGraphAsNew = onSaveBrushTipGraphAsNew;
         _isBrushTool = toolPreset.OutputProcess == OutputProcessType.DirectDraw;
 
         Width = 420;
@@ -315,6 +321,7 @@ public sealed class ToolPropertiesWindow : Window
     private Control BuildBrushTipContent(bool forceImageMode = false)
     {
         var mainTip = _brushPreset.Tip;
+        RememberProceduralTip(mainTip);
         var isProc = IsGraphTip(mainTip) && !forceImageMode;
         var procTip = BuiltInProceduralTipFor(mainTip);
         var activeShape = procTip?.Shape;
@@ -333,14 +340,14 @@ public sealed class ToolPropertiesWindow : Window
 
             if (!IsGraphTip(_brushPreset.Tip))
             {
-                var shape = _brushPreset.Shape?.Shape ?? BrushTipShape.Circle;
-                CommitMainTip(new ProceduralBrushTip(shape));
+                CommitMainTip(RestoreProceduralTip());
             }
         });
         var materialBtn = MkToggleBtn("Material", !isProc, () =>
         {
             if (IsGraphTip(_brushPreset.Tip))
             {
+                RememberProceduralTip(_brushPreset.Tip);
                 var materialTips = MaterialTipsFor(_brushPreset);
                 if (materialTips.Count > 0)
                 {
@@ -413,7 +420,7 @@ public sealed class ToolPropertiesWindow : Window
                         ? newList.FirstOrDefault()
                         : activeTipData;
                     Commit(p => nextActive == null
-                        ? p with { Tip = new ProceduralBrushTip(), Tips = [] }
+                        ? p with { Tip = RestoreProceduralTip(), Tips = [] }
                         : p with { Tip = nextActive.CreateTip(), Tips = newList });
                     _contentHost.Child = WrapContent(BuildBrushTipContent(forceImageMode: true));
                 };
@@ -442,6 +449,7 @@ public sealed class ToolPropertiesWindow : Window
             {
                 var browser = new BrushTipBrowserWindow(this, tip =>
                 {
+                    RememberProceduralTip(_brushPreset.Tip);
                     var td = BrushTipData.FromTip(tip);
                     var newList = MaterialTipsFor(_brushPreset)
                         .Where(t => !TipDataEquals(t, td))
@@ -527,7 +535,9 @@ public sealed class ToolPropertiesWindow : Window
             var editor = new NodeGraphEditorWindow(graph.DeepClone(), g =>
             {
                 if (g.Validate().Count > 0) return;
-                var tip = g.ToBuiltInProceduralTip() ?? (IBrushTip)new NodeBrushTip(g);
+                var clone = g.DeepClone();
+                clone.BuiltInShape = null;
+                var tip = (IBrushTip)new NodeBrushTip(clone);
                 Commit(p => p with { Tip = tip, Tips = PreserveMaterialTipsWithActiveFirst(p) });
             }, (g, name) =>
             {
@@ -535,8 +545,13 @@ public sealed class ToolPropertiesWindow : Window
                 var clone = g.DeepClone();
                 clone.BuiltInShape = null;
                 clone.BuiltInAspectRatio = 1.0f;
-                var tip = (IBrushTip)new NodeBrushTip(clone);
-                Commit(p => p with { Name = name, Tip = tip, Tips = PreserveMaterialTipsWithActiveFirst(p) });
+                if (_onSaveBrushTipGraphAsNew != null)
+                    _onSaveBrushTipGraphAsNew(clone, name);
+                else
+                {
+                    var tip = (IBrushTip)new NodeBrushTip(clone);
+                    Commit(p => p with { Name = name, Tip = tip, Tips = PreserveMaterialTipsWithActiveFirst(p) });
+                }
             });
             editor.Closed += (_, _) =>
             {
@@ -782,7 +797,9 @@ public sealed class ToolPropertiesWindow : Window
     {
         if (graph.Validate().Count > 0)
             return;
-        var tip = graph.ToBuiltInProceduralTip() ?? (IBrushTip)new NodeBrushTip(graph);
+        var clone = graph.DeepClone();
+        clone.BuiltInShape = null;
+        var tip = (IBrushTip)new NodeBrushTip(clone);
         Commit(p => p with { Tip = tip, Tips = PreserveMaterialTipsWithActiveFirst(p) });
     }
 
@@ -992,7 +1009,11 @@ public sealed class ToolPropertiesWindow : Window
 
     private void OpenTipBrowser()
     {
-        var browser = new BrushTipBrowserWindow(this, tip => CommitMainTip(tip));
+        var browser = new BrushTipBrowserWindow(this, tip =>
+        {
+            RememberProceduralTip(_brushPreset.Tip);
+            CommitMainTip(tip);
+        });
         browser.Show(this);
     }
 
@@ -1877,6 +1898,8 @@ public sealed class ToolPropertiesWindow : Window
     private void CommitMainTip(IBrushTip tip)
     {
         var tipData = BrushTipData.FromTip(tip);
+        if (tipData.Kind != BrushTipStorageKind.EmbeddedPng)
+            _lastProceduralTip = tipData.DeepClone();
         Commit(p =>
         {
             if (tipData.Kind != BrushTipStorageKind.EmbeddedPng)
@@ -1893,6 +1916,21 @@ public sealed class ToolPropertiesWindow : Window
             _contentHost.Child = WrapContent(BuildBrushTipContent());
         else if (_activeCategory == 3)
             _contentHost.Child = WrapContent(BuildBrushShapeContent());
+    }
+
+    private void RememberProceduralTip(IBrushTip tip)
+    {
+        if (!IsGraphTip(tip)) return;
+        _lastProceduralTip = BrushTipData.FromTip(tip).DeepClone();
+    }
+
+    private IBrushTip RestoreProceduralTip()
+    {
+        if (_lastProceduralTip is { Kind: BrushTipStorageKind.NodeGraph } remembered)
+            return remembered.CreateTip();
+        if (_brushPreset.Shape != null)
+            return new ProceduralBrushTip(_brushPreset.Shape.Shape, _brushPreset.Shape.AspectRatio);
+        return new ProceduralBrushTip();
     }
 
     private static IReadOnlyList<BrushTipData> PreserveMaterialTipsWithActiveFirst(BrushPreset preset)
@@ -1926,7 +1964,7 @@ public sealed class ToolPropertiesWindow : Window
         => tip switch
         {
             ProceduralBrushTip proc => proc,
-            NodeBrushTip node => node.Graph.ToBuiltInProceduralTip(),
+            NodeBrushTip => null,
             _ => null
         };
 
@@ -1977,6 +2015,7 @@ public sealed class ToolPropertiesWindow : Window
     {
         _syncing = true;
         _brushPreset = preset;
+        RememberProceduralTip(preset.Tip);
 
         _sizeSlider.Value = Math.Clamp(preset.Size, _sizeSlider.Minimum, _sizeSlider.Maximum);
         _opacitySlider.Value = Math.Clamp(preset.Opacity, _opacitySlider.Minimum, _opacitySlider.Maximum);

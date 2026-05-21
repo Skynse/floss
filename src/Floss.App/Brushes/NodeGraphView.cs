@@ -8,6 +8,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Floss.App.Input;
 using SkiaSharp;
 
 namespace Floss.App.Brushes;
@@ -73,8 +74,14 @@ public sealed class NodeGraphView : Control
     private double _panY;
     private double _zoom = 1.2;
 
-    private enum DragAction { None, Pan, MoveNode, Connect, ConnectFromInput, ScrubParam }
+    private enum DragAction { None, Pan, Zoom, MoveNode, Connect, ConnectFromInput, ScrubParam }
     private DragAction _dragAction;
+    private bool _spaceHeld;
+    private CanvasAction _shortcutAction;
+    private double _dragStartZoom;
+    private Point _zoomAnchorScreen;
+    private Point _lastZoomScreen;
+    private int _zoomDirection = 1;
     private Point _dragStartScreen;
     private Point _dragStartWorld;
     private string _dragNodeId = null!;
@@ -101,18 +108,24 @@ public sealed class NodeGraphView : Control
     public event Action<BrushTipNode?>? NodeSelected;
     public event Action<BrushTipNode>? NodeRightClicked;
     public event Action? GraphModified;
-    public event Action? CanvasRightClicked;
+    public event Action<Point>? CanvasRightClicked;
 
     public string? SelectedNodeId => _selectedNodeId;
     public BrushTipNodeGraph Graph => _graph;
 
+    public NodeGraphView()
+    {
+        Focusable = true;
+        DetachedFromVisualTree += (_, _) => ReleaseTransientCaches();
+    }
+
     public void LoadGraph(BrushTipNodeGraph graph, Dictionary<string, Point> positions)
     {
-        _graph = graph;
-        _positions = positions;
+        _graph = graph.DeepClone();
+        _positions = new Dictionary<string, Point>(positions);
         _selectedNodeId = null;
         _history.Clear();
-        _history.Add(new HistoryEntry(graph.DeepClone(), new(positions)));
+        _history.Add(new HistoryEntry(_graph.DeepClone(), new(_positions)));
         _historyIndex = 0;
         InvalidatePreviews();
         InvalidateVisual();
@@ -141,6 +154,13 @@ public sealed class NodeGraphView : Control
         _previewCache.Clear();
     }
 
+    private void ReleaseTransientCaches()
+    {
+        InvalidatePreviews();
+        _history.Clear();
+        _historyIndex = -1;
+    }
+
     private IImage GetNodePreview(BrushTipNode node)
     {
         if (_previewCache.TryGetValue(node.Id, out var cached))
@@ -149,11 +169,10 @@ public sealed class NodeGraphView : Control
         const int prevSize = 32;
         var tempGraph = _graph.DeepClone();
         tempGraph.OutputNodeId = node.Id;
-        var bitmap = BrushTipNodeGraphEvaluator.Evaluate(tempGraph, prevSize, 1.0f);
-
+        using var bitmap = BrushTipNodeGraphEvaluator.Evaluate(tempGraph, prevSize, 1.0f);
         using var skImg = SKImage.FromBitmap(bitmap);
-        var png = skImg.Encode(SKEncodedImageFormat.Png, 60);
-        var stream = new MemoryStream(png.ToArray());
+        using var png = skImg.Encode(SKEncodedImageFormat.Png, 60);
+        using var stream = new MemoryStream(png.ToArray());
         var avaloniaBmp = new Bitmap(stream);
         _previewCache[node.Id] = avaloniaBmp;
         return avaloniaBmp;
@@ -179,17 +198,18 @@ public sealed class NodeGraphView : Control
         _positions = new Dictionary<string, Point>(entry.Positions);
         _selectedNodeId = null;
         NodeSelected?.Invoke(null);
+        InvalidatePreviews();
         InvalidateVisual();
         GraphModified?.Invoke();
     }
 
-    public BrushTipNode? AddNode(BrushTipNodeKind kind)
+    public BrushTipNode? AddNode(BrushTipNodeKind kind, Point? worldPosition = null)
     {
         var id = $"{kind.ToString().ToLowerInvariant()}-{Guid.NewGuid().ToString("N").AsSpan(0, 6)}";
         var node = new BrushTipNode { Id = id, Kind = kind };
         var centerWorld = ScreenToWorld(new Point(Bounds.Width / 2, Bounds.Height / 2));
         var offset = new Point(_positions.Count * 20.0, _positions.Count * 20.0);
-        _positions[id] = centerWorld + offset;
+        _positions[id] = worldPosition ?? centerWorld + offset;
 
         var outputIdx = _graph.Nodes.FindIndex(n => n.Id == _graph.OutputNodeId);
         if (outputIdx >= 0)
@@ -209,7 +229,6 @@ public sealed class NodeGraphView : Control
     {
         var node = _graph.Nodes.FirstOrDefault(n => n.Id == nodeId);
         if (node == null || nodeId == _graph.OutputNodeId) return;
-        PushHistory();
         _graph.Nodes.Remove(node);
         _positions.Remove(nodeId);
         foreach (var other in _graph.Nodes)
@@ -219,8 +238,80 @@ public sealed class NodeGraphView : Control
             _selectedNodeId = null;
             NodeSelected?.Invoke(null);
         }
+        PushHistory();
         InvalidateVisual();
         GraphModified?.Invoke();
+    }
+
+    public bool SetNodeInput(string nodeId, int inputIndex, string? sourceNodeId, bool notify = true)
+    {
+        if (inputIndex < 0) return false;
+        var node = _graph.Nodes.FirstOrDefault(n => n.Id == nodeId);
+        if (node == null) return false;
+
+        sourceNodeId = string.IsNullOrWhiteSpace(sourceNodeId) ? "" : sourceNodeId;
+        if (!string.IsNullOrEmpty(sourceNodeId))
+        {
+            var source = _graph.Nodes.FirstOrDefault(n => n.Id == sourceNodeId);
+            if (source == null || source.Kind == BrushTipNodeKind.Output || source.Id == nodeId)
+                return false;
+            if (WouldCreateCycle(source.Id, nodeId))
+                return false;
+        }
+
+        while (node.Inputs.Count <= inputIndex)
+            node.Inputs.Add("");
+        if (node.Inputs[inputIndex] == sourceNodeId)
+            return true;
+
+        node.Inputs[inputIndex] = sourceNodeId;
+        TrimTrailingEmptyInputs(node);
+        PushHistory();
+        InvalidateVisual();
+        if (notify)
+            GraphModified?.Invoke();
+        return true;
+    }
+
+    public bool UpdateNode(string nodeId, Action<BrushTipNode> update, bool pushHistory = true, bool notify = true)
+    {
+        var node = _graph.Nodes.FirstOrDefault(n => n.Id == nodeId);
+        if (node == null) return false;
+        update(node);
+        InvalidatePreviews();
+        if (pushHistory)
+            PushHistory();
+        InvalidateVisual();
+        if (notify)
+            GraphModified?.Invoke();
+        return true;
+    }
+
+    private bool WouldCreateCycle(string sourceNodeId, string targetNodeId)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        return DependsOn(sourceNodeId, targetNodeId, seen);
+    }
+
+    private bool DependsOn(string nodeId, string targetNodeId, HashSet<string> seen)
+    {
+        if (nodeId == targetNodeId) return true;
+        if (!seen.Add(nodeId)) return false;
+        var node = _graph.Nodes.FirstOrDefault(n => n.Id == nodeId);
+        if (node == null) return false;
+        foreach (var inputId in node.Inputs)
+        {
+            if (string.IsNullOrEmpty(inputId)) continue;
+            if (DependsOn(inputId, targetNodeId, seen))
+                return true;
+        }
+        return false;
+    }
+
+    private static void TrimTrailingEmptyInputs(BrushTipNode node)
+    {
+        while (node.Inputs.Count > 0 && string.IsNullOrEmpty(node.Inputs[^1]))
+            node.Inputs.RemoveAt(node.Inputs.Count - 1);
     }
 
     public void SetView(double panX, double panY, double zoom)
@@ -234,10 +325,118 @@ public sealed class NodeGraphView : Control
     private Point ScreenToWorld(Point screen) =>
         new((screen.X - _panX) / _zoom, (screen.Y - _panY) / _zoom);
 
+    private void SetZoomAround(double newZoom, Point cursor)
+    {
+        var oldZoom = _zoom;
+        var worldBefore = ScreenToWorld(cursor);
+        _zoom = Math.Clamp(newZoom, 0.1, 10.0);
+        if (oldZoom > 0)
+        {
+            _panX = cursor.X - worldBefore.X * _zoom;
+            _panY = cursor.Y - worldBefore.Y * _zoom;
+        }
+        InvalidateVisual();
+    }
+
+    private Point ViewCenter() => new(Bounds.Width * 0.5, Bounds.Height * 0.5);
+
+    private void FitGraphToView()
+    {
+        if (_graph == null || _positions == null || _positions.Count == 0 || Bounds.Width <= 1 || Bounds.Height <= 1)
+            return;
+
+        var minX = double.PositiveInfinity;
+        var minY = double.PositiveInfinity;
+        var maxX = double.NegativeInfinity;
+        var maxY = double.NegativeInfinity;
+        foreach (var node in _graph.Nodes)
+        {
+            if (!_positions.TryGetValue(node.Id, out var p)) continue;
+            minX = Math.Min(minX, p.X);
+            minY = Math.Min(minY, p.Y);
+            maxX = Math.Max(maxX, p.X + NodeWidth);
+            maxY = Math.Max(maxY, p.Y + GetNodeHeight(node));
+        }
+
+        if (!double.IsFinite(minX) || !double.IsFinite(minY) || !double.IsFinite(maxX) || !double.IsFinite(maxY))
+            return;
+
+        const double margin = 72;
+        var graphW = Math.Max(1, maxX - minX);
+        var graphH = Math.Max(1, maxY - minY);
+        _zoom = Math.Clamp(Math.Min((Bounds.Width - margin) / graphW, (Bounds.Height - margin) / graphH), 0.1, 2.5);
+        _panX = Bounds.Width * 0.5 - ((minX + maxX) * 0.5) * _zoom;
+        _panY = Bounds.Height * 0.5 - ((minY + maxY) * 0.5) * _zoom;
+        InvalidateVisual();
+    }
+
+    private void BeginPan(Point screenPos, IPointer pointer)
+    {
+        _dragAction = DragAction.Pan;
+        _dragStartScreen = screenPos;
+        _dragStartWorld = new Point(_panX, _panY);
+        pointer.Capture(this);
+    }
+
+    private void BeginZoom(Point screenPos, IPointer pointer, int direction)
+    {
+        _dragAction = DragAction.Zoom;
+        _dragStartScreen = screenPos;
+        _lastZoomScreen = screenPos;
+        _zoomAnchorScreen = screenPos;
+        _dragStartZoom = _zoom;
+        _zoomDirection = direction >= 0 ? 1 : -1;
+        pointer.Capture(this);
+    }
+
+    private static CanvasAction ResolveButtonAction(CanvasButtonAction action) => action switch
+    {
+        CanvasButtonAction.PanCanvas => CanvasAction.PanCanvas,
+        CanvasButtonAction.ZoomCanvas => CanvasAction.ZoomCanvas,
+        _ => CanvasAction.None
+    };
+
+    private static bool IsModifierKey(Key key)
+        => key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
+            or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin;
+
+    private void UpdateViewportShortcut(Key key, KeyModifiers modifiers)
+    {
+        if (!_spaceHeld)
+        {
+            _shortcutAction = CanvasAction.None;
+            return;
+        }
+
+        var triggerKey = key == Key.Space || IsModifierKey(key) ? Key.Space : key;
+        var assignment = App.ModifierKeys.Resolve(
+            (int)InputProcessType.Pen,
+            (int)OutputProcessType.DirectDraw,
+            triggerKey,
+            modifiers);
+        var presetId = assignment?.TemporaryToolPresetId;
+        _shortcutAction = presetId switch
+        {
+            ToolGroupConfig.ViewHandPresetId => CanvasAction.PanCanvas,
+            ToolGroupConfig.ViewZoomInPresetId => CanvasAction.ZoomCanvas,
+            ToolGroupConfig.ViewZoomOutPresetId => CanvasAction.ZoomCanvas,
+            _ => CanvasAction.None
+        };
+        _zoomDirection = presetId == ToolGroupConfig.ViewZoomOutPresetId ? -1 : 1;
+    }
+
     private static int NodeInputCount(BrushTipNodeKind kind) => kind switch
     {
         BrushTipNodeKind.Output => 1,
-        BrushTipNodeKind.Threshold or BrushTipNodeKind.Invert => 1,
+        BrushTipNodeKind.RotateCoordinates or BrushTipNodeKind.PolarRadius
+            or BrushTipNodeKind.PolarAngle => 1,
+        BrushTipNodeKind.WarpCoordinates => 2,
+        BrushTipNodeKind.DistanceField or BrushTipNodeKind.BoxDistanceField
+            or BrushTipNodeKind.LinearGradient or BrushTipNodeKind.Stripe
+            or BrushTipNodeKind.Noise => 1,
+        BrushTipNodeKind.Threshold or BrushTipNodeKind.SmoothStep
+            or BrushTipNodeKind.Invert or BrushTipNodeKind.Power
+            or BrushTipNodeKind.Sine or BrushTipNodeKind.Absolute => 1,
         BrushTipNodeKind.Add or BrushTipNodeKind.Multiply or BrushTipNodeKind.Max
             or BrushTipNodeKind.Min or BrushTipNodeKind.Subtract or BrushTipNodeKind.Mix => 2,
         _ => 0
@@ -265,7 +464,11 @@ public sealed class NodeGraphView : Control
 
     private static SolidColorBrush HeaderBrush(BrushTipNodeKind kind) => kind switch
     {
-        BrushTipNodeKind.Circle or BrushTipNodeKind.Rectangle
+        BrushTipNodeKind.Coordinates or BrushTipNodeKind.RotateCoordinates
+            or BrushTipNodeKind.WarpCoordinates
+            or BrushTipNodeKind.Value or BrushTipNodeKind.DistanceField
+            or BrushTipNodeKind.BoxDistanceField
+            or BrushTipNodeKind.Circle or BrushTipNodeKind.Rectangle
             or BrushTipNodeKind.RoundedRectangle
             or BrushTipNodeKind.LinearGradient or BrushTipNodeKind.Stripe
             or BrushTipNodeKind.Noise or BrushTipNodeKind.Bristle => GenBrush,
@@ -284,6 +487,41 @@ public sealed class NodeGraphView : Control
 
     private static NodeParam[] GetNodeParams(BrushTipNodeKind kind) => kind switch
     {
+        BrushTipNodeKind.RotateCoordinates => new NodeParam[] {
+            new("Center X", 0f, 1f, n => n.X, (n, v) => n.X = v),
+            new("Center Y", 0f, 1f, n => n.Y, (n, v) => n.Y = v),
+            new("Scale", 0.05f, 8f, n => n.Scale, (n, v) => n.Scale = v),
+            new("Rotation", -180f, 180f, n => n.RotationDegrees, (n, v) => n.RotationDegrees = v),
+        },
+        BrushTipNodeKind.WarpCoordinates => new NodeParam[] {
+            new("Amount", 0f, 1f, n => n.Density, (n, v) => n.Density = v),
+            new("X Amp", 0f, 1f, n => n.Width, (n, v) => n.Width = v),
+            new("Y Amp", 0f, 1f, n => n.Height, (n, v) => n.Height = v),
+            new("Direction", -180f, 180f, n => n.RotationDegrees, (n, v) => n.RotationDegrees = v),
+        },
+        BrushTipNodeKind.PolarRadius => new NodeParam[] {
+            new("Center X", 0f, 1f, n => n.X, (n, v) => n.X = v),
+            new("Center Y", 0f, 1f, n => n.Y, (n, v) => n.Y = v),
+            new("Width", 0f, 1f, n => n.Width, (n, v) => n.Width = v),
+            new("Height", 0f, 1f, n => n.Height, (n, v) => n.Height = v),
+            new("Scale", 0.05f, 16f, n => n.Scale, (n, v) => n.Scale = v),
+        },
+        BrushTipNodeKind.PolarAngle => new NodeParam[] {
+            new("Center X", 0f, 1f, n => n.X, (n, v) => n.X = v),
+            new("Center Y", 0f, 1f, n => n.Y, (n, v) => n.Y = v),
+            new("Repeats", 0.05f, 64f, n => n.Scale, (n, v) => n.Scale = v),
+            new("Phase", -180f, 180f, n => n.RotationDegrees, (n, v) => n.RotationDegrees = v),
+        },
+        BrushTipNodeKind.Value => new NodeParam[] {
+            new("Value", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
+        },
+        BrushTipNodeKind.DistanceField or BrushTipNodeKind.BoxDistanceField => new NodeParam[] {
+            new("Center X", 0f, 1f, n => n.X, (n, v) => n.X = v),
+            new("Center Y", 0f, 1f, n => n.Y, (n, v) => n.Y = v),
+            new("Width", 0f, 1f, n => n.Width, (n, v) => n.Width = v),
+            new("Height", 0f, 1f, n => n.Height, (n, v) => n.Height = v),
+            new("Rotation", -180f, 180f, n => n.RotationDegrees, (n, v) => n.RotationDegrees = v),
+        },
         BrushTipNodeKind.Circle => new NodeParam[] {
             new("Radius", 0f, 1f, n => n.Radius, (n, v) => n.Radius = v),
             new("Hardness", 0f, 1f, n => n.Hardness, (n, v) => n.Hardness = v),
@@ -323,6 +561,24 @@ public sealed class NodeGraphView : Control
             new("Threshold", 0f, 1f, n => n.Threshold, (n, v) => n.Threshold = v),
             new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
         },
+        BrushTipNodeKind.SmoothStep => new NodeParam[] {
+            new("Edge", 0f, 1f, n => n.Threshold, (n, v) => n.Threshold = v),
+            new("Softness", 0.001f, 1f, n => n.Hardness, (n, v) => n.Hardness = v),
+            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
+        },
+        BrushTipNodeKind.Power => new NodeParam[] {
+            new("Exponent", 0.05f, 16f, n => n.Scale, (n, v) => n.Scale = v),
+            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
+        },
+        BrushTipNodeKind.Sine => new NodeParam[] {
+            new("Frequency", 0.05f, 64f, n => n.Scale, (n, v) => n.Scale = v),
+            new("Phase", 0f, 1f, n => n.X, (n, v) => n.X = v),
+            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
+        },
+        BrushTipNodeKind.Absolute => new NodeParam[] {
+            new("Center", 0f, 1f, n => n.X, (n, v) => n.X = v),
+            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
+        },
         BrushTipNodeKind.Mix => new NodeParam[] {
             new("Factor", 0f, 1f, n => n.Density, (n, v) => n.Density = v),
             new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
@@ -345,6 +601,13 @@ public sealed class NodeGraphView : Control
     {
         BrushTipNodeKind.LinearGradient => "Linear Grad",
         BrushTipNodeKind.RoundedRectangle => "Round Rect",
+        BrushTipNodeKind.RotateCoordinates => "Rotate Coord",
+        BrushTipNodeKind.WarpCoordinates => "Warp Coord",
+        BrushTipNodeKind.PolarRadius => "Polar Radius",
+        BrushTipNodeKind.PolarAngle => "Polar Angle",
+        BrushTipNodeKind.DistanceField => "Ellipse Field",
+        BrushTipNodeKind.BoxDistanceField => "Box Field",
+        BrushTipNodeKind.SmoothStep => "Smooth Step",
         _ => kind.ToString()
     };
 
@@ -382,7 +645,7 @@ public sealed class NodeGraphView : Control
         context.DrawRectangle(BgBrush, null, new Rect(Bounds.Size));
         DrawGrid(context);
 
-        var transform = Matrix.CreateTranslation(_panX, _panY) * Matrix.CreateScale(_zoom, _zoom);
+        var transform = Matrix.CreateScale(_zoom, _zoom) * Matrix.CreateTranslation(_panX, _panY);
         using (context.PushTransform(transform))
         {
             DrawWires(context);
@@ -509,6 +772,12 @@ public sealed class NodeGraphView : Control
             var inputLabel = node.Kind switch
             {
                 BrushTipNodeKind.Output => "output",
+                BrushTipNodeKind.DistanceField or BrushTipNodeKind.BoxDistanceField
+                    or BrushTipNodeKind.LinearGradient or BrushTipNodeKind.Stripe
+                    or BrushTipNodeKind.Noise => "coord",
+                BrushTipNodeKind.RotateCoordinates or BrushTipNodeKind.PolarRadius
+                    or BrushTipNodeKind.PolarAngle => "coord",
+                BrushTipNodeKind.WarpCoordinates => i == 0 ? "coord" : "warp",
                 BrushTipNodeKind.Threshold => "mask",
                 BrushTipNodeKind.Invert => "input",
                 _ => i == 0 ? "A" : "B"
@@ -657,6 +926,7 @@ public sealed class NodeGraphView : Control
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         if (_graph == null || _positions == null) return;
+        Focus();
 
         var point = e.GetCurrentPoint(this);
         var screenPos = point.Position;
@@ -664,16 +934,30 @@ public sealed class NodeGraphView : Control
 
         if (point.Properties.IsMiddleButtonPressed)
         {
-            _dragAction = DragAction.Pan;
-            _dragStartScreen = screenPos;
-            _dragStartWorld = new Point(_panX, _panY);
-            e.Pointer.Capture(this);
+            var middleAction = ResolveButtonAction(App.Shortcuts.MiddleButtonAction);
+            if (middleAction == CanvasAction.ZoomCanvas)
+                BeginZoom(screenPos, e.Pointer, 1);
+            else
+                BeginPan(screenPos, e.Pointer);
             e.Handled = true;
             return;
         }
 
         if (point.Properties.IsLeftButtonPressed)
         {
+            if (_shortcutAction == CanvasAction.PanCanvas)
+            {
+                BeginPan(screenPos, e.Pointer);
+                e.Handled = true;
+                return;
+            }
+            if (_shortcutAction == CanvasAction.ZoomCanvas)
+            {
+                BeginZoom(screenPos, e.Pointer, _zoomDirection);
+                e.Handled = true;
+                return;
+            }
+
             // Hit-test output ports (reverse order).
             for (var ni = _graph.Nodes.Count - 1; ni >= 0; ni--)
             {
@@ -771,17 +1055,13 @@ public sealed class NodeGraphView : Control
                 return;
             }
 
-            // Empty space: deselect then pan.
+            // Empty space: deselect. Pan with middle button or Space+drag so node selection stays stable.
             if (_selectedNodeId != null)
             {
                 _selectedNodeId = null;
                 NodeSelected?.Invoke(null);
                 InvalidateVisual();
             }
-            _dragAction = DragAction.Pan;
-            _dragStartScreen = screenPos;
-            _dragStartWorld = new Point(_panX, _panY);
-            e.Pointer.Capture(this);
             e.Handled = true;
             return;
         }
@@ -801,10 +1081,7 @@ public sealed class NodeGraphView : Control
                     {
                         if (i < node.Inputs.Count && !string.IsNullOrEmpty(node.Inputs[i]))
                         {
-                            PushHistory();
-                            node.Inputs[i] = "";
-                            GraphModified?.Invoke();
-                            InvalidateVisual();
+                            SetNodeInput(node.Id, i, "");
                         }
                         e.Handled = true;
                         return;
@@ -827,7 +1104,7 @@ public sealed class NodeGraphView : Control
             }
 
             // Right-click on empty canvas → add-node context menu.
-            CanvasRightClicked?.Invoke();
+            CanvasRightClicked?.Invoke(worldPos);
             e.Handled = true;
         }
     }
@@ -845,6 +1122,17 @@ public sealed class NodeGraphView : Control
                 _panX = _dragStartWorld.X + (screenPos.X - _dragStartScreen.X);
                 _panY = _dragStartWorld.Y + (screenPos.Y - _dragStartScreen.Y);
                 InvalidateVisual();
+                break;
+
+            case DragAction.Zoom:
+                var zoomDx = screenPos.X - _lastZoomScreen.X;
+                var zoomDy = screenPos.Y - _lastZoomScreen.Y;
+                var zoomDelta = Math.Sqrt(zoomDx * zoomDx + zoomDy * zoomDy) * Math.Sign(zoomDy);
+                if (Math.Abs(zoomDelta) > 0.001)
+                {
+                    SetZoomAround(_zoom * Math.Pow(1.012, -zoomDelta * _zoomDirection), _zoomAnchorScreen);
+                    _lastZoomScreen = screenPos;
+                }
                 break;
 
             case DragAction.MoveNode:
@@ -873,12 +1161,13 @@ public sealed class NodeGraphView : Control
                     var nodeParams = GetNodeParams(node.Kind);
                     if (_scrubParamIdx >= nodeParams.Length) break;
                     var param = nodeParams[_scrubParamIdx];
-                    var dx = (screenPos.X - _dragStartScreen.X) / Math.Max(1.0, _zoom * 150.0);
+                    var scrubDx = (screenPos.X - _dragStartScreen.X) / Math.Max(1.0, _zoom * 150.0);
                     var range = param.Max - param.Min;
-                    var newValue = (float)Math.Clamp(_scrubStartValue + dx * range, param.Min, param.Max);
+                    var newValue = (float)Math.Clamp(_scrubStartValue + scrubDx * range, param.Min, param.Max);
                     if (Math.Abs(newValue - param.Get(node)) > 0.0001f)
                     {
                         param.Set(node, newValue);
+                        InvalidatePreviews();
                         InvalidateVisual();
                     }
                 }
@@ -902,11 +1191,7 @@ public sealed class NodeGraphView : Control
                 {
                     if (Dist(worldPos, GetInputPortPos(node, np, i)) < PortHitRadius)
                     {
-                        PushHistory();
-                        while (node.Inputs.Count <= i) node.Inputs.Add("");
-                        node.Inputs[i] = _connectSrcId;
-                        GraphModified?.Invoke();
-                        InvalidateVisual();
+                        SetNodeInput(node.Id, i, _connectSrcId);
                         goto done;
                     }
                 }
@@ -926,10 +1211,7 @@ public sealed class NodeGraphView : Control
                     var tgtNode = _graph.Nodes.FirstOrDefault(n => n.Id == _connectTgtId);
                     if (tgtNode != null)
                     {
-                        while (tgtNode.Inputs.Count <= _connectTgtIdx) tgtNode.Inputs.Add("");
-                        tgtNode.Inputs[_connectTgtIdx] = node.Id;
-                        GraphModified?.Invoke();
-                        InvalidateVisual();
+                        SetNodeInput(tgtNode.Id, _connectTgtIdx, node.Id);
                     }
                     goto done;
                 }
@@ -939,10 +1221,7 @@ public sealed class NodeGraphView : Control
             if (tgtN != null && _connectTgtIdx < tgtN.Inputs.Count
                 && !string.IsNullOrEmpty(tgtN.Inputs[_connectTgtIdx]))
             {
-                PushHistory();
-                tgtN.Inputs[_connectTgtIdx] = "";
-                GraphModified?.Invoke();
-                InvalidateVisual();
+                SetNodeInput(tgtN.Id, _connectTgtIdx, "");
             }
         }
         else if (_dragAction == DragAction.ScrubParam && _scrubNodeId != null)
@@ -958,6 +1237,10 @@ public sealed class NodeGraphView : Control
                     GraphModified?.Invoke();
                 }
             }
+        }
+        else if (_dragAction == DragAction.MoveNode && _dragNodeId != null)
+        {
+            PushHistory();
         }
 
         done:
@@ -975,20 +1258,39 @@ public sealed class NodeGraphView : Control
         if (_graph == null) return;
 
         var pos = e.GetPosition(this);
-        var worldBefore = ScreenToWorld(pos);
-
         var zoomDelta = e.Delta.Y > 0 ? 1.1 : 1.0 / 1.1;
-        _zoom = Math.Clamp(_zoom * zoomDelta, 0.1, 10.0);
-
-        _panX = pos.X - worldBefore.X * _zoom;
-        _panY = pos.Y - worldBefore.Y * _zoom;
-
-        InvalidateVisual();
+        SetZoomAround(_zoom * zoomDelta, pos);
         e.Handled = true;
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
+        var sc = App.Shortcuts;
+        if (sc.ZoomIn.Matches(e) || sc.ZoomInAlt.Matches(e))
+        {
+            SetZoomAround(_zoom * sc.ZoomKeyFactor, ViewCenter());
+            e.Handled = true;
+            return;
+        }
+        if (sc.ZoomOut.Matches(e))
+        {
+            SetZoomAround(_zoom / sc.ZoomKeyFactor, ViewCenter());
+            e.Handled = true;
+            return;
+        }
+        if (sc.ZoomReset.Matches(e))
+        {
+            SetZoomAround(1.2, ViewCenter());
+            e.Handled = true;
+            return;
+        }
+        if (sc.ZoomFit.Matches(e))
+        {
+            FitGraphToView();
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key == Key.Delete || e.Key == Key.Back)
         {
             if (_selectedNodeId != null && _selectedNodeId != _graph?.OutputNodeId)
@@ -998,7 +1300,38 @@ public sealed class NodeGraphView : Control
                 return;
             }
         }
+        if (e.Key == Key.Space)
+        {
+            _spaceHeld = true;
+            UpdateViewportShortcut(e.Key, Floss.App.Input.KeyBinding.ModifiersWithKeyDown(e.Key, e.KeyModifiers));
+            e.Handled = true;
+            return;
+        }
+        if (_spaceHeld && IsModifierKey(e.Key))
+        {
+            UpdateViewportShortcut(e.Key, Floss.App.Input.KeyBinding.ModifiersWithKeyDown(e.Key, e.KeyModifiers));
+            e.Handled = true;
+            return;
+        }
         base.OnKeyDown(e);
+    }
+
+    protected override void OnKeyUp(KeyEventArgs e)
+    {
+        if (e.Key == Key.Space)
+        {
+            _spaceHeld = false;
+            _shortcutAction = CanvasAction.None;
+            e.Handled = true;
+            return;
+        }
+        if (_spaceHeld && IsModifierKey(e.Key))
+        {
+            UpdateViewportShortcut(Key.Space, Floss.App.Input.KeyBinding.ModifiersAfterKeyUp(e.Key, e.KeyModifiers));
+            e.Handled = true;
+            return;
+        }
+        base.OnKeyUp(e);
     }
 
     private static double Dist(Point a, Point b)

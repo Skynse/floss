@@ -1741,16 +1741,109 @@ public partial class MainWindow : Window
                 _canvas.SetActiveTool(ToolForPreset(tp), tp);
 
             RefreshToolProperties();
-        });
+        }, SaveNodeGraphAsNewBrushPreset);
         _toolPropsWindow.Closed += (_, _) => _toolPropsWindow = null;
         _toolPropsWindow.Show(this);
     }
 
     private void OpenBrushTipGraphEditor()
     {
-        OpenToolProperties();
-        _toolPropsWindow?.SelectBrushTipCategory();
+        _activePreset ??= _canvas.Brush;
+        var graph = GraphForBrushTip(_activePreset.Tip);
+        var editor = new NodeGraphEditorWindow(graph, g =>
+        {
+            if (g.Validate().Count > 0) return;
+            var clone = g.DeepClone();
+            clone.BuiltInShape = null;
+            var tip = (IBrushTip)new NodeBrushTip(clone);
+            UpdateCurrentBrush(p => p with
+            {
+                Tip = tip,
+                Tips = PreserveMaterialBrushTips(p)
+            });
+        }, (g, name) =>
+        {
+            if (g.Validate().Count > 0) return;
+            SaveNodeGraphAsNewBrushPreset(g, name);
+        });
+        editor.Show(this);
     }
+
+    private void SaveNodeGraphAsNewBrushPreset(BrushTipNodeGraph graph, string name)
+    {
+        if (graph.Validate().Count > 0) return;
+
+        var group = _activeToolGroup
+            ?? App.ToolGroups.Groups.FirstOrDefault(g => g.DefaultEngine == ToolPresetEngine.Brush)
+            ?? App.ToolGroups.Groups.FirstOrDefault();
+        if (group == null) return;
+
+        var clone = graph.DeepClone();
+        clone.BuiltInShape = null;
+        clone.BuiltInAspectRatio = 1.0f;
+        var tip = (IBrushTip)new NodeBrushTip(clone);
+        var brushName = string.IsNullOrWhiteSpace(name) ? "Custom Node Graph" : name.Trim();
+        var source = _activePreset ?? _canvas.Brush ?? BrushPreset.Defaults[0];
+        var brushPreset = source with
+        {
+            Name = brushName,
+            Tip = tip,
+            Shape = null,
+            Tips = [],
+            TipSelectionMode = BrushTipSelectionMode.Single
+        };
+
+        var category = _selectedCategory
+            ?? group.LastActiveCategoryName
+            ?? group.Categories.FirstOrDefault()?.Name;
+        var asset = new BrushAsset
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Category = category,
+            Preset = brushPreset,
+            Tip = BrushTipData.FromTip(tip),
+            ShapeData = null
+        };
+        _brushLibrary.Save(asset);
+        _brushAssets = [.._brushAssets, asset];
+
+        var toolPreset = new ToolPreset
+        {
+            Name = brushName,
+            InputProcess = InputProcessType.Brush,
+            OutputProcess = OutputProcessType.DirectDraw,
+            BrushId = asset.Id,
+            BrushBlendMode = brushPreset.BlendMode
+        };
+        toolPreset.CaptureFromBrushPreset(brushPreset);
+        group.Presets.Add(toolPreset);
+
+        if (category != null)
+        {
+            var cat = group.Categories.FirstOrDefault(c => c.Name == category);
+            if (cat != null && !cat.PresetIds.Contains(toolPreset.Id))
+                cat.PresetIds.Add(toolPreset.Id);
+        }
+
+        App.ToolGroups.Save();
+        RefreshGroupPresets();
+        ActivatePreset(group, toolPreset);
+        _footerStatusText.Text = $"Saved brush {brushName}";
+    }
+
+    private static BrushTipNodeGraph GraphForBrushTip(IBrushTip tip)
+        => tip switch
+        {
+            ProceduralBrushTip proc => proc.Graph.DeepClone(),
+            NodeBrushTip node => node.Graph.DeepClone(),
+            _ => BrushTipNodeGraph.FromProceduralShape(BrushTipShape.Circle)
+        };
+
+    private static IReadOnlyList<BrushTipData> PreserveMaterialBrushTips(BrushPreset preset)
+        => preset.Tips
+            .Where(t => t.Kind == BrushTipStorageKind.EmbeddedPng)
+            .Select(t => t.DeepClone())
+            .ToList();
 
     private void SaveActiveBrush()
     {

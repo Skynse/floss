@@ -213,7 +213,6 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
 
         // Extract pixels from each layer
         var operation = new SelectionTransformOperation(ctx, cb.X, cb.Y, cb.Width, cb.Height, combined);
-        bool hasPixels = false;
 
         foreach (var (layerIdx, layer) in layers)
         {
@@ -290,7 +289,6 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
 
                     layer.Pixels.SetPixel(layX, layY, 0, 0, 0, 0);
                     layerHasPixels = true;
-                    hasPixels = true;
                 }
             }
 
@@ -303,9 +301,8 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
             }
         }
 
-        if (!hasPixels) return null;
-
-        ctx.Document.NotifyChanged(cb, ctx.ActiveLayerIndex);
+        if (operation._layerData.Count > 0)
+            ctx.Document.NotifyChanged(cb, ctx.ActiveLayerIndex);
         return operation;
     }
 
@@ -420,42 +417,43 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
 
     public void CommitCurrent()
     {
-        if (_layerData.Count == 0) return;
-
         var dest = RotatedBounds(_rect, _angle);
         if (dest.IsEmpty) return;
 
-        var mutations = new List<LayerTileMutation>(_layerData.Count);
-        foreach (var data in _layerData)
+        if (_layerData.Count > 0)
         {
-            if (data.Index < 0 || data.Index >= _context.Document.Layers.Count) continue;
-            var layer = _context.Document.Layers[data.Index];
+            var mutations = new List<LayerTileMutation>(_layerData.Count);
+            foreach (var data in _layerData)
+            {
+                if (data.Index < 0 || data.Index >= _context.Document.Layers.Count) continue;
+                var layer = _context.Document.Layers[data.Index];
 
-            var destLayerRegion = new PixelRegion(
-                dest.X - layer.OffsetX,
-                dest.Y - layer.OffsetY,
-                dest.Width,
-                dest.Height);
-            if (destLayerRegion.IsEmpty) continue;
+                var destLayerRegion = new PixelRegion(
+                    dest.X - layer.OffsetX,
+                    dest.Y - layer.OffsetY,
+                    dest.Width,
+                    dest.Height);
+                if (destLayerRegion.IsEmpty) continue;
 
-            // Capture destination tiles for undo
-            var destTiles = layer.Pixels.CaptureTiles(destLayerRegion);
-            var allBefore = new Dictionary<(int, int), byte[]?>(data.BeforeTiles);
-            foreach (var (key, value) in destTiles)
-                allBefore.TryAdd(key, value);
+                // Capture destination tiles for undo
+                var destTiles = layer.Pixels.CaptureTiles(destLayerRegion);
+                var allBefore = new Dictionary<(int, int), byte[]?>(data.BeforeTiles);
+                foreach (var (key, value) in destTiles)
+                    allBefore.TryAdd(key, value);
 
-            StampRotatedLayer(layer, dest, data);
+                StampRotatedLayer(layer, dest, data);
 
-            layer.MarkThumbnailDirty();
-            var dirty = new PixelRegion(data.SrcX, data.SrcY, data.SrcW, data.SrcH).Union(dest);
-            mutations.Add(new LayerTileMutation(data.Index, allBefore, dirty));
+                layer.MarkThumbnailDirty();
+                var dirty = new PixelRegion(data.SrcX, data.SrcY, data.SrcW, data.SrcH).Union(dest);
+                mutations.Add(new LayerTileMutation(data.Index, allBefore, dirty));
+            }
+            _context.Document.CommitLayerTileMutations(mutations);
+
+            // CommitLayerTileMutations skips NotifyChanged when before==after (no-op transform).
+            // Always notify so the compositor flushes the stale "cleared" tile cache.
+            foreach (var data in _layerData)
+                _context.Document.NotifyChanged(new PixelRegion(data.SrcX, data.SrcY, data.SrcW, data.SrcH).Union(dest), data.Index);
         }
-        _context.Document.CommitLayerTileMutations(mutations);
-
-        // CommitLayerTileMutations skips NotifyChanged when before==after (no-op transform).
-        // Always notify so the compositor flushes the stale "cleared" tile cache.
-        foreach (var data in _layerData)
-            _context.Document.NotifyChanged(new PixelRegion(data.SrcX, data.SrcY, data.SrcW, data.SrcH).Union(dest), data.Index);
 
         _context.Selection.SetFromRect(dest.X, dest.Y, dest.Width, dest.Height);
         _overlayBitmap?.Dispose();

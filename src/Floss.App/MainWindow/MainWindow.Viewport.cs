@@ -468,17 +468,19 @@ public partial class MainWindow : ICanvasInputHost
     // ── Keyboard ──────────────────────────────────────────────────────────────
     private void OnKeyDownTunnel(object? sender, KeyEventArgs e)
     {
-        var focused = FocusManager.GetFocusedElement();
-        if (focused is TextBox or ComboBox)
-            return;
-
         if (_recordingToolGroup != null)
         {
             HandleShortcutRecording(e);
             return;
         }
 
+        var focused = FocusManager.GetFocusedElement();
+        if (focused is TextBox or ComboBox)
+            return;
+
         _inputRouter.KeyDown(e);
+        if (ShouldReserveCanvasModifierKey(e))
+            e.Handled = true;
     }
 
     private void HandleShortcutRecording(KeyEventArgs e)
@@ -491,9 +493,29 @@ public partial class MainWindow : ICanvasInputHost
         e.Handled = true;
     }
 
-    private void OnKeyUp(object? sender, KeyEventArgs e)
+    private void OnKeyUpTunnel(object? sender, KeyEventArgs e)
     {
+        var focused = FocusManager.GetFocusedElement();
+        if (focused is TextBox or ComboBox)
+            return;
+
         _inputRouter.KeyUp(e);
+        if (ShouldReserveCanvasModifierKey(e))
+            e.Handled = true;
+    }
+
+    private bool ShouldReserveCanvasModifierKey(KeyEventArgs e)
+    {
+        if (!_canvas.HasDocument) return false;
+
+        // Avalonia/Linux treats bare Alt as menu activation. In a drawing
+        // viewport Alt is a canvas modifier first, otherwise eyedropper and
+        // Ctrl+Alt brush-size alternate every other press as the menu takes
+        // focus.
+        if (e.Key is Key.LeftAlt or Key.RightAlt)
+            return true;
+
+        return false;
     }
 
     private void ResetTransientInputState()

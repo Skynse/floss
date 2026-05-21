@@ -428,6 +428,12 @@ public partial class MainWindow : Window, Tools.IViewportController
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
+        if (_recordingToolGroup != null)
+        {
+            HandleShortcutRecording(e);
+            return;
+        }
+
         base.OnKeyDown(e);
         if (e.Handled) return;
         if (_inputRouter.IsTransactionActive) return;
@@ -2319,7 +2325,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         SliderChanged(_grainSlider, v => UpdateCurrentBrush(p => p with { Grain = v }));
 
         AddHandler(KeyDownEvent, OnKeyDownTunnel, Avalonia.Interactivity.RoutingStrategies.Tunnel);
-        KeyUp += OnKeyUp;
+        AddHandler(KeyUpEvent, OnKeyUpTunnel, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         RegisterShortcuts();
     }
 

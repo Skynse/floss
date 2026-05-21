@@ -16,10 +16,9 @@ namespace Floss.App.Processes.Output;
 public sealed class DirectDrawOutput : IOutputProcess
 {
     private const long PreviewNotifyIntervalMs = 12;
-    private const double RenderSliceBudgetMs = 5.0;
-    private const int MaxSegmentsPerSlice = 24;
-    private const int InitialSegmentsPerSlice = 8;
-    private const int SynchronousFinishSegmentLimit = 4;
+    private const double RenderSliceBudgetMs = 3.0;
+    private const int MaxSegmentsPerSlice = 8;
+    private const int InitialSegmentsPerSlice = 1;
     private const int TargetMaxDabsPerQueuedSegment = 96;
     private const double MinQueuedSegmentLength = 8.0;
     private const double MaxQueuedSegmentLength = 96.0;
@@ -88,10 +87,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         }
 
         EnsureActiveTransaction();
-        if (_active is { } active && active.RemainingSegments <= SynchronousFinishSegmentLimit)
-            ProcessQueuedSegments(force: true);
-        else
-            ScheduleProcessQueued();
+        ScheduleProcessQueued();
     }
 
     private StrokeTransaction BeginTransaction(ToolContext ctx, DrawingLayer layer, CanvasInputSample firstSample)
@@ -180,7 +176,7 @@ public sealed class DirectDrawOutput : IOutputProcess
             return;
 
         _processingScheduled = true;
-        Dispatcher.UIThread.Post(() => ProcessQueuedSegments(force: false), DispatcherPriority.Background);
+        Dispatcher.UIThread.Post(() => ProcessQueuedSegments(force: false), DispatcherPriority.Normal);
     }
 
     private async void ProcessQueuedSegments(bool force)
@@ -206,14 +202,6 @@ public sealed class DirectDrawOutput : IOutputProcess
             {
                 _brushEngine.BeginStroke(tx.Brush, tx.FirstSample);
                 tx.StrokeStarted = true;
-            }
-
-            // Fast path: small remaining segments run synchronously to avoid
-            // async overhead for the final 1-4 segments.
-            if (force && tx.RemainingSegments <= SynchronousFinishSegmentLimit)
-            {
-                ProcessSegmentsSync(tx, force, ref started, ref processed, ref batchDirty, ref scheduleAfterProcessing);
-                return;
             }
 
             while (tx.NextSegmentIndex < tx.QueuedSamples.Count)
@@ -420,6 +408,31 @@ public sealed class DirectDrawOutput : IOutputProcess
         _active = null;
         _accepting = null;
         _processingScheduled = false;
+    }
+
+    public void FlushPending()
+    {
+        if (_processing)
+            return;
+
+        _processingScheduled = false;
+        EnsureActiveTransaction();
+        while (_active is { } tx)
+        {
+            if (!tx.StrokeStarted)
+            {
+                _brushEngine.BeginStroke(tx.Brush, tx.FirstSample);
+                tx.StrokeStarted = true;
+            }
+
+            var started = Stopwatch.GetTimestamp();
+            var processed = 0;
+            var batchDirty = PixelRegion.Empty;
+            var scheduleAfterProcessing = false;
+            ProcessSegmentsSync(tx, force: true, ref started, ref processed, ref batchDirty, ref scheduleAfterProcessing);
+            if (ReferenceEquals(_active, tx))
+                break;
+        }
     }
 
     private static void RestoreTransaction(StrokeTransaction tx)

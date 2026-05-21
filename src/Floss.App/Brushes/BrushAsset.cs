@@ -25,7 +25,7 @@ public sealed class BrushTipData
         BrushTipStorageKind.EmbeddedPng when PngBytes.Length > 0
             => new ImageBrushTip(PngBytes),
         BrushTipStorageKind.NodeGraph when NodeGraph != null
-            => (IBrushTip?)NodeGraph.ToBuiltInProceduralTip() ?? new NodeBrushTip(NodeGraph),
+            => new NodeBrushTip(NodeGraph),
         _ => new ProceduralBrushTip(Shape, AspectRatio)
     };
 

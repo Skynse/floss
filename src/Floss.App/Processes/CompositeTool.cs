@@ -1,6 +1,7 @@
 using Avalonia.Media;
 using Floss.App.Input;
 using Floss.App.Processes.Input;
+using Floss.App.Processes.Output;
 using Floss.App.Tools;
 
 namespace Floss.App.Processes;
@@ -99,6 +100,8 @@ public sealed class CompositeTool : ITool
         if (Input.GetResult() is { } result)
         {
             Output.Execute(ctx, result);
+            if (Output is DirectDrawOutput directDraw)
+                directDraw.FlushPending();
         }
     }
 }

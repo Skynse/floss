@@ -26,6 +26,7 @@ public sealed class NodeGraphEditorWindow : Window
     private bool _isCommitting;
     private int _saveCounter;
     private ContextMenu? _openMenu;
+    private Point _pendingAddPosition;
 
     public NodeGraphEditorWindow(BrushTipNodeGraph graph, Action<BrushTipNodeGraph> onCommit,
         Action<BrushTipNodeGraph, string>? onSaveAsNew = null)
@@ -92,7 +93,7 @@ public sealed class NodeGraphEditorWindow : Window
 
         var statusText = new TextBlock
         {
-            Text = "Middle-click pan · Scroll zoom · Drag header move · Drag port connect · Right-click canvas add node · Ctrl+Z undo · Del delete",
+            Text = "Middle/Space-drag pan · Scroll zoom · Drag header move · Drag port connect · Right-click canvas add node · Ctrl+Z undo · Del delete",
             FontSize = 10,
             Foreground = new SolidColorBrush(Color.Parse(TextMuted))
         };
@@ -163,7 +164,7 @@ public sealed class NodeGraphEditorWindow : Window
             e.Handled = true;
             return;
         }
-        if (ctrl && e.Key == Key.Y || (ctrl && shift && e.Key == Key.Z))
+        if ((ctrl && e.Key == Key.Y) || (ctrl && shift && e.Key == Key.Z))
         {
             _view.Redo();
             _graph = _view.Graph;
@@ -192,8 +193,9 @@ public sealed class NodeGraphEditorWindow : Window
         ShowNodeContextMenu(node);
     }
 
-    private void OnCanvasRightClicked()
+    private void OnCanvasRightClicked(Point worldPosition)
     {
+        _pendingAddPosition = worldPosition;
         ShowAddNodeMenu();
     }
 
@@ -226,6 +228,7 @@ public sealed class NodeGraphEditorWindow : Window
             item.Click += (_, _) =>
             {
                 _graph = BrushTipNodeGraph.FromProceduralShape(capturedShape, capturedAspect).DeepClone();
+                _graph.BuiltInShape = null;
                 var positions = new Dictionary<string, Avalonia.Point>();
                 _view.LoadGraph(_graph, positions);
                 _view.AutoLayout();
@@ -249,23 +252,18 @@ public sealed class NodeGraphEditorWindow : Window
     private void ShowAddNodeMenu()
     {
         var menu = OpenMenu();
-        foreach (var kind in Enum.GetValues<BrushTipNodeKind>().Where(k => k != BrushTipNodeKind.Output))
+        foreach (var item in BuildGroupedAddNodeItems(kind =>
         {
-            var item = new MenuItem { Header = kind.ToString(), FontSize = 11 };
-            var capturedKind = kind;
-            item.Click += (_, _) =>
+            var node = _view.AddNode(kind, _pendingAddPosition);
+            if (node != null)
             {
-                var node = _view.AddNode(capturedKind);
-                if (node != null)
-                {
-                    _graph = _view.Graph;
-                    _selectedNode = node;
-                    RefreshPropertyPanel();
-                    DoCommit();
-                }
-            };
+                _graph = _view.Graph;
+                _selectedNode = node;
+                RefreshPropertyPanel();
+                DoCommit();
+            }
+        }))
             menu.Items.Add(item);
-        }
         menu.Open(this);
     }
 
@@ -291,26 +289,37 @@ public sealed class NodeGraphEditorWindow : Window
 
         // Add node submenu
         var addSub = new MenuItem { Header = "Add Node", FontSize = 11 };
-        foreach (var kind in Enum.GetValues<BrushTipNodeKind>().Where(k => k != BrushTipNodeKind.Output))
+        foreach (var item in BuildGroupedAddNodeItems(kind =>
         {
-            var addItem = new MenuItem { Header = kind.ToString(), FontSize = 11 };
-            var capturedKind = kind;
-            addItem.Click += (_, _) =>
+            var newNode = _view.AddNode(kind);
+            if (newNode != null)
             {
-                var newNode = _view.AddNode(capturedKind);
-                if (newNode != null)
-                {
-                    _graph = _view.Graph;
-                    _selectedNode = newNode;
-                    RefreshPropertyPanel();
-                    DoCommit();
-                }
-            };
-            addSub.Items.Add(addItem);
-        }
+                _graph = _view.Graph;
+                _selectedNode = newNode;
+                RefreshPropertyPanel();
+                DoCommit();
+            }
+        }))
+            addSub.Items.Add(item);
         menu.Items.Add(addSub);
 
         menu.Open(this);
+    }
+
+    private static IEnumerable<MenuItem> BuildGroupedAddNodeItems(Action<BrushTipNodeKind> onAdd)
+    {
+        foreach (var group in AddableNodeKindGroups())
+        {
+            var groupItem = new MenuItem { Header = group.Name, FontSize = 11 };
+            foreach (var kind in group.Kinds)
+            {
+                var item = new MenuItem { Header = NodeKindDisplayName(kind), FontSize = 11 };
+                var capturedKind = kind;
+                item.Click += (_, _) => onAdd(capturedKind);
+                groupItem.Items.Add(item);
+            }
+            yield return groupItem;
+        }
     }
 
     private void RefreshPropertyPanel()
@@ -357,6 +366,12 @@ public sealed class NodeGraphEditorWindow : Window
                 var inputLabel = _selectedNode.Kind switch
                 {
                     BrushTipNodeKind.Output => "Input",
+                    BrushTipNodeKind.DistanceField or BrushTipNodeKind.BoxDistanceField
+                        or BrushTipNodeKind.LinearGradient or BrushTipNodeKind.Stripe
+                        or BrushTipNodeKind.Noise => "Coord",
+                    BrushTipNodeKind.RotateCoordinates or BrushTipNodeKind.PolarRadius
+                        or BrushTipNodeKind.PolarAngle => "Coord",
+                    BrushTipNodeKind.WarpCoordinates => idx == 0 ? "Coord" : "Warp",
                     BrushTipNodeKind.Threshold => "Mask",
                     BrushTipNodeKind.Invert => "Input",
                     _ => idx == 0 ? "A" : "B"
@@ -377,14 +392,14 @@ public sealed class NodeGraphEditorWindow : Window
                 combo.SelectionChanged += (_, _) =>
                 {
                     var chosen = combo.SelectedItem as string ?? "— none —";
-                    var n = _graph.Nodes.FirstOrDefault(x => x.Id == _selectedNode.Id);
-                    if (n == null) return;
-                    while (n.Inputs.Count <= capturedIdx)
-                        n.Inputs.Add("");
-                    n.Inputs[capturedIdx] = chosen != "— none —" ? chosen : "";
-                    while (n.Inputs.Count > 0 && string.IsNullOrEmpty(n.Inputs[^1]))
-                        n.Inputs.RemoveAt(n.Inputs.Count - 1);
-                    _view.InvalidateVisual();
+                    if (!_view.SetNodeInput(_selectedNode.Id, capturedIdx,
+                            chosen != "— none —" ? chosen : "", notify: false))
+                    {
+                        RefreshPropertyPanel();
+                        return;
+                    }
+                    _graph = _view.Graph;
+                    _selectedNode = _graph.Nodes.FirstOrDefault(x => x.Id == _selectedNode.Id);
                     DoCommit();
                 };
 
@@ -442,9 +457,11 @@ public sealed class NodeGraphEditorWindow : Window
                 slider.ValueChanged += (_, args) =>
                 {
                     var val = (float)args.NewValue;
-                    capturedParam.Set(_selectedNode, val);
+                    var selectedId = _selectedNode.Id;
+                    _view.UpdateNode(selectedId, n => capturedParam.Set(n, val), notify: false);
+                    _graph = _view.Graph;
+                    _selectedNode = _graph.Nodes.FirstOrDefault(x => x.Id == selectedId) ?? _selectedNode;
                     valueText.Text = val.ToString("F2", CultureInfo.InvariantCulture);
-                    _view.InvalidateVisual();
                     DoCommit();
                 };
 
@@ -518,7 +535,10 @@ public sealed class NodeGraphEditorWindow : Window
         {
             var cloned = _graph.DeepClone();
             if (cloned.Validate().Count == 0)
+            {
+                cloned.BuiltInShape = null;
                 _onCommit(cloned);
+            }
         }
         finally
         {
@@ -529,10 +549,74 @@ public sealed class NodeGraphEditorWindow : Window
     private static int NodeInputCount(BrushTipNodeKind kind) => kind switch
     {
         BrushTipNodeKind.Output => 1,
-        BrushTipNodeKind.Threshold or BrushTipNodeKind.Invert => 1,
+        BrushTipNodeKind.RotateCoordinates or BrushTipNodeKind.PolarRadius
+            or BrushTipNodeKind.PolarAngle => 1,
+        BrushTipNodeKind.WarpCoordinates => 2,
+        BrushTipNodeKind.DistanceField or BrushTipNodeKind.BoxDistanceField
+            or BrushTipNodeKind.LinearGradient or BrushTipNodeKind.Stripe
+            or BrushTipNodeKind.Noise => 1,
+        BrushTipNodeKind.Threshold or BrushTipNodeKind.SmoothStep
+            or BrushTipNodeKind.Invert or BrushTipNodeKind.Power
+            or BrushTipNodeKind.Sine or BrushTipNodeKind.Absolute => 1,
         BrushTipNodeKind.Add or BrushTipNodeKind.Multiply or BrushTipNodeKind.Max
             or BrushTipNodeKind.Min or BrushTipNodeKind.Subtract or BrushTipNodeKind.Mix => 2,
         _ => 0
+    };
+
+    private sealed record NodeKindGroup(string Name, BrushTipNodeKind[] Kinds);
+
+    private static IReadOnlyList<NodeKindGroup> AddableNodeKindGroups()
+        =>
+        [
+            new("Input / Coordinates",
+            [
+                BrushTipNodeKind.Coordinates,
+                BrushTipNodeKind.RotateCoordinates,
+                BrushTipNodeKind.WarpCoordinates,
+                BrushTipNodeKind.PolarRadius,
+                BrushTipNodeKind.PolarAngle,
+                BrushTipNodeKind.Value
+            ]),
+            new("Fields / Generators",
+            [
+                BrushTipNodeKind.DistanceField,
+                BrushTipNodeKind.BoxDistanceField,
+                BrushTipNodeKind.LinearGradient,
+                BrushTipNodeKind.Stripe,
+                BrushTipNodeKind.Noise,
+                BrushTipNodeKind.Bristle
+            ]),
+            new("Math / Combine",
+            [
+                BrushTipNodeKind.Add,
+                BrushTipNodeKind.Subtract,
+                BrushTipNodeKind.Multiply,
+                BrushTipNodeKind.Min,
+                BrushTipNodeKind.Max,
+                BrushTipNodeKind.Mix
+            ]),
+            new("Mask / Remap",
+            [
+                BrushTipNodeKind.Threshold,
+                BrushTipNodeKind.SmoothStep,
+                BrushTipNodeKind.Power,
+                BrushTipNodeKind.Sine,
+                BrushTipNodeKind.Absolute,
+                BrushTipNodeKind.Invert
+            ])
+        ];
+
+    private static string NodeKindDisplayName(BrushTipNodeKind kind) => kind switch
+    {
+        BrushTipNodeKind.DistanceField => "Ellipse Distance",
+        BrushTipNodeKind.BoxDistanceField => "Box Distance",
+        BrushTipNodeKind.RotateCoordinates => "Rotate Coordinates",
+        BrushTipNodeKind.WarpCoordinates => "Warp Coordinates",
+        BrushTipNodeKind.PolarRadius => "Polar Radius",
+        BrushTipNodeKind.PolarAngle => "Polar Angle",
+        BrushTipNodeKind.LinearGradient => "Linear Gradient",
+        BrushTipNodeKind.SmoothStep => "Smooth Step",
+        _ => kind.ToString()
     };
 
     private sealed record NodeParam(
@@ -542,6 +626,41 @@ public sealed class NodeGraphEditorWindow : Window
 
     private static NodeParam[] GetNodeParams(BrushTipNodeKind kind) => kind switch
     {
+        BrushTipNodeKind.RotateCoordinates => new NodeParam[] {
+            new("Center X", 0f, 1f, n => n.X, (n, v) => n.X = v),
+            new("Center Y", 0f, 1f, n => n.Y, (n, v) => n.Y = v),
+            new("Scale", 0.05f, 8f, n => n.Scale, (n, v) => n.Scale = v),
+            new("Rotation", -180f, 180f, n => n.RotationDegrees, (n, v) => n.RotationDegrees = v),
+        },
+        BrushTipNodeKind.WarpCoordinates => new NodeParam[] {
+            new("Amount", 0f, 1f, n => n.Density, (n, v) => n.Density = v),
+            new("X Amp", 0f, 1f, n => n.Width, (n, v) => n.Width = v),
+            new("Y Amp", 0f, 1f, n => n.Height, (n, v) => n.Height = v),
+            new("Direction", -180f, 180f, n => n.RotationDegrees, (n, v) => n.RotationDegrees = v),
+        },
+        BrushTipNodeKind.PolarRadius => new NodeParam[] {
+            new("Center X", 0f, 1f, n => n.X, (n, v) => n.X = v),
+            new("Center Y", 0f, 1f, n => n.Y, (n, v) => n.Y = v),
+            new("Width", 0f, 1f, n => n.Width, (n, v) => n.Width = v),
+            new("Height", 0f, 1f, n => n.Height, (n, v) => n.Height = v),
+            new("Scale", 0.05f, 16f, n => n.Scale, (n, v) => n.Scale = v),
+        },
+        BrushTipNodeKind.PolarAngle => new NodeParam[] {
+            new("Center X", 0f, 1f, n => n.X, (n, v) => n.X = v),
+            new("Center Y", 0f, 1f, n => n.Y, (n, v) => n.Y = v),
+            new("Repeats", 0.05f, 64f, n => n.Scale, (n, v) => n.Scale = v),
+            new("Phase", -180f, 180f, n => n.RotationDegrees, (n, v) => n.RotationDegrees = v),
+        },
+        BrushTipNodeKind.Value => new NodeParam[] {
+            new("Value", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
+        },
+        BrushTipNodeKind.DistanceField or BrushTipNodeKind.BoxDistanceField => new NodeParam[] {
+            new("Center X", 0f, 1f, n => n.X, (n, v) => n.X = v),
+            new("Center Y", 0f, 1f, n => n.Y, (n, v) => n.Y = v),
+            new("Width", 0f, 1f, n => n.Width, (n, v) => n.Width = v),
+            new("Height", 0f, 1f, n => n.Height, (n, v) => n.Height = v),
+            new("Rotation", -180f, 180f, n => n.RotationDegrees, (n, v) => n.RotationDegrees = v),
+        },
         BrushTipNodeKind.Circle => new NodeParam[] {
             new("Radius", 0f, 1f, n => n.Radius, (n, v) => n.Radius = v),
             new("Hardness", 0f, 1f, n => n.Hardness, (n, v) => n.Hardness = v),
@@ -579,6 +698,24 @@ public sealed class NodeGraphEditorWindow : Window
         },
         BrushTipNodeKind.Threshold => new NodeParam[] {
             new("Threshold", 0f, 1f, n => n.Threshold, (n, v) => n.Threshold = v),
+            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
+        },
+        BrushTipNodeKind.SmoothStep => new NodeParam[] {
+            new("Edge", 0f, 1f, n => n.Threshold, (n, v) => n.Threshold = v),
+            new("Softness", 0.001f, 1f, n => n.Hardness, (n, v) => n.Hardness = v),
+            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
+        },
+        BrushTipNodeKind.Power => new NodeParam[] {
+            new("Exponent", 0.05f, 16f, n => n.Scale, (n, v) => n.Scale = v),
+            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
+        },
+        BrushTipNodeKind.Sine => new NodeParam[] {
+            new("Frequency", 0.05f, 64f, n => n.Scale, (n, v) => n.Scale = v),
+            new("Phase", 0f, 1f, n => n.X, (n, v) => n.X = v),
+            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
+        },
+        BrushTipNodeKind.Absolute => new NodeParam[] {
+            new("Center", 0f, 1f, n => n.X, (n, v) => n.X = v),
             new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
         },
         BrushTipNodeKind.Mix => new NodeParam[] {

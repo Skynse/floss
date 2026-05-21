@@ -96,6 +96,7 @@ public sealed class SelectionMask
 
     public void Invert()
     {
+        var hadExplicitMask = _mask != null;
         var next = new byte[_docW * _docH];
         if (_mask == null)
         {
@@ -110,8 +111,16 @@ public sealed class SelectionMask
         CommitMask(next);
         if (_mask != null)
         {
-            _geoType = SelectionGeometry.Mask;
-            _geoPoly.Clear();
+            if (hadExplicitMask && TryGetSolidRectBounds(out var rect))
+            {
+                _geoType = SelectionGeometry.Rect;
+                _geoRect = rect;
+            }
+            else
+            {
+                _geoType = SelectionGeometry.Mask;
+                _geoPoly.Clear();
+            }
         }
         _cachedMaskGeo = null;
     }
@@ -428,6 +437,27 @@ public sealed class SelectionMask
         }
 
         Clear();
+    }
+
+    private bool TryGetSolidRectBounds(out SKRectI rect)
+    {
+        rect = default;
+        var bounds = GetMaskBounds();
+        if (bounds == null || _mask == null) return false;
+
+        var b = bounds.Value;
+        for (var y = 0; y < _docH; y++)
+        {
+            for (var x = 0; x < _docW; x++)
+            {
+                var insideBounds = x >= b.Left && x < b.Right && y >= b.Top && y < b.Bottom;
+                var selected = _mask[y * _docW + x] > 0;
+                if (selected != insideBounds) return false;
+            }
+        }
+
+        rect = b;
+        return true;
     }
 
     private void Apply(byte[] mask, int x, int y, SelectOp op, bool inside)

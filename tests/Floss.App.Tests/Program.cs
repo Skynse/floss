@@ -46,6 +46,7 @@ internal static class Program
         ("TiledPixelBuffer solid fills isolate tile mutations", TiledPixelBufferTests.FillSolid_SharedTemplatesDoNotLeakMutations),
         ("TiledPixelBuffer scratch disk round-trips tiles through disk", TiledPixelBufferTests.ScratchDisk_RoundTripsTilesThroughDisk),
         ("Layer compositor monochrome expression thresholds coverage", LayerCompositorTests.MonochromeExpression_ThresholdsCoverageBeforePaperComposite),
+        ("Layer compositor samples final composited viewport color", LayerCompositorTests.SampleCompositePixel_UsesFinalCompositorResult),
         ("Layer compositor budgets dirty tile projection", LayerCompositorTests.Composite_BudgetsDirtyTiles),
         ("Layer compositor selects LOD for huge low zoom canvas", LayerCompositorTests.Composite_SelectsLodForHugeLowZoomCanvas),
 
@@ -78,6 +79,7 @@ internal static class Program
         ("Brush engine low-spacing simple brushes use cached tile-major path", BrushTests.BrushEngine_LowSpacingUsesCachedTileMajorPath),
         ("Brush engine shaped tips use cached tile-major path", BrushTests.BrushEngine_ShapedTipsUseCachedTileMajorPath),
         ("Brush engine multi-tips use cached tile-major path", BrushTests.BrushEngine_MultiTipsUseCachedTileMajorPath),
+        ("Brush engine single mode ignores material tip list", BrushTests.BrushEngine_SingleModeIgnoresMaterialTipList),
         ("Brush engine color image tips use cached tile-major path", BrushTests.BrushEngine_ColorImageTipsUseCachedTileMajorPath),
         ("Brush engine batched segments match sequential dry stroke", BrushTests.BrushEngine_BatchedSegmentsMatchSequentialDryStroke),
         ("Brush engine color mix uses cached tile-major path", BrushTests.BrushEngine_ColorMixUsesCachedTileMajorPath),
@@ -102,6 +104,7 @@ internal static class Program
         ("Brush tip graphs validate bad topology", BrushTests.BrushTipNodeGraph_ValidatesBadTopology),
         ("Node brush tips evaluate deterministic graphs", BrushTests.NodeBrushTip_EvaluatesDeterministicGraph),
         ("Node brush tips compose procedural primitives", BrushTests.NodeBrushTip_ComposesProceduralPrimitives),
+        ("Node brush tips support coordinate warping", BrushTests.NodeBrushTip_SupportsCoordinateWarping),
         ("Image brush tips with color paint as colored stamps", BrushTests.ImageBrushTip_ColorStampPreservesColor),
         ("ABR preset mapping keeps usable brush dynamics", BrushTests.AbrPresetMapping_KeepsDynamics),
         ("ABR mask cleanup inverts dark-on-light stamps", BrushTests.AbrMaskCleanup_InvertsDarkOnLightMasks),
@@ -126,6 +129,7 @@ internal static class Program
         ("DrawingDocument reference flag participates in undo and duplicate", DrawingDocumentTests.ReferenceLayerFlag_UndoRedoAndDuplicate),
         ("DrawingDocument selection changes undo and redo", DrawingDocumentTests.SelectionMutations_UndoRedo),
         ("DrawingDocument selection inversion keeps renderable mask geometry", DrawingDocumentTests.SelectionInvert_KeepsRenderableMaskGeometry),
+        ("DrawingDocument transform can start on empty selected pixels", DrawingDocumentTests.Transform_StartsOnEmptySelection),
         ("DrawingDocument clear active layer records tile history", DrawingDocumentTests.ClearActiveLayer_UndoRedoRestoresPixels),
         ("DrawingDocument move layer validates invalid targets", DrawingDocumentTests.MoveLayer_ValidatesTargetsAndMoves),
         ("DrawingDocument grouping keeps children and can undo", DrawingDocumentTests.GroupSelectedLayers_CreatesGroupAndUndoRestores),
@@ -1094,6 +1098,24 @@ internal static class LayerCompositorTests
         AssertPixel(pixels, 2, 255, 255, 255, 255);
     }
 
+    public static void SampleCompositePixel_UsesFinalCompositorResult()
+    {
+        using var layer = new DrawingLayer("Multiply red", 1, 1)
+        {
+            BlendMode = "Multiply"
+        };
+        layer.Pixels.SetPixel(0, 0, b: 0, g: 0, r: 255, a: 255);
+
+        using var compositor = new LayerCompositor();
+        var sampled = compositor.SampleCompositePixel([layer], 1, 1, 0, 0, paperColor: 0xFF0000FF);
+
+        AssertEx.True(sampled.HasValue, "Sampling image mode should return the final composited pixel.");
+        AssertEx.Equal((byte)0, sampled!.Value.R);
+        AssertEx.Equal((byte)0, sampled.Value.G);
+        AssertEx.Equal((byte)0, sampled.Value.B);
+        AssertEx.Equal((byte)255, sampled.Value.A);
+    }
+
     public static void Composite_BudgetsDirtyTiles()
     {
         var dirtyTileCount = LayerCompositor.CountTilesForRegion(new PixelRegion(0, 0, 4096, 4096), lod: 0);
@@ -1104,9 +1126,10 @@ internal static class LayerCompositorTests
 
     public static void Composite_SelectsLodForHugeLowZoomCanvas()
     {
-        AssertEx.Equal(2, LayerCompositor.SelectLod(6000, 4080, 0.1));
-        AssertEx.Equal(1, LayerCompositor.SelectLod(6000, 4080, 0.3));
-        AssertEx.Equal(0, LayerCompositor.SelectLod(6000, 4080, 1.0));
+        using var compositor = new LayerCompositor();
+        AssertEx.Equal(2, compositor.SelectLod(6000, 4080, 0.1));
+        AssertEx.Equal(1, compositor.SelectLod(6000, 4080, 0.3));
+        AssertEx.Equal(0, compositor.SelectLod(6000, 4080, 1.0));
     }
 
     private static void AssertPixel(byte[] pixels, int x, byte b, byte g, byte r, byte a)
@@ -1483,6 +1506,28 @@ internal static class BrushTests
         AssertEx.Equal("CachedTileMajor", engine.LastStats.Path);
         AssertEx.True(engine.LastStats.CachedDabCount > 10);
         AssertEx.True(engine.LastStats.TileBucketCount > 0);
+    }
+
+    public static void BrushEngine_SingleModeIgnoresMaterialTipList()
+    {
+        using var engine = new BrushEngine();
+        using var layer = new DrawingLayer("Layer", 96, 96);
+        var activeTip = new CountingBrushTip();
+        var brush = new BrushPreset("Procedural active with saved materials", 32, 1, 1, 0.1, Colors.Black, 0)
+        {
+            Tip = activeTip,
+            Tips = [new BrushTipData { Kind = BrushTipStorageKind.Procedural, Shape = BrushTipShape.Flat }],
+            TipSelectionMode = BrushTipSelectionMode.Single,
+            Shape = null,
+            Dynamics = new BrushDynamics()
+        };
+        var sample = Sample(48, 48, 0);
+
+        engine.BeginStroke(brush, sample);
+        var dirty = engine.RasterizeDab(layer, brush, sample, velocity: 0);
+
+        AssertEx.False(dirty.IsEmpty);
+        AssertEx.True(activeTip.GenerateCount > 0, "Single tip mode must render brush.Tip, not the saved material tip list.");
     }
 
     public static void BrushEngine_ColorImageTipsUseCachedTileMajorPath()
@@ -2011,7 +2056,7 @@ internal static class BrushTests
         var procedural = new ProceduralBrushTip(BrushTipShape.Flat, 1.0f);
         var fromGraph = new NodeBrushTip(procedural.Graph);
 
-        AssertEx.Equal(BrushTipNodeKind.Rectangle, procedural.Graph.Nodes.Single(n => n.Id == "flat").Kind);
+        AssertEx.Equal(BrushTipNodeKind.BoxDistanceField, procedural.Graph.Nodes.Single(n => n.Id == "flat-field").Kind);
         AssertEx.SequenceEqual(AlphaBytes(procedural.GenerateMask(80, 0.82f)), AlphaBytes(fromGraph.GenerateMask(80, 0.82f)));
     }
 
@@ -2023,7 +2068,7 @@ internal static class BrushTests
 
         AssertEx.Equal(BrushTipStorageKind.NodeGraph, data.Kind);
         AssertEx.True(data.NodeGraph != null, "Procedural brush tips should save their graph payload.");
-        AssertEx.True(restored is ProceduralBrushTip, "Built-in graph metadata should restore a procedural UI tip.");
+        AssertEx.True(restored is NodeBrushTip, "Graph payloads should restore as editable node graph tips.");
         AssertEx.SequenceEqual(AlphaBytes(tip.GenerateMask(72, 0.74f)), AlphaBytes(restored.GenerateMask(72, 0.74f)));
     }
 
@@ -2079,6 +2124,39 @@ internal static class BrushTests
 
         AssertEx.True(bounds.MaxX > bounds.MinX && bounds.MaxY > bounds.MinY, "Composed node tip should render visible coverage.");
         AssertEx.True(center > corner, $"Circle multiplied by noise should stay stronger near center than corner, got center={center}, corner={corner}.");
+    }
+
+    public static void NodeBrushTip_SupportsCoordinateWarping()
+    {
+        var plainGraph = new BrushTipNodeGraph
+        {
+            OutputNodeId = "output",
+            Nodes =
+            [
+                new BrushTipNode { Id = "field", Kind = BrushTipNodeKind.DistanceField, Width = 1f, Height = 1f },
+                new BrushTipNode { Id = "edge", Kind = BrushTipNodeKind.SmoothStep, Inputs = ["field"], Threshold = 0.48f, Hardness = 0.03f },
+                new BrushTipNode { Id = "output", Kind = BrushTipNodeKind.Output, Inputs = ["edge"] }
+            ]
+        };
+        var warpedGraph = new BrushTipNodeGraph
+        {
+            OutputNodeId = "output",
+            Nodes =
+            [
+                new BrushTipNode { Id = "coords", Kind = BrushTipNodeKind.Coordinates },
+                new BrushTipNode { Id = "bands", Kind = BrushTipNodeKind.Stripe, Inputs = ["coords"], Scale = 9f, Density = 0.55f, Opacity = 1f },
+                new BrushTipNode { Id = "warp", Kind = BrushTipNodeKind.WarpCoordinates, Inputs = ["coords", "bands"], Density = 0.8f, Width = 0.28f, Height = 0.12f, RotationDegrees = 0f },
+                new BrushTipNode { Id = "field", Kind = BrushTipNodeKind.DistanceField, Inputs = ["warp"], Width = 1f, Height = 1f },
+                new BrushTipNode { Id = "edge", Kind = BrushTipNodeKind.SmoothStep, Inputs = ["field"], Threshold = 0.48f, Hardness = 0.03f },
+                new BrushTipNode { Id = "output", Kind = BrushTipNodeKind.Output, Inputs = ["edge"] }
+            ]
+        };
+
+        var plain = new NodeBrushTip(plainGraph).GenerateMask(96, 0.85f);
+        var warped = new NodeBrushTip(warpedGraph).GenerateMask(96, 0.85f);
+
+        AssertEx.True(warpedGraph.Validate().Count == 0, "Coordinate-warp graph should validate.");
+        AssertEx.True(!AlphaBytes(plain).SequenceEqual(AlphaBytes(warped)), "Warped coordinate graph should produce a different mask than the unwarped field.");
     }
 
     public static void ImageBrushTip_ColorStampPreservesColor()
@@ -2389,6 +2467,24 @@ internal static class DrawingDocumentTests
         AssertEx.True(document.Selection.HasSelection);
         AssertEx.Equal("Mask", document.Selection.CaptureSnapshot().GeometryType);
         AssertEx.Equal(new SKRectI(0, 0, 8, 8), document.Selection.GetMaskBounds());
+
+        document.Selection.SetFromRect(2, 2, 2, 2);
+        document.Selection.Invert();
+        document.Selection.Invert();
+        AssertEx.Equal("Rect", document.Selection.CaptureSnapshot().GeometryType);
+        AssertEx.Equal(new SKRectI(2, 2, 4, 4), document.Selection.GetMaskBounds());
+    }
+
+    public static void Transform_StartsOnEmptySelection()
+    {
+        var document = new DrawingDocument(16, 16);
+        document.AddLayer();
+        document.Selection.SetFromRect(4, 4, 6, 6);
+        var ctx = new ToolContext(document);
+        var tool = new TransformTool();
+
+        AssertEx.True(tool.BeginTransform(ctx), "Selection transform should start from the selected region even when it contains no pixels.");
+        AssertEx.True(tool.HasPendingOperation, "Transform overlay should be active for an empty selected region.");
     }
 
     public static void ClearActiveLayer_UndoRedoRestoresPixels()
