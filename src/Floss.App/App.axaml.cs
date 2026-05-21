@@ -6,6 +6,7 @@ using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Floss.App.Input;
+using Floss.App.Windows;
 using System;
 using System.IO;
 using System.Linq;
@@ -70,31 +71,67 @@ public partial class App : Application
             // Don't set e.Handled — Avalonia can't recover.
         };
 
-        AppPaths.EnsureDirectories();
-        Config = AppConfig.Load();
-        Shortcuts = ShortcutsConfig.Load();
-        ToolGroups = ToolGroupConfig.Load();
-        ModifierKeys = ModifierKeySettings.Load();
-
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            var window = new MainWindow();
-            desktop.MainWindow = window;
-
-            var initialFile = desktop.Args?.FirstOrDefault(a => !a.StartsWith('-') && File.Exists(a));
-            if (!string.IsNullOrWhiteSpace(initialFile))
-                window.Opened += async (_, _) => await window.OpenDocumentFromPathAsync(initialFile);
-
-            desktop.Exit += (_, _) =>
-            {
-                Config.Save();
-                Shortcuts.Save();
-                ToolGroups.Save();
-                ModifierKeys.Save();
-            };
+            StartDesktopWithSplash(desktop);
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    private static void StartDesktopWithSplash(IClassicDesktopStyleApplicationLifetime desktop)
+    {
+        var splash = new SplashWindow();
+        desktop.MainWindow = splash;
+        splash.Show();
+
+        desktop.Exit += (_, _) =>
+        {
+            Config.Save();
+            Shortcuts.Save();
+            ToolGroups.Save();
+            ModifierKeys.Save();
+        };
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            try
+            {
+                splash.SetStatus("Preparing workspace...");
+                AppPaths.EnsureDirectories();
+
+                splash.SetStatus("Loading configuration...");
+                Config = AppConfig.Load();
+                Shortcuts = ShortcutsConfig.Load();
+                ModifierKeys = ModifierKeySettings.Load();
+
+                splash.SetStatus("Loading tools and brushes...");
+                ToolGroups = ToolGroupConfig.Load();
+
+                splash.SetStatus("Opening window...");
+                var window = new MainWindow();
+                desktop.MainWindow = window;
+
+                var initialFile = desktop.Args?.FirstOrDefault(a => !a.StartsWith('-') && File.Exists(a));
+                if (!string.IsNullOrWhiteSpace(initialFile))
+                    window.Opened += async (_, _) => await window.OpenDocumentFromPathAsync(initialFile);
+
+                window.Opened += (_, _) => splash.Close();
+                window.Closed += (_, _) =>
+                {
+                    if (splash.IsVisible)
+                        splash.Close();
+                };
+
+                window.Show();
+            }
+            catch
+            {
+                if (splash.IsVisible)
+                    splash.Close();
+                throw;
+            }
+        }, DispatcherPriority.Background);
     }
 
     private static void ShowCrashDialog(CrashReportData crash, IClassicDesktopStyleApplicationLifetime desktop)
