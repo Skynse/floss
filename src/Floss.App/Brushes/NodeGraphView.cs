@@ -1392,6 +1392,19 @@ public sealed class NodeGraphView : Control
     protected override void OnKeyDown(KeyEventArgs e)
     {
         var sc = App.Shortcuts;
+        if (sc.Undo.Matches(e))
+        {
+            Undo();
+            e.Handled = true;
+            return;
+        }
+        if (sc.Redo.Matches(e) || sc.RedoAlt.Matches(e))
+        {
+            Redo();
+            e.Handled = true;
+            return;
+        }
+
         if (sc.ZoomIn.Matches(e) || sc.ZoomInAlt.Matches(e))
         {
             SetZoomAround(_zoom * sc.ZoomKeyFactor, ViewCenter());

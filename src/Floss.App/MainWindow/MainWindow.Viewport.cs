@@ -473,8 +473,8 @@ public partial class MainWindow : ICanvasInputHost
             return;
         }
 
-        var focused = FocusManager.GetFocusedElement();
-        if (focused is TextBox or ComboBox)
+        var focused = FocusManager.GetFocusedElement() as IInputElement;
+        if (!Input.KeyboardFocusScope.ShouldRouteToCanvas(focused))
             return;
 
         _inputRouter.KeyDown(e);
@@ -494,8 +494,8 @@ public partial class MainWindow : ICanvasInputHost
 
     private void OnKeyUpTunnel(object? sender, KeyEventArgs e)
     {
-        var focused = FocusManager.GetFocusedElement();
-        if (focused is TextBox or ComboBox)
+        var focused = FocusManager.GetFocusedElement() as IInputElement;
+        if (!Input.KeyboardFocusScope.ShouldRouteToCanvas(focused))
             return;
 
         _inputRouter.KeyUp(e);

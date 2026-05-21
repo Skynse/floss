@@ -5,6 +5,7 @@ using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
@@ -227,6 +228,18 @@ public sealed class NodeGraphEditorPanel : UserControl
         };
         _view.KeyDown += OnPanelKeyDown;
         Focusable = true;
+        AddHandler(PointerPressedEvent, OnPanelPointerPressed, RoutingStrategies.Tunnel | RoutingStrategies.Bubble);
+    }
+
+    private void OnPanelPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed &&
+            !e.GetCurrentPoint(this).Properties.IsRightButtonPressed &&
+            !e.GetCurrentPoint(this).Properties.IsMiddleButtonPressed)
+            return;
+
+        Focus();
+        _view.Focus();
     }
 
     private static Button MakeToolbarButton(string label) => new()
@@ -277,23 +290,16 @@ public sealed class NodeGraphEditorPanel : UserControl
 
     private void OnPanelKeyDown(object? sender, KeyEventArgs e)
     {
-        var ctrl = (e.KeyModifiers & KeyModifiers.Control) != 0;
-        var shift = (e.KeyModifiers & KeyModifiers.Shift) != 0;
-        if (ctrl && e.Key == Key.Z && !shift)
+        var sc = App.Shortcuts;
+        if (sc.Undo.Matches(e))
         {
             _view.Undo();
-            _graph = _view.Graph;
-            _selectedNode = null;
-            RefreshPropertyPanel();
             e.Handled = true;
             return;
         }
-        if ((ctrl && e.Key == Key.Y) || (ctrl && shift && e.Key == Key.Z))
+        if (sc.Redo.Matches(e) || sc.RedoAlt.Matches(e))
         {
             _view.Redo();
-            _graph = _view.Graph;
-            _selectedNode = null;
-            RefreshPropertyPanel();
             e.Handled = true;
         }
     }

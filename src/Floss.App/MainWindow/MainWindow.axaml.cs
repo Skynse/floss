@@ -258,6 +258,12 @@ public partial class MainWindow : Window, Tools.IViewportController
         });
     }
 
+    private bool CanExecuteCanvasShortcut()
+        => Input.KeyboardFocusScope.ShouldRouteToCanvas(FocusManager.GetFocusedElement() as IInputElement);
+
+    private bool CanExecuteCanvasDocumentShortcut()
+        => _canvas.HasDocument && CanExecuteCanvasShortcut();
+
     private void RegisterShortcuts()
     {
         var s = App.Shortcuts;
@@ -268,48 +274,48 @@ public partial class MainWindow : Window, Tools.IViewportController
         AddShortcut(s.FileSave, () => _ = SaveDocumentAsync());
         AddShortcut(s.FileSaveAs, () => _ = SaveDocumentAsAsync());
 
-        // Edit
-        AddShortcut(s.Undo, () => _canvas.Undo(), () => _canvas.HasDocument);
-        AddShortcut(s.Redo, () => _canvas.Redo(), () => _canvas.HasDocument);
-        AddShortcut(s.RedoAlt, () => _canvas.Redo(), () => _canvas.HasDocument);
-        AddShortcut(s.Copy, () => _canvas.CopyToClipboard(), () => _canvas.HasDocument);
-        AddShortcut(s.Paste, () => _ = _canvas.PasteFromOSClipboardAsync(), () => _canvas.HasDocument);
-        AddShortcut(s.DeleteSelection, DeleteSelectionAction, () => _canvas.HasDocument);
+        // Edit — suppressed while node graph editor has keyboard focus
+        AddShortcut(s.Undo, () => _canvas.Undo(), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.Redo, () => _canvas.Redo(), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.RedoAlt, () => _canvas.Redo(), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.Copy, () => _canvas.CopyToClipboard(), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.Paste, () => _ = _canvas.PasteFromOSClipboardAsync(), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.DeleteSelection, DeleteSelectionAction, CanExecuteCanvasDocumentShortcut);
 
         // View - flip
-        AddShortcut(s.FlipHorizontal, () => _canvas.FlipCanvas(horizontal: true), () => _canvas.HasDocument);
-        AddShortcut(s.FlipVertical, () => _canvas.FlipCanvas(horizontal: false), () => _canvas.HasDocument);
-        AddShortcut(s.MirrorHorizontal, MirrorHorizontalAction, () => _canvas.HasDocument);
-        AddShortcut(s.MirrorVertical, MirrorVerticalAction, () => _canvas.HasDocument);
+        AddShortcut(s.FlipHorizontal, () => _canvas.FlipCanvas(horizontal: true), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.FlipVertical, () => _canvas.FlipCanvas(horizontal: false), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.MirrorHorizontal, MirrorHorizontalAction, CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.MirrorVertical, MirrorVerticalAction, CanExecuteCanvasDocumentShortcut);
 
         // View - zoom
-        AddShortcut(s.ZoomIn, () => SetZoom(_zoom * s.ZoomKeyFactor, null));
-        AddShortcut(s.ZoomInAlt, () => SetZoom(_zoom * s.ZoomKeyFactor, null));
-        AddShortcut(s.ZoomOut, () => SetZoom(_zoom / s.ZoomKeyFactor, null));
-        AddShortcut(s.ZoomReset, () => ResetView());
-        AddShortcut(s.ZoomFit, () => SyncCanvasFrameToDocument(fitToViewport: true));
+        AddShortcut(s.ZoomIn, () => SetZoom(_zoom * s.ZoomKeyFactor, null), CanExecuteCanvasShortcut);
+        AddShortcut(s.ZoomInAlt, () => SetZoom(_zoom * s.ZoomKeyFactor, null), CanExecuteCanvasShortcut);
+        AddShortcut(s.ZoomOut, () => SetZoom(_zoom / s.ZoomKeyFactor, null), CanExecuteCanvasShortcut);
+        AddShortcut(s.ZoomReset, () => ResetView(), CanExecuteCanvasShortcut);
+        AddShortcut(s.ZoomFit, () => SyncCanvasFrameToDocument(fitToViewport: true), CanExecuteCanvasShortcut);
 
         // View - rotate
-        AddShortcut(s.RotateLeft, () => SetRotation(_rotation - s.RotateKeyStep));
-        AddShortcut(s.RotateRight, () => SetRotation(_rotation + s.RotateKeyStep));
-        AddShortcut(s.RotateReset, () => SetRotation(0));
+        AddShortcut(s.RotateLeft, () => SetRotation(_rotation - s.RotateKeyStep), CanExecuteCanvasShortcut);
+        AddShortcut(s.RotateRight, () => SetRotation(_rotation + s.RotateKeyStep), CanExecuteCanvasShortcut);
+        AddShortcut(s.RotateReset, () => SetRotation(0), CanExecuteCanvasShortcut);
 
         // Image - rotate canvas
-        AddShortcut(s.RotateCanvas90Cw, RotateCanvas90CwAction, () => _canvas.HasDocument);
-        AddShortcut(s.RotateCanvas90Ccw, RotateCanvas90CcwAction, () => _canvas.HasDocument);
-        AddShortcut(s.RotateCanvas180, () => _canvas.RotateCanvas180(), () => _canvas.HasDocument);
+        AddShortcut(s.RotateCanvas90Cw, RotateCanvas90CwAction, CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.RotateCanvas90Ccw, RotateCanvas90CcwAction, CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.RotateCanvas180, () => _canvas.RotateCanvas180(), CanExecuteCanvasDocumentShortcut);
 
         // Selection
-        AddShortcut(s.SelectAll, () => _canvas.SelectAll(), () => _canvas.HasDocument);
-        AddShortcut(s.Deselect, () => _canvas.Deselect(), () => _canvas.HasDocument);
-        AddShortcut(s.InvertSelect, () => _canvas.InvertSelection(), () => _canvas.HasDocument);
-        AddShortcut(s.Transform, TransformAction, () => _canvas.HasDocument);
+        AddShortcut(s.SelectAll, () => _canvas.SelectAll(), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.Deselect, () => _canvas.Deselect(), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.InvertSelect, () => _canvas.InvertSelection(), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.Transform, TransformAction, CanExecuteCanvasDocumentShortcut);
 
         // Brush - size
-        AddShortcut(s.BrushSizeDecrease, () => NudgeBrushSize(-1, false), () => _canvas.HasDocument);
-        AddShortcut(s.BrushSizeIncrease, () => NudgeBrushSize(1, false), () => _canvas.HasDocument);
-        AddShortcut(s.BrushSizeDecreaseLarge, () => NudgeBrushSize(-1, true), () => _canvas.HasDocument);
-        AddShortcut(s.BrushSizeIncreaseLarge, () => NudgeBrushSize(1, true), () => _canvas.HasDocument);
+        AddShortcut(s.BrushSizeDecrease, () => NudgeBrushSize(-1, false), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.BrushSizeIncrease, () => NudgeBrushSize(1, false), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.BrushSizeDecreaseLarge, () => NudgeBrushSize(-1, true), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.BrushSizeIncreaseLarge, () => NudgeBrushSize(1, true), CanExecuteCanvasDocumentShortcut);
 
         // Brush - opacity
         AddShortcut(s.BrushOpacityDecrease, () => { _opacitySlider.Value = Math.Max(_opacitySlider.Minimum, _opacitySlider.Value - s.BrushOpacityStep); });
@@ -320,23 +326,23 @@ public partial class MainWindow : Window, Tools.IViewportController
         AddShortcut(s.ColorDefault, () => SetColor(Color.Parse("#111111")));
 
         // Layers
-        AddShortcut(s.LayerNew, () => _canvas.AddLayer(), () => _canvas.HasDocument);
-        AddShortcut(s.LayerDuplicate, () => _canvas.DuplicateLayer(), () => _canvas.HasDocument);
-        AddShortcut(s.LayerDelete, () => _canvas.DeleteLayer(), () => _canvas.HasDocument);
-        AddShortcut(s.LayerMoveUp, () => _canvas.MoveActiveLayer(1), () => _canvas.HasDocument);
-        AddShortcut(s.LayerMoveDown, () => _canvas.MoveActiveLayer(-1), () => _canvas.HasDocument);
-        AddShortcut(s.LayerMerge, LayerMergeAction, () => _canvas.HasDocument);
-        AddShortcut(s.LayerGroup, LayerGroupAction, () => _canvas.HasDocument);
-        AddShortcut(s.LayerToggleColor, () => ToggleActiveLayerColor(), () => _canvas.HasDocument);
+        AddShortcut(s.LayerNew, () => _canvas.AddLayer(), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.LayerDuplicate, () => _canvas.DuplicateLayer(), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.LayerDelete, () => _canvas.DeleteLayer(), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.LayerMoveUp, () => _canvas.MoveActiveLayer(1), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.LayerMoveDown, () => _canvas.MoveActiveLayer(-1), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.LayerMerge, LayerMergeAction, CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.LayerGroup, LayerGroupAction, CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.LayerToggleColor, () => ToggleActiveLayerColor(), CanExecuteCanvasDocumentShortcut);
 
         // Filters
-        AddShortcut(s.FilterBlur, () => _ = ApplyBlurFilter(), () => _canvas.HasDocument);
-        AddShortcut(s.FilterSharpen, () => _ = ApplySharpenFilter(), () => _canvas.HasDocument);
-        AddShortcut(s.FilterNoise, () => _ = ApplyNoiseFilter(), () => _canvas.HasDocument);
-        AddShortcut(s.FilterColorCurves, () => _ = ApplyColorCurvesFilter(), () => _canvas.HasDocument);
-        AddShortcut(s.FilterChromaticAberration, () => _ = ApplyChromaticAberrationFilter(), () => _canvas.HasDocument);
-        AddShortcut(s.FilterBaseColorMask, () => _ = RunBaseColorMaskGenerator(), () => _canvas.HasDocument);
-        AddShortcut(s.FilterRemoveDust, () => _ = ApplyRemoveDustFilter(), () => _canvas.HasDocument);
+        AddShortcut(s.FilterBlur, () => _ = ApplyBlurFilter(), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.FilterSharpen, () => _ = ApplySharpenFilter(), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.FilterNoise, () => _ = ApplyNoiseFilter(), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.FilterColorCurves, () => _ = ApplyColorCurvesFilter(), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.FilterChromaticAberration, () => _ = ApplyChromaticAberrationFilter(), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.FilterBaseColorMask, () => _ = RunBaseColorMaskGenerator(), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.FilterRemoveDust, () => _ = ApplyRemoveDustFilter(), CanExecuteCanvasDocumentShortcut);
 
         // Misc
         AddShortcut(s.OpenSettings, () => OpenSettings());
@@ -345,12 +351,14 @@ public partial class MainWindow : Window, Tools.IViewportController
         AddShortcut(s.ToggleRulers, () => ToggleRulers());
 
         // Special keys (not in ShortcutsConfig but handled same way)
-        AddShortcut(new Input.KeyBinding(Key.Escape), () => _canvas.CancelActiveTool());
-        AddShortcut(new Input.KeyBinding(Key.Back), DeleteSelectionAction);
+        AddShortcut(new Input.KeyBinding(Key.Escape), () => _canvas.CancelActiveTool(), CanExecuteCanvasShortcut);
+        AddShortcut(new Input.KeyBinding(Key.Back), DeleteSelectionAction, CanExecuteCanvasDocumentShortcut);
         AddShortcut(new Input.KeyBinding(Key.Return), () => _canvas.CommitActiveTool(),
-            () => _canvas.ActiveTool is TransformTool or CompositeTool { CanCommitFromClick: true });
+            () => CanExecuteCanvasDocumentShortcut() &&
+                  _canvas.ActiveTool is TransformTool or CompositeTool { CanCommitFromClick: true });
         AddShortcut(new Input.KeyBinding(Key.Enter), () => _canvas.CommitActiveTool(),
-            () => _canvas.ActiveTool is TransformTool or CompositeTool { CanCommitFromClick: true });
+            () => CanExecuteCanvasDocumentShortcut() &&
+                  _canvas.ActiveTool is TransformTool or CompositeTool { CanCommitFromClick: true });
     }
 
     private void DeleteSelectionAction()
@@ -437,6 +445,7 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         base.OnKeyDown(e);
         if (e.Handled) return;
+        if (!CanExecuteCanvasShortcut()) return;
         if (_inputRouter.IsTransactionActive) return;
 
         var key = e.Key;

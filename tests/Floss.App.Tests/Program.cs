@@ -104,6 +104,7 @@ internal static class Program
         ("Procedural brush tips are graph backed", BrushTests.ProceduralBrushTip_IsGraphBacked),
         ("Procedural brush tip data stores graph payloads", BrushTests.ProceduralBrushTipData_StoresGraphPayload),
         ("Brush tip graphs validate bad topology", BrushTests.BrushTipNodeGraph_ValidatesBadTopology),
+        ("Brush tip graph cache keys change with graph content", BrushTests.BrushTipNodeGraph_CacheKeyChangesWithContent),
         ("Node brush tips evaluate deterministic graphs", BrushTests.NodeBrushTip_EvaluatesDeterministicGraph),
         ("Node brush tips compose procedural primitives", BrushTests.NodeBrushTip_ComposesProceduralPrimitives),
         ("Node brush tips support coordinate warping", BrushTests.NodeBrushTip_SupportsCoordinateWarping),
@@ -2185,6 +2186,17 @@ internal static class BrushTests
         graph.OutputNodeId = "cycle-a";
         errors = graph.Validate();
         AssertEx.True(errors.Any(e => e.Contains("cycle", StringComparison.OrdinalIgnoreCase)), "Validator should report cycles reachable from output.");
+    }
+
+    public static void BrushTipNodeGraph_CacheKeyChangesWithContent()
+    {
+        var circle = BrushTipNodeGraph.FromProceduralShape(BrushTipShape.Circle);
+        var soft = BrushTipNodeGraph.FromProceduralShape(BrushTipShape.SoftRound);
+        AssertEx.False(circle.CacheKey() == soft.CacheKey(), "Different preset shapes should produce different cache keys.");
+
+        var edited = circle.DeepClone();
+        edited.Nodes[0].Hardness = 0.42f;
+        AssertEx.False(circle.CacheKey() == edited.CacheKey(), "Graph edits should change the cache key.");
     }
 
     public static void NodeBrushTip_EvaluatesDeterministicGraph()

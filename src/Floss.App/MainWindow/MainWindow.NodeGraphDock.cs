@@ -120,7 +120,15 @@ public partial class MainWindow
     {
         var assetId = _activeBrushAsset?.Id ?? "";
         var presetId = _activeToolGroup?.ActivePreset?.Id ?? "";
-        return $"{assetId}|{presetId}";
+        _activePreset ??= _canvas.Brush;
+        var tipKey = GraphForBrushTip(_activePreset.Tip).CacheKey();
+        return $"{assetId}|{presetId}|{tipKey}";
+    }
+
+    private void InvalidateNodeGraphDockState()
+    {
+        _nodeGraphLoadedKey = null;
+        SyncNodeGraphDockToActiveBrush(force: true);
     }
 
     private void SyncNodeGraphDockToActiveBrush(bool force = false)
@@ -179,6 +187,7 @@ public partial class MainWindow
         finally
         {
             _nodeGraphCommitInProgress = false;
+            _nodeGraphLoadedKey = BuildNodeGraphBrushKey();
         }
     }
 

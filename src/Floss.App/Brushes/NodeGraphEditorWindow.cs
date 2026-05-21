@@ -28,6 +28,7 @@ public sealed class NodeGraphEditorWindow : Window
 
         _panel = new NodeGraphEditorPanel(graph, onCommit, onSaveAsNew, imageSamplers);
         Content = _panel;
+        Opened += (_, _) => _panel.Focus();
     }
 
     public void SetImageSamplerOptions(IReadOnlyList<BrushTipData>? tips)
