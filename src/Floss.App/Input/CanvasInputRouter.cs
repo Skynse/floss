@@ -107,8 +107,6 @@ public interface ICanvasInputHost
 /// </summary>
 public sealed class CanvasInputRouter
 {
-    private const double PenPressureThreshold = 0.02;
-
     private readonly ICanvasInputHost _host;
 
     // ── State machine ──
@@ -177,9 +175,41 @@ public sealed class CanvasInputRouter
 
     public void PointerMoved(PointerEventArgs e)
     {
-        if (_state != RouterState.Running) return;
-        var pt = _host.GetViewportPosition(e);
-        HandlePointerMove(e, pt);
+        if (_state == RouterState.Running)
+        {
+            var vpt = _host.GetViewportPointerPoint(e);
+            // Tablet-as-mouse: tip lift = pressure drops to 0 with no button held.
+            // Some drivers never fire PointerReleased in this mode.
+            if (vpt.Pointer.Type == PointerType.Mouse
+                && vpt.Properties.Pressure <= 0
+                && !vpt.Properties.IsLeftButtonPressed
+                && _runningAction == CanvasAction.PrimaryTool)
+            {
+                HandlePointerRelease(e);
+                return;
+            }
+            HandlePointerMove(e, vpt.Position);
+            return;
+        }
+
+        if (_state == RouterState.Suppressed) return;
+
+        // Tablet-as-mouse: tip contact fires PointerMoved with pressure > 0
+        // instead of PointerPressed on some drivers.
+        var pt = _host.GetViewportPointerPoint(e);
+        if (pt.Pointer.Type == PointerType.Mouse
+            && pt.Properties.Pressure > 0
+            && !pt.Properties.IsMiddleButtonPressed
+            && !pt.Properties.IsRightButtonPressed)
+        {
+            HandlePointerPress(
+                CanvasAction.PrimaryTool, true, pt.Pointer.Id, pt.Position,
+                null,
+                e.KeyModifiers.HasFlag(KeyModifiers.Control),
+                e.KeyModifiers.HasFlag(KeyModifiers.Shift));
+            if (_state == RouterState.Running)
+                HandlePointerMove(e, pt.Position);
+        }
     }
 
     public void PointerReleased(PointerReleasedEventArgs e)
@@ -781,7 +811,7 @@ public sealed class CanvasInputRouter
         var props = pt.Properties;
         if (props.IsEraser || pt.Pointer.Type == PointerType.Pen)
         {
-            if (props.Pressure >= PenPressureThreshold)
+            if (props.Pressure > 0)
                 return CanvasAction.PrimaryTool;
             if (props.IsMiddleButtonPressed)
                 return (CanvasAction)App.Shortcuts.MiddleButtonAction;
@@ -791,16 +821,17 @@ public sealed class CanvasInputRouter
         }
 
         if (pt.Pointer.Type == PointerType.Touch)
-            return props.IsLeftButtonPressed || props.Pressure >= PenPressureThreshold
+            return props.IsLeftButtonPressed || props.Pressure > 0
                 ? CanvasAction.PrimaryTool
                 : CanvasAction.None;
 
-        if (props.IsLeftButtonPressed || props.Pressure >= PenPressureThreshold)
-            return CanvasAction.PrimaryTool;
+        // Mouse (may be a tablet driver reporting as mouse)
         if (props.IsMiddleButtonPressed)
             return (CanvasAction)App.Shortcuts.MiddleButtonAction;
         if (props.IsRightButtonPressed)
             return (CanvasAction)App.Shortcuts.RightButtonAction;
+        if (props.IsLeftButtonPressed || props.Pressure > 0)
+            return CanvasAction.PrimaryTool;
         return CanvasAction.None;
     }
 

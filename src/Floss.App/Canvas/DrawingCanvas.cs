@@ -25,7 +25,6 @@ namespace Floss.App.Canvas;
 
 public sealed class DrawingCanvas : Control, IDisposable
 {
-    private const double PenPressureThreshold = 0.02;
     private const double CursorDirectionDeadZone = 1.25;
     private const float CursorAngleLerp = 0.35f;
 
@@ -299,7 +298,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             if (!hasTabletData && pressure <= 0)
                 pressure = 1;
         }
-        else if ((source is CanvasInputSource.Pen or CanvasInputSource.Eraser or CanvasInputSource.Touch) && pressure < 0.005)
+        else if ((source is CanvasInputSource.Pen or CanvasInputSource.Eraser or CanvasInputSource.Touch) && pressure < 0)
         {
             pressure = 0;
         }
@@ -1761,13 +1760,13 @@ public sealed class DrawingCanvas : Control, IDisposable
     {
         var properties = point.Properties;
         if (properties.IsEraser)
-            return properties.Pressure >= PenPressureThreshold;
+            return properties.Pressure > 0;
 
         return point.Pointer.Type switch
         {
-            PointerType.Pen => properties.Pressure >= PenPressureThreshold,
-            PointerType.Touch => properties.IsLeftButtonPressed || properties.Pressure >= PenPressureThreshold,
-            PointerType.Mouse => properties.IsLeftButtonPressed || properties.Pressure >= PenPressureThreshold,
+            PointerType.Pen => properties.Pressure > 0,
+            PointerType.Touch => properties.IsLeftButtonPressed || properties.Pressure > 0,
+            PointerType.Mouse => properties.IsLeftButtonPressed || properties.Pressure > 0,
             _ => false
         };
     }
