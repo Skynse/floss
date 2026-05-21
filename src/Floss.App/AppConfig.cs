@@ -37,6 +37,8 @@ public sealed class AppConfig
     public BrushCursorMode EraserCursorMode { get; set; } = BrushCursorMode.Outline;
     public BrushCursorMode SmudgeCursorMode { get; set; } = BrushCursorMode.Outline;
     public bool ShowRulers { get; set; }
+    public bool ShowNodeGraphDock { get; set; }
+    public double NodeGraphDockHeight { get; set; } = 320;
     public Dictionary<string, bool> ToolPropertyDockerVisibility { get; set; } = new();
     public WorkspaceLayoutConfig WorkspaceLayout { get; set; } = WorkspaceLayoutConfig.Default();
     public Dictionary<string, WorkspaceLayoutConfig> WorkspacePresets { get; set; } = new();

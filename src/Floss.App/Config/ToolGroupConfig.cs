@@ -205,6 +205,11 @@ public sealed class ToolPreset
     public BrushTipSelectionMode? BrushTipSelectionMode { get; set; }
     public SkiaSharp.SKBlendMode? BrushBlendMode { get; set; }
     public string? BrushDynamicsJson { get; set; }
+    public BrushTipData? BrushTipOverride { get; set; }
+    public List<BrushTipData>? BrushTipsOverride { get; set; }
+    public BrushTipData? BrushShapeOverride { get; set; }
+    public bool BrushShapeOverrideSet { get; set; }
+    public List<BrushParameterGraph>? BrushParameterGraphsOverride { get; set; }
 
     // Apply overrides to a BrushPreset, returning a modified copy
     public BrushPreset ApplyToBrushPreset(BrushPreset preset)
@@ -215,7 +220,9 @@ public sealed class ToolPreset
             BrushColorStretch.HasValue || BrushBlurAmount.HasValue || BrushSmudgeMode.HasValue || BrushMixingMode.HasValue ||
             BrushAmountOfPaint.HasValue || BrushDensityOfPaint.HasValue || BrushTipDensity.HasValue ||
             BrushTipThickness.HasValue || BrushTipDirection.HasValue || BrushTipSelectionMode.HasValue ||
-            BrushBlendMode.HasValue || !string.IsNullOrEmpty(BrushDynamicsJson);
+            BrushBlendMode.HasValue || !string.IsNullOrEmpty(BrushDynamicsJson) ||
+            BrushTipOverride != null || BrushTipsOverride != null || BrushShapeOverrideSet ||
+            BrushParameterGraphsOverride != null;
 
         if (!needsUpdate) return preset;
 
@@ -241,6 +248,14 @@ public sealed class ToolPreset
             TipDirection = BrushTipDirection ?? preset.TipDirection,
             TipSelectionMode = BrushTipSelectionMode ?? preset.TipSelectionMode,
             BlendMode = BrushBlendMode ?? preset.BlendMode,
+            Tip = BrushTipOverride?.CreateTip() ?? preset.Tip,
+            Tips = BrushTipsOverride?.Select(t => t.DeepClone()).ToList() ?? preset.Tips,
+            Shape = BrushShapeOverrideSet && BrushShapeOverride is { Kind: BrushTipStorageKind.Procedural } shape
+                ? new ProceduralBrushTip(shape.Shape, shape.AspectRatio)
+                : BrushShapeOverrideSet
+                    ? null
+                    : preset.Shape,
+            ParameterGraphs = BrushParameterGraphsOverride?.Select(g => g.DeepClone()).ToList() ?? preset.ParameterGraphs,
         };
 
         if (!string.IsNullOrEmpty(BrushDynamicsJson))
@@ -280,6 +295,18 @@ public sealed class ToolPreset
         BrushTipSelectionMode = preset.TipSelectionMode;
         BrushBlendMode = preset.BlendMode;
         BrushDynamicsJson = preset.Dynamics.Serialize();
+        BrushTipOverride = BrushTipData.FromTip(preset.Tip);
+        BrushTipsOverride = preset.Tips.Select(t => t.DeepClone()).ToList();
+        BrushShapeOverride = preset.Shape == null
+            ? null
+            : new BrushTipData
+            {
+                Kind = BrushTipStorageKind.Procedural,
+                Shape = preset.Shape.Shape,
+                AspectRatio = preset.Shape.AspectRatio
+            };
+        BrushShapeOverrideSet = true;
+        BrushParameterGraphsOverride = preset.ParameterGraphs.Select(g => g.DeepClone()).ToList();
     }
 
     public void ClearBrushOverrides()
@@ -305,6 +332,11 @@ public sealed class ToolPreset
         BrushTipSelectionMode = null;
         BrushBlendMode = null;
         BrushDynamicsJson = null;
+        BrushTipOverride = null;
+        BrushTipsOverride = null;
+        BrushShapeOverride = null;
+        BrushShapeOverrideSet = false;
+        BrushParameterGraphsOverride = null;
     }
 
     // Brush/Eraser/Smudge — references a BrushAsset on disk; null = use current brush

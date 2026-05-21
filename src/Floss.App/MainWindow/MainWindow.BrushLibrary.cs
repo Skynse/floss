@@ -419,9 +419,8 @@ public partial class MainWindow : Window
         preset.ClearBrushOverrides();
         App.ToolGroups.Save();
 
-        // Live brush editing mutates the in-memory BrushAsset before the user chooses
-        // to save defaults. Reload persisted assets here so "restore default" truly
-        // means restore the stored brush asset, not the dirty in-memory copy.
+        // Reload persisted assets so restore always means the stored default, not
+        // any stale in-memory asset instance.
         LoadBrushAssets();
 
         if (_activeToolGroup == group && group.ActivePreset == preset)
@@ -497,6 +496,7 @@ public partial class MainWindow : Window
 
         UpdateStatus();
         RefreshToolProperties();
+        SyncNodeGraphDockToActiveBrush();
     }
 
     private void ShowPresetPropertiesDialog(ToolGroup group, ToolPreset preset)
@@ -1606,9 +1606,20 @@ public partial class MainWindow : Window
         _strokePreview.Brush = applied;
         var activeToolPreset = _activeToolGroup?.ActivePreset;
         if (syncToolPropertiesWindow && activeToolPreset != null && _toolPropsWindow?.CanSyncToolPreset(activeToolPreset) == true)
-            _toolPropsWindow.SyncFromPreset(applied);
+        {
+            _syncingToolPropertyPanel = true;
+            try
+            {
+                _toolPropsWindow.SyncFromPreset(applied);
+            }
+            finally
+            {
+                _syncingToolPropertyPanel = false;
+            }
+        }
         UpdateStatus();
         RefreshToolProperties();
+        SyncNodeGraphDockToActiveBrush();
     }
 
     private void SyncBrushScalarControls(BrushPreset preset)
@@ -1643,23 +1654,10 @@ public partial class MainWindow : Window
             activeToolPreset.CaptureFromBrushPreset(updated);
             App.ToolGroups.Save();
         }
-        if (_activeBrushAsset != null)
-        {
-            _activeBrushAsset.Preset = updated;
-            _activeBrushAsset.Tip = BrushTipData.FromTip(updated.Tip);
-            _activeBrushAsset.ShapeData = updated.Shape == null
-                ? null
-                : new BrushTipData
-                {
-                    Kind = BrushTipStorageKind.Procedural,
-                    Shape = updated.Shape.Shape,
-                    AspectRatio = updated.Shape.AspectRatio
-            };
-            _dirtyBrushAssetIds.Add(_activeBrushAsset.Id);
-        }
         ScheduleBrushPresetAutosave();
         ApplyBrushSettings(updated, syncSliders: false);
         RefreshGroupPresets();
+        RefreshNodeGraphImageOptions();
     }
 
     private void UpdateCurrentBrushFromToolProperties(Func<BrushPreset, BrushPreset> update)
@@ -1675,23 +1673,10 @@ public partial class MainWindow : Window
             activeToolPreset.CaptureFromBrushPreset(updated);
             App.ToolGroups.Save();
         }
-        if (_activeBrushAsset != null)
-        {
-            _activeBrushAsset.Preset = updated;
-            _activeBrushAsset.Tip = BrushTipData.FromTip(updated.Tip);
-            _activeBrushAsset.ShapeData = updated.Shape == null
-                ? null
-                : new BrushTipData
-                {
-                    Kind = BrushTipStorageKind.Procedural,
-                    Shape = updated.Shape.Shape,
-                    AspectRatio = updated.Shape.AspectRatio
-            };
-            _dirtyBrushAssetIds.Add(_activeBrushAsset.Id);
-        }
         ScheduleBrushPresetAutosave();
         ApplyBrushSettings(updated, syncSliders: false, syncToolPropertiesWindow: false);
         RefreshGroupPresets();
+        RefreshNodeGraphImageOptions();
     }
 
     private void OpenToolProperties()
@@ -1712,7 +1697,17 @@ public partial class MainWindow : Window
             {
                 _toolPropsWindow.SyncFromToolPreset(toolPreset);
                 if (brushPreset != null)
-                    _toolPropsWindow.SyncFromPreset(brushPreset);
+                {
+                    _syncingToolPropertyPanel = true;
+                    try
+                    {
+                        _toolPropsWindow.SyncFromPreset(brushPreset);
+                    }
+                    finally
+                    {
+                        _syncingToolPropertyPanel = false;
+                    }
+                }
                 _toolPropsWindow.Activate();
                 return;
             }
@@ -1741,32 +1736,9 @@ public partial class MainWindow : Window
                 _canvas.SetActiveTool(ToolForPreset(tp), tp);
 
             RefreshToolProperties();
-        }, SaveNodeGraphAsNewBrushPreset);
+        }, SaveNodeGraphAsNewBrushPreset, OpenBrushTipGraphEditor);
         _toolPropsWindow.Closed += (_, _) => _toolPropsWindow = null;
         _toolPropsWindow.Show(this);
-    }
-
-    private void OpenBrushTipGraphEditor()
-    {
-        _activePreset ??= _canvas.Brush;
-        var graph = GraphForBrushTip(_activePreset.Tip);
-        var editor = new NodeGraphEditorWindow(graph, g =>
-        {
-            if (g.Validate().Count > 0) return;
-            var clone = g.DeepClone();
-            clone.BuiltInShape = null;
-            var tip = (IBrushTip)new NodeBrushTip(clone);
-            UpdateCurrentBrush(p => p with
-            {
-                Tip = tip,
-                Tips = PreserveMaterialBrushTips(p)
-            });
-        }, (g, name) =>
-        {
-            if (g.Validate().Count > 0) return;
-            SaveNodeGraphAsNewBrushPreset(g, name);
-        });
-        editor.Show(this);
     }
 
     private void SaveNodeGraphAsNewBrushPreset(BrushTipNodeGraph graph, string name)
@@ -1836,14 +1808,12 @@ public partial class MainWindow : Window
         {
             ProceduralBrushTip proc => proc.Graph.DeepClone(),
             NodeBrushTip node => node.Graph.DeepClone(),
+            ImageBrushTip img => BrushTipNodeGraph.FromImageTip(img.GetPngBytes()),
             _ => BrushTipNodeGraph.FromProceduralShape(BrushTipShape.Circle)
         };
 
     private static IReadOnlyList<BrushTipData> PreserveMaterialBrushTips(BrushPreset preset)
-        => preset.Tips
-            .Where(t => t.Kind == BrushTipStorageKind.EmbeddedPng)
-            .Select(t => t.DeepClone())
-            .ToList();
+        => BrushMaterialTips.PreserveForPreset(preset);
 
     private void SaveActiveBrush()
     {
@@ -1883,13 +1853,15 @@ public partial class MainWindow : Window
             Kind = BrushTipStorageKind.EmbeddedPng,
             PngBytes = memory.ToArray()
         };
-        _activeBrushAsset.Tip = tip;
-        _activeBrushAsset.Preset = CurrentBrushFromUi() with { Tip = tip.CreateTip() };
-        _dirtyBrushAssetIds.Add(_activeBrushAsset.Id);
-        ScheduleBrushPresetAutosave();
-        ApplyBrushSettings(_activeBrushAsset.ToPreset(), syncSliders: false);
+        var current = CurrentBrushFromUi();
+        var updated = current with
+        {
+            Tip = new NodeBrushTip(BrushTipNodeGraph.FromImageTip(tip.PngBytes)),
+            Tips = [..current.Tips.Where(t => t.Kind == BrushTipStorageKind.EmbeddedPng).Select(t => t.DeepClone()), tip.DeepClone()]
+        };
+        UpdateCurrentBrush(_ => updated);
         RefreshGroupPresets();
-        _footerStatusText.Text = $"Embedded PNG tip in {_activeBrushAsset.Preset.Name}";
+        _footerStatusText.Text = $"Added PNG sampler to {updated.Name}";
     }
 
     private async System.Threading.Tasks.Task ImportAbrAsync()

@@ -18,6 +18,7 @@ public sealed class AngleDynamicsPopupWindow : Window
 
     private readonly Action<AngleSource> _onSourceChanged;
     private readonly Action<float> _onRandomChanged;
+    private bool _syncing;
 
     public AngleDynamicsPopupWindow(
         AngleSource currentSource,
@@ -54,8 +55,9 @@ public sealed class AngleDynamicsPopupWindow : Window
         };
         _sourceCombo.SelectionChanged += (_, _) =>
         {
-            if (_sourceCombo.SelectedIndex >= 0)
-                _onSourceChanged((AngleSource)_sourceCombo.SelectedIndex);
+            if (_syncing || _sourceCombo.SelectedIndex < 0)
+                return;
+            _onSourceChanged((AngleSource)_sourceCombo.SelectedIndex);
         };
 
         var jitterLbl = new TextBlock
@@ -78,11 +80,10 @@ public sealed class AngleDynamicsPopupWindow : Window
         _randomSlider = new Slider { Minimum = 0, Maximum = 1, Value = currentRandom, Height = 26, MinHeight = 22 };
         _randomSlider.PropertyChanged += (_, e) =>
         {
-            if (e.Property == Slider.ValueProperty)
-            {
-                _randomVal.Text = $"{_randomSlider.Value * 100:0}%";
-                _onRandomChanged((float)_randomSlider.Value);
-            }
+            if (_syncing || e.Property != Slider.ValueProperty)
+                return;
+            _randomVal.Text = $"{_randomSlider.Value * 100:0}%";
+            _onRandomChanged((float)_randomSlider.Value);
         };
 
         var jitterHeader = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 2) };
@@ -108,8 +109,10 @@ public sealed class AngleDynamicsPopupWindow : Window
 
     public void SyncState(AngleSource source, float random)
     {
+        _syncing = true;
         _sourceCombo.SelectedIndex = (int)source;
         _randomSlider.Value = random;
         _randomVal.Text = $"{random * 100:0}%";
+        _syncing = false;
     }
 }

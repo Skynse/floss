@@ -1257,8 +1257,8 @@ public sealed class DrawingCanvas : Control, IDisposable
         var tip = _brush.Tip;
 
         SKBitmap? tipBitmap = null;
-        if (tip is ImageBrushTip img)
-            tipBitmap = GetOrBuildCursorOutline(img);
+        if (tip is ImageBrushTip or NodeBrushTip { IsDirectImageSampler: true })
+            tipBitmap = GetOrBuildCursorOutline(tip);
 
         var angle = ComputeLiveCursorAngle();
         _cursorAngle = angle;
@@ -1270,16 +1270,16 @@ public sealed class DrawingCanvas : Control, IDisposable
             angle));
     }
 
-    private SKBitmap GetOrBuildCursorOutline(ImageBrushTip img)
+    private SKBitmap GetOrBuildCursorOutline(IBrushTip tip)
     {
-        if (ReferenceEquals(_cursorOutlineCache.Tip, img) && _cursorOutlineCache.Outline != null)
+        if (ReferenceEquals(_cursorOutlineCache.Tip, tip) && _cursorOutlineCache.Outline != null)
             return _cursorOutlineCache.Outline;
 
         _cursorOutlineCache.Outline?.Dispose();
         // Always use 256 so GenerateMask hits the brush engine's existing cache entry
         // regardless of current cursor radius, avoiding a cache miss on every slider tick.
-        var outline = OutlineBitmapFromMask(img.GenerateMask(256, 1.0f));
-        _cursorOutlineCache = (img, outline);
+        var outline = OutlineBitmapFromMask(tip.GenerateMask(256, 1.0f));
+        _cursorOutlineCache = (tip, outline);
         return outline;
     }
 

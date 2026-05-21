@@ -70,6 +70,7 @@ internal static class Program
         ("SensorConfig maps raw stroke values", BrushTests.SensorConfig_RawValuesAreNormalized),
         ("CurveOption combines sensors and clones deeply", BrushTests.CurveOption_ComputesAndClones),
         ("BrushDynamics serializes and handles invalid JSON", BrushTests.BrushDynamics_SerializesAndFallsBack),
+        ("Brush parameter graphs evaluate live stroke inputs", BrushTests.BrushParameterGraph_EvaluatesStrokeInputs),
         ("BrushPreset legacy dynamics bridge preserves settings", BrushTests.BrushPreset_LegacyDynamicsBridge),
         ("Brush engine reuses masks during large strokes", BrushTests.BrushEngine_ReusesMasksDuringLargeStrokes),
         ("Brush engine treats color mix as a master switch", BrushTests.BrushEngine_ColorMixOffIgnoresWetPaintFields),
@@ -81,6 +82,7 @@ internal static class Program
         ("Brush engine multi-tips use cached tile-major path", BrushTests.BrushEngine_MultiTipsUseCachedTileMajorPath),
         ("Brush engine single mode ignores material tip list", BrushTests.BrushEngine_SingleModeIgnoresMaterialTipList),
         ("Brush engine color image tips use cached tile-major path", BrushTests.BrushEngine_ColorImageTipsUseCachedTileMajorPath),
+        ("Brush engine dab cache survives batched unique stamps", BrushTests.BrushEngine_DabCacheSurvivesBatchedUniqueStamps),
         ("Brush engine batched segments match sequential dry stroke", BrushTests.BrushEngine_BatchedSegmentsMatchSequentialDryStroke),
         ("Brush engine color mix uses cached tile-major path", BrushTests.BrushEngine_ColorMixUsesCachedTileMajorPath),
         ("Direct draw splits fast long brush segments before rendering", BrushTests.DirectDraw_SplitsFastLongBrushSegments),
@@ -105,6 +107,9 @@ internal static class Program
         ("Node brush tips evaluate deterministic graphs", BrushTests.NodeBrushTip_EvaluatesDeterministicGraph),
         ("Node brush tips compose procedural primitives", BrushTests.NodeBrushTip_ComposesProceduralPrimitives),
         ("Node brush tips support coordinate warping", BrushTests.NodeBrushTip_SupportsCoordinateWarping),
+        ("Node brush tips sample embedded image tips", BrushTests.NodeBrushTip_SamplesEmbeddedImageTip),
+        ("Brush material tips resolve active embedded image tips", BrushTests.BrushMaterialTips_ResolveActiveEmbeddedTip),
+        ("Node brush tips evaluate color with procedural output", BrushTests.NodeBrushTip_EvaluateColorWithProceduralOutput),
         ("Image brush tips with color paint as colored stamps", BrushTests.ImageBrushTip_ColorStampPreservesColor),
         ("ABR preset mapping keeps usable brush dynamics", BrushTests.AbrPresetMapping_KeepsDynamics),
         ("ABR mask cleanup inverts dark-on-light stamps", BrushTests.AbrMaskCleanup_InvertsDarkOnLightMasks),
@@ -379,7 +384,8 @@ internal static class PresetStoreTests
             AssertEx.True(loaded.Preset.FlipVertical);
             AssertEx.Equal(1, loaded.Preset.Tips.Count);
             AssertEx.Equal(materialTip.PngBytes.Length, loaded.Preset.Tips[0].PngBytes.Length);
-            AssertEx.True(loaded.Preset.Tip is ImageBrushTip);
+            AssertEx.True(loaded.Preset.Tip is NodeBrushTip nodeTip && nodeTip.IsDirectImageSampler,
+                "Persisted PNG tips should restore as graph-backed image sampler tips.");
             AssertEx.True(loaded.Preset.Shape is { Shape: BrushTipShape.Ellipse, AspectRatio: 0.5f });
             AssertEx.True(loaded.Preset.Dynamics.Size.IsEnabled);
             AssertEx.True(loaded.Preset.Dynamics.Rotation.IsEnabled);
@@ -608,7 +614,8 @@ internal static class PresetStoreTests
             BrushFileFormat.Save(path, asset);
             var loaded = BrushFileFormat.Load(path);
 
-            AssertEx.True(loaded.Preset.Tip is ImageBrushTip);
+            AssertEx.True(loaded.Preset.Tip is NodeBrushTip nodeTip && nodeTip.IsDirectImageSampler,
+                "Material PNG tips should restore as graph-backed image sampler tips.");
             AssertEx.Near(0.57, loaded.Preset.TipDensity);
             AssertEx.Near(0.33, loaded.Preset.TipThickness);
             AssertEx.Equal(BrushTipDirection.Vertical, loaded.Preset.TipDirection);
@@ -775,13 +782,16 @@ internal static class PresetStoreTests
         AssertEx.True(restored.Dynamics.Opacity.IsEnabled);
         AssertEx.True(restored.Dynamics.Rotation.IsEnabled);
 
-        // These fields are NOT captured by CaptureFromBrushPreset; they come from the base preset
+        // Tool identity and paint color stay on the base preset/default.
         AssertEx.Near(0, restored.Angle, 0.0001, "Angle should NOT be captured by ToolPreset");
         AssertEx.Equal(BrushDynamics.AngleSource.None, restored.BaseAngleSource, "BaseAngleSource should NOT be captured");
         AssertEx.Near(0, restored.AngleJitter, 0.0001, "AngleJitter should NOT be captured");
-        AssertEx.True(restored.Tip is not ImageBrushTip, "Tip should NOT be captured (comes from base preset)");
-        AssertEx.True(restored.Shape is null, "Shape should NOT be captured (comes from base preset)");
         AssertEx.Equal(Color.Parse("#000000"), restored.Color, "Color should NOT be captured");
+
+        // Tip/shape are runtime brush state now so graph and image sampler edits survive restart without overwriting the asset default.
+        AssertEx.True(restored.Tip is NodeBrushTip nodeTip && nodeTip.IsDirectImageSampler,
+            "Captured image tips should restore through graph-backed image samplers.");
+        AssertEx.True(restored.Shape is { Shape: BrushTipShape.Ellipse, AspectRatio: 0.5f });
     }
 
     public static void BrushPresetOverride_Isolation()
@@ -826,13 +836,14 @@ internal static class PresetStoreTests
         AssertEx.Near(15, restored.Size);
         AssertEx.Near(0.9, restored.Opacity);
 
-        // NOT captured — these come from the base
+        // Identity/angle still come from the base.
         AssertEx.Equal("Default", restored.Name);
         AssertEx.Near(0, restored.Angle, 0.0001, "Angle should NOT be captured");
         AssertEx.Equal(BrushDynamics.AngleSource.None, restored.BaseAngleSource);
         AssertEx.Near(0, restored.AngleJitter, 0.0001);
-        AssertEx.True(restored.Tip is ProceduralBrushTip, "Tip should come from base");
-        AssertEx.True(restored.Shape is null, "Shape should come from base");
+        AssertEx.True(restored.Tip is NodeBrushTip, "Tip graph should be captured as runtime brush state");
+        AssertEx.True(restored.Shape is { Shape: BrushTipShape.Rectangle, AspectRatio: 1.5f },
+            "Shape should be captured as runtime brush state");
     }
 
     public static void BrushPresetOverride_ClearBrushOverrides()
@@ -884,6 +895,33 @@ internal static class PresetStoreTests
         AssertEx.True(preset.BrushTipDirection is null);
         AssertEx.True(preset.BrushBlendMode is null);
         AssertEx.True(preset.BrushDynamicsJson is null);
+        AssertEx.True(preset.BrushTipOverride is null);
+        AssertEx.True(preset.BrushTipsOverride is null);
+        AssertEx.True(preset.BrushShapeOverride is null);
+        AssertEx.True(!preset.BrushShapeOverrideSet);
+        AssertEx.True(preset.BrushParameterGraphsOverride is null);
+    }
+
+    public static void BrushPresetOverride_CapturesNullShape()
+    {
+        var graphTip = new NodeBrushTip(BrushTipNodeGraph.FromProceduralShape(BrushTipShape.Chalk));
+        var fullPreset = new BrushPreset("Graph", 12, 1, 1, 0.5, Color.Parse("#112233"), 0)
+        {
+            Tip = graphTip,
+            Shape = null
+        };
+
+        var preset = new ToolPreset();
+        preset.CaptureFromBrushPreset(fullPreset);
+
+        var differentBase = new BrushPreset("Default", 1, 1, 1, 1, Color.Parse("#000000"), 0)
+        {
+            Shape = new ProceduralBrushTip(BrushTipShape.Rectangle, 1.0f)
+        };
+        var restored = preset.ApplyToBrushPreset(differentBase);
+
+        AssertEx.True(preset.BrushShapeOverrideSet, "Captured null shape must be an explicit override");
+        AssertEx.True(restored.Shape is null, "Graph/image brush state should not inherit the base procedural shape");
     }
 }
 
@@ -1292,6 +1330,28 @@ internal static class BrushTests
         AssertEx.Equal(1.0f, BrushDynamics.Deserialize("{bad json").EvalSize(StrokePoint()));
     }
 
+    public static void BrushParameterGraph_EvaluatesStrokeInputs()
+    {
+        var graph = new BrushParameterGraph
+        {
+            Target = BrushParameterTarget.Size,
+            OutputNodeId = "output",
+            Nodes =
+            [
+                new BrushParameterNode { Id = "pressure", Kind = BrushParameterNodeKind.Pressure, Min = 0.2f, Max = 1.0f, Strength = 1f },
+                new BrushParameterNode { Id = "speed", Kind = BrushParameterNodeKind.Velocity, Min = 1.0f, Max = 0.5f, Strength = 1f },
+                new BrushParameterNode { Id = "mul", Kind = BrushParameterNodeKind.Multiply, Inputs = ["pressure", "speed"] },
+                new BrushParameterNode { Id = "output", Kind = BrushParameterNodeKind.Output, Inputs = ["mul"] }
+            ]
+        };
+        var slow = StrokePoint(pressure: 1f, speed: 0f);
+        var fast = StrokePoint(pressure: 1f, speed: 1f);
+
+        AssertEx.True(graph.Validate().Count == 0);
+        AssertEx.Near(1.0, graph.Evaluate(slow), 0.001);
+        AssertEx.Near(0.5, graph.Evaluate(fast), 0.001);
+    }
+
     public static void BrushPreset_LegacyDynamicsBridge()
     {
         var preset = new BrushPreset("Test", 10, 1, 1, 1, Colors.Black, 0)
@@ -1554,6 +1614,41 @@ internal static class BrushTests
         layer.Pixels.GetPixel(240, 128, out var b, out var g, out var r, out var a);
         AssertEx.True(a > 0, "Colored image tip should deposit alpha.");
         AssertEx.True(r > 180 && g < 80 && b < 80, $"Colored image tip should preserve red pixels, got BGRA=({b},{g},{r},{a}).");
+    }
+
+    public static void BrushEngine_DabCacheSurvivesBatchedUniqueStamps()
+    {
+        using var engine = new BrushEngine();
+        using var layer = new DrawingLayer("Layer", 1024, 512);
+        var brush = new BrushPreset("Cache stress", 48, 1, 1, 0.008, Colors.Black, 0)
+        {
+            Tip = new ImageBrushTip(ColoredTipPngBytes(SKColors.Red)),
+            Shape = null,
+            ColorMix = false,
+            Grain = 0,
+            SizeDynamics = new ParameterDynamics { PressureEnabled = true },
+            Dynamics = new BrushDynamics()
+        };
+
+        var samples = new List<CanvasInputSample>(130);
+        for (var i = 0; i < 130; i++)
+        {
+            var pressure = 0.08 + (i % 90) * 0.01;
+            samples.Add(SampleWithPressure(20 + i * 6.0, 256, i * 4_000L, pressure));
+        }
+
+        engine.BeginStroke(brush, samples[0]);
+        var dirty = engine.RasterizeSegments(layer, brush, samples, 1, samples.Count - 1);
+
+        AssertEx.False(dirty.IsEmpty);
+        AssertEx.Equal("CachedColorTileMajor", engine.LastStats.Path);
+        AssertEx.True(engine.LastStats.StampCount > 40,
+            $"Expected many unique stamps in one batch, got {engine.LastStats.StampCount}.");
+        AssertEx.True(engine.LastStats.CachedDabCount > 32,
+            "Batch should exceed color dab cache capacity within one tile-major pass.");
+        layer.Pixels.GetPixel(400, 256, out _, out _, out var r, out var a);
+        AssertEx.True(a > 0, "Stressed dab cache pass should still deposit pixels.");
+        AssertEx.True(r > 100, $"Expected red paint after cache stress, got alpha={a}, red={r}.");
     }
 
     public static void BrushEngine_BatchedSegmentsMatchSequentialDryStroke()
@@ -2157,6 +2252,54 @@ internal static class BrushTests
 
         AssertEx.True(warpedGraph.Validate().Count == 0, "Coordinate-warp graph should validate.");
         AssertEx.True(!AlphaBytes(plain).SequenceEqual(AlphaBytes(warped)), "Warped coordinate graph should produce a different mask than the unwarped field.");
+    }
+
+    public static void NodeBrushTip_SamplesEmbeddedImageTip()
+    {
+        var png = ColoredTipPngBytes(SKColors.Black);
+        var image = new ImageBrushTip(png).GenerateMask(48, 0.9f);
+        var graph = BrushTipNodeGraph.FromImageTip(png);
+        var node = new NodeBrushTip(graph).GenerateMask(48, 0.9f);
+
+        AssertEx.True(graph.Validate().Count == 0, "Image sampler graph should validate.");
+        AssertEx.SequenceEqual(AlphaBytes(image), AlphaBytes(node));
+        AssertEx.True(graph.TryGetDirectImageSampler(out var restored));
+        AssertEx.Equal(png.Length, restored.Length);
+    }
+
+    public static void BrushMaterialTips_ResolveActiveEmbeddedTip()
+    {
+        var png = ColoredTipPngBytes(SKColors.Red);
+        var preset = new BrushPreset("Imported", 32, 1, 1, 0.1, Colors.Black, 0)
+        {
+            Tip = new NodeBrushTip(BrushTipNodeGraph.FromImageTip(png)),
+            Tips = []
+        };
+
+        var options = ImageSamplerOptions.FromTips(BrushMaterialTips.ForPreset(preset));
+        AssertEx.Equal(1, options.Count);
+        AssertEx.True(ImageSamplerOptions.SameBytes(png, options[0].Tip.PngBytes));
+    }
+
+    public static void NodeBrushTip_EvaluateColorWithProceduralOutput()
+    {
+        var graph = new BrushTipNodeGraph();
+        graph.Nodes.Add(new BrushTipNode
+        {
+            Id = "tip-image",
+            Kind = BrushTipNodeKind.ImageSampler,
+            PngBytes = ColoredTipPngBytes(SKColors.Red)
+        });
+
+        using var tip = new NodeBrushTip(graph);
+        AssertEx.True(BrushTipNodeGraphEvaluator.GraphUsesColor(graph));
+        AssertEx.True(tip.HasColor);
+        AssertEx.False(tip.IsDirectImageSampler, "Procedural output should not take the direct-image fast path.");
+
+        using var stamp = tip.GenerateColorStamp(48);
+        AssertEx.True(stamp != null, "Color evaluation should not crash and must return a bitmap.");
+        AssertEx.Equal(48, stamp!.Width);
+        AssertEx.Equal(48, stamp.Height);
     }
 
     public static void ImageBrushTip_ColorStampPreservesColor()

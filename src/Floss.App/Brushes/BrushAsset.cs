@@ -23,7 +23,7 @@ public sealed class BrushTipData
     public IBrushTip CreateTip() => Kind switch
     {
         BrushTipStorageKind.EmbeddedPng when PngBytes.Length > 0
-            => new ImageBrushTip(PngBytes),
+            => new NodeBrushTip(BrushTipNodeGraph.FromImageTip(PngBytes)),
         BrushTipStorageKind.NodeGraph when NodeGraph != null
             => new NodeBrushTip(NodeGraph),
         _ => new ProceduralBrushTip(Shape, AspectRatio)
@@ -35,6 +35,11 @@ public sealed class BrushTipData
         {
             Kind = BrushTipStorageKind.EmbeddedPng,
             PngBytes = img.GetPngBytes()
+        },
+        NodeBrushTip node when node.Graph.TryGetDirectImageSampler(out var pngBytes) => new BrushTipData
+        {
+            Kind = BrushTipStorageKind.EmbeddedPng,
+            PngBytes = pngBytes
         },
         ProceduralBrushTip proc => new BrushTipData
         {

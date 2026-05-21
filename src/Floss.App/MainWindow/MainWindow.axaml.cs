@@ -510,7 +510,12 @@ public partial class MainWindow : Window, Tools.IViewportController
         Closing += MainWindow_Closing;
         Deactivated += (_, _) => ResetTransientInputState();
         LostFocus += (_, _) => ResetTransientInputState();
-        Loaded += (_, _) => { UpdateTabBar(); SyncCanvasViewport(); };
+        Loaded += (_, _) =>
+        {
+            UpdateTabBar();
+            SyncCanvasViewport();
+            SetNodeGraphDockVisible(App.Config.ShowNodeGraphDock, reload: false);
+        };
     }
 
     // ── Root layout ───────────────────────────────────────────────────────────
@@ -592,6 +597,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         centerArea.Children.Add(statusBar);
         centerArea.Children.Add(_workspaceViewport);
         centerArea.Children.Add(footer);
+        AttachNodeGraphDockToCenter(centerArea);
 
         _dockerRows.Clear();
         _dockerSections.Clear();
@@ -615,6 +621,7 @@ public partial class MainWindow : Window, Tools.IViewportController
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
             Background = new SolidColorBrush(Color.Parse(Bg0))
         };
+        leftSplitter.DragCompleted += (_, _) => PersistWorkspaceLayout();
         var rightSplitter = new GridSplitter
         {
             Width = 3,
@@ -622,6 +629,7 @@ public partial class MainWindow : Window, Tools.IViewportController
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
             Background = new SolidColorBrush(Color.Parse(Bg0))
         };
+        rightSplitter.DragCompleted += (_, _) => PersistWorkspaceLayout();
 
         Grid.SetColumn(leftRail, 0);
         Grid.SetColumn(leftSplitter, 1);
@@ -1168,6 +1176,7 @@ public partial class MainWindow : Window, Tools.IViewportController
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
             Background = new SolidColorBrush(Color.Parse(Stroke))
         };
+        splitter.DragCompleted += (_, _) => PersistWorkspaceLayout();
 
         var grid = new Grid { ClipToBounds = true };
         _dockerHostGrid = grid;
@@ -1233,6 +1242,7 @@ public partial class MainWindow : Window, Tools.IViewportController
                 ResizeDirection = GridResizeDirection.Rows,
                 Background = new SolidColorBrush(Color.Parse(Stroke))
             };
+            splitter.DragCompleted += (_, _) => PersistWorkspaceLayout();
             Grid.SetRow(splitter, grid.RowDefinitions.Count - 1);
             grid.Children.Add(splitter);
         }
@@ -2008,10 +2018,21 @@ public partial class MainWindow : Window, Tools.IViewportController
         }
 
         foreach (var (id, row) in _dockerRows)
-            layout.PanelHeights[id] = Math.Max(40, row.ActualHeight > 0 ? row.ActualHeight : row.Height.Value);
+        {
+            var height = row.ActualHeight > 0
+                ? row.ActualHeight
+                : row.Height.IsAbsolute ? row.Height.Value : row.Height.Value;
+            layout.PanelHeights[id] = Math.Max(40, height);
+        }
 
         foreach (var id in _floatingDockers.Keys.ToArray())
             SaveFloatingDockerBounds(id);
+    }
+
+    private void PersistWorkspaceLayout()
+    {
+        SaveWorkspaceLayoutFromUi();
+        App.Config.Save();
     }
 
     private MenuItem BuildWorkspaceMenu()
@@ -2100,7 +2121,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         RebuildDockers();
         OpenFloatingDockersFromConfig();
         RefreshWorkspaceLoadMenu();
-        App.Config.Save();
+        PersistWorkspaceLayout();
     }
 
     private async System.Threading.Tasks.Task<string?> PromptForWorkspacePresetName()
@@ -2247,15 +2268,14 @@ public partial class MainWindow : Window, Tools.IViewportController
 
     private void SaveToConfig()
     {
+        FlushLayoutToConfig();
+        App.ToolGroups.Save();
+    }
+
+    internal void FlushLayoutToConfig()
+    {
         FlushBrushPresetAutosave();
         CaptureActiveBrushToPreset();
-
-        // Persist brush asset so curve edits, slider changes, etc. survive restart
-        if (_activeBrushAsset != null)
-        {
-            _activeBrushAsset.WithPreset(CurrentBrushFromUi());
-            _brushLibrary.Save(_activeBrushAsset);
-        }
 
         // Save any other brush assets that were modified while not active
         foreach (var assetId in _dirtyBrushAssetIds.ToList())
@@ -2277,7 +2297,6 @@ public partial class MainWindow : Window, Tools.IViewportController
         cfg.LastColor = $"#{c.R:X2}{c.G:X2}{c.B:X2}";
         cfg.LastBrushName = _activePreset?.Name ?? "";
         cfg.Save();
-        App.ToolGroups.Save();
     }
 
     private async void MainWindow_Closing(object? sender, WindowClosingEventArgs e)
@@ -2428,8 +2447,16 @@ public partial class MainWindow : Window, Tools.IViewportController
                 _strokePreview.Brush = overridden;
                 if (_toolPropsWindow?.CanSyncToolPreset(preset) == true)
                 {
-                    _toolPropsWindow.SyncFromToolPreset(preset);
-                    _toolPropsWindow.SyncFromPreset(overridden);
+                    _syncingToolPropertyPanel = true;
+                    try
+                    {
+                        _toolPropsWindow.SyncFromToolPreset(preset);
+                        _toolPropsWindow.SyncFromPreset(overridden);
+                    }
+                    finally
+                    {
+                        _syncingToolPropertyPanel = false;
+                    }
                 }
                 _syncingBrushUi = true;
                 _sizeSlider.Value = Math.Clamp(overridden.Size, _sizeSlider.Minimum, _sizeSlider.Maximum);
@@ -2453,8 +2480,16 @@ public partial class MainWindow : Window, Tools.IViewportController
                 _strokePreview.Brush = overridden;
                 if (_toolPropsWindow?.CanSyncToolPreset(preset) == true)
                 {
-                    _toolPropsWindow.SyncFromToolPreset(preset);
-                    _toolPropsWindow.SyncFromPreset(overridden);
+                    _syncingToolPropertyPanel = true;
+                    try
+                    {
+                        _toolPropsWindow.SyncFromToolPreset(preset);
+                        _toolPropsWindow.SyncFromPreset(overridden);
+                    }
+                    finally
+                    {
+                        _syncingToolPropertyPanel = false;
+                    }
                 }
             }
         }
@@ -2473,6 +2508,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         App.ToolGroups.Save();
         SaveActiveToolSelection();
         RefreshToolProperties();
+        SyncNodeGraphDockToActiveBrush();
     }
 
     private void CaptureActiveBrushToPreset()

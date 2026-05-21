@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using SkiaSharp;
 
@@ -23,6 +24,7 @@ public enum BrushTipNodeKind
     RoundedRectangle,
     LinearGradient,
     Stripe,
+    ImageSampler,
     Noise,
     Bristle,
     Add,
@@ -57,6 +59,7 @@ public sealed class BrushTipNode
     public float Scale { get; set; } = 1.0f;
     public float Threshold { get; set; } = 0.5f;
     public int Seed { get; set; } = 1;
+    public byte[] PngBytes { get; set; } = [];
 
     public BrushTipNode DeepClone() => new()
     {
@@ -74,7 +77,8 @@ public sealed class BrushTipNode
         Density = Density,
         Scale = Scale,
         Threshold = Threshold,
-        Seed = Seed
+        Seed = Seed,
+        PngBytes = PngBytes.ToArray()
     };
 }
 
@@ -175,7 +179,8 @@ public sealed class BrushTipNodeGraph
                 .Append(':').Append(F(node.Density))
                 .Append(':').Append(F(node.Scale))
                 .Append(':').Append(F(node.Threshold))
-                .Append(':').Append(node.Seed);
+                .Append(':').Append(node.Seed)
+                .Append(':').Append(node.PngBytes.Length == 0 ? "" : Convert.ToHexString(SHA256.HashData(node.PngBytes)));
         }
         return sb.ToString();
 
@@ -315,29 +320,102 @@ public sealed class BrushTipNodeGraph
             };
     }
 
+    public static BrushTipNodeGraph FromImageTip(byte[] pngBytes)
+        => new()
+        {
+            BuiltInShape = null,
+            BuiltInAspectRatio = 1.0f,
+            OutputNodeId = "output",
+            Nodes =
+            [
+                new BrushTipNode
+                {
+                    Id = "image",
+                    Kind = BrushTipNodeKind.ImageSampler,
+                    PngBytes = pngBytes.ToArray(),
+                    Opacity = 1.0f
+                },
+                new BrushTipNode { Id = "output", Kind = BrushTipNodeKind.Output, Inputs = ["image"] }
+            ]
+        };
+
+    public bool TryGetDirectImageSampler(out byte[] pngBytes)
+    {
+        pngBytes = [];
+        var output = Nodes.FirstOrDefault(n => n.Id == OutputNodeId);
+        if (output == null)
+            return false;
+
+        BrushTipNode? image = null;
+        if (output.Kind == BrushTipNodeKind.ImageSampler)
+            image = output;
+        else if (output.Kind == BrushTipNodeKind.Output && output.Inputs.Count > 0)
+            image = Nodes.FirstOrDefault(n => n.Id == output.Inputs[0] && n.Kind == BrushTipNodeKind.ImageSampler);
+
+        if (image is not { PngBytes.Length: > 0 })
+            return false;
+        pngBytes = image.PngBytes.ToArray();
+        return true;
+    }
+
     public ProceduralBrushTip? ToBuiltInProceduralTip()
         => BuiltInShape.HasValue
             ? new ProceduralBrushTip(this)
             : null;
 }
 
-public sealed class NodeBrushTip : IBrushTip
+public sealed class NodeBrushTip : IBrushTip, IDisposable
 {
     private readonly object _cacheLock = new();
     private readonly Dictionary<(int Size, int Hardness, string Graph), SKBitmap> _maskCache = [];
+    private readonly Lazy<ImageBrushTip?> _directImageTip;
+    private readonly string _graphCacheKey;
 
     public NodeBrushTip(BrushTipNodeGraph graph)
     {
         Graph = graph.Validate().Count == 0 ? graph.DeepClone() : new BrushTipNodeGraph();
+        _graphCacheKey = Graph.CacheKey();
+        _directImageTip = new Lazy<ImageBrushTip?>(() =>
+            Graph.TryGetDirectImageSampler(out var bytes) ? new ImageBrushTip(bytes) : null);
     }
 
     public BrushTipNodeGraph Graph { get; }
 
+    public bool IsDirectImageSampler => _directImageTip.Value != null;
+
+    public bool HasColor => _directImageTip.Value?.HasColor
+        ?? BrushTipNodeGraphEvaluator.GraphUsesColor(Graph);
+
+    public SKBitmap? GenerateColorStamp(int baseSize)
+    {
+        if (!HasColor)
+            return null;
+        if (_directImageTip.Value is { } direct)
+            return direct.GenerateColorStamp(baseSize);
+        return BrushTipNodeGraphEvaluator.EvaluateColor(Graph, baseSize, 1.0f);
+    }
+
+    public void Dispose()
+    {
+        lock (_cacheLock)
+        {
+            foreach (var mask in _maskCache.Values)
+                mask.Dispose();
+            _maskCache.Clear();
+        }
+
+        if (_directImageTip.IsValueCreated)
+            _directImageTip.Value?.Dispose();
+    }
+
     public SKBitmap GenerateMask(int baseSize, float hardness)
     {
+        if (_directImageTip.Value is { } imageTip)
+            return imageTip.GenerateMask(baseSize, hardness);
+
         var size = Math.Max(1, baseSize);
         var h = Math.Clamp(hardness, 0.001f, 1.0f);
-        var key = (size, QuantizeHardness(h), Graph.CacheKey());
+        var key = (size, QuantizeHardness(h), _graphCacheKey);
 
         lock (_cacheLock)
             if (_maskCache.TryGetValue(key, out var cached))
@@ -404,6 +482,7 @@ public static class BrushTipNodeGraphEvaluator
                 BrushTipNodeKind.Rectangle => Scalar(Rectangle(node)),
                 BrushTipNodeKind.LinearGradient => Scalar(LinearGradient(node, stack)),
                 BrushTipNodeKind.Stripe => Scalar(Stripe(node, stack)),
+                BrushTipNodeKind.ImageSampler => Scalar(ImageSampler(node)),
                 BrushTipNodeKind.Noise => Scalar(Noise(node, stack)),
                 BrushTipNodeKind.Bristle => Scalar(Bristle(node)),
                 BrushTipNodeKind.Add => Scalar(Combine(node, stack, (a, b) => Math.Clamp(a + b, 0f, 1f))),
@@ -695,6 +774,28 @@ public static class BrushTipNodeGraphEvaluator
             return result;
         }
 
+        float[] ImageSampler(BrushTipNode node)
+        {
+            var result = new float[size * size];
+            if (node.PngBytes.Length == 0)
+                return result;
+
+            using var tip = new ImageBrushTip(node.PngBytes);
+            var mask = tip.GenerateMask(size, CombinedHardness(node, brushHardness));
+            var opacity = Math.Clamp(node.Opacity, 0f, 1f);
+            var ptr = (byte*)mask.GetPixels().ToPointer();
+            if (ptr == null)
+                return result;
+
+            for (var y = 0; y < size; y++)
+            {
+                var row = ptr + y * mask.RowBytes;
+                for (var x = 0; x < size; x++)
+                    result[y * size + x] = row[x] / 255f * opacity;
+            }
+            return result;
+        }
+
         float[] PolarRadius(BrushTipNode node, HashSet<string> stack)
         {
             var (coordX, coordY) = EvalVectorInputOrCoordinates(node, 0, stack);
@@ -848,4 +949,318 @@ public static class BrushTipNodeGraphEvaluator
 
     private static SKBitmap NewAlpha8(int size)
         => new(new SKImageInfo(size, size, SKColorType.Alpha8, SKAlphaType.Unpremul));
+
+    public static bool GraphUsesColor(BrushTipNodeGraph graph)
+    {
+        foreach (var node in graph.Nodes)
+        {
+            if (node.Kind != BrushTipNodeKind.ImageSampler || node.PngBytes.Length == 0)
+                continue;
+            using var tip = new ImageBrushTip(node.PngBytes);
+            if (tip.HasColor)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Evaluates the graph to an RGBA stamp when any ImageSampler carries color data.
+    /// Grayscale samplers contribute white RGB weighted by mask alpha; combine nodes blend color and alpha.
+    /// </summary>
+    public static SKBitmap? EvaluateColor(BrushTipNodeGraph graph, int size, float brushHardness)
+    {
+        if (!GraphUsesColor(graph))
+            return null;
+
+        size = Math.Max(1, size);
+        var nodes = graph.Nodes.ToDictionary(n => n.Id, StringComparer.Ordinal);
+        var cache = new Dictionary<string, ColorField>(StringComparer.Ordinal);
+        var outputId = nodes.ContainsKey(graph.OutputNodeId) ? graph.OutputNodeId : graph.Nodes.FirstOrDefault()?.Id;
+        if (outputId == null)
+            return null;
+
+        var field = EvalColor(outputId, []);
+        var bitmap = new SKBitmap(new SKImageInfo(size, size, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+        unsafe
+        {
+            var ptr = (byte*)bitmap.GetPixels().ToPointer();
+            if (ptr == null)
+                return bitmap;
+            for (var i = 0; i < field.A.Length; i++)
+            {
+                var a = (byte)(Math.Clamp(field.A[i], 0f, 1f) * 255f + 0.5f);
+                var o = i * 4;
+                ptr[o + 0] = (byte)(Math.Clamp(field.B[i], 0f, 1f) * 255f + 0.5f);
+                ptr[o + 1] = (byte)(Math.Clamp(field.G[i], 0f, 1f) * 255f + 0.5f);
+                ptr[o + 2] = (byte)(Math.Clamp(field.R[i], 0f, 1f) * 255f + 0.5f);
+                ptr[o + 3] = a;
+            }
+        }
+        return bitmap;
+
+        ColorField EvalColor(string id, HashSet<string> stack)
+        {
+            if (cache.TryGetValue(id, out var existing))
+                return existing;
+            if (!nodes.TryGetValue(id, out var node) || !stack.Add(id))
+                return ColorField.Zero(size);
+
+            var result = node.Kind switch
+            {
+                BrushTipNodeKind.Output => EvalColorInput(node, 0, stack),
+                BrushTipNodeKind.ImageSampler => ImageSamplerColor(node),
+                BrushTipNodeKind.Add => CombineColor(node, stack, (a, b) => Math.Clamp(a + b, 0f, 1f)),
+                BrushTipNodeKind.Multiply => CombineColor(node, stack, (a, b) => a * b),
+                BrushTipNodeKind.Max => CombineColor(node, stack, MathF.Max),
+                BrushTipNodeKind.Min => CombineColor(node, stack, MathF.Min),
+                BrushTipNodeKind.Subtract => CombineColor(node, stack, (a, b) => Math.Clamp(a - b, 0f, 1f)),
+                BrushTipNodeKind.Mix => MixColor(node, stack),
+                BrushTipNodeKind.Threshold => MaskColor(node, stack, v =>
+                    v >= Math.Clamp(node.Threshold, 0f, 1f) ? Math.Clamp(node.Opacity, 0f, 1f) : 0f),
+                BrushTipNodeKind.SmoothStep => SmoothStepColor(node, stack),
+                BrushTipNodeKind.Invert => InvertColor(node, stack),
+                BrushTipNodeKind.Power => UnaryColor(node, stack, v =>
+                    MathF.Pow(Math.Clamp(v, 0f, 1f), Math.Clamp(node.Scale, 0.05f, 16f)) * Math.Clamp(node.Opacity, 0f, 1f)),
+                BrushTipNodeKind.Sine => UnaryColor(node, stack, v =>
+                    (MathF.Sin((v * Math.Clamp(node.Scale, 0.05f, 64f) + node.X) * MathF.PI * 2f) * 0.5f + 0.5f)
+                    * Math.Clamp(node.Opacity, 0f, 1f)),
+                BrushTipNodeKind.Absolute => UnaryColor(node, stack, v =>
+                    Math.Abs(v - node.X) * Math.Clamp(node.Opacity, 0f, 1f)),
+                _ => FromScalar(EvalScalarNode(id, stack))
+            };
+            stack.Remove(id);
+            cache[id] = result;
+            return result;
+        }
+
+        float[] EvalScalarNode(string id, HashSet<string> stack)
+        {
+            if (!stack.Add(id))
+                return new float[size * size];
+            var temp = graph.DeepClone();
+            temp.OutputNodeId = id;
+            using var bmp = Evaluate(temp, size, brushHardness);
+            stack.Remove(id);
+            var result = new float[size * size];
+            unsafe
+            {
+                var ptr = (byte*)bmp.GetPixels().ToPointer();
+                if (ptr == null)
+                    return result;
+                for (var i = 0; i < result.Length; i++)
+                    result[i] = ptr[i] / 255f;
+            }
+            return result;
+        }
+
+        ColorField EvalColorInput(BrushTipNode node, int index, HashSet<string> stack)
+            => index < node.Inputs.Count && !string.IsNullOrEmpty(node.Inputs[index])
+                ? EvalColor(node.Inputs[index], stack)
+                : ColorField.Zero(size);
+
+        float[] EvalScalarInput(BrushTipNode node, int index, HashSet<string> stack)
+            => index < node.Inputs.Count && !string.IsNullOrEmpty(node.Inputs[index])
+                ? EvalScalarNode(node.Inputs[index], stack)
+                : new float[size * size];
+
+        ColorField FromScalar(float[] alpha)
+        {
+            var n = alpha.Length;
+            var r = new float[n];
+            var g = new float[n];
+            var b = new float[n];
+            Array.Fill(r, 1f);
+            Array.Fill(g, 1f);
+            Array.Fill(b, 1f);
+            return new ColorField(r, g, b, alpha, false);
+        }
+
+        ColorField ImageSamplerColor(BrushTipNode node)
+        {
+            var n = size * size;
+            var r = new float[n];
+            var g = new float[n];
+            var b = new float[n];
+            var a = new float[n];
+            if (node.PngBytes.Length == 0)
+                return new ColorField(r, g, b, a, false);
+
+            using var tip = new ImageBrushTip(node.PngBytes);
+            using var mask = tip.GenerateMask(size, CombinedHardness(node, brushHardness));
+            var opacity = Math.Clamp(node.Opacity, 0f, 1f);
+            var hasColor = tip.HasColor;
+            SKBitmap? stamp = hasColor ? tip.GenerateColorStamp(size) : null;
+            unsafe
+            {
+                var maskPtr = (byte*)mask.GetPixels().ToPointer();
+                byte* stampPtr = stamp != null ? (byte*)stamp.GetPixels().ToPointer() : null;
+                var maskRow = mask.RowBytes;
+                var stampRow = stamp?.RowBytes ?? 0;
+                for (var y = 0; y < size; y++)
+                {
+                    var maskRowPtr = maskPtr + y * maskRow;
+                    var stampRowPtr = stampPtr + y * stampRow;
+                    for (var x = 0; x < size; x++)
+                    {
+                        var i = y * size + x;
+                        var maskA = maskRowPtr[x] / 255f * opacity;
+                        a[i] = maskA;
+                        if (hasColor && stampPtr != null)
+                        {
+                            var o = x * 4;
+                            b[i] = stampRowPtr[o + 0] / 255f;
+                            g[i] = stampRowPtr[o + 1] / 255f;
+                            r[i] = stampRowPtr[o + 2] / 255f;
+                        }
+                        else
+                        {
+                            r[i] = g[i] = b[i] = 1f;
+                        }
+                    }
+                }
+            }
+            stamp?.Dispose();
+            return new ColorField(r, g, b, a, hasColor);
+        }
+
+        ColorField CombineColor(BrushTipNode node, HashSet<string> stack, Func<float, float, float> op)
+        {
+            var left = EvalColorInput(node, 0, stack);
+            var right = EvalColorInput(node, 1, stack);
+            var n = left.A.Length;
+            var r = new float[n];
+            var g = new float[n];
+            var b = new float[n];
+            var a = new float[n];
+            for (var i = 0; i < n; i++)
+            {
+                var la = left.A[i];
+                var ra = right.A[i];
+                a[i] = op(la, ra);
+                var denom = Math.Max(a[i], 0.0001f);
+                r[i] = Math.Clamp((left.R[i] * la + right.R[i] * ra) / denom, 0f, 1f);
+                g[i] = Math.Clamp((left.G[i] * la + right.G[i] * ra) / denom, 0f, 1f);
+                b[i] = Math.Clamp((left.B[i] * la + right.B[i] * ra) / denom, 0f, 1f);
+            }
+            return new ColorField(r, g, b, a, left.HasColor || right.HasColor);
+        }
+
+        ColorField MixColor(BrushTipNode node, HashSet<string> stack)
+        {
+            var left = EvalColorInput(node, 0, stack);
+            var right = EvalColorInput(node, 1, stack);
+            var t = Math.Clamp(node.Density, 0f, 1f);
+            var inv = 1f - t;
+            var n = left.A.Length;
+            var r = new float[n];
+            var g = new float[n];
+            var b = new float[n];
+            var a = new float[n];
+            for (var i = 0; i < n; i++)
+            {
+                r[i] = Math.Clamp(left.R[i] * inv + right.R[i] * t, 0f, 1f);
+                g[i] = Math.Clamp(left.G[i] * inv + right.G[i] * t, 0f, 1f);
+                b[i] = Math.Clamp(left.B[i] * inv + right.B[i] * t, 0f, 1f);
+                a[i] = Math.Clamp(left.A[i] * inv + right.A[i] * t, 0f, 1f);
+            }
+            return new ColorField(r, g, b, a, left.HasColor || right.HasColor);
+        }
+
+        ColorField MaskColor(BrushTipNode node, HashSet<string> stack, Func<float, float> maskAt)
+        {
+            var input = EvalColorInput(node, 0, stack);
+            var scalar = EvalScalarInput(node, 0, stack);
+            var n = input.A.Length;
+            var r = new float[n];
+            var g = new float[n];
+            var b = new float[n];
+            var a = new float[n];
+            for (var i = 0; i < n; i++)
+            {
+                var m = maskAt(scalar[i]);
+                r[i] = input.R[i] * m;
+                g[i] = input.G[i] * m;
+                b[i] = input.B[i] * m;
+                a[i] = input.A[i] * m;
+            }
+            return new ColorField(r, g, b, a, input.HasColor);
+        }
+
+        ColorField SmoothStepColor(BrushTipNode node, HashSet<string> stack)
+        {
+            var input = EvalColorInput(node, 0, stack);
+            var scalar = EvalScalarInput(node, 0, stack);
+            var edge = Math.Clamp(node.Threshold, 0f, 1f);
+            var softness = Math.Max(0.0001f, Math.Clamp(node.Hardness, 0.0001f, 1f));
+            var opacity = Math.Clamp(node.Opacity, 0f, 1f);
+            var n = input.A.Length;
+            var r = new float[n];
+            var g = new float[n];
+            var b = new float[n];
+            var a = new float[n];
+            for (var i = 0; i < n; i++)
+            {
+                var t = Math.Clamp((scalar[i] - (edge - softness)) / softness, 0f, 1f);
+                var smooth = (1f - t * t * (3f - 2f * t)) * opacity;
+                r[i] = input.R[i] * smooth;
+                g[i] = input.G[i] * smooth;
+                b[i] = input.B[i] * smooth;
+                a[i] = input.A[i] * smooth;
+            }
+            return new ColorField(r, g, b, a, input.HasColor);
+        }
+
+        ColorField InvertColor(BrushTipNode node, HashSet<string> stack)
+        {
+            var input = EvalColorInput(node, 0, stack);
+            var n = input.A.Length;
+            var r = new float[n];
+            var g = new float[n];
+            var b = new float[n];
+            var a = new float[n];
+            for (var i = 0; i < n; i++)
+            {
+                r[i] = 1f - input.R[i];
+                g[i] = 1f - input.G[i];
+                b[i] = 1f - input.B[i];
+                a[i] = 1f - input.A[i];
+            }
+            return new ColorField(r, g, b, a, input.HasColor);
+        }
+
+        ColorField UnaryColor(BrushTipNode node, HashSet<string> stack, Func<float, float> op)
+        {
+            var input = EvalColorInput(node, 0, stack);
+            var scalar = EvalScalarInput(node, 0, stack);
+            var n = input.A.Length;
+            var r = new float[n];
+            var g = new float[n];
+            var b = new float[n];
+            var a = new float[n];
+            for (var i = 0; i < n; i++)
+            {
+                var m = Math.Clamp(op(scalar[i]), 0f, 1f);
+                r[i] = input.R[i] * m;
+                g[i] = input.G[i] * m;
+                b[i] = input.B[i] * m;
+                a[i] = input.A[i] * m;
+            }
+            return new ColorField(r, g, b, a, input.HasColor);
+        }
+    }
+
+    private sealed class ColorField(float[] r, float[] g, float[] b, float[] a, bool hasColor)
+    {
+        public float[] R { get; } = r;
+        public float[] G { get; } = g;
+        public float[] B { get; } = b;
+        public float[] A { get; } = a;
+        public bool HasColor { get; } = hasColor;
+
+        public static ColorField Zero(int size)
+        {
+            var n = size * size;
+            return new ColorField(new float[n], new float[n], new float[n], new float[n], false);
+        }
+    }
 }

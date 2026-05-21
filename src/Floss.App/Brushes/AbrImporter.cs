@@ -1127,6 +1127,7 @@ public static class AbrImporter
         {
             Dynamics = BuildDynamics(p),
             Tip = tipData.CreateTip(),
+            Tips = pngBytes.Length > 0 ? [tipData.DeepClone()] : [],
             Shape = null,
             Flow = flow,
             Smoothing = smoothing,

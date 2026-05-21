@@ -595,11 +595,6 @@ public partial class MainWindow : ICanvasInputHost
             activeToolPreset.OutputProcess == OutputProcessType.DirectDraw)
             activeToolPreset.CaptureFromBrushPreset(updated);
 
-        if (_activeBrushAsset != null)
-        {
-            _activeBrushAsset.Preset = updated;
-            _dirtyBrushAssetIds.Add(_activeBrushAsset.Id);
-        }
         ScheduleBrushPresetAutosave();
 
         var applied = updated with { Color = _canvas.PaintColor };

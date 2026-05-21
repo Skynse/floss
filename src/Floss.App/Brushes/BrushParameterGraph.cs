@@ -11,6 +11,7 @@ public enum BrushParameterTarget
     Size,
     Opacity,
     Flow,
+    Hardness,
     Angle,
     Spacing,
     TipDensity,
@@ -145,5 +146,78 @@ public sealed class BrushParameterGraph
                 new BrushParameterNode { Id = "output", Kind = BrushParameterNodeKind.Output, Inputs = ["mix"] }
             ]
         };
+    }
+
+    public float Evaluate(in StrokePoint sp, float fallback = 1f)
+    {
+        if (Validate().Count > 0)
+            return fallback;
+
+        var nodes = Nodes.ToDictionary(n => n.Id, StringComparer.Ordinal);
+        var cache = new Dictionary<string, float>(StringComparer.Ordinal);
+        var outputId = nodes.ContainsKey(OutputNodeId) ? OutputNodeId : Nodes.FirstOrDefault()?.Id;
+        var point = sp;
+        return outputId == null ? fallback : Eval(outputId, []);
+
+        float Eval(string id, HashSet<string> stack)
+        {
+            if (cache.TryGetValue(id, out var cached))
+                return cached;
+            if (!nodes.TryGetValue(id, out var node) || !stack.Add(id))
+                return fallback;
+
+            var value = node.Kind switch
+            {
+                BrushParameterNodeKind.Output => EvalInput(node, 0, stack, fallback),
+                BrushParameterNodeKind.Constant => node.Value,
+                BrushParameterNodeKind.Pressure => Sensor(node, point.Pressure),
+                BrushParameterNodeKind.Velocity => Sensor(node, point.Speed),
+                BrushParameterNodeKind.Tilt => Sensor(node, Math.Clamp(MathF.Sqrt(point.TiltX * point.TiltX + point.TiltY * point.TiltY), 0f, 1f)),
+                BrushParameterNodeKind.Random => Sensor(node, point.Random),
+                BrushParameterNodeKind.Add => EvalInput(node, 0, stack, 0f) + EvalInput(node, 1, stack, 0f),
+                BrushParameterNodeKind.Multiply => EvalInput(node, 0, stack, 1f) * EvalInput(node, 1, stack, 1f),
+                BrushParameterNodeKind.Clamp => Math.Clamp(EvalInput(node, 0, stack, fallback), node.Min, node.Max),
+                BrushParameterNodeKind.Curve => CurveValue(node, EvalInput(node, 0, stack, fallback)),
+                _ => fallback
+            };
+            stack.Remove(id);
+            cache[id] = Math.Clamp(value, -16f, 16f);
+            return cache[id];
+        }
+
+        float EvalInput(BrushParameterNode node, int index, HashSet<string> stack, float missing)
+            => index < node.Inputs.Count && !string.IsNullOrWhiteSpace(node.Inputs[index])
+                ? Eval(node.Inputs[index], stack)
+                : missing;
+
+        static float Sensor(BrushParameterNode node, float input)
+        {
+            if (node.Strength <= 0.0001f)
+                return 1f;
+            var curved = EvaluateCurve(node.Curve, Math.Clamp(input, 0f, 1f));
+            var ranged = node.Min + curved * (node.Max - node.Min);
+            return 1f + (ranged - 1f) * Math.Clamp(node.Strength, 0f, 1f);
+        }
+
+        static float CurveValue(BrushParameterNode node, float input)
+        {
+            var curved = EvaluateCurve(node.Curve, Math.Clamp(input, 0f, 1f));
+            var ranged = node.Min + curved * (node.Max - node.Min);
+            return 1f + (ranged - 1f) * Math.Clamp(node.Strength, 0f, 1f);
+        }
+
+        static float EvaluateCurve(IReadOnlyList<float> points, float x)
+        {
+            if (points.Count < 4)
+                return x;
+            var pairs = new List<CurvePoint>(points.Count / 2);
+            for (var i = 0; i + 1 < points.Count; i += 2)
+                pairs.Add(new CurvePoint(Math.Clamp(points[i], 0f, 1f), Math.Clamp(points[i + 1], 0f, 1f)));
+            if (pairs.Count < 2)
+                return x;
+            var curve = new CubicCurve();
+            curve.SetPoints(pairs);
+            return curve.Evaluate(x);
+        }
     }
 }

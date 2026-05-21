@@ -35,8 +35,10 @@ public sealed class ToolPropertiesWindow : Window
     private BrushTipData? _lastProceduralTip;
     private readonly Action<ToolPreset, Func<BrushPreset, BrushPreset>?> _onChange;
     private readonly Action<BrushTipNodeGraph, string>? _onSaveBrushTipGraphAsNew;
+    private readonly Action? _onOpenNodeGraphEditor;
     private readonly BrushStrokePreview _preview = new() { Height = 64 };
     private bool _syncing;
+    private int _presetSyncGeneration;
 
     // ── Texture / grain ───────────────────────────────────────────────────────
     private TextBlock _textureFileLabel = null!;
@@ -82,13 +84,15 @@ public sealed class ToolPropertiesWindow : Window
 
     public ToolPropertiesWindow(ToolPreset toolPreset, BrushPreset? brushPreset,
         Action<ToolPreset, Func<BrushPreset, BrushPreset>?> onChange,
-        Action<BrushTipNodeGraph, string>? onSaveBrushTipGraphAsNew = null)
+        Action<BrushTipNodeGraph, string>? onSaveBrushTipGraphAsNew = null,
+        Action? onOpenNodeGraphEditor = null)
     {
         _toolPreset = toolPreset;
         _brushPreset = brushPreset ?? new BrushPreset(toolPreset.Name, 8, 1.0, 0.9, 0.1, Colors.White, 0);
         RememberProceduralTip(_brushPreset.Tip);
         _onChange = onChange;
         _onSaveBrushTipGraphAsNew = onSaveBrushTipGraphAsNew;
+        _onOpenNodeGraphEditor = onOpenNodeGraphEditor;
         _isBrushTool = toolPreset.OutputProcess == OutputProcessType.DirectDraw;
 
         Width = 420;
@@ -219,12 +223,8 @@ public sealed class ToolPropertiesWindow : Window
         }
     }
 
-    private void SelectCategory(int index)
+    private void CloseDynamicsPopups()
     {
-        _activeCategory = index;
-        HighlightActiveCategory();
-        // Close any open dynamics popups before switching — prevents crashes
-        // from stale references to re-parented sliders.
         _sizeDynPopup?.Close();
         _sizeDynPopup = null;
         _opacDynPopup?.Close();
@@ -245,7 +245,13 @@ public sealed class ToolPropertiesWindow : Window
         _tipThicknessDynPopup = null;
         _angleDynPopup?.Close();
         _angleDynPopup = null;
+    }
 
+    private void SelectCategory(int index)
+    {
+        _activeCategory = index;
+        HighlightActiveCategory();
+        CloseDynamicsPopups();
         if (!_isBrushTool && _genericPanels != null)
         {
             _contentHost.Child = _genericPanels[index];
@@ -318,169 +324,127 @@ public sealed class ToolPropertiesWindow : Window
         Children = { BuildAntialiasingLevelRow() }
     };
 
-    private Control BuildBrushTipContent(bool forceImageMode = false)
+    private Control BuildBrushTipContent()
     {
         var mainTip = _brushPreset.Tip;
         RememberProceduralTip(mainTip);
-        var isProc = IsGraphTip(mainTip) && !forceImageMode;
         var procTip = BuiltInProceduralTipFor(mainTip);
-        var activeShape = procTip?.Shape;
-        var activeAspect = procTip?.AspectRatio ?? 1.0f;
 
         var result = new StackPanel { Spacing = 0 };
 
-        // ── Circle / Material toggle ──────────────────────────────────────────
-        var circleBtn = MkToggleBtn("Procedural", isProc, () =>
+        // ── Tip image library (feeds Image Sampler nodes in the graph) ───────
+        var galleryPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
+        var materialTips = MaterialTipsFor(_brushPreset);
+        var activeTipData = ActiveMaterialTipData(_brushPreset);
+
+        foreach (var tipData in materialTips)
         {
-            if (forceImageMode && IsGraphTip(_brushPreset.Tip))
+            var td = tipData;
+            var isActiveMaterial = activeTipData != null && TipDataEquals(activeTipData, td);
+            var tipObj = td.CreateTip();
+            var bmp = BuildTipPreview(tipObj);
+            if (tipObj is IDisposable disp) disp.Dispose();
+
+            var img = new Image { Source = bmp, Width = 40, Height = 40, Stretch = Stretch.Uniform };
+            var trashBtn = new Button
             {
-                _contentHost.Child = WrapContent(BuildBrushTipContent());
-                return;
-            }
-
-            if (!IsGraphTip(_brushPreset.Tip))
-            {
-                CommitMainTip(RestoreProceduralTip());
-            }
-        });
-        var materialBtn = MkToggleBtn("Material", !isProc, () =>
-        {
-            if (IsGraphTip(_brushPreset.Tip))
-            {
-                RememberProceduralTip(_brushPreset.Tip);
-                var materialTips = MaterialTipsFor(_brushPreset);
-                if (materialTips.Count > 0)
-                {
-                    var restored = materialTips[0].DeepClone();
-                    Commit(p => p with
-                    {
-                        Tip = restored.CreateTip(),
-                        Tips = materialTips.Select(t => t.DeepClone()).ToList()
-                    });
-                    _contentHost.Child = WrapContent(BuildBrushTipContent());
-                }
-                else
-                {
-                    _contentHost.Child = WrapContent(BuildBrushTipContent(forceImageMode: true));
-                }
-            }
-        });
-
-        var modeRow = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 2, 0, 4) };
-        var modeLbl = new TextBlock
-        {
-            Text = "Tip shape",
-            FontSize = 11,
-            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            Width = 72,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        var modePanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-        modePanel.Children.Add(circleBtn);
-        modePanel.Children.Add(materialBtn);
-        DockPanel.SetDock(modeLbl, Dock.Left);
-        modeRow.Children.Add(modeLbl);
-        modeRow.Children.Add(modePanel);
-        result.Children.Add(modeRow);
-
-        // ── Material tip gallery (only for image-based tips) ─────────────────
-        if (!isProc)
-        {
-            var galleryPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
-            var materialTips = MaterialTipsFor(_brushPreset);
-            var activeTipData = BrushTipData.FromTip(_brushPreset.Tip);
-
-            foreach (var tipData in materialTips)
-            {
-                var td = tipData;
-                var tipObj = td.CreateTip();
-                var bmp = BuildTipPreview(tipObj);
-                if (tipObj is IDisposable disp) disp.Dispose();
-
-                var img = new Image { Source = bmp, Width = 40, Height = 40, Stretch = Stretch.Uniform };
-                var trashBtn = new Button
-                {
-                    Content = "✕",
-                    Width = 14, Height = 14, Padding = new Thickness(0), FontSize = 8,
-                    HorizontalContentAlignment = HorizontalAlignment.Center,
-                    VerticalContentAlignment = VerticalAlignment.Center,
-                    Background = new SolidColorBrush(Color.Parse(Bg1)),
-                    BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-                    BorderThickness = new Thickness(1),
-                    CornerRadius = new CornerRadius(2),
-                    HorizontalAlignment = HorizontalAlignment.Right,
-                    VerticalAlignment = VerticalAlignment.Top,
-                    Margin = new Thickness(0, 1, 1, 0)
-                };
-                trashBtn.PointerPressed += (_, e) => e.Handled = true;
-                trashBtn.Click += (_, _) =>
-                {
-                    var newList = materialTips.Where(t => !TipDataEquals(t, td)).Select(t => t.DeepClone()).ToList();
-                    var nextActive = TipDataEquals(activeTipData, td)
-                        ? newList.FirstOrDefault()
-                        : activeTipData;
-                    Commit(p => nextActive == null
-                        ? p with { Tip = RestoreProceduralTip(), Tips = [] }
-                        : p with { Tip = nextActive.CreateTip(), Tips = newList });
-                    _contentHost.Child = WrapContent(BuildBrushTipContent(forceImageMode: true));
-                };
-
-                var cell = new Grid { Width = 54, Height = 58, Margin = new Thickness(2) };
-                cell.Children.Add(new Border
-                {
-                    Background = new SolidColorBrush(Color.Parse(TipDataEquals(activeTipData, td) ? AccentSoft : Bg2)),
-                    BorderBrush = new SolidColorBrush(Color.Parse(TipDataEquals(activeTipData, td) ? Accent : Stroke)),
-                    BorderThickness = new Thickness(1),
-                    CornerRadius = new CornerRadius(4),
-                    Child = img,
-                    HorizontalAlignment = HorizontalAlignment.Stretch,
-                    VerticalAlignment = VerticalAlignment.Stretch
-                });
-                cell.Children.Add(trashBtn);
-                cell.PointerPressed += (_, _) =>
-                {
-                    Commit(p => p with { Tip = td.CreateTip(), Tips = materialTips.Select(t => t.DeepClone()).ToList() });
-                    _contentHost.Child = WrapContent(BuildBrushTipContent(forceImageMode: true));
-                };
-                galleryPanel.Children.Add(cell);
-            }
-
-            var newCell = MkGalleryNewBtn(() =>
-            {
-                var browser = new BrushTipBrowserWindow(this, tip =>
-                {
-                    RememberProceduralTip(_brushPreset.Tip);
-                    var td = BrushTipData.FromTip(tip);
-                    var newList = MaterialTipsFor(_brushPreset)
-                        .Where(t => !TipDataEquals(t, td))
-                        .Select(t => t.DeepClone())
-                        .Append(td.DeepClone())
-                        .ToList();
-                    Commit(p => p with { Tip = td.CreateTip(), Tips = newList });
-                    if (_activeCategory == 4)
-                        _contentHost.Child = WrapContent(BuildBrushTipContent(forceImageMode: true));
-                });
-                browser.Show(this);
-            });
-            galleryPanel.Children.Add(newCell);
-
-            var galleryScroll = new ScrollViewer
-            {
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                Content = galleryPanel,
-                Margin = new Thickness(0, 0, 0, 2)
+                Content = "✕",
+                Width = 14, Height = 14, Padding = new Thickness(0), FontSize = 8,
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                Background = new SolidColorBrush(Color.Parse(Bg1)),
+                BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(2),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 1, 1, 0)
             };
-            result.Children.Add(galleryScroll);
-            result.Children.Add(BuildTipSelectionModeRow());
+            trashBtn.PointerPressed += (_, e) => e.Handled = true;
+            trashBtn.Click += (_, _) =>
+            {
+                var newList = materialTips.Where(t => !TipDataEquals(t, td)).Select(t => t.DeepClone()).ToList();
+                Commit(p =>
+                {
+                    if (newList.Count == 0 && IsMaterialTip(p.Tip)
+                        && ActiveMaterialTipData(p) is { } active && TipDataEquals(active, td))
+                        return p with { Tip = RestoreProceduralTip(), Tips = [] };
+                    return p with { Tips = newList };
+                });
+                _contentHost.Child = WrapContent(BuildBrushTipContent());
+            };
+
+            var cell = new Grid { Width = 54, Height = 58, Margin = new Thickness(2) };
+            cell.Children.Add(new Border
+            {
+                Background = new SolidColorBrush(Color.Parse(isActiveMaterial ? AccentSoft : Bg2)),
+                BorderBrush = new SolidColorBrush(Color.Parse(isActiveMaterial ? Accent : Stroke)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Child = img,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch
+            });
+            cell.Children.Add(trashBtn);
+            cell.PointerPressed += (_, _) =>
+            {
+                if (isActiveMaterial) return;
+                var newList = materialTips.Where(t => !TipDataEquals(t, td)).Select(t => t.DeepClone()).ToList();
+                newList.Insert(0, td.DeepClone());
+                Commit(p => p with { Tips = newList });
+                _contentHost.Child = WrapContent(BuildBrushTipContent());
+            };
+            galleryPanel.Children.Add(cell);
         }
 
-        // For procedural tips, shape gallery replaced by node graph editor above.
-        else
+        var newCell = MkGalleryNewBtn(() =>
+        {
+            var browser = new BrushTipBrowserWindow(this, tip =>
+            {
+                RememberProceduralTip(_brushPreset.Tip);
+                var td = BrushTipData.FromTip(tip);
+                var newList = MaterialTipsFor(_brushPreset)
+                    .Where(t => !TipDataEquals(t, td))
+                    .Select(t => t.DeepClone())
+                    .Append(td.DeepClone())
+                    .ToList();
+                Commit(p =>
+                {
+                    if (p.Tip is NodeBrushTip { IsDirectImageSampler: false })
+                        return p with { Tips = newList };
+                    return p with { Tip = CreateGraphTipFromTipData(td), Tips = newList };
+                });
+                if (_activeCategory == 4)
+                    _contentHost.Child = WrapContent(BuildBrushTipContent());
+            });
+            browser.Show(this);
+        });
+        galleryPanel.Children.Add(newCell);
+
+        var galleryScroll = new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Content = galleryPanel,
+            Margin = new Thickness(0, 0, 0, 2)
+        };
+        result.Children.Add(SectionHeader("TIP IMAGES"));
+        result.Children.Add(new TextBlock
+        {
+            Text = "PNG library for Image Sampler nodes in the graph editor.",
+            FontSize = 10,
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+        result.Children.Add(galleryScroll);
+        if (materialTips.Count > 1)
+            result.Children.Add(BuildTipSelectionModeRow());
+
+        if (IsGraphTip(_brushPreset.Tip))
             result.Children.Add(BuildTipGraphControls());
 
-        // ── Oval aspect ratio ─────────────────────────────────────────────────
-        if (isProc && procTip?.Shape == BrushTipShape.Ellipse)
+        if (procTip?.Shape == BrushTipShape.Ellipse)
         {
             var aspectSlider = MkSlider(0.1, 8.0, Math.Clamp(procTip.AspectRatio, 0.1, 8.0), "Oval width/height ratio");
             WireSlider(aspectSlider, v => CommitMainTip(new ProceduralBrushTip(procTip.Shape, (float)v)));
@@ -520,7 +484,7 @@ public sealed class ToolPropertiesWindow : Window
 
         var openEditorBtn = new Button
         {
-            Content = "Open Node Graph Editor",
+            Content = "Open Graph Editor",
             Background = new SolidColorBrush(Color.Parse(AccentSoft)),
             BorderBrush = new SolidColorBrush(Color.Parse(Accent)),
             BorderThickness = new Thickness(1),
@@ -528,10 +492,16 @@ public sealed class ToolPropertiesWindow : Window
             FontSize = 11,
             MinHeight = 26,
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            Margin = new Thickness(0, 0, 0, 6)
+            Margin = new Thickness(0, 0, 0, 4)
         };
         openEditorBtn.Click += (_, _) =>
         {
+            if (_onOpenNodeGraphEditor != null)
+            {
+                _onOpenNodeGraphEditor();
+                return;
+            }
+
             var editor = new NodeGraphEditorWindow(graph.DeepClone(), g =>
             {
                 if (g.Validate().Count > 0) return;
@@ -552,11 +522,7 @@ public sealed class ToolPropertiesWindow : Window
                     var tip = (IBrushTip)new NodeBrushTip(clone);
                     Commit(p => p with { Name = name, Tip = tip, Tips = PreserveMaterialTipsWithActiveFirst(p) });
                 }
-            });
-            editor.Closed += (_, _) =>
-            {
-                _contentHost.Child = WrapContent(BuildBrushTipContent());
-            };
+            }, MaterialTipsFor(_brushPreset));
             editor.Show(this);
         };
         panel.Children.Add(openEditorBtn);
@@ -577,9 +543,10 @@ public sealed class ToolPropertiesWindow : Window
         var nodeCount = graph.Nodes.Count;
         panel.Children.Add(new TextBlock
         {
-            Text = $"{nodeCount} node{(nodeCount == 1 ? "" : "s")} — edit above",
+            Text = $"{nodeCount} node{(nodeCount == 1 ? "" : "s")}. Wire Image Sampler nodes to Tip Images above.",
             FontSize = 10,
             Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+            TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 2, 0, 2)
         });
         return panel;
@@ -808,6 +775,7 @@ public sealed class ToolPropertiesWindow : Window
         {
             ProceduralBrushTip proc => proc.Graph.DeepClone(),
             NodeBrushTip node => node.Graph.DeepClone(),
+            ImageBrushTip img => BrushTipNodeGraph.FromImageTip(img.GetPngBytes()),
             _ => BrushTipNodeGraph.FromProceduralShape(BrushTipShape.Circle)
         };
 
@@ -1023,6 +991,11 @@ public sealed class ToolPropertiesWindow : Window
         if (tip is ImageBrushTip img)
         {
             try { using var ms = new MemoryStream(img.GetPngBytes()); return new Bitmap(ms); }
+            catch { return null; }
+        }
+        if (tip is NodeBrushTip node && node.Graph.TryGetDirectImageSampler(out var bytes))
+        {
+            try { using var ms = new MemoryStream(bytes); return new Bitmap(ms); }
             catch { return null; }
         }
         return RenderMaskThumbnail(tip, size);
@@ -1910,7 +1883,7 @@ public sealed class ToolPropertiesWindow : Window
                 .Select(t => t.DeepClone())
                 .Append(tipData.DeepClone())
                 .ToList();
-            return p with { Tip = tip, Tips = tips };
+            return p with { Tip = CreateGraphTipFromTipData(tipData), Tips = tips };
         });
         if (_activeCategory == 4)
             _contentHost.Child = WrapContent(BuildBrushTipContent());
@@ -1920,6 +1893,7 @@ public sealed class ToolPropertiesWindow : Window
 
     private void RememberProceduralTip(IBrushTip tip)
     {
+        if (IsMaterialTip(tip)) return;
         if (!IsGraphTip(tip)) return;
         _lastProceduralTip = BrushTipData.FromTip(tip).DeepClone();
     }
@@ -1936,7 +1910,7 @@ public sealed class ToolPropertiesWindow : Window
     private static IReadOnlyList<BrushTipData> PreserveMaterialTipsWithActiveFirst(BrushPreset preset)
     {
         var tips = preset.Tips.Select(t => t.DeepClone()).ToList();
-        if (BrushTipData.FromTip(preset.Tip) is { Kind: BrushTipStorageKind.EmbeddedPng } active)
+        if (ActiveMaterialTipData(preset) is { Kind: BrushTipStorageKind.EmbeddedPng } active)
         {
             tips = tips.Where(t => !TipDataEquals(t, active)).ToList();
             tips.Insert(0, active.DeepClone());
@@ -1945,20 +1919,21 @@ public sealed class ToolPropertiesWindow : Window
     }
 
     private static IReadOnlyList<BrushTipData> MaterialTipsFor(BrushPreset preset)
-    {
-        var tips = preset.Tips
-            .Where(t => t.Kind == BrushTipStorageKind.EmbeddedPng)
-            .Select(t => t.DeepClone())
-            .ToList();
-        if (tips.Count > 0)
-            return tips;
-        return preset.Tip is ImageBrushTip
-            ? [BrushTipData.FromTip(preset.Tip)]
-            : [];
-    }
+        => BrushMaterialTips.ForPreset(preset);
 
     private static bool IsGraphTip(IBrushTip tip)
         => tip is ProceduralBrushTip or NodeBrushTip;
+
+    private static bool IsMaterialTip(IBrushTip tip)
+        => tip is ImageBrushTip || tip is NodeBrushTip node && node.Graph.TryGetDirectImageSampler(out _);
+
+    private static BrushTipData? ActiveMaterialTipData(BrushPreset preset)
+        => BrushMaterialTips.ActiveEmbedded(preset);
+
+    private static IBrushTip CreateGraphTipFromTipData(BrushTipData data)
+        => data.Kind == BrushTipStorageKind.EmbeddedPng && data.PngBytes.Length > 0
+            ? new NodeBrushTip(BrushTipNodeGraph.FromImageTip(data.PngBytes))
+            : data.CreateTip();
 
     private static ProceduralBrushTip? BuiltInProceduralTipFor(IBrushTip tip)
         => tip switch
@@ -2003,17 +1978,18 @@ public sealed class ToolPropertiesWindow : Window
     private void Commit(Func<BrushPreset, BrushPreset> update)
     {
         if (_syncing) return;
+        var generation = _presetSyncGeneration;
         _brushPreset = update(_brushPreset);
         _preview.Brush = _brushPreset;
         _preview.InvalidateBitmap();
-        _onChange(_toolPreset, _isBrushTool ? update : null);
+        _onChange(_toolPreset, _isBrushTool && generation == _presetSyncGeneration ? update : null);
     }
-
-    // SyncFromPreset at line 1304+
 
     public void SyncFromPreset(BrushPreset preset)
     {
+        CloseDynamicsPopups();
         _syncing = true;
+        _presetSyncGeneration++;
         _brushPreset = preset;
         RememberProceduralTip(preset.Tip);
 
@@ -2036,32 +2012,20 @@ public sealed class ToolPropertiesWindow : Window
         UpdateSmudgeModeButtons(preset.SmudgeMode);
         if (_aaLevelCombo != null) _aaLevelCombo.SelectedIndex = HardnessToLevel(preset.Hardness);
 
-        _syncing = false;
-
-        // Sync open popup windows
-        _sizeDynPopup?.SyncFromDynamics(preset.SizeDynamics);
-        _opacDynPopup?.SyncFromDynamics(preset.OpacityDynamics);
-        _flowDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.Flow));
-        _hardnessDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.Hardness));
-        _spacingDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.Spacing));
-        _scatterDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.Scatter));
-        _rotationDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.Rotation));
-        _tipDensityDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.TipDensity));
-        _tipThicknessDynPopup?.SyncFromDynamics(BrushDynamics.ToParameterDynamics(preset.Dynamics.TipThickness));
-        _angleDynPopup?.SyncState(preset.BaseAngleSource, preset.AngleJitter);
-
         if (_textureFileLabel != null)
             _textureFileLabel.Text = preset.Texture != null ? Path.GetFileName(preset.Texture) : "None";
-        // Refresh sidebar highlight without rebuilding cached slider panels.
-        // Brush Tip and Brush Shape panels need a live rebuild (they reflect preset state).
+
         HighlightActiveCategory();
         if (_activeCategory == 4)
             _contentHost.Child = WrapContent(BuildBrushTipContent());
         else if (_activeCategory == 3)
             _contentHost.Child = WrapContent(BuildBrushShapeContent());
+
         _preview.Brush = preset;
         _preview.InvalidateBitmap();
         Title = $"Edit Brush — {preset.Name}";
+
+        _syncing = false;
     }
 
     public void SyncFromToolPreset(ToolPreset preset)
@@ -2153,11 +2117,13 @@ public sealed class ToolPropertiesWindow : Window
         _ => $"{v:0.##}"
     };
 
-    private static void WireSlider(Slider slider, Action<double> onChange)
+    private void WireSlider(Slider slider, Action<double> onChange)
     {
         slider.PropertyChanged += (_, e) =>
         {
-            if (e.Property == Slider.ValueProperty) onChange(slider.Value);
+            if (_syncing || e.Property != Slider.ValueProperty)
+                return;
+            onChange(slider.Value);
         };
     }
 
@@ -2182,8 +2148,9 @@ public sealed class ToolPropertiesWindow : Window
         };
         _blendModeCombo.SelectionChanged += (_, _) =>
         {
-            if (_blendModeCombo.SelectedItem is SKBlendMode mode)
-                Commit(p => p with { BlendMode = mode });
+            if (_syncing || _blendModeCombo.SelectedItem is not SKBlendMode mode)
+                return;
+            Commit(p => p with { BlendMode = mode });
         };
         var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 2, 0, 2) };
         var lbl = new TextBlock
@@ -2216,8 +2183,9 @@ public sealed class ToolPropertiesWindow : Window
         };
         _mixingModeCombo.SelectionChanged += (_, _) =>
         {
-            if (_mixingModeCombo.SelectedItem is MixingMode mode)
-                Commit(p => p with { MixingMode = mode });
+            if (_syncing || _mixingModeCombo.SelectedItem is not MixingMode mode)
+                return;
+            Commit(p => p with { MixingMode = mode });
         };
         var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 2, 0, 2) };
         var lbl = new TextBlock
@@ -2313,6 +2281,8 @@ public sealed class ToolPropertiesWindow : Window
         };
         _aaLevelCombo.SelectionChanged += (_, _) =>
         {
+            if (_syncing)
+                return;
             var level = _aaLevelCombo.SelectedIndex;
             var hardness = LevelToHardness(level);
             Commit(p => p with { Hardness = hardness });

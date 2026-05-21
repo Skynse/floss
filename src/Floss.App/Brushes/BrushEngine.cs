@@ -195,7 +195,8 @@ public sealed class BrushEngine : IDisposable
             && !primaryTip.HasColor
             && primaryTip is
                 (ProceduralBrushTip { Shape: BrushTipShape.Circle or BrushTipShape.SoftRound or BrushTipShape.Ellipse }
-                 or ImageBrushTip);
+                 or ImageBrushTip
+                 or NodeBrushTip { IsDirectImageSampler: true });
 
         bool blendModeCanRasterize = brush.BlendMode == SKBlendMode.SrcOver || brush.BlendMode == SKBlendMode.DstOut;
         bool canCachedTileMajor = blendModeCanRasterize && !stroke.HasAnyColorTip && !isMultiTipSingle;
@@ -216,7 +217,7 @@ public sealed class BrushEngine : IDisposable
             }
 
             var grainTable = PrecomputeGrain(dirty, texPx, texW, texH, texStride, brushGrain);
-            if (!isMultiTipSingle && _stampColors.Count == 0 &&
+            if (stroke.HasAnyColorTip && !isMultiTipSingle && _stampColors.Count == 0 &&
                 TryRasterizeCachedColorDabsTileMajor(layer, stroke, brush, brush.BlendMode == SKBlendMode.DstOut,
                     brushGrain, texPx, texW, texH, texStride, dirty, grainTable))
             {
@@ -442,15 +443,20 @@ public sealed class BrushEngine : IDisposable
     private static StampSample CreateStamp(ActiveStroke stroke, BrushPreset brush, in StrokePoint sp)
     {
         var dyn = brush.Dynamics;
-        var sizeMul = dyn.EvalSize(sp);
-        var opacMul = dyn.EvalOpacity(sp);
-        var flowMul = dyn.EvalFlow(sp);
-        var hardness = dyn.Hardness.IsEnabled ? dyn.EvalHardness(sp) : (float)brush.Hardness;
-        var spacingMul = dyn.EvalSpacing(sp);
-        var tipDensityMul = dyn.TipDensity.IsEnabled ? dyn.EvalTipDensity(sp) : 1f;
-        var tipThicknessMul = dyn.TipThickness.IsEnabled ? dyn.EvalTipThickness(sp) : 1f;
-        var scatter = dyn.Scatter.IsEnabled ? dyn.EvalScatter(sp) : 0f;
-        var rotDeg = dyn.EvalRotationDeg(sp);
+        var parameterGraphs = brush.ParameterGraphs;
+        var sizeMul = EvalParameter(parameterGraphs, BrushParameterTarget.Size, sp, dyn.EvalSize(sp));
+        var opacMul = EvalParameter(parameterGraphs, BrushParameterTarget.Opacity, sp, dyn.EvalOpacity(sp));
+        var flowMul = EvalParameter(parameterGraphs, BrushParameterTarget.Flow, sp, dyn.EvalFlow(sp));
+        var hardness = EvalParameter(parameterGraphs, BrushParameterTarget.Hardness, sp,
+            dyn.Hardness.IsEnabled ? dyn.EvalHardness(sp) : (float)brush.Hardness);
+        var spacingMul = EvalParameter(parameterGraphs, BrushParameterTarget.Spacing, sp, dyn.EvalSpacing(sp));
+        var tipDensityMul = EvalParameter(parameterGraphs, BrushParameterTarget.TipDensity, sp,
+            dyn.TipDensity.IsEnabled ? dyn.EvalTipDensity(sp) : 1f);
+        var tipThicknessMul = EvalParameter(parameterGraphs, BrushParameterTarget.TipThickness, sp,
+            dyn.TipThickness.IsEnabled ? dyn.EvalTipThickness(sp) : 1f);
+        var scatter = EvalParameter(parameterGraphs, BrushParameterTarget.Scatter, sp,
+            dyn.Scatter.IsEnabled ? dyn.EvalScatter(sp) : 0f);
+        var rotDeg = EvalParameter(parameterGraphs, BrushParameterTarget.Angle, sp, dyn.EvalRotationDeg(sp));
         var size = Math.Max(0.5f, (float)brush.Size * sizeMul);
         // Opacity is independent of AmountOfPaint. AmountOfPaint controls how much
         // brush color is deposited, not the visibility of the stamp.
@@ -483,6 +489,14 @@ public sealed class BrushEngine : IDisposable
             Math.Clamp(spacingMul, 0.05f, 4f),
             Math.Clamp(tipThicknessMul, 0.01f, 4f),
             SelectTipIndex(brush, sp));
+    }
+
+    private static float EvalParameter(IReadOnlyList<BrushParameterGraph> graphs, BrushParameterTarget target, in StrokePoint sp, float fallback)
+    {
+        var graph = graphs.FirstOrDefault(g => g.Target == target);
+        return graph == null || graph.Validate().Count > 0
+            ? fallback
+            : graph.Evaluate(sp, fallback);
     }
 
     private static int SelectTipIndex(BrushPreset brush, in StrokePoint sp)
@@ -597,7 +611,7 @@ public sealed class BrushEngine : IDisposable
     private unsafe void RasterizeStampsDirect(DrawingLayer layer, ActiveStroke stroke, BrushPreset brush, PixelRegion dirty)
     {
         var procTip = brush.Tip as ProceduralBrushTip;
-        bool isImageTip = brush.Tip is ImageBrushTip;
+        bool isImageTip = brush.Tip is ImageBrushTip or NodeBrushTip { IsDirectImageSampler: true };
         bool isSoft = procTip?.Shape == BrushTipShape.SoftRound;
         bool isCircle = procTip?.Shape is BrushTipShape.Circle or BrushTipShape.SoftRound;
         float aspect = (procTip != null && !isCircle) ? MathF.Max(0.05f, MathF.Min(20f, procTip.AspectRatio)) : 1f;
@@ -850,6 +864,7 @@ public sealed class BrushEngine : IDisposable
         if (_lastRasterPath == "None")
             _lastRasterPath = _lastCachedDabCount > 0 ? "CachedStampMajorMixed" : "AnalyticalDirect";
 
+        stroke.TrimDabCache();
         layer.Pixels.PruneRegion(dirty);
     }
 
@@ -876,88 +891,98 @@ public sealed class BrushEngine : IDisposable
         const int tsz = TiledPixelBuffer.TileSize;
         var buckets = new Dictionary<(int X, int Y), List<PlacedDab>>();
 
-        for (var i = 0; i < _stamps.Count; i++)
-        {
-            var stamp = _stamps[i];
-            if (stamp.Opacity <= 0 || stamp.Size <= 0) continue;
-
-            var colorB = brushB;
-            var colorG = brushG;
-            var colorR = brushR;
-            var colorA = baseAlpha;
-            if (!isDstOut && _stampColors.Count > i)
-            {
-                var color = _stampColors[i];
-                if (color.Alpha == 0) continue;
-                colorB = color.Blue;
-                colorG = color.Green;
-                colorR = color.Red;
-                colorA = color.Alpha;
-            }
-
-            if (!stroke.TryGetCachedDab(stamp, out var dab))
-                return false;
-            _lastCachedDabCount++;
-
-            var left = (int)MathF.Round(stamp.X) + dab.OffsetX;
-            var top = (int)MathF.Round(stamp.Y) + dab.OffsetY;
-            var right = left + dab.Mask.Width;
-            var bottom = top + dab.Mask.Height;
-            if (right <= dirty.X || bottom <= dirty.Y || left >= dirty.Right || top >= dirty.Bottom)
-                continue;
-
-            var placed = new PlacedDab(stamp, dab, left, top, right, bottom, colorB, colorG, colorR, colorA);
-            var firstTx = FloorDiv(left, tsz);
-            var firstTy = FloorDiv(top, tsz);
-            var lastTx = FloorDiv(right - 1, tsz);
-            var lastTy = FloorDiv(bottom - 1, tsz);
-
-            for (var ty = firstTy; ty <= lastTy; ty++)
-            {
-                for (var tx = firstTx; tx <= lastTx; tx++)
-                {
-                    var tileLeft = tx * tsz;
-                    var tileTop = ty * tsz;
-                    if (right <= tileLeft || bottom <= tileTop || left >= tileLeft + tsz || top >= tileTop + tsz)
-                        continue;
-
-                    var key = (tx, ty);
-                    if (!buckets.TryGetValue(key, out var list))
-                    {
-                        list = new List<PlacedDab>(8);
-                        buckets.Add(key, list);
-                    }
-                    list.Add(placed);
-                }
-            }
-        }
-
-        if (buckets.Count == 0)
-            return true;
-        _lastTileBucketCount = buckets.Count;
-
-        layer.Pixels.EnterPixelWriteLock();
+        stroke.EnterDabCacheUse();
         try
         {
-            foreach (var ((tx, ty), dabs) in buckets)
+            for (var i = 0; i < _stamps.Count; i++)
             {
-                var tile = layer.Pixels.GetOrCreateRawTile(tx, ty);
-                var tilePixX = tx * tsz;
-                var tilePixY = ty * tsz;
+                var stamp = _stamps[i];
+                if (stamp.Opacity <= 0 || stamp.Size <= 0) continue;
 
-                foreach (var placed in dabs)
+                var colorB = brushB;
+                var colorG = brushG;
+                var colorR = brushR;
+                var colorA = baseAlpha;
+                if (!isDstOut && _stampColors.Count > i)
                 {
-                    ApplyCachedDabToTile(
-                        tile, tilePixX, tilePixY, dirty, grainTable,
-                        placed, isDstOut,
-                        brushGrain, texPx, texW, texH, texStride);
+                    var color = _stampColors[i];
+                    if (color.Alpha == 0) continue;
+                    colorB = color.Blue;
+                    colorG = color.Green;
+                    colorR = color.Red;
+                    colorA = color.Alpha;
+                }
+
+                if (!stroke.TryGetCachedDab(stamp, out var dab))
+                {
+                    buckets.Clear();
+                    return false;
+                }
+                _lastCachedDabCount++;
+
+                var left = (int)MathF.Round(stamp.X) + dab.OffsetX;
+                var top = (int)MathF.Round(stamp.Y) + dab.OffsetY;
+                var right = left + dab.Mask.Width;
+                var bottom = top + dab.Mask.Height;
+                if (right <= dirty.X || bottom <= dirty.Y || left >= dirty.Right || top >= dirty.Bottom)
+                    continue;
+
+                var placed = new PlacedDab(stamp, dab, left, top, right, bottom, colorB, colorG, colorR, colorA);
+                var firstTx = FloorDiv(left, tsz);
+                var firstTy = FloorDiv(top, tsz);
+                var lastTx = FloorDiv(right - 1, tsz);
+                var lastTy = FloorDiv(bottom - 1, tsz);
+
+                for (var ty = firstTy; ty <= lastTy; ty++)
+                {
+                    for (var tx = firstTx; tx <= lastTx; tx++)
+                    {
+                        var tileLeft = tx * tsz;
+                        var tileTop = ty * tsz;
+                        if (right <= tileLeft || bottom <= tileTop || left >= tileLeft + tsz || top >= tileTop + tsz)
+                            continue;
+
+                        var key = (tx, ty);
+                        if (!buckets.TryGetValue(key, out var list))
+                        {
+                            list = new List<PlacedDab>(8);
+                            buckets.Add(key, list);
+                        }
+                        list.Add(placed);
+                    }
                 }
             }
-        }
-        finally { layer.Pixels.ExitPixelWriteLock(); }
 
-        stroke.TrimDabCache();
-        return true;
+            if (buckets.Count == 0)
+                return true;
+            _lastTileBucketCount = buckets.Count;
+
+            layer.Pixels.EnterPixelWriteLock();
+            try
+            {
+                foreach (var ((tx, ty), dabs) in buckets)
+                {
+                    var tile = layer.Pixels.GetOrCreateRawTile(tx, ty);
+                    var tilePixX = tx * tsz;
+                    var tilePixY = ty * tsz;
+
+                    foreach (var placed in dabs)
+                    {
+                        ApplyCachedDabToTile(
+                            tile, tilePixX, tilePixY, dirty, grainTable,
+                            placed, isDstOut,
+                            brushGrain, texPx, texW, texH, texStride);
+                    }
+                }
+            }
+            finally { layer.Pixels.ExitPixelWriteLock(); }
+
+            return true;
+        }
+        finally
+        {
+            stroke.ExitDabCacheUse();
+        }
     }
 
     private unsafe bool TryRasterizeCachedColorDabsTileMajor(
@@ -979,74 +1004,84 @@ public sealed class BrushEngine : IDisposable
         const int tsz = TiledPixelBuffer.TileSize;
         var buckets = new Dictionary<(int X, int Y), List<PlacedColorDab>>();
 
-        for (var i = 0; i < _stamps.Count; i++)
-        {
-            var stamp = _stamps[i];
-            if (stamp.Opacity <= 0 || stamp.Size <= 0) continue;
-
-            if (!stroke.TryGetCachedColorDab(stamp, out var dab))
-                return false;
-            _lastCachedDabCount++;
-
-            var left = (int)MathF.Round(stamp.X) + dab.OffsetX;
-            var top = (int)MathF.Round(stamp.Y) + dab.OffsetY;
-            var right = left + dab.Bitmap.Width;
-            var bottom = top + dab.Bitmap.Height;
-            if (right <= dirty.X || bottom <= dirty.Y || left >= dirty.Right || top >= dirty.Bottom)
-                continue;
-
-            var placed = new PlacedColorDab(stamp, dab, left, top, right, bottom);
-            var firstTx = FloorDiv(left, tsz);
-            var firstTy = FloorDiv(top, tsz);
-            var lastTx = FloorDiv(right - 1, tsz);
-            var lastTy = FloorDiv(bottom - 1, tsz);
-
-            for (var ty = firstTy; ty <= lastTy; ty++)
-            {
-                for (var tx = firstTx; tx <= lastTx; tx++)
-                {
-                    var tileLeft = tx * tsz;
-                    var tileTop = ty * tsz;
-                    if (right <= tileLeft || bottom <= tileTop || left >= tileLeft + tsz || top >= tileTop + tsz)
-                        continue;
-
-                    var key = (tx, ty);
-                    if (!buckets.TryGetValue(key, out var list))
-                    {
-                        list = new List<PlacedColorDab>(8);
-                        buckets.Add(key, list);
-                    }
-                    list.Add(placed);
-                }
-            }
-        }
-
-        if (buckets.Count == 0)
-            return true;
-        _lastTileBucketCount = buckets.Count;
-
-        layer.Pixels.EnterPixelWriteLock();
+        stroke.EnterColorDabCacheUse();
         try
         {
-            foreach (var ((tx, ty), dabs) in buckets)
+            for (var i = 0; i < _stamps.Count; i++)
             {
-                var tile = layer.Pixels.GetOrCreateRawTile(tx, ty);
-                var tilePixX = tx * tsz;
-                var tilePixY = ty * tsz;
+                var stamp = _stamps[i];
+                if (stamp.Opacity <= 0 || stamp.Size <= 0) continue;
 
-                foreach (var placed in dabs)
+                if (!stroke.TryGetCachedColorDab(stamp, out var dab))
                 {
-                    ApplyCachedColorDabToTile(
-                        tile, tilePixX, tilePixY, dirty, grainTable,
-                        placed, isDstOut,
-                        brushGrain, texPx, texW, texH, texStride);
+                    buckets.Clear();
+                    return false;
+                }
+                _lastCachedDabCount++;
+
+                var left = (int)MathF.Round(stamp.X) + dab.OffsetX;
+                var top = (int)MathF.Round(stamp.Y) + dab.OffsetY;
+                var right = left + dab.Bitmap.Width;
+                var bottom = top + dab.Bitmap.Height;
+                if (right <= dirty.X || bottom <= dirty.Y || left >= dirty.Right || top >= dirty.Bottom)
+                    continue;
+
+                var placed = new PlacedColorDab(stamp, dab, left, top, right, bottom);
+                var firstTx = FloorDiv(left, tsz);
+                var firstTy = FloorDiv(top, tsz);
+                var lastTx = FloorDiv(right - 1, tsz);
+                var lastTy = FloorDiv(bottom - 1, tsz);
+
+                for (var ty = firstTy; ty <= lastTy; ty++)
+                {
+                    for (var tx = firstTx; tx <= lastTx; tx++)
+                    {
+                        var tileLeft = tx * tsz;
+                        var tileTop = ty * tsz;
+                        if (right <= tileLeft || bottom <= tileTop || left >= tileLeft + tsz || top >= tileTop + tsz)
+                            continue;
+
+                        var key = (tx, ty);
+                        if (!buckets.TryGetValue(key, out var list))
+                        {
+                            list = new List<PlacedColorDab>(8);
+                            buckets.Add(key, list);
+                        }
+                        list.Add(placed);
+                    }
                 }
             }
-        }
-        finally { layer.Pixels.ExitPixelWriteLock(); }
 
-        stroke.TrimColorDabCache();
-        return true;
+            if (buckets.Count == 0)
+                return true;
+            _lastTileBucketCount = buckets.Count;
+
+            layer.Pixels.EnterPixelWriteLock();
+            try
+            {
+                foreach (var ((tx, ty), dabs) in buckets)
+                {
+                    var tile = layer.Pixels.GetOrCreateRawTile(tx, ty);
+                    var tilePixX = tx * tsz;
+                    var tilePixY = ty * tsz;
+
+                    foreach (var placed in dabs)
+                    {
+                        ApplyCachedColorDabToTile(
+                            tile, tilePixX, tilePixY, dirty, grainTable,
+                            placed, isDstOut,
+                            brushGrain, texPx, texW, texH, texStride);
+                    }
+                }
+            }
+            finally { layer.Pixels.ExitPixelWriteLock(); }
+
+            return true;
+        }
+        finally
+        {
+            stroke.ExitColorDabCacheUse();
+        }
     }
 
     private static unsafe void ApplyCachedColorDabToTile(
@@ -1757,6 +1792,8 @@ public sealed class BrushEngine : IDisposable
         private readonly Queue<CachedDabKey> _dabCacheOrder = new();
         private readonly Dictionary<CachedDabKey, CachedColorDab> _colorDabCache = new();
         private readonly Queue<CachedDabKey> _colorDabCacheOrder = new();
+        private int _dabCacheUseDepth;
+        private int _colorDabCacheUseDepth;
         private readonly HashSet<SKBitmap> _ownedMasks = new();
         private readonly List<IBrushTip>? _ownedTipSet;
         private int[]? _cachedTipIndices;
@@ -1783,8 +1820,8 @@ public sealed class BrushEngine : IDisposable
                 (float)sample.X, (float)sample.Y, (float)sample.Pressure,
                 (float)sample.TiltX, (float)sample.TiltY, (float)sample.Twist,
                 0, 0, 0, 0, 0, StrokeRandom);
-            var initSizeMul = brush.Dynamics.EvalSize(sp);
-            var initSpacingMul = brush.Dynamics.EvalSpacing(sp);
+            var initSizeMul = EvalParameter(brush.ParameterGraphs, BrushParameterTarget.Size, sp, brush.Dynamics.EvalSize(sp));
+            var initSpacingMul = EvalParameter(brush.ParameterGraphs, BrushParameterTarget.Spacing, sp, brush.Dynamics.EvalSpacing(sp));
             State.NextStampDistance = Math.Max(0.5f,
                 (float)brush.Size
                 * Math.Max(0.5f, initSizeMul)
@@ -1873,7 +1910,7 @@ public sealed class BrushEngine : IDisposable
             return [stampTipIndex];
         }
 
-        public bool IsImageTip(int tipIndex) => TipFor(tipIndex) is ImageBrushTip;
+        public bool IsImageTip(int tipIndex) => TipFor(tipIndex) is ImageBrushTip or NodeBrushTip { IsDirectImageSampler: true };
 
         public SKBitmap MaskFor(StampSample stamp)
             => MaskFor(stamp.TipIndex, stamp.Hardness);
@@ -2052,7 +2089,41 @@ public sealed class BrushEngine : IDisposable
             return true;
         }
 
+        internal void EnterDabCacheUse() => _dabCacheUseDepth++;
+
+        internal void ExitDabCacheUse()
+        {
+            if (_dabCacheUseDepth > 0)
+                _dabCacheUseDepth--;
+            if (_dabCacheUseDepth == 0)
+                TrimDabCacheCore();
+        }
+
+        internal void EnterColorDabCacheUse() => _colorDabCacheUseDepth++;
+
+        internal void ExitColorDabCacheUse()
+        {
+            if (_colorDabCacheUseDepth > 0)
+                _colorDabCacheUseDepth--;
+            if (_colorDabCacheUseDepth == 0)
+                TrimColorDabCacheCore();
+        }
+
         internal void TrimDabCache()
+        {
+            if (_dabCacheUseDepth > 0)
+                return;
+            TrimDabCacheCore();
+        }
+
+        internal void TrimColorDabCache()
+        {
+            if (_colorDabCacheUseDepth > 0)
+                return;
+            TrimColorDabCacheCore();
+        }
+
+        private void TrimDabCacheCore()
         {
             while (_dabCache.Count > MaxCachedDabs && _dabCacheOrder.Count > 0)
             {
@@ -2062,7 +2133,7 @@ public sealed class BrushEngine : IDisposable
             }
         }
 
-        internal void TrimColorDabCache()
+        private void TrimColorDabCacheCore()
         {
             while (_colorDabCache.Count > MaxCachedColorDabs && _colorDabCacheOrder.Count > 0)
             {

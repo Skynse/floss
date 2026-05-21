@@ -21,7 +21,9 @@ public sealed class NodeGraphView : Control
     private const float PortRadius = 5f;
     private const float PortHitRadius = 8f;
     private const float SliderRowHeight = 22f;
+    private const float ImageSelectorRowHeight = 26f;
     private const float PreviewBarHeight = 38f;
+    private const float ImageTipPreviewSize = 72f;
     private const float BodyPadding = 4f;
     private const float BottomPadding = 4f;
     private const float CornerRadius = 6f;
@@ -104,11 +106,13 @@ public sealed class NodeGraphView : Control
 
     // Preview cache
     private readonly Dictionary<string, IImage> _previewCache = new();
+    private List<ImageSamplerOption> _imageSamplers = [];
 
     public event Action<BrushTipNode?>? NodeSelected;
     public event Action<BrushTipNode>? NodeRightClicked;
     public event Action? GraphModified;
     public event Action<Point>? CanvasRightClicked;
+    public event Action<string, byte[]>? ImageSamplerChanged;
 
     public string? SelectedNodeId => _selectedNodeId;
     public BrushTipNodeGraph Graph => _graph;
@@ -130,6 +134,14 @@ public sealed class NodeGraphView : Control
         InvalidatePreviews();
         InvalidateVisual();
     }
+
+    public void SetImageSamplerOptions(IReadOnlyList<BrushTipData>? tips)
+    {
+        _imageSamplers = ImageSamplerOptions.FromTips(tips);
+        InvalidateVisual();
+    }
+
+    public IReadOnlyList<ImageSamplerOption> AvailableImageSamplers => _imageSamplers;
 
     private void PushHistory()
     {
@@ -166,16 +178,43 @@ public sealed class NodeGraphView : Control
         if (_previewCache.TryGetValue(node.Id, out var cached))
             return cached;
 
+        if (node.Kind == BrushTipNodeKind.ImageSampler && node.PngBytes.Length > 0)
+        {
+            var thumb = DecodeImagePreview(node.PngBytes);
+            _previewCache[node.Id] = thumb;
+            return thumb;
+        }
+
         const int prevSize = 32;
         var tempGraph = _graph.DeepClone();
         tempGraph.OutputNodeId = node.Id;
-        using var bitmap = BrushTipNodeGraphEvaluator.Evaluate(tempGraph, prevSize, 1.0f);
+        using var bitmap = BrushTipNodeGraphEvaluator.EvaluateColor(tempGraph, prevSize, 1.0f)
+            ?? BrushTipNodeGraphEvaluator.Evaluate(tempGraph, prevSize, 1.0f);
         using var skImg = SKImage.FromBitmap(bitmap);
         using var png = skImg.Encode(SKEncodedImageFormat.Png, 60);
         using var stream = new MemoryStream(png.ToArray());
         var avaloniaBmp = new Bitmap(stream);
         _previewCache[node.Id] = avaloniaBmp;
         return avaloniaBmp;
+    }
+
+    private static Bitmap DecodeImagePreview(byte[] pngBytes)
+    {
+        using var source = SKBitmap.Decode(pngBytes)
+            ?? throw new InvalidDataException("Brush tip PNG could not be decoded.");
+        const int maxDim = 64;
+        var scale = Math.Min(maxDim / (float)source.Width, maxDim / (float)source.Height);
+        var width = Math.Max(1, (int)MathF.Round(source.Width * scale));
+        var height = Math.Max(1, (int)MathF.Round(source.Height * scale));
+
+        using var scaled = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul));
+        if (!source.ScalePixels(scaled, new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None)))
+            throw new InvalidDataException("Brush tip PNG could not be scaled.");
+
+        using var skImg = SKImage.FromBitmap(scaled);
+        using var png = skImg.Encode(SKEncodedImageFormat.Png, 80);
+        using var stream = new MemoryStream(png.ToArray());
+        return new Bitmap(stream);
     }
 
     public void Undo()
@@ -340,7 +379,7 @@ public sealed class NodeGraphView : Control
 
     private Point ViewCenter() => new(Bounds.Width * 0.5, Bounds.Height * 0.5);
 
-    private void FitGraphToView()
+    public void FitGraphToView()
     {
         if (_graph == null || _positions == null || _positions.Count == 0 || Bounds.Width <= 1 || Bounds.Height <= 1)
             return;
@@ -442,24 +481,64 @@ public sealed class NodeGraphView : Control
         _ => 0
     };
 
+    private static bool HasImageSelector(BrushTipNode node)
+        => node.Kind == BrushTipNodeKind.ImageSampler;
+
+    private static float PreviewBarHeightFor(BrushTipNode node)
+        => HasImageSelector(node) ? ImageTipPreviewSize : PreviewBarHeight;
+
+    private static Rect AspectFitRect(Size sourceSize, Rect bounds)
+    {
+        if (sourceSize.Width <= 0 || sourceSize.Height <= 0 || bounds.Width <= 0 || bounds.Height <= 0)
+            return bounds;
+
+        var scale = Math.Min(bounds.Width / sourceSize.Width, bounds.Height / sourceSize.Height);
+        var w = sourceSize.Width * scale;
+        var h = sourceSize.Height * scale;
+        return new Rect(
+            bounds.X + (bounds.Width - w) * 0.5,
+            bounds.Y + (bounds.Height - h) * 0.5,
+            w,
+            h);
+    }
+
     private float GetNodeHeight(BrushTipNode node)
     {
         var inputCount = NodeInputCount(node.Kind);
         var paramCount = GetNodeParams(node.Kind).Length;
+        var hasImageSelector = HasImageSelector(node);
         var bodyHeight = BodyPadding;
         if (inputCount > 0)
             bodyHeight += inputCount * PortRowHeight;
+        if (hasImageSelector)
+            bodyHeight += ImageSelectorRowHeight + BodyPadding;
+        var previewHeight = PreviewBarHeightFor(node);
         if (paramCount > 0)
         {
             bodyHeight += BodyPadding;
             bodyHeight += paramCount * SliderRowHeight;
-            bodyHeight += PreviewBarHeight + 4;
+            bodyHeight += previewHeight + 4;
         }
-        else if (inputCount > 0)
+        else if (inputCount > 0 || hasImageSelector)
         {
-            bodyHeight += PreviewBarHeight + 4;
+            bodyHeight += previewHeight + 4;
         }
         return HeaderHeight + bodyHeight + BottomPadding;
+    }
+
+    private static float WidgetsStartY(Point pos, BrushTipNode node)
+    {
+        var y = (float)pos.Y + HeaderHeight + BodyPadding;
+        var inputCount = NodeInputCount(node.Kind);
+        if (inputCount > 0)
+            y += inputCount * PortRowHeight + BodyPadding;
+        return y;
+    }
+
+    private static Rect ImageSelectorRect(Point pos, BrushTipNode node)
+    {
+        var y = WidgetsStartY(pos, node);
+        return new Rect(pos.X + 4, y, NodeWidth - 8, ImageSelectorRowHeight - 4);
     }
 
     private static SolidColorBrush HeaderBrush(BrushTipNodeKind kind) => kind switch
@@ -471,6 +550,7 @@ public sealed class NodeGraphView : Control
             or BrushTipNodeKind.Circle or BrushTipNodeKind.Rectangle
             or BrushTipNodeKind.RoundedRectangle
             or BrushTipNodeKind.LinearGradient or BrushTipNodeKind.Stripe
+            or BrushTipNodeKind.ImageSampler
             or BrushTipNodeKind.Noise or BrushTipNodeKind.Bristle => GenBrush,
         BrushTipNodeKind.Add or BrushTipNodeKind.Multiply
             or BrushTipNodeKind.Max or BrushTipNodeKind.Min
@@ -557,6 +637,9 @@ public sealed class NodeGraphView : Control
             new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
             new("Rotation", -180f, 180f, n => n.RotationDegrees, (n, v) => n.RotationDegrees = v),
         },
+        BrushTipNodeKind.ImageSampler => new NodeParam[] {
+            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
+        },
         BrushTipNodeKind.Threshold => new NodeParam[] {
             new("Threshold", 0f, 1f, n => n.Threshold, (n, v) => n.Threshold = v),
             new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
@@ -600,6 +683,7 @@ public sealed class NodeGraphView : Control
     private static string NodeKindDisplayName(BrushTipNodeKind kind) => kind switch
     {
         BrushTipNodeKind.LinearGradient => "Linear Grad",
+        BrushTipNodeKind.ImageSampler => "Image Sampler",
         BrushTipNodeKind.RoundedRectangle => "Round Rect",
         BrushTipNodeKind.RotateCoordinates => "Rotate Coord",
         BrushTipNodeKind.WarpCoordinates => "Warp Coord",
@@ -618,10 +702,11 @@ public sealed class NodeGraphView : Control
         new(nodePos.X, nodePos.Y + HeaderHeight + BodyPadding + index * PortRowHeight + PortRowHeight / 2);
 
     // ── Slider bar bounds (world-space, relative to node position) ─────────────
-    private static Rect SliderBarRect(Point pos, int paramIndex, int inputCount)
+    private static Rect SliderBarRect(Point pos, BrushTipNode node, int paramIndex)
     {
-        var y = pos.Y + HeaderHeight + BodyPadding;
-        if (inputCount > 0) y += inputCount * PortRowHeight + BodyPadding;
+        var y = WidgetsStartY(pos, node);
+        if (HasImageSelector(node))
+            y += ImageSelectorRowHeight + BodyPadding;
         y += paramIndex * SliderRowHeight + 4;
         return new Rect(pos.X + 58, y, NodeWidth - 98, 14);
     }
@@ -630,12 +715,12 @@ public sealed class NodeGraphView : Control
     private static Rect PreviewBarRect(Point pos, BrushTipNode node)
     {
         var paramCount = GetNodeParams(node.Kind).Length;
-        var inputCount = NodeInputCount(node.Kind);
-        var y = pos.Y + HeaderHeight + BodyPadding;
-        if (inputCount > 0) y += inputCount * PortRowHeight + BodyPadding;
-        if (paramCount > 0) y += paramCount * SliderRowHeight + 4;
-        else if (inputCount > 0) { /* just after inputs */ }
-        return new Rect(pos.X + 4, y, NodeWidth - 8, PreviewBarHeight);
+        var y = WidgetsStartY(pos, node);
+        if (HasImageSelector(node))
+            y += ImageSelectorRowHeight + BodyPadding;
+        if (paramCount > 0)
+            y += paramCount * SliderRowHeight + 4;
+        return new Rect(pos.X + 4, y, NodeWidth - 8, PreviewBarHeightFor(node));
     }
 
     public override void Render(DrawingContext context)
@@ -790,8 +875,34 @@ public sealed class NodeGraphView : Control
             y += PortRowHeight;
         }
 
+        // Image selector widget (Blender-style on-node dropdown)
+        if (HasImageSelector(node))
+        {
+            if (inputCount > 0) y += BodyPadding;
+            var selectorRect = ImageSelectorRect(pos, node);
+            context.DrawRectangle(SliderBgBrush, null, selectorRect, 3, 3);
+            var label = _imageSamplers.Count == 0
+                ? "No images"
+                : ImageSamplerOptions.Match(_imageSamplers, node.PngBytes)?.Label
+                  ?? (_imageSamplers.Count > 0 ? _imageSamplers[0].Label : "—");
+            var labelFt = new FormattedText(label, CultureInfo.InvariantCulture,
+                FlowDirection.LeftToRight, DefaultTypeface, 9, BodyTextBrush);
+            var maxLabelW = selectorRect.Width - 18;
+            if (labelFt.Width > maxLabelW)
+                label = label.Length > 12 ? label[..9] + "…" : label;
+            labelFt = new FormattedText(label, CultureInfo.InvariantCulture,
+                FlowDirection.LeftToRight, DefaultTypeface, 9, BodyTextBrush);
+            context.DrawText(labelFt,
+                new Point(selectorRect.X + 6, selectorRect.Y + (selectorRect.Height - labelFt.Height) / 2));
+            var arrow = new FormattedText("▾", CultureInfo.InvariantCulture,
+                FlowDirection.LeftToRight, DefaultTypeface, 10, MutedTextBrush);
+            context.DrawText(arrow,
+                new Point(selectorRect.Right - 14, selectorRect.Y + (selectorRect.Height - arrow.Height) / 2));
+            y += ImageSelectorRowHeight + BodyPadding;
+        }
+
         // Slider rows
-        if (inputCount > 0) y += BodyPadding;
+        if (inputCount > 0 && !HasImageSelector(node)) y += BodyPadding;
         var nodeParams = GetNodeParams(node.Kind);
         foreach (var param in nodeParams)
         {
@@ -804,7 +915,7 @@ public sealed class NodeGraphView : Control
             context.DrawText(labelText, new Point(pos.X + 4, y + (SliderRowHeight - labelText.Height) / 2));
 
             // Slider background + fill
-            var barRect = SliderBarRect(pos, Array.IndexOf(nodeParams, param), inputCount);
+            var barRect = SliderBarRect(pos, node, Array.IndexOf(nodeParams, param));
             context.DrawRectangle(SliderBgBrush, null, barRect, 3, 3);
             if (fraction > 0.001f)
             {
@@ -821,7 +932,7 @@ public sealed class NodeGraphView : Control
         }
 
         // Preview bar at bottom
-        if (nodeParams.Length > 0 || inputCount > 0)
+        if (nodeParams.Length > 0 || inputCount > 0 || HasImageSelector(node))
         {
             var prev = PreviewBarRect(pos, node);
             context.DrawRectangle(PreviewBgBrush, null, prev, 3, 3);
@@ -829,10 +940,12 @@ public sealed class NodeGraphView : Control
             try
             {
                 var previewImage = GetNodePreview(node);
-                var padding = 3.0;
-                var imgRect = new Rect(prev.X + padding, prev.Y + padding,
+                const double padding = 3.0;
+                var bounds = new Rect(prev.X + padding, prev.Y + padding,
                     prev.Width - padding * 2, prev.Height - padding * 2);
-                context.DrawImage(previewImage, new Rect(previewImage.Size), imgRect);
+                var srcSize = previewImage.Size;
+                var drawRect = AspectFitRect(srcSize, bounds);
+                context.DrawImage(previewImage, new Rect(srcSize), drawRect);
             }
             catch
             {
@@ -998,16 +1111,29 @@ public sealed class NodeGraphView : Control
                 }
             }
 
+            // Hit-test image selector on ImageSampler nodes.
+            for (var ni = _graph.Nodes.Count - 1; ni >= 0; ni--)
+            {
+                var node = _graph.Nodes[ni];
+                if (!HasImageSelector(node) || !_positions.TryGetValue(node.Id, out var np))
+                    continue;
+                if (ImageSelectorRect(np, node).Contains(worldPos))
+                {
+                    ShowImageSelectorMenu(node, np);
+                    e.Handled = true;
+                    return;
+                }
+            }
+
             // Hit-test slider bars.
             for (var ni = _graph.Nodes.Count - 1; ni >= 0; ni--)
             {
                 var node = _graph.Nodes[ni];
                 if (!_positions.TryGetValue(node.Id, out var np)) continue;
                 var nodeParams = GetNodeParams(node.Kind);
-                var inputCount = NodeInputCount(node.Kind);
                 for (var pi = 0; pi < nodeParams.Length; pi++)
                 {
-                    var bar = SliderBarRect(np, pi, inputCount);
+                    var bar = SliderBarRect(np, node, pi);
                     if (bar.Contains(worldPos))
                     {
                         _dragAction = DragAction.ScrubParam;
@@ -1339,5 +1465,39 @@ public sealed class NodeGraphView : Control
         var dx = a.X - b.X;
         var dy = a.Y - b.Y;
         return Math.Sqrt(dx * dx + dy * dy);
+    }
+
+    private void ShowImageSelectorMenu(BrushTipNode node, Point nodePos)
+    {
+        if (_imageSamplers.Count == 0)
+            return;
+
+        var menu = new ContextMenu();
+        foreach (var option in _imageSamplers)
+        {
+            var item = new MenuItem { Header = option.Label, FontSize = 11 };
+            var captured = option;
+            item.Click += (_, _) =>
+            {
+                if (ImageSamplerOptions.SameBytes(node.PngBytes, captured.Tip.PngBytes))
+                    return;
+                PushHistory();
+                UpdateNode(node.Id, n => n.PngBytes = captured.Tip.PngBytes.ToArray());
+                ImageSamplerChanged?.Invoke(node.Id, captured.Tip.PngBytes);
+                GraphModified?.Invoke();
+            };
+            menu.Items.Add(item);
+        }
+
+        menu.Open(this);
+    }
+
+    public void SetImageSamplerPng(string nodeId, byte[] pngBytes, bool pushHistory = true)
+    {
+        if (pushHistory)
+            PushHistory();
+        UpdateNode(nodeId, n => n.PngBytes = pngBytes.ToArray());
+        ImageSamplerChanged?.Invoke(nodeId, pngBytes);
+        GraphModified?.Invoke();
     }
 }

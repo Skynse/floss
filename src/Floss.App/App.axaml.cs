@@ -87,6 +87,8 @@ public partial class App : Application
 
         desktop.Exit += (_, _) =>
         {
+            if (desktop.MainWindow is MainWindow mainWindow)
+                mainWindow.FlushLayoutToConfig();
             Config.Save();
             Shortcuts.Save();
             ToolGroups.Save();
