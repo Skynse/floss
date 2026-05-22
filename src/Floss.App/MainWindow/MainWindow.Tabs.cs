@@ -434,9 +434,7 @@ public partial class MainWindow
 
     private void OnCanvasLayersChanged(object? s, EventArgs e)
     {
-        _selectedLayerIndices.Clear();
-        if (_canvas.Layers.Count > 0)
-            _selectedLayerIndices.Add(_canvas.ActiveLayerIndex);
+        PruneLayerSelection();
         SyncCanvasFrameToDocument(fitToViewport: false);
         _rulerOverlay?.InvalidateVisual();
         BuildLayerList();

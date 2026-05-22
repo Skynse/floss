@@ -261,7 +261,6 @@ public sealed class SettingsWindow : Window
             new("Duplicate layer",        "Layers",           () => sc.LayerDuplicate,         v => sc.LayerDuplicate = v),
             new("Delete layer",           "Layers",           () => sc.LayerDelete,            v => sc.LayerDelete = v),
             new("Group layers",           "Layers",           () => sc.LayerGroup,             v => sc.LayerGroup = v),
-            new("Merge / Flatten",        "Layers",           () => sc.LayerMerge,             v => sc.LayerMerge = v),
             new("Move up",                "Layers",           () => sc.LayerMoveUp,            v => sc.LayerMoveUp = v),
             new("Move down",              "Layers",           () => sc.LayerMoveDown,          v => sc.LayerMoveDown = v),
             new("Toggle layer color",     "Layers",           () => sc.LayerToggleColor,       v => sc.LayerToggleColor = v),

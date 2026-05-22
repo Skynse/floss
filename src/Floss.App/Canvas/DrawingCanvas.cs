@@ -483,26 +483,6 @@ public sealed class DrawingCanvas : Control, IDisposable
     public void ApplyFilter(IReadOnlyList<int> layerIndices, Action<DrawingLayer> apply)
         => _document.ApplyFilterToLayers(layerIndices, apply);
 
-    public void MergeDown(IReadOnlyList<int>? selectedIndices = null)
-    {
-        if (!_document.CanModifyActiveLayer) return;
-        var active = _document.ActiveLayerIndex;
-        if (selectedIndices is { Count: > 1 })
-        {
-            _document.MergeSelectedLayers(selectedIndices, _compositor);
-            return;
-        }
-        if (_document.ActiveLayer is not { } layer) return;
-        if (layer.IsGroup)
-        {
-            _document.FlattenGroup(active, _compositor);
-            return;
-        }
-        // Merge with the next layer below in the flat list
-        if (active + 1 < _document.Layers.Count)
-            _document.MergeSelectedLayers([active, active + 1], _compositor);
-    }
-
     public void ResizeCanvas(int newW, int newH, int offsetX, int offsetY)
     {
         _document.ResizeCanvas(newW, newH, offsetX, offsetY);

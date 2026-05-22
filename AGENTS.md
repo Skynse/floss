@@ -148,4 +148,4 @@ Modifier keys:
 Shared:
 - App.axaml.cs — exposes singleton ShortcutsConfig / ModifierKeySettings loaded from disk
 - AppPaths.cs — file paths for both configs
-- tests/Floss.App.Tests/Program.cs — KeyBindingTests covering parsing, modifiers, round-trip
+- tests/Floss.App.Tests/ — xUnit test project (`dotnet test tests/Floss.App.Tests/Floss.App.Tests.csproj`)

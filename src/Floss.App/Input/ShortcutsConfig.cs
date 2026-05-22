@@ -115,7 +115,6 @@ public sealed class ShortcutsConfig
     public KeyBinding LayerDelete { get; set; } = new(Key.Delete, KeyModifiers.Control);
     public KeyBinding LayerMoveUp { get; set; } = new(Key.Up, KeyModifiers.Control);
     public KeyBinding LayerMoveDown { get; set; } = new(Key.Down, KeyModifiers.Control);
-    public KeyBinding LayerMerge { get; set; } = new(Key.E, KeyModifiers.Control);
     public KeyBinding LayerGroup { get; set; } = new(Key.G, KeyModifiers.Control);
     public KeyBinding LayerToggleColor { get; set; } = new(Key.B, KeyModifiers.Control);
 

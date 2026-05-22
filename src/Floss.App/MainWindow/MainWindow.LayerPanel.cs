@@ -49,7 +49,10 @@ public partial class MainWindow
     private static readonly IBrush IconOff = new SolidColorBrush(Color.Parse("#5b5b5b"));
     private static readonly IBrush IconVisOn = new SolidColorBrush(Color.Parse("#8aa6cc"));
     private static readonly IBrush GroupIconFg = new SolidColorBrush(Color.Parse(TextMuted));
-    private static readonly IBrush IconStandard = new SolidColorBrush(Color.Parse(TextMuted));
+    private static readonly IBrush GroupFolderIcon = new SolidColorBrush(Color.Parse("#8aa3c4"));
+    private static readonly IBrush GroupFolderIconActive = new SolidColorBrush(Color.Parse("#c5d8f0"));
+    private static readonly IBrush GroupPreviewBg = new SolidColorBrush(Color.Parse("#263040"));
+    private static readonly IBrush GroupPreviewBgActive = new SolidColorBrush(Color.Parse("#334158"));
 
     // Miscellaneous UI Elements
     private static readonly IBrush PreviewFrameBg = new SolidColorBrush(Color.Parse(Bg0));
@@ -205,7 +208,7 @@ public partial class MainWindow
 
         // ── Action buttons (bottom bar — like CSP) ───────────────────────────────
         var addBtn = SmIconBtn(Icons.LayerPlus, "Add layer  (Ctrl+Shift+N)");
-        var folderBtn = SmIconBtn(Icons.FolderOpenOutline, "Add layer folder");
+        var folderBtn = SmIconBtn(Icons.Folder, "Add layer folder");
         var dupBtn = SmIconBtn(Icons.ContentCopy, "Duplicate  (Ctrl+J)");
         _deleteLayerButton = SmIconBtn(Icons.DeleteOutline, "Delete  (Ctrl+Delete)");
         _moveLayerUpButton = SmIconBtn(Icons.ArrowUp, "Move up  (Ctrl+Up)");
@@ -290,6 +293,35 @@ public partial class MainWindow
         {
             _layerListBox.ScrollIntoView(scrollTarget);
         }, Avalonia.Threading.DispatcherPriority.Background);
+    }
+
+    private void PruneLayerSelection()
+    {
+        var max = _canvas.Layers.Count;
+        _selectedLayerIndices.RemoveWhere(i => i < 0 || i >= max);
+        if (max > 0 && _selectedLayerIndices.Count == 0)
+            _selectedLayerIndices.Add(_canvas.ActiveLayerIndex);
+    }
+
+    /// <summary>
+    /// Sets the active layer for a menu/shortcut action without collapsing a multi-selection.
+    /// </summary>
+    private void FocusLayerForAction(int index)
+    {
+        if (index < 0 || index >= _canvas.Layers.Count)
+            return;
+
+        if (_selectedLayerIndices.Count > 1 && _selectedLayerIndices.Contains(index))
+        {
+            if (index != _canvas.ActiveLayerIndex)
+                _canvas.SelectLayer(index);
+            return;
+        }
+
+        _selectedLayerIndices.Clear();
+        _selectedLayerIndices.Add(index);
+        if (index != _canvas.ActiveLayerIndex)
+            _canvas.SelectLayer(index);
     }
 
     // ── Layer panel ───────────────────────────────────────────────────────────
@@ -400,7 +432,7 @@ public partial class MainWindow
         row.AddHandler(DragDrop.DropEvent, LayerRowDrop);
 
         // cols: clip-strip | disclosure | visibility | thumbnail | name/status
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("3,12,16,28,*") };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("3,14,16,28,*") };
 
         // Thin pink strip on the left edge to signal "clipped to layer below"
         var clipStrip = new Border
@@ -409,7 +441,7 @@ public partial class MainWindow
             IsHitTestVisible = false
         };
 
-        var disclosureBtn = LayerDisclosureBtn(layer, i);
+        var disclosureBtn = LayerDisclosureBtn(layer, i, isActive || isSelected);
 
         var visBtn = LayerIconBtn(
             layer.IsVisible ? Icons.Eye : Icons.EyeOff,
@@ -417,7 +449,7 @@ public partial class MainWindow
             layer.IsVisible ? IconVisOn : IconOff, i);
         visBtn.Click += (_, _) => _canvas.ToggleLayerVisibility((int)visBtn.Tag!);
 
-        var (preview, previewImage) = BuildLayerPreview(layer, layer.IsPaper ? _canvas.Document.PaperColor : null);
+        var (preview, previewImage) = BuildLayerPreview(layer, isActive || isSelected, layer.IsPaper ? _canvas.Document.PaperColor : null);
         preview.PointerPressed += (_, e) =>
         {
             if (layer.IsGroup && e.GetCurrentPoint(preview).Properties.IsLeftButtonPressed)
@@ -481,6 +513,12 @@ public partial class MainWindow
 
     private static string LayerStatusText(DrawingLayer layer)
     {
+        if (layer.IsGroup)
+        {
+            var count = CountLayersInTree(layer);
+            return count == 1 ? "1 layer" : $"{count} layers";
+        }
+
         var flags = new List<string>(4);
         if (layer.IsLocked) flags.Add("Lock");
         if (layer.IsAlphaLocked) flags.Add("Alpha");
@@ -491,6 +529,25 @@ public partial class MainWindow
         return $"{Math.Round(layer.Opacity * 100):0}%  {layer.BlendMode}{suffix}";
     }
 
+    private static int CountLayersInTree(DrawingLayer layer)
+    {
+        var count = 0;
+        foreach (var _ in EnumerateLayerTree(layer))
+            count++;
+        return count;
+    }
+
+    private static IEnumerable<DrawingLayer> EnumerateLayerTree(DrawingLayer layer)
+    {
+        if (!layer.IsGroup) yield break;
+        foreach (var child in layer.Children)
+        {
+            yield return child;
+            foreach (var nested in EnumerateLayerTree(child))
+                yield return nested;
+        }
+    }
+
     private void CommitLayerOpacityScrubIfActive()
     {
         if (!_layerOpacityScrubActive) return;
@@ -498,15 +555,19 @@ public partial class MainWindow
         _canvas.CommitActiveLayerOpacityScrub();
     }
 
-    private Button LayerDisclosureBtn(DrawingLayer layer, int index)
+    private Button LayerDisclosureBtn(DrawingLayer layer, int index, bool highlighted)
     {
         var btn = new Button
         {
-            Content = layer.IsGroup ? Icons.Make(layer.IsOpen ? Icons.ArrowDown : Icons.ChevronRight, 10, layer.IsGroup ? GroupIconFg : IconStandard) : null,
+            Content = layer.IsGroup
+                ? Icons.Make(layer.IsOpen ? Icons.ChevronDown : Icons.ChevronRight, 11, highlighted ? GroupFolderIconActive : GroupIconFg)
+                : null,
             Background = Avalonia.Media.Brushes.Transparent,
             BorderBrush = Avalonia.Media.Brushes.Transparent,
-            Foreground = layer.IsGroup ? GroupIconFg : IconStandard,
+            Foreground = highlighted ? GroupFolderIconActive : GroupIconFg,
             Padding = new Thickness(0),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             Tag = index,
             IsHitTestVisible = layer.IsGroup
         };
@@ -534,8 +595,7 @@ public partial class MainWindow
             if (gesture != null) item.InputGesture = gesture;
             item.Click += (_, _) =>
             {
-                if (index >= 0 && index < _canvas.Layers.Count)
-                    _canvas.SelectLayer(index);
+                FocusLayerForAction(index);
                 action();
             };
             return item;
@@ -551,7 +611,6 @@ public partial class MainWindow
         var pasteItem = Item("_Paste", () => _canvas.PasteLayer(index));
         pasteItem.IsEnabled = _canvas.CanPasteLayer;
 
-        var multiSelected = _selectedLayerIndices.Count > 1;
         var hasSelection = _selectedLayerIndices.Count >= 1;
 
         var items = new List<MenuItem>
@@ -593,18 +652,11 @@ public partial class MainWindow
             items.Insert(4, Item(layer.IsOpen ? "Collapse Folder" : "Expand Folder", () => _canvas.ToggleLayerOpen(index)));
             items.Insert(5, Item("Flatten Folder", () => _canvas.FlattenGroup(index)));
         }
-        else
+        else if (_selectedLayerIndices.Count > 1)
         {
-            items.Insert(multiSelected ? 5 : 4, Item(
-                multiSelected ? $"Merge {_selectedLayerIndices.Count} Selected Layers" : "Merge Down",
-                () =>
-                {
-                    if (multiSelected)
-                        _canvas.MergeSelectedLayers(_selectedLayerIndices.OrderBy(x => x).ToList());
-                    else
-                        _canvas.MergeDown();
-                },
-                new KeyGesture(Key.E, KeyModifiers.Control)));
+            items.Insert(4, Item(
+                $"Merge {_selectedLayerIndices.Count} Selected Layers",
+                () => _canvas.MergeSelectedLayers(_selectedLayerIndices.OrderBy(x => x).ToList())));
         }
 
         var visibleCount = VisibleLayerIndexes().Count();
@@ -632,8 +684,7 @@ public partial class MainWindow
             var mi = new MenuItem { Header = header };
             mi.Click += async (_, _) =>
             {
-                if (index >= 0 && index < _canvas.Layers.Count)
-                    _canvas.SelectLayer(index);
+                FocusLayerForAction(index);
                 await action();
             };
             return mi;
@@ -643,8 +694,7 @@ public partial class MainWindow
             var mi = new MenuItem { Header = header };
             mi.Click += (_, _) =>
             {
-                if (index >= 0 && index < _canvas.Layers.Count)
-                    _canvas.SelectLayer(index);
+                FocusLayerForAction(index);
                 action();
             };
             return mi;
@@ -775,17 +825,18 @@ public partial class MainWindow
             var alreadySelected = _selectedLayerIndices.Contains(index);
             if (isRightClick)
             {
-                // Right-click: update selection without clearing it, then let the
-                // context menu open. Do NOT start a drag.
+                // Right-click unselected row: select it alone, then open the menu.
+                // Right-click an already-selected row: keep the full multi-selection
+                // (do not call SelectLayer — that fires LayersChanged and clears it).
                 if (!alreadySelected)
                 {
-                _selectedLayerIndices.Add(index);
-                BuildLayerList();
+                    _selectedLayerIndices.Clear();
+                    _selectedLayerIndices.Add(index);
+                    _canvas.SelectLayer(index);
+                    BuildLayerList();
+                }
+                return;
             }
-            _canvas.SelectLayer(index);
-            e.Handled = true;
-            return;
-        }
 
         SelectLayerWithModifiers(index, e.KeyModifiers);
 
@@ -1025,8 +1076,12 @@ public partial class MainWindow
             layer.IsVisible ? Icons.Eye : Icons.EyeOff,
             layer.IsVisible ? IconVisOn : IconOff);
 
-        refs.DisclosureButton.Content = layer.IsGroup ? Icons.Make(layer.IsOpen ? Icons.ArrowDown : Icons.ChevronRight, 10, GroupIconFg) : null;
+        refs.DisclosureButton.Content = layer.IsGroup
+            ? Icons.Make(layer.IsOpen ? Icons.ChevronDown : Icons.ChevronRight, 11,
+                isActive || isSelected ? GroupFolderIconActive : GroupIconFg)
+            : null;
         refs.DisclosureButton.IsHitTestVisible = layer.IsGroup;
+        refs.DisclosureButton.Foreground = isActive || isSelected ? GroupFolderIconActive : GroupIconFg;
         if (_renamingLayerIndex != index)
         {
             refs.NameHost.Content = new StackPanel
@@ -1067,7 +1122,10 @@ public partial class MainWindow
         }
     }
 
-    private static (Control Frame, Image? PreviewImage) BuildLayerPreview(DrawingLayer layer, Avalonia.Media.Color? paperColor = null)
+    private static (Control Frame, Image? PreviewImage) BuildLayerPreview(
+        DrawingLayer layer,
+        bool highlighted,
+        Avalonia.Media.Color? paperColor = null)
     {
         var frame = new Border
         {
@@ -1083,7 +1141,14 @@ public partial class MainWindow
 
         if (layer.IsGroup)
         {
-            frame.Child = Icons.Make(layer.IsOpen ? Icons.ArrowDown : Icons.ChevronRight, 12, GroupIconFg);
+            frame.Background = highlighted ? GroupPreviewBgActive : GroupPreviewBg;
+            frame.BorderBrush = highlighted
+                ? new SolidColorBrush(Color.Parse(Accent))
+                : PreviewFrameBorder;
+            frame.Child = Icons.Make(
+                layer.IsOpen ? Icons.FolderOpenOutline : Icons.Folder,
+                15,
+                highlighted ? GroupFolderIconActive : GroupFolderIcon);
             return (frame, null);
         }
 

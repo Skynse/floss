@@ -204,11 +204,15 @@ public partial class MainWindow : Window, Tools.IViewportController
     private MenuItem? _addLayerMenuItem;
     private MenuItem? _duplicateLayerMenuItem;
     private MenuItem? _deleteLayerMenuItem;
-    private MenuItem? _mergeDownMenuItem;
     private MenuItem? _moveUpMenuItem;
     private MenuItem? _moveDownMenuItem;
     private MenuItem? _addBackgroundMenuItem;
     private MenuItem? _filterMenu;
+    private Button? _toolbarNewBtn;
+    private Button? _toolbarOpenBtn;
+    private Button? _toolbarSaveBtn;
+    private Button? _toolbarUndoBtn;
+    private Button? _toolbarRedoBtn;
     private bool _suppressFloatingDockerClosed;
     private bool _suppressFloatingDockerSnap;
     private Grid? _dockerHostGrid;
@@ -336,7 +340,6 @@ public partial class MainWindow : Window, Tools.IViewportController
         AddShortcut(s.LayerDelete, () => _canvas.DeleteLayer(), CanExecuteCanvasDocumentShortcut);
         AddShortcut(s.LayerMoveUp, () => _canvas.MoveActiveLayer(1), CanExecuteCanvasDocumentShortcut);
         AddShortcut(s.LayerMoveDown, () => _canvas.MoveActiveLayer(-1), CanExecuteCanvasDocumentShortcut);
-        AddShortcut(s.LayerMerge, LayerMergeAction, CanExecuteCanvasDocumentShortcut);
         AddShortcut(s.LayerGroup, LayerGroupAction, CanExecuteCanvasDocumentShortcut);
         AddShortcut(s.LayerToggleColor, () => ToggleActiveLayerColor(), CanExecuteCanvasDocumentShortcut);
 
@@ -381,11 +384,6 @@ public partial class MainWindow : Window, Tools.IViewportController
             _canvas.BeginSelectionTransform(
                 _selectedLayerIndices.Count > 1 ? _selectedLayerIndices.ToList() : null);
         }
-    }
-
-    private void LayerMergeAction()
-    {
-        _canvas.MergeDown(_selectedLayerIndices.Count > 1 ? _selectedLayerIndices.OrderBy(x => x).ToList() : null);
     }
 
     private void LayerGroupAction()
@@ -882,7 +880,6 @@ public partial class MainWindow : Window, Tools.IViewportController
         _addLayerMenuItem = MenuAction("_Add Layer", new KeyGesture(Key.N, KeyModifiers.Control | KeyModifiers.Shift), () => _canvas.AddLayer());
         _duplicateLayerMenuItem = MenuAction("_Duplicate Layer", new KeyGesture(Key.J, KeyModifiers.Control), () => _canvas.DuplicateLayer());
         _deleteLayerMenuItem = MenuAction("_Delete Layer", new KeyGesture(Key.Delete, KeyModifiers.Control), () => _canvas.DeleteLayer());
-        _mergeDownMenuItem = MenuAction("_Merge Down", new KeyGesture(Key.E, KeyModifiers.Control), () => _canvas.MergeDown());
         _moveUpMenuItem = MenuAction("Move Layer _Up", () => _canvas.MoveActiveLayer(1));
         _moveDownMenuItem = MenuAction("Move Layer _Down", () => _canvas.MoveActiveLayer(-1));
         _addBackgroundMenuItem = MenuAction("Add _Background", AddBackgroundLayer);
@@ -895,8 +892,6 @@ public partial class MainWindow : Window, Tools.IViewportController
                 _addLayerMenuItem,
                 _duplicateLayerMenuItem,
                 _deleteLayerMenuItem,
-                new Separator(),
-                _mergeDownMenuItem,
                 new Separator(),
                 _moveUpMenuItem,
                 _moveDownMenuItem,
@@ -1051,14 +1046,15 @@ public partial class MainWindow : Window, Tools.IViewportController
         undoTb.Click += (_, _) => _canvas.Undo();
         redoTb.Click += (_, _) => _canvas.Redo();
 
-        var openTb = TbarBtn(Icons.FolderOpenOutline, "Open document  (Ctrl+O)");
-        var SaveDocumentTb = TbarBtn(Icons.ContentSaveOutline, "Save document  (Ctrl+S)");
-        var exportPsdTb = TbarBtn(Icons.ContentSaveOutline, "Export PSD");
-        var exportTb = TbarBtn(Icons.ContentSaveOutline, "Export image");
+        var newTb = TbarBtn(Icons.Plus, "New document  (Ctrl+N)");
+        var openTb = TbarBtn(Icons.Import, "Open document  (Ctrl+O)");
+        var saveTb = TbarBtn(Icons.ContentSaveOutline, "Save document  (Ctrl+S)");
+        newTb.Click += async (_, _) => await NewDocumentAsync();
         openTb.Click += async (_, _) => await OpenDocumentAsync();
-        SaveDocumentTb.Click += async (_, _) => await SaveDocumentAsync();
-        exportPsdTb.Click += async (_, _) => await ExportPsdAsync();
-        exportTb.Click += async (_, _) => await ExportImageAsync();
+        saveTb.Click += async (_, _) => await SaveDocumentAsync();
+        _toolbarNewBtn = newTb;
+        _toolbarOpenBtn = openTb;
+        _toolbarSaveBtn = saveTb;
 
         var row = new StackPanel
         {
@@ -1067,13 +1063,14 @@ public partial class MainWindow : Window, Tools.IViewportController
             Spacing = 1,
             Margin = new Thickness(6, 0)
         };
+        row.Children.Add(newTb);
         row.Children.Add(openTb);
-        row.Children.Add(SaveDocumentTb);
-        row.Children.Add(exportPsdTb);
-        row.Children.Add(exportTb);
+        row.Children.Add(saveTb);
         row.Children.Add(TbarSep());
         row.Children.Add(undoTb);
         row.Children.Add(redoTb);
+        _toolbarUndoBtn = undoTb;
+        _toolbarRedoBtn = redoTb;
         row.Children.Add(TbarSep());
         row.Children.Add(zoomOut);
         row.Children.Add(_zoomDisplay);
@@ -2672,12 +2669,15 @@ public partial class MainWindow : Window, Tools.IViewportController
         if (_addLayerMenuItem != null) _addLayerMenuItem.IsEnabled = hasDocument;
         if (_duplicateLayerMenuItem != null) _duplicateLayerMenuItem.IsEnabled = hasDocument && canModifyActive;
         if (_deleteLayerMenuItem != null) _deleteLayerMenuItem.IsEnabled = hasDocument && canDeleteLayer;
-        if (_mergeDownMenuItem != null) _mergeDownMenuItem.IsEnabled = hasDocument && canModifyActive && activeIdx > 0;
         if (_moveUpMenuItem != null) _moveUpMenuItem.IsEnabled = hasDocument && activeIdx < layers.Count - 1;
         if (_moveDownMenuItem != null) _moveDownMenuItem.IsEnabled = hasDocument && activeIdx > 0;
         if (_addBackgroundMenuItem != null) _addBackgroundMenuItem.IsEnabled = hasDocument;
 
         if (_filterMenu != null) _filterMenu.IsEnabled = hasDocument && canModifyActive;
+
+        if (_toolbarSaveBtn != null) _toolbarSaveBtn.IsEnabled = hasDocument;
+        if (_toolbarUndoBtn != null) _toolbarUndoBtn.IsEnabled = hasDocument && _canvas.CanUndo;
+        if (_toolbarRedoBtn != null) _toolbarRedoBtn.IsEnabled = hasDocument && _canvas.CanRedo;
     }
 }
 

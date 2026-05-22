@@ -2,7 +2,7 @@
 
 Floss implements a highly customizable stamp-based brush engine designed to feel natural and responsive to tablet pressure/speed.
 
-## Architecture Overview
+## Architecture Overview -OLD
 
 The brush engine operates by tracking pointer movement, forming a curve, and "stamping" a brush tip along that curve at specific intervals.
 
@@ -33,3 +33,6 @@ When a tool calls the `BrushEngine` to apply a stroke:
 2. It generates points interpolated by the `CubicCurve` to ensure the spacing constraint (e.g., 10% of brush size) is met exactly, preventing "stepped" artifacts.
 3. For each `StrokePoint`, it evaluates the `BrushDynamics` to determine the final size, opacity, and rotation of the stamp.
 4. It calls `IBrushTip.Stamp()` or blends the tip onto the `TiledPixelBuffer` using the active blend mode and color.
+
+
+NOTE: Brush engine has been replaced with procedural graph engine that supports image samplers.

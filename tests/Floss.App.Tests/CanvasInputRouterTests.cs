@@ -1,14 +1,8 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using Avalonia;
-using Avalonia.Input;
-using Floss.App.Input;
-using Floss.App.Tools;
 
 namespace Floss.App.Tests;
 
-internal static class CanvasInputRouterTests
+public class CanvasInputRouterTests
 {
     // ── Mock host ─────────────────────────────────────────────────────────────
 
@@ -116,7 +110,8 @@ internal static class CanvasInputRouterTests
 
     // ── Tests ─────────────────────────────────────────────────────────────────
 
-    public static void ModifierReleaseDoesNotEndRunningStroke()
+    [Fact]
+    public void ModifierReleaseDoesNotEndRunningStroke()
     {
         var host = new MockHost();
         var router = new CanvasInputRouter(host);
@@ -134,17 +129,18 @@ internal static class CanvasInputRouterTests
             ctrlHeld: false,
             shiftHeld: false);
 
-        AssertEx.Equal(RouterState.Running, router.State, "Should be running after pointer press");
+        TestAssertions.Equal(RouterState.Running, router.State, "Should be running after pointer press");
 
         // Release Space modifier while still running
         router.HandleKeyUp(Key.Space, KeyModifiers.None);
 
         // Verify: still running, no cancel
-        AssertEx.Equal(RouterState.Running, router.State, "Modifier release must not end running stroke");
-        AssertEx.False(host.Operations.Any(o => o == "CancelTool"), "No cancel during running stroke");
+        TestAssertions.Equal(RouterState.Running, router.State, "Modifier release must not end running stroke");
+        TestAssertions.False(host.Operations.Any(o => o == "CancelTool"), "No cancel during running stroke");
     }
 
-    public static void ModifierPressDuringStrokeDoesNotChangeActiveTool()
+    [Fact]
+    public void ModifierPressDuringStrokeDoesNotChangeActiveTool()
     {
         var host = new MockHost();
         var router = new CanvasInputRouter(host);
@@ -159,19 +155,20 @@ internal static class CanvasInputRouterTests
             ctrlHeld: false,
             shiftHeld: false);
 
-        AssertEx.Equal(RouterState.Running, router.State);
+        TestAssertions.Equal(RouterState.Running, router.State);
         var beforeAction = router.RunningAction;
 
         // Press Space while running — should be deferred
         router.HandleKeyDown(Key.Space, KeyModifiers.None);
 
         // Verify: still running same action
-        AssertEx.Equal(RouterState.Running, router.State);
-        AssertEx.Equal(beforeAction, router.RunningAction, "Running action must not change on modifier press");
-        AssertEx.False(host.Operations.Any(o => o.StartsWith("PushPreset")), "No tool push during running stroke");
+        TestAssertions.Equal(RouterState.Running, router.State);
+        TestAssertions.Equal(beforeAction, router.RunningAction, "Running action must not change on modifier press");
+        TestAssertions.False(host.Operations.Any(o => o.StartsWith("PushPreset")), "No tool push during running stroke");
     }
 
-    public static void CompletedStrokeIsNotCancelledByLaterTempToolActivation()
+    [Fact]
+    public void CompletedStrokeIsNotCancelledByLaterTempToolActivation()
     {
         var host = new MockHost { ToolTypes = (1, 1) };
         var router = new CanvasInputRouter(host);
@@ -185,32 +182,33 @@ internal static class CanvasInputRouterTests
             eventArgs: null,
             ctrlHeld: false,
             shiftHeld: false);
-        AssertEx.Equal(RouterState.Running, router.State);
+        TestAssertions.Equal(RouterState.Running, router.State);
 
         // Release — stroke completes
         router.HandlePointerRelease(null!);
-        AssertEx.Equal(RouterState.Idle, router.State, "Stroke completed, should be Idle");
+        TestAssertions.Equal(RouterState.Idle, router.State, "Stroke completed, should be Idle");
 
         // Verify no cancel occurred during the stroke cycle
-        AssertEx.False(host.Operations.Contains("CancelTool"), "No cancel during or after stroke");
+        TestAssertions.False(host.Operations.Contains("CancelTool"), "No cancel during or after stroke");
 
         // Clear operations — now only check what happens with modifier
         host.Operations.Clear();
 
         // Press Alt — activates Eyedropper temporary tool
         router.HandleKeyDown(Key.LeftAlt, KeyModifiers.Alt);
-        AssertEx.True(host.Operations.Any(o => o.StartsWith("PushPreset")), "Alt should push temp eyedropper preset");
-        AssertEx.False(host.Operations.Any(o => o == "CancelTool"), "Alt press must not cancel completed stroke");
+        TestAssertions.True(host.Operations.Any(o => o.StartsWith("PushPreset")), "Alt should push temp eyedropper preset");
+        TestAssertions.False(host.Operations.Any(o => o == "CancelTool"), "Alt press must not cancel completed stroke");
 
         host.Operations.Clear();
 
         // Release Alt — pops temp preset, restores brush
         router.HandleKeyUp(Key.LeftAlt, KeyModifiers.None);
-        AssertEx.True(host.Operations.Any(o => o.StartsWith("PopPreset")), "Alt release should pop temp preset");
-        AssertEx.False(host.Operations.Any(o => o == "CancelTool"), "Alt release must not cancel completed stroke");
+        TestAssertions.True(host.Operations.Any(o => o.StartsWith("PopPreset")), "Alt release should pop temp preset");
+        TestAssertions.False(host.Operations.Any(o => o == "CancelTool"), "Alt release must not cancel completed stroke");
     }
 
-    public static void AfterStrokeReleaseHeldSpaceBecomesReadyPan()
+    [Fact]
+    public void AfterStrokeReleaseHeldSpaceBecomesReadyPan()
     {
         var host = new MockHost { ToolTypes = (1, 1) };
         var router = new CanvasInputRouter(host);
@@ -228,16 +226,17 @@ internal static class CanvasInputRouterTests
             ctrlHeld: false,
             shiftHeld: false);
 
-        AssertEx.Equal(RouterState.Running, router.State);
+        TestAssertions.Equal(RouterState.Running, router.State);
 
         // Release pointer while Space still held
         router.HandlePointerRelease(null!);
 
-        AssertEx.Equal(RouterState.Ready, router.State, "Held Space should become a ready pan action after release");
-        AssertEx.Equal(CanvasAction.PanCanvas, router.ReadyAction, "Held Space should resolve to pan.");
+        TestAssertions.Equal(RouterState.Ready, router.State, "Held Space should become a ready pan action after release");
+        TestAssertions.Equal(CanvasAction.PanCanvas, router.ReadyAction, "Held Space should resolve to pan.");
     }
 
-    public static void CtrlShiftFallsThroughStaleSpecificNone()
+    [Fact]
+    public void CtrlShiftFallsThroughStaleSpecificNone()
     {
         var settings = new ModifierKeySettings
         {
@@ -265,11 +264,12 @@ internal static class CanvasInputRouterTests
 
         var resolved = settings.Resolve(1, 1, null, KeyModifiers.Control | KeyModifiers.Shift);
 
-        AssertEx.True(resolved != null, "Stale tool-specific None should not shadow a real general Ctrl+Shift assignment.");
-        AssertEx.Equal("custom-select-layer", resolved!.TemporaryToolPresetId);
+        TestAssertions.True(resolved != null, "Stale tool-specific None should not shadow a real general Ctrl+Shift assignment.");
+        TestAssertions.Equal("custom-select-layer", resolved!.TemporaryToolPresetId);
     }
 
-    public static void CaptureLostCancelsOnlyActiveTransaction()
+    [Fact]
+    public void CaptureLostCancelsOnlyActiveTransaction()
     {
         var host = new MockHost();
         var router = new CanvasInputRouter(host);
@@ -284,13 +284,13 @@ internal static class CanvasInputRouterTests
             ctrlHeld: false,
             shiftHeld: false);
 
-        AssertEx.Equal(RouterState.Running, router.State);
+        TestAssertions.Equal(RouterState.Running, router.State);
 
         // Capture lost
         router.HandleCaptureLost();
 
-        AssertEx.True(host.Operations.Contains("CommitTool"), "CaptureLost should force-end/commit active tool");
-        AssertEx.False(host.Operations.Contains("CancelTool"), "CaptureLost must not destructively cancel active paint");
-        AssertEx.Equal(RouterState.Idle, router.State, "Should be idle after capture lost");
+        TestAssertions.True(host.Operations.Contains("CommitTool"), "CaptureLost should force-end/commit active tool");
+        TestAssertions.False(host.Operations.Contains("CancelTool"), "CaptureLost must not destructively cancel active paint");
+        TestAssertions.Equal(RouterState.Idle, router.State, "Should be idle after capture lost");
     }
 }
