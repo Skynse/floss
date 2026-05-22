@@ -228,7 +228,7 @@ public sealed class DrawingCanvas : Control, IDisposable
         var w = Math.Max(1, Bounds.Width);
         var h = Math.Max(1, Bounds.Height);
 
-        var sampleInfo = GetCanvasInputSampleInfo(point);
+        var sampleInfo = GetCanvasInputSampleInfo(point, phase);
         var props = point.Properties;
 
         var docX = point.Position.X / w * _document.Width;
@@ -275,7 +275,7 @@ public sealed class DrawingCanvas : Control, IDisposable
         };
 
         var props = point.Properties;
-        var sampleInfo = GetCanvasInputSampleInfo(point);
+        var sampleInfo = GetCanvasInputSampleInfo(point, phase);
 
         var sample = new CanvasInputSample(
             viewportPos.X,
@@ -291,49 +291,8 @@ public sealed class DrawingCanvas : Control, IDisposable
         _toolController.DispatchViewport(new ToolInputEvent(kind, sample));
     }
 
-    private static (CanvasInputSource Source, double Pressure) GetCanvasInputSampleInfo(PointerPoint point)
-    {
-        var props = point.Properties;
-        var source = SourceFromPointer(point);
-        var pressure = props.Pressure;
-        if (double.IsNaN(pressure)) pressure = 0;
-
-        if (source == CanvasInputSource.Mouse && props.IsLeftButtonPressed)
-        {
-            var hasTabletData = pressure > 0 || props.XTilt != 0 || props.YTilt != 0 || props.Twist != 0;
-            if (!hasTabletData && pressure <= 0)
-                pressure = 1;
-        }
-        else if ((source is CanvasInputSource.Pen or CanvasInputSource.Eraser or CanvasInputSource.Touch) && pressure < 0)
-        {
-            pressure = 0;
-        }
-
-        return (source, Math.Clamp(pressure, 0, 1));
-    }
-
-    private static CanvasInputSource SourceFromPointer(PointerPoint point)
-    {
-        if (point.Properties.IsEraser)
-            return CanvasInputSource.Eraser;
-
-        // Some tablet drivers report the pen as a generic mouse but still send
-        // pressure/tilt data. Detect that and treat it as a pen so dynamics work.
-        if (point.Pointer.Type == PointerType.Mouse)
-        {
-            var p = point.Properties;
-            if (p.Pressure > 0 || p.XTilt != 0 || p.YTilt != 0 || p.Twist != 0)
-                return CanvasInputSource.Pen;
-        }
-
-        return point.Pointer.Type switch
-        {
-            PointerType.Pen => CanvasInputSource.Pen,
-            PointerType.Touch => CanvasInputSource.Touch,
-            PointerType.Mouse => CanvasInputSource.Mouse,
-            _ => CanvasInputSource.Unknown
-        };
-    }
+    private static (CanvasInputSource Source, double Pressure) GetCanvasInputSampleInfo(PointerPoint point, CanvasInputPhase phase)
+        => TabletInput.GetSampleInfo(point, phase);
 
     public double PanOffsetX { get; set; }
     public double PanOffsetY { get; set; }
@@ -1894,19 +1853,7 @@ public sealed class DrawingCanvas : Control, IDisposable
     }
 
     private static bool IsPaintInput(PointerPoint point)
-    {
-        var properties = point.Properties;
-        if (properties.IsEraser)
-            return properties.Pressure > 0;
-
-        return point.Pointer.Type switch
-        {
-            PointerType.Pen => properties.Pressure > 0,
-            PointerType.Touch => properties.IsLeftButtonPressed || properties.Pressure > 0,
-            PointerType.Mouse => properties.IsLeftButtonPressed || properties.Pressure > 0,
-            _ => false
-        };
-    }
+        => TabletInput.IsPaintContact(point);
 
     private static uint ColorToBgraUint(Avalonia.Media.Color c)
         => (uint)(c.B | (c.G << 8) | (c.R << 16) | (c.A << 24));

@@ -165,7 +165,7 @@ public sealed class CanvasInputRouter
         }
 
         var pt = _host.GetViewportPointerPoint(e);
-        var action = ResolveButtonAction(pt);
+        var action = TabletInput.ResolveButtonAction(pt);
         var isPrimaryDown = action == CanvasAction.PrimaryTool;
 
         HandlePointerPress(
@@ -776,35 +776,6 @@ public sealed class CanvasInputRouter
         Key.LeftAlt or Key.RightAlt => true,
         _ => false
     };
-
-    private static CanvasAction ResolveButtonAction(PointerPoint pt)
-    {
-        var props = pt.Properties;
-        if (props.IsEraser || pt.Pointer.Type == PointerType.Pen)
-        {
-            if (props.Pressure > 0)
-                return CanvasAction.PrimaryTool;
-            if (props.IsMiddleButtonPressed)
-                return (CanvasAction)App.Shortcuts.MiddleButtonAction;
-            if (props.IsRightButtonPressed)
-                return (CanvasAction)App.Shortcuts.RightButtonAction;
-            return CanvasAction.None;
-        }
-
-        if (pt.Pointer.Type == PointerType.Touch)
-            return props.IsLeftButtonPressed || props.Pressure > 0
-                ? CanvasAction.PrimaryTool
-                : CanvasAction.None;
-
-        // Mouse (may be a tablet driver reporting as mouse)
-        if (props.IsMiddleButtonPressed)
-            return (CanvasAction)App.Shortcuts.MiddleButtonAction;
-        if (props.IsRightButtonPressed)
-            return (CanvasAction)App.Shortcuts.RightButtonAction;
-        if (props.IsLeftButtonPressed || props.Pressure > 0)
-            return CanvasAction.PrimaryTool;
-        return CanvasAction.None;
-    }
 
     private static bool IsPointerActivation(bool isPrimaryDown, object? eventArgs)
     {

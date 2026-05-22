@@ -11,6 +11,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Floss.App.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <AvaloniaResource Include="../../packaging/icon.png" Link="Assets/icon.png" />
   </ItemGroup>
 
