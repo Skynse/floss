@@ -40,6 +40,7 @@ public interface ICanvasInputHost
     // ── Temporary preset / tool switching ──
     bool PushTemporaryPreset(string presetId);
     void PopTemporaryPreset();
+    bool HasViewportNavOverlay { get; }
     void SetAlternateActive(bool active);
     bool IsAlternateActive { get; }
 
@@ -761,6 +762,8 @@ public sealed class CanvasInputRouter
 
     private bool IsViewportTool()
     {
+        if (_host.HasViewportNavOverlay) return true;
+
         var tool = _host.ActiveTool;
         if (tool is not CompositeTool ct) return false;
         return ct.Output is HandOutput or RotateOutput or ZoomOutput;

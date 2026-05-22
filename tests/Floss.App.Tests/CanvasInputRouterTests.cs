@@ -23,6 +23,7 @@ internal static class CanvasInputRouterTests
         public IViewportController? ViewportController { get; set; }
         public (int Input, int Output) ToolTypes { get; set; }
         public bool TemporaryPresetActive { get; set; }
+        public bool HasViewportNavOverlay { get; set; }
 
         public List<string> Operations { get; } = [];
 
@@ -50,6 +51,8 @@ internal static class CanvasInputRouterTests
             TemporaryPresetActive = false;
             Operations.Add("PopPreset");
         }
+
+        bool ICanvasInputHost.HasViewportNavOverlay => HasViewportNavOverlay;
 
         void ICanvasInputHost.SetAlternateActive(bool active)
             => Operations.Add($"SetAlternate:{active}");

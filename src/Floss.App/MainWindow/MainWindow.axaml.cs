@@ -2529,9 +2529,30 @@ public partial class MainWindow : Window, Tools.IViewportController
         active.CaptureFromBrushPreset(_activePreset);
     }
 
+    private static bool IsViewportNavigationPreset(string presetId)
+        => presetId is ToolGroupConfig.ViewHandPresetId
+            or ToolGroupConfig.ViewRotatePresetId
+            or ToolGroupConfig.ViewZoomInPresetId
+            or ToolGroupConfig.ViewZoomOutPresetId;
+
     internal bool PushTemporaryPreset(string presetId)
     {
         if (_temporaryPresetActive) return false;
+
+        // Pan/zoom/rotate the viewport without committing or canceling an active transform.
+        if (_canvas.IsTransformActive && IsViewportNavigationPreset(presetId))
+        {
+            foreach (var group in App.ToolGroups.Groups)
+            {
+                var preset = group.Presets.FirstOrDefault(p => p.Id == presetId);
+                if (preset == null) continue;
+                if (!_canvas.PushViewportNavOverlay(ToolForPreset(preset))) return false;
+                _temporaryPresetActive = true;
+                return true;
+            }
+            return false;
+        }
+
         foreach (var group in App.ToolGroups.Groups)
         {
             var preset = group.Presets.FirstOrDefault(p => p.Id == presetId);
@@ -2549,6 +2570,14 @@ public partial class MainWindow : Window, Tools.IViewportController
     internal void PopTemporaryPreset()
     {
         if (!_temporaryPresetActive) return;
+
+        if (_canvas.HasViewportNavOverlay)
+        {
+            _canvas.PopViewportNavOverlay();
+            _temporaryPresetActive = false;
+            return;
+        }
+
         _temporaryPresetActive = false;
         var prev = _savedPresetTemp;
         _savedPresetTemp = null;

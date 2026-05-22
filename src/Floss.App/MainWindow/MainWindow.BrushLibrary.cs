@@ -693,14 +693,7 @@ public partial class MainWindow : Window
             Engine = preset.Engine,
             InputProcess = preset.InputProcess,
             OutputProcess = preset.OutputProcess,
-            BrushSize = preset.BrushSize,
-            BrushOpacity = preset.BrushOpacity,
-            BrushFlow = preset.BrushFlow,
-            BrushHardness = preset.BrushHardness,
-            BrushSpacing = preset.BrushSpacing,
-            BrushSmoothing = preset.BrushSmoothing,
-            BrushGrain = preset.BrushGrain,
-            BrushDynamicsJson = preset.BrushDynamicsJson,
+            BrushOverride = preset.BrushOverride?.DeepClone(),
             Tolerance = preset.Tolerance,
             SelectMode = preset.SelectMode,
             GradientType = preset.GradientType,
@@ -1728,10 +1721,10 @@ public partial class MainWindow : Window
             else
             {
                 // Non-brush tool: paint settings travel through CommitTool/_toolPreset
-                if (tp.BrushOpacity.HasValue)
-                    UpdateCurrentBrush(p => p with { Opacity = tp.BrushOpacity.Value });
-                if (tp.BrushBlendMode.HasValue)
-                    UpdateCurrentBrush(p => p with { BlendMode = tp.BrushBlendMode.Value });
+                if (tp.BrushOverride?.Opacity is { } opacity)
+                    UpdateCurrentBrush(p => p with { Opacity = opacity });
+                if (tp.BrushOverride?.BlendMode is { } blendMode)
+                    UpdateCurrentBrush(p => p with { BlendMode = blendMode });
             }
 
             if (_activeToolGroup?.ActivePreset == tp && tp.OutputProcess != OutputProcessType.DirectDraw)

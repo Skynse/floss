@@ -183,133 +183,142 @@ public sealed class ToolPreset
     public bool Antialiasing { get; set; } = true;
     public AntialiasingQuality AntialiasingQuality { get; set; } = AntialiasingQuality.High;
 
-    // Brush properties (for DirectDraw output)
+    // Brush runtime overrides layered on the linked brush asset (BrushId).
+    public BrushPresetOverrideDocument? BrushOverride { get; set; }
+
+    // Legacy flat override fields — deserialized from older configs, migrated to BrushOverride on load.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? BrushSize { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? BrushOpacity { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? BrushFlow { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? BrushHardness { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? BrushSpacing { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? BrushSmoothing { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? BrushGrain { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? BrushColorMix { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? BrushColorLoad { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? BrushColorStretch { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? BrushBlurAmount { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public SmudgeMode? BrushSmudgeMode { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public MixingMode? BrushMixingMode { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? BrushAmountOfPaint { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? BrushDensityOfPaint { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? BrushTipDensity { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? BrushTipThickness { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public BrushTipDirection? BrushTipDirection { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? BrushAngle { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public BrushDynamics.AngleSource? BrushBaseAngleSource { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? BrushAngleJitter { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public BrushTipSelectionMode? BrushTipSelectionMode { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public SkiaSharp.SKBlendMode? BrushBlendMode { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? BrushDynamicsJson { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public BrushTipData? BrushTipOverride { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public List<BrushTipData>? BrushTipsOverride { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public BrushTipData? BrushShapeOverride { get; set; }
-    public bool BrushShapeOverrideSet { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? BrushShapeOverrideSet { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public List<BrushParameterGraph>? BrushParameterGraphsOverride { get; set; }
 
-    // Apply overrides to a BrushPreset, returning a modified copy
     public BrushPreset ApplyToBrushPreset(BrushPreset preset)
-    {
-        var needsUpdate = BrushSize.HasValue || BrushOpacity.HasValue || BrushHardness.HasValue ||
-            BrushSpacing.HasValue || BrushFlow.HasValue || BrushSmoothing.HasValue ||
-            BrushGrain.HasValue || BrushColorMix.HasValue || BrushColorLoad.HasValue ||
-            BrushColorStretch.HasValue || BrushBlurAmount.HasValue || BrushSmudgeMode.HasValue || BrushMixingMode.HasValue ||
-            BrushAmountOfPaint.HasValue || BrushDensityOfPaint.HasValue || BrushTipDensity.HasValue ||
-            BrushTipThickness.HasValue || BrushTipDirection.HasValue || BrushTipSelectionMode.HasValue ||
-            BrushBlendMode.HasValue || !string.IsNullOrEmpty(BrushDynamicsJson) ||
-            BrushTipOverride != null || BrushTipsOverride != null || BrushShapeOverrideSet ||
-            BrushParameterGraphsOverride != null;
+        => BrushOverride?.ApplyTo(preset) ?? preset;
 
-        if (!needsUpdate) return preset;
-
-        var result = preset with
-        {
-            Size = BrushSize ?? preset.Size,
-            Opacity = BrushOpacity ?? preset.Opacity,
-            Hardness = BrushHardness ?? preset.Hardness,
-            Spacing = BrushSpacing ?? preset.Spacing,
-            Flow = BrushFlow ?? preset.Flow,
-            Smoothing = BrushSmoothing ?? preset.Smoothing,
-            Grain = BrushGrain ?? preset.Grain,
-            ColorMix = BrushColorMix ?? preset.ColorMix,
-            ColorLoad = BrushColorLoad ?? preset.ColorLoad,
-            ColorStretch = BrushColorStretch ?? preset.ColorStretch,
-            BlurAmount = BrushBlurAmount ?? preset.BlurAmount,
-            SmudgeMode = BrushSmudgeMode ?? preset.SmudgeMode,
-            MixingMode = BrushMixingMode ?? preset.MixingMode,
-            AmountOfPaint = BrushAmountOfPaint ?? preset.AmountOfPaint,
-            DensityOfPaint = BrushDensityOfPaint ?? preset.DensityOfPaint,
-            TipDensity = BrushTipDensity ?? preset.TipDensity,
-            TipThickness = BrushTipThickness ?? preset.TipThickness,
-            TipDirection = BrushTipDirection ?? preset.TipDirection,
-            TipSelectionMode = BrushTipSelectionMode ?? preset.TipSelectionMode,
-            BlendMode = BrushBlendMode ?? preset.BlendMode,
-            Tip = BrushTipOverride?.CreateTip() ?? preset.Tip,
-            Tips = BrushTipsOverride?.Select(t => t.DeepClone()).ToList() ?? preset.Tips,
-            Shape = BrushShapeOverrideSet && BrushShapeOverride is { Kind: BrushTipStorageKind.Procedural } shape
-                ? new ProceduralBrushTip(shape.Shape, shape.AspectRatio)
-                : BrushShapeOverrideSet
-                    ? null
-                    : preset.Shape,
-            ParameterGraphs = BrushParameterGraphsOverride?.Select(g => g.DeepClone()).ToList() ?? preset.ParameterGraphs,
-        };
-
-        if (!string.IsNullOrEmpty(BrushDynamicsJson))
-        {
-            try
-            {
-                var dynamics = BrushDynamics.Deserialize(BrushDynamicsJson);
-                result = result with { Dynamics = dynamics };
-            }
-            catch (Exception ex) { CrashLog.Write(ex, $"ToolGroupConfig.Load ({Id})"); }
-        }
-
-        return result;
-    }
-
-    // Capture current brush preset state into override properties
     public void CaptureFromBrushPreset(BrushPreset preset)
-    {
-        BrushSize = preset.Size;
-        BrushOpacity = preset.Opacity;
-        BrushHardness = preset.Hardness;
-        BrushSpacing = preset.Spacing;
-        BrushFlow = preset.Flow;
-        BrushSmoothing = preset.Smoothing;
-        BrushGrain = preset.Grain;
-        BrushColorMix = preset.ColorMix;
-        BrushColorLoad = preset.ColorLoad;
-        BrushColorStretch = preset.ColorStretch;
-        BrushBlurAmount = preset.BlurAmount;
-        BrushSmudgeMode = preset.SmudgeMode;
-        BrushMixingMode = preset.MixingMode;
-        BrushAmountOfPaint = preset.AmountOfPaint;
-        BrushDensityOfPaint = preset.DensityOfPaint;
-        BrushTipDensity = preset.TipDensity;
-        BrushTipThickness = preset.TipThickness;
-        BrushTipDirection = preset.TipDirection;
-        BrushTipSelectionMode = preset.TipSelectionMode;
-        BrushBlendMode = preset.BlendMode;
-        BrushDynamicsJson = preset.Dynamics.Serialize();
-        BrushTipOverride = BrushTipData.FromTip(preset.Tip);
-        BrushTipsOverride = preset.Tips.Select(t => t.DeepClone()).ToList();
-        BrushShapeOverride = preset.Shape == null
-            ? null
-            : new BrushTipData
-            {
-                Kind = BrushTipStorageKind.Procedural,
-                Shape = preset.Shape.Shape,
-                AspectRatio = preset.Shape.AspectRatio
-            };
-        BrushShapeOverrideSet = true;
-        BrushParameterGraphsOverride = preset.ParameterGraphs.Select(g => g.DeepClone()).ToList();
-    }
+        => BrushOverride = BrushPresetOverrideDocument.FromPreset(preset);
 
     public void ClearBrushOverrides()
+    {
+        BrushOverride = null;
+        ClearLegacyBrushFields();
+    }
+
+    public void MigrateBrushOverrideFormat()
+    {
+        if (BrushOverride != null)
+        {
+            ClearLegacyBrushFields();
+            return;
+        }
+
+        if (!HasLegacyBrushFields()) return;
+
+        BrushOverride = new BrushPresetOverrideDocument
+        {
+            Size = BrushSize,
+            Opacity = BrushOpacity,
+            Flow = BrushFlow,
+            Hardness = BrushHardness,
+            Spacing = BrushSpacing,
+            Smoothing = BrushSmoothing,
+            Grain = BrushGrain,
+            ColorMix = BrushColorMix,
+            ColorLoad = BrushColorLoad,
+            ColorStretch = BrushColorStretch,
+            BlurAmount = BrushBlurAmount,
+            SmudgeMode = BrushSmudgeMode,
+            MixingMode = BrushMixingMode,
+            AmountOfPaint = BrushAmountOfPaint,
+            DensityOfPaint = BrushDensityOfPaint,
+            TipDensity = BrushTipDensity,
+            TipThickness = BrushTipThickness,
+            TipDirection = BrushTipDirection,
+            Angle = BrushAngle,
+            BaseAngleSource = BrushBaseAngleSource,
+            AngleJitter = BrushAngleJitter,
+            TipSelectionMode = BrushTipSelectionMode,
+            BlendMode = BrushBlendMode,
+            DynamicsJson = BrushDynamicsJson,
+            Tip = BrushTipOverride?.DeepClone(),
+            Tips = BrushTipsOverride?.Select(t => t.DeepClone()).ToList(),
+            Shape = BrushShapeOverride?.DeepClone(),
+            ShapeOverride = BrushShapeOverrideSet == true
+                ? BrushShapeOverride == null
+                    ? BrushShapeOverrideMode.Null
+                    : BrushShapeOverrideMode.Value
+                : BrushShapeOverrideMode.Unset,
+            ParameterGraphs = BrushParameterGraphsOverride?.Select(g => g.DeepClone()).ToList()
+        };
+        ClearLegacyBrushFields();
+    }
+
+    private bool HasLegacyBrushFields()
+        => BrushSize.HasValue || BrushOpacity.HasValue || BrushFlow.HasValue || BrushHardness.HasValue ||
+           BrushSpacing.HasValue || BrushSmoothing.HasValue || BrushGrain.HasValue || BrushColorMix.HasValue ||
+           BrushColorLoad.HasValue || BrushColorStretch.HasValue || BrushBlurAmount.HasValue ||
+           BrushSmudgeMode.HasValue || BrushMixingMode.HasValue || BrushAmountOfPaint.HasValue ||
+           BrushDensityOfPaint.HasValue || BrushTipDensity.HasValue || BrushTipThickness.HasValue ||
+           BrushTipDirection.HasValue || BrushAngle.HasValue || BrushBaseAngleSource.HasValue ||
+           BrushAngleJitter.HasValue || BrushTipSelectionMode.HasValue || BrushBlendMode.HasValue ||
+           !string.IsNullOrEmpty(BrushDynamicsJson) || BrushTipOverride != null || BrushTipsOverride != null ||
+           BrushShapeOverrideSet == true || BrushParameterGraphsOverride != null;
+
+    private void ClearLegacyBrushFields()
     {
         BrushSize = null;
         BrushOpacity = null;
@@ -329,13 +338,16 @@ public sealed class ToolPreset
         BrushTipDensity = null;
         BrushTipThickness = null;
         BrushTipDirection = null;
+        BrushAngle = null;
+        BrushBaseAngleSource = null;
+        BrushAngleJitter = null;
         BrushTipSelectionMode = null;
         BrushBlendMode = null;
         BrushDynamicsJson = null;
         BrushTipOverride = null;
         BrushTipsOverride = null;
         BrushShapeOverride = null;
-        BrushShapeOverrideSet = false;
+        BrushShapeOverrideSet = null;
         BrushParameterGraphsOverride = null;
     }
 
@@ -493,7 +505,10 @@ public sealed class ToolGroupConfig
         foreach (var group in Groups)
         {
             foreach (var preset in group.Presets)
+            {
                 preset.MigrateFromLegacy();
+                preset.MigrateBrushOverrideFormat();
+            }
 
             if (group.Presets.Count == 0)
             {
@@ -642,11 +657,11 @@ public sealed class ToolGroupConfig
         WithDefaultCategory(new() { Name = "Brush",  DefaultEngine = ToolPresetEngine.Brush,  Shortcut = new(Key.B),
             Presets = [new() { Name = "Brush",  Engine = ToolPresetEngine.Brush, InputProcess = InputProcessType.Brush, OutputProcess = OutputProcessType.DirectDraw }] }),
         WithDefaultCategory(new() { Name = "Eraser", DefaultEngine = ToolPresetEngine.Eraser, Shortcut = new(Key.E),
-            Presets = [new() { Name = "Eraser", InputProcess = InputProcessType.Eraser, OutputProcess = OutputProcessType.DirectDraw, BrushBlendMode = SkiaSharp.SKBlendMode.DstOut }] }),
+            Presets = [new() { Name = "Eraser", InputProcess = InputProcessType.Eraser, OutputProcess = OutputProcessType.DirectDraw, BrushOverride = new BrushPresetOverrideDocument { BlendMode = SkiaSharp.SKBlendMode.DstOut } }] }),
         WithDefaultCategory(new()
         {
             Name = "Smudge", DefaultEngine = ToolPresetEngine.Smudge, Shortcut = new(Key.U),
-            Presets = [new() { Name = "Smudge", Engine = ToolPresetEngine.Smudge, InputProcess = InputProcessType.Smudge, OutputProcess = OutputProcessType.DirectDraw, BrushColorMix = true, BrushSmudgeMode = SmudgeMode.Smudge, BrushAmountOfPaint = 0.0, BrushDensityOfPaint = 0.0 }]
+            Presets = [new() { Name = "Smudge", Engine = ToolPresetEngine.Smudge, InputProcess = InputProcessType.Smudge, OutputProcess = OutputProcessType.DirectDraw, BrushOverride = new BrushPresetOverrideDocument { ColorMix = true, SmudgeMode = SmudgeMode.Smudge, AmountOfPaint = 0.0, DensityOfPaint = 0.0 } }]
         }),
         WithDefaultCategory(new()
         {

@@ -339,6 +339,8 @@ public partial class MainWindow : ICanvasInputHost
     void ICanvasInputHost.DispatchViewportPointerInput(ToolInputEventKind kind, Point viewportPos, PointerPoint point)
         => _canvas.HandleViewportPointerInput(kind, viewportPos, point);
 
+    bool ICanvasInputHost.HasViewportNavOverlay => _canvas.HasViewportNavOverlay;
+
     void ICanvasInputHost.DispatchPointerInput(ToolInputEventKind kind, PointerPoint canvasPoint)
         => _canvas.HandlePointerInput(kind, canvasPoint);
 

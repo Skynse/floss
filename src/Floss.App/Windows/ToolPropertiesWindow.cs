@@ -1319,11 +1319,11 @@ public sealed class ToolPropertiesWindow : Window
             else
             {
                 panel.Children.Add(BuildGenericSliderRow("Opacity", 0.01, 1.0,
-                    _toolPreset.BrushOpacity ?? 1.0,
-                    v => CommitTool(p => p.BrushOpacity = v), "%", mult: 100, toolPropId: "paint.opacity"));
+                    _toolPreset.BrushOverride?.Opacity ?? 1.0,
+                    v => CommitTool(p => (p.BrushOverride ??= new()).Opacity = v), "%", mult: 100, toolPropId: "paint.opacity"));
                 panel.Children.Add(BuildGenericComboRow<SkiaSharp.SKBlendMode>("Blend Mode",
-                    _toolPreset.BrushBlendMode ?? SkiaSharp.SKBlendMode.SrcOver,
-                    v => CommitTool(p => p.BrushBlendMode = v), toolPropId: "paint.blendMode"));
+                    _toolPreset.BrushOverride?.BlendMode ?? SkiaSharp.SKBlendMode.SrcOver,
+                    v => CommitTool(p => (p.BrushOverride ??= new()).BlendMode = v), toolPropId: "paint.blendMode"));
             }
             return panel;
         }

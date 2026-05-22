@@ -124,8 +124,10 @@ internal static class Program
         ("Brush file format round-trips node brush tips", PresetStoreTests.BrushFileFormat_RoundTripsNodeBrushTip),
         ("Preset store round-trips all brush fields via Capture/Apply", PresetStoreTests.BrushPresetOverride_RoundTrip),
         ("Preset store isolates overrides between presets", PresetStoreTests.BrushPresetOverride_Isolation),
-        ("Preset store does not override Tip/Angle/Kind from Capture", PresetStoreTests.BrushPresetOverride_PreservesTipAndAngle),
+        ("Preset store isolates angle overrides between presets", PresetStoreTests.BrushPresetOverride_IsolatesAngle),
+        ("Preset store captures angle and tip from Capture/Apply", PresetStoreTests.BrushPresetOverride_PreservesTipAndAngle),
         ("ToolPreset clears all brush overrides", PresetStoreTests.BrushPresetOverride_ClearBrushOverrides),
+        ("ToolPreset migrates legacy brush override fields", PresetStoreTests.BrushPresetOverride_MigratesLegacyFields),
         ("Preset packages export sub tools with brush assets", PresetStoreTests.Packages_ExportSubTool),
         ("Preset packages export sub tool groups with brush assets", PresetStoreTests.Packages_ExportSubToolGroup),
 
@@ -231,13 +233,16 @@ internal static class PresetStoreTests
                 OutputProcess = OutputProcessType.DirectDraw,
                 BrushId = "brush-asset",
 
-                BrushSize = 31,
-                BrushOpacity = 0.72,
-                BrushFlow = 0.44,
-                BrushColorMix = true,
-                BrushSmudgeMode = SmudgeMode.Smear,
-                BrushAmountOfPaint = 0.33,
-                BrushDensityOfPaint = 0.66,
+                BrushOverride = new BrushPresetOverrideDocument
+                {
+                    Size = 31,
+                    Opacity = 0.72,
+                    Flow = 0.44,
+                    ColorMix = true,
+                    SmudgeMode = SmudgeMode.Smear,
+                    AmountOfPaint = 0.33,
+                    DensityOfPaint = 0.66
+                },
                 PresetIcon = Icons.BrushOutline
             };
             var fillPreset = new ToolPreset
@@ -274,10 +279,10 @@ internal static class PresetStoreTests
             AssertEx.Equal("Portable Ink", groups[0].Presets[0].Name);
             AssertEx.Equal(OutputProcessType.DirectDraw, groups[0].Presets[0].OutputProcess);
             AssertEx.Equal("brush-asset", groups[0].Presets[0].BrushId);
-            AssertEx.Near(31, groups[0].Presets[0].BrushSize!.Value);
-            AssertEx.Equal(SmudgeMode.Smear, groups[0].Presets[0].BrushSmudgeMode!.Value);
-            AssertEx.Near(0.33, groups[0].Presets[0].BrushAmountOfPaint!.Value);
-            AssertEx.Near(0.66, groups[0].Presets[0].BrushDensityOfPaint!.Value);
+            AssertEx.Near(31, groups[0].Presets[0].BrushOverride!.Size!.Value);
+            AssertEx.Equal(SmudgeMode.Smear, groups[0].Presets[0].BrushOverride!.SmudgeMode!.Value);
+            AssertEx.Near(0.33, groups[0].Presets[0].BrushOverride!.AmountOfPaint!.Value);
+            AssertEx.Near(0.66, groups[0].Presets[0].BrushOverride!.DensityOfPaint!.Value);
             AssertEx.Equal(FillReferenceMode.ReferenceLayers, groups[0].Presets[1].FillReference);
             AssertEx.False(groups[0].Presets[1].ContiguousFill);
             AssertEx.SequenceEqual([fillPreset.Id, brushPreset.Id], groups[0].Categories[0].PresetIds);
@@ -506,7 +511,7 @@ internal static class PresetStoreTests
                 InputProcess = InputProcessType.Brush,
                 OutputProcess = OutputProcessType.DirectDraw,
                 BrushId = asset.Id,
-                BrushSize = 42
+                BrushOverride = new BrushPresetOverrideDocument { Size = 42 }
             };
             var group = new ToolGroup
             {
@@ -785,9 +790,9 @@ internal static class PresetStoreTests
         AssertEx.True(restored.Dynamics.Rotation.IsEnabled);
 
         // Tool identity and paint color stay on the base preset/default.
-        AssertEx.Near(0, restored.Angle, 0.0001, "Angle should NOT be captured by ToolPreset");
-        AssertEx.Equal(BrushDynamics.AngleSource.None, restored.BaseAngleSource, "BaseAngleSource should NOT be captured");
-        AssertEx.Near(0, restored.AngleJitter, 0.0001, "AngleJitter should NOT be captured");
+        AssertEx.Near(33, restored.Angle, 0.0001, "Angle should be captured by ToolPreset");
+        AssertEx.Equal(BrushDynamics.AngleSource.DirectionOfLine, restored.BaseAngleSource, "BaseAngleSource should be captured");
+        AssertEx.Near(0.15, restored.AngleJitter, 0.0001, "AngleJitter should be captured");
         AssertEx.Equal(Color.Parse("#000000"), restored.Color, "Color should NOT be captured");
 
         // Tip/shape are runtime brush state now so graph and image sampler edits survive restart without overwriting the asset default.
@@ -817,6 +822,37 @@ internal static class PresetStoreTests
         AssertEx.Near(0.8, restoredB.Opacity, 0.0001, "Preset B should keep its own opacity");
     }
 
+    public static void BrushPresetOverride_IsolatesAngle()
+    {
+        var basePreset = new BrushPreset("Base", 5, 1, 1, 0.5, Color.Parse("#000000"), 0);
+
+        var presetA = new ToolPreset();
+        presetA.CaptureFromBrushPreset(basePreset with
+        {
+            Angle = 30,
+            BaseAngleSource = BrushDynamics.AngleSource.DirectionOfLine,
+            AngleJitter = 0.1f
+        });
+
+        var presetB = new ToolPreset();
+        presetB.CaptureFromBrushPreset(basePreset with
+        {
+            Angle = 120,
+            BaseAngleSource = BrushDynamics.AngleSource.PenTilt,
+            AngleJitter = 0.4f
+        });
+
+        var restoredA = presetA.ApplyToBrushPreset(basePreset);
+        var restoredB = presetB.ApplyToBrushPreset(basePreset);
+
+        AssertEx.Near(30, restoredA.Angle, 0.0001, "Preset A should keep its own angle");
+        AssertEx.Equal(BrushDynamics.AngleSource.DirectionOfLine, restoredA.BaseAngleSource);
+        AssertEx.Near(0.1, restoredA.AngleJitter, 0.0001);
+        AssertEx.Near(120, restoredB.Angle, 0.0001, "Preset B should keep its own angle");
+        AssertEx.Equal(BrushDynamics.AngleSource.PenTilt, restoredB.BaseAngleSource);
+        AssertEx.Near(0.4, restoredB.AngleJitter, 0.0001);
+    }
+
     public static void BrushPresetOverride_PreservesTipAndAngle()
     {
         var fullPreset = new BrushPreset("Custom", 15, 0.9, 0.6, 0.2, Color.Parse("#112233"), 45)
@@ -838,11 +874,11 @@ internal static class PresetStoreTests
         AssertEx.Near(15, restored.Size);
         AssertEx.Near(0.9, restored.Opacity);
 
-        // Identity/angle still come from the base.
+        // Identity still comes from the base; captured angle settings override it.
         AssertEx.Equal("Default", restored.Name);
-        AssertEx.Near(0, restored.Angle, 0.0001, "Angle should NOT be captured");
-        AssertEx.Equal(BrushDynamics.AngleSource.None, restored.BaseAngleSource);
-        AssertEx.Near(0, restored.AngleJitter, 0.0001);
+        AssertEx.Near(45, restored.Angle, 0.0001, "Angle should be captured");
+        AssertEx.Equal(BrushDynamics.AngleSource.PenTilt, restored.BaseAngleSource);
+        AssertEx.Near(0.25, restored.AngleJitter, 0.0001);
         AssertEx.True(restored.Tip is NodeBrushTip, "Tip graph should be captured as runtime brush state");
         AssertEx.True(restored.Shape is { Shape: BrushTipShape.Rectangle, AspectRatio: 1.5f },
             "Shape should be captured as runtime brush state");
@@ -877,31 +913,31 @@ internal static class PresetStoreTests
 
         preset.ClearBrushOverrides();
 
+        AssertEx.True(preset.BrushOverride is null);
         AssertEx.True(preset.BrushSize is null);
-        AssertEx.True(preset.BrushOpacity is null);
-        AssertEx.True(preset.BrushFlow is null);
-        AssertEx.True(preset.BrushHardness is null);
-        AssertEx.True(preset.BrushSpacing is null);
-        AssertEx.True(preset.BrushSmoothing is null);
-        AssertEx.True(preset.BrushGrain is null);
-        AssertEx.True(preset.BrushColorMix is null);
-        AssertEx.True(preset.BrushColorLoad is null);
-        AssertEx.True(preset.BrushColorStretch is null);
-        AssertEx.True(preset.BrushBlurAmount is null);
-        AssertEx.True(preset.BrushSmudgeMode is null);
-        AssertEx.True(preset.BrushMixingMode is null);
-        AssertEx.True(preset.BrushAmountOfPaint is null);
-        AssertEx.True(preset.BrushDensityOfPaint is null);
-        AssertEx.True(preset.BrushTipDensity is null);
-        AssertEx.True(preset.BrushTipThickness is null);
-        AssertEx.True(preset.BrushTipDirection is null);
-        AssertEx.True(preset.BrushBlendMode is null);
-        AssertEx.True(preset.BrushDynamicsJson is null);
-        AssertEx.True(preset.BrushTipOverride is null);
-        AssertEx.True(preset.BrushTipsOverride is null);
-        AssertEx.True(preset.BrushShapeOverride is null);
-        AssertEx.True(!preset.BrushShapeOverrideSet);
-        AssertEx.True(preset.BrushParameterGraphsOverride is null);
+    }
+
+    public static void BrushPresetOverride_MigratesLegacyFields()
+    {
+        var preset = new ToolPreset
+        {
+            BrushSize = 31,
+            BrushOpacity = 0.72,
+            BrushAngle = 45,
+            BrushBaseAngleSource = BrushDynamics.AngleSource.DirectionOfLine,
+            BrushAngleJitter = 0.2f,
+            BrushShapeOverrideSet = true
+        };
+
+        preset.MigrateBrushOverrideFormat();
+
+        AssertEx.Near(31, preset.BrushOverride!.Size!.Value);
+        AssertEx.Near(0.72, preset.BrushOverride.Opacity!.Value);
+        AssertEx.Near(45, preset.BrushOverride.Angle!.Value);
+        AssertEx.Equal(BrushDynamics.AngleSource.DirectionOfLine, preset.BrushOverride.BaseAngleSource!.Value);
+        AssertEx.Near(0.2, preset.BrushOverride.AngleJitter!.Value);
+        AssertEx.Equal(BrushShapeOverrideMode.Null, preset.BrushOverride.ShapeOverride);
+        AssertEx.True(preset.BrushSize is null);
     }
 
     public static void BrushPresetOverride_CapturesNullShape()
@@ -922,7 +958,7 @@ internal static class PresetStoreTests
         };
         var restored = preset.ApplyToBrushPreset(differentBase);
 
-        AssertEx.True(preset.BrushShapeOverrideSet, "Captured null shape must be an explicit override");
+        AssertEx.Equal(BrushShapeOverrideMode.Null, preset.BrushOverride!.ShapeOverride, "Captured null shape must be an explicit override");
         AssertEx.True(restored.Shape is null, "Graph/image brush state should not inherit the base procedural shape");
     }
 }
@@ -1939,11 +1975,14 @@ internal static class BrushTests
             Name = "Smudge",
             InputProcess = InputProcessType.Brush,
             OutputProcess = OutputProcessType.DirectDraw,
-            BrushSize = 80,
-            BrushColorMix = true,
-            BrushSmudgeMode = SmudgeMode.Smear,
-            BrushAmountOfPaint = 0.25,
-            BrushDensityOfPaint = 0
+            BrushOverride = new BrushPresetOverrideDocument
+            {
+                Size = 80,
+                ColorMix = true,
+                SmudgeMode = SmudgeMode.Smear,
+                AmountOfPaint = 0.25,
+                DensityOfPaint = 0
+            }
         };
 
         controller.SetActiveTool(second, targetPreset);

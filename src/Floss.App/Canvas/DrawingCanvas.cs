@@ -282,7 +282,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             point.Pointer.Id,
             sampleInfo.Source,
             phase);
-        _toolController.Dispatch(new ToolInputEvent(kind, sample));
+        _toolController.DispatchViewport(new ToolInputEvent(kind, sample));
     }
 
     private static (CanvasInputSource Source, double Pressure) GetCanvasInputSampleInfo(PointerPoint point)
@@ -342,6 +342,14 @@ public sealed class DrawingCanvas : Control, IDisposable
         _toolController.SetActiveTool(tool, preset);
         InvalidateVisual();
     }
+
+    public bool HasViewportNavOverlay => _toolController.HasViewportNavOverlay;
+
+    public bool PushViewportNavOverlay(ITool tool)
+        => _toolController.PushViewportNavOverlay(tool);
+
+    public void PopViewportNavOverlay()
+        => _toolController.PopViewportNavOverlay();
 
     public ITool? AlternateTool => _toolController.IsAlternateActive ? _toolController.ActiveTool.Alternate : null;
     public void SetAlternateActive(bool active) => _toolController.SetAlternateActive(active);
