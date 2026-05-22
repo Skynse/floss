@@ -374,7 +374,7 @@ public partial class MainWindow : Window
         menu.Items.Add(new Separator());
         menu.Items.Add(deleteItem);
 
-        if (preset.BrushId != null)
+        if (preset.InputProcess.IsBrushFamily() && preset.OutputProcess == OutputProcessType.DirectDraw)
         {
             menu.Items.Add(new Separator());
             var restoreItem = new MenuItem { Header = "Restore Default State" };
@@ -414,46 +414,58 @@ public partial class MainWindow : Window
 
     private void RestorePresetDefault(ToolGroup group, ToolPreset preset)
     {
-        if (preset.BrushId == null) return;
+        if (!preset.InputProcess.IsBrushFamily() || preset.OutputProcess != OutputProcessType.DirectDraw)
+            return;
 
-        preset.ClearBrushOverrides();
+        if (preset.BrushId != null)
+            preset.ClearBrushOverrides();
+        else
+            preset.RestoreBrushDefaults(ToolGroupConfig.CreateFactorySmudgeOverride());
+
         App.ToolGroups.Save();
 
-        // Reload persisted assets so restore always means the stored default, not
-        // any stale in-memory asset instance.
-        LoadBrushAssets();
+        if (preset.BrushId != null)
+            LoadBrushAssets();
 
         if (_activeToolGroup == group && group.ActivePreset == preset)
             SyncActivePresetToCanvas();
+        RefreshGroupPresets();
         _footerStatusText.Text = $"Restored {preset.Name} to defaults";
     }
 
     private void SavePresetAsDefault(ToolGroup group, ToolPreset preset)
     {
-        if (preset.BrushId == null) return;
+        if (!preset.InputProcess.IsBrushFamily() || preset.OutputProcess != OutputProcessType.DirectDraw)
+            return;
 
-        // Ensure this preset is active so _activeBrushAsset points to the right asset
         if (!(_activeToolGroup == group && group.ActivePreset == preset))
-        {
             ActivatePreset(group, preset);
-        }
 
-        if (_activeBrushAsset != null)
+        if (preset.BrushId != null)
         {
-            _activeBrushAsset.WithPreset(CurrentBrushFromUi());
-            _brushLibrary.Save(_activeBrushAsset);
-            _footerStatusText.Text = $"Saved {preset.Name} as new default";
+            var asset = _activeBrushAsset ?? _brushAssets.FirstOrDefault(a => a.Id == preset.BrushId);
+            if (asset == null)
+            {
+                _footerStatusText.Text = $"Could not find brush asset for {preset.Name}";
+                return;
+            }
+
+            asset.WithPreset(CurrentBrushFromUi());
+            _brushLibrary.Save(asset);
+            preset.ClearBrushOverrides();
+            App.ToolGroups.Save();
+            LoadBrushAssets();
         }
-
-        preset.ClearBrushOverrides();
-        App.ToolGroups.Save();
-
-        // Rehydrate from storage so the asset list, active asset, and canvas all
-        // converge on the persisted default state instead of any stale in-memory copy.
-        LoadBrushAssets();
+        else
+        {
+            CaptureActiveBrushToPreset();
+            preset.SaveBrushOverrideAsDefault();
+            App.ToolGroups.Save();
+        }
 
         SyncActivePresetToCanvas();
         RefreshGroupPresets();
+        _footerStatusText.Text = $"Saved {preset.Name} as new default";
     }
 
     private void SyncActivePresetToCanvas()
@@ -1253,7 +1265,11 @@ public partial class MainWindow : Window
 
         try
         {
-            var (importedGroup, importedPreset, brushAssets) = PresetPackageFormat.ImportSubTool(files[0].Path.LocalPath);
+            using var busy = BeginBusy("Importing sub tool…");
+            var (importedGroup, importedPreset, brushAssets) = await System.Threading.Tasks.Task.Run(
+                () => PresetPackageFormat.ImportSubTool(files[0].Path.LocalPath));
+
+            busy.Report("Saving imported brushes…");
 
             foreach (var asset in brushAssets)
                 _brushLibrary.Save(asset);
@@ -1297,7 +1313,11 @@ public partial class MainWindow : Window
 
         try
         {
-            var (importedGroups, brushAssets) = PresetPackageFormat.ImportSubToolGroup(files[0].Path.LocalPath);
+            using var busy = BeginBusy("Importing tool group…");
+            var (importedGroups, brushAssets) = await System.Threading.Tasks.Task.Run(
+                () => PresetPackageFormat.ImportSubToolGroup(files[0].Path.LocalPath));
+
+            busy.Report("Saving imported brushes…");
 
             foreach (var asset in brushAssets)
                 _brushLibrary.Save(asset);
@@ -1869,16 +1889,20 @@ public partial class MainWindow : Window
         });
         if (files.Count == 0) return;
 
+        using var busy = BeginBusy("Importing brush pack…");
         var imported = 0;
         var lastDiag = "";
         var fileImports = new List<(string CategoryName, List<string> AssetIds)>();
 
         foreach (var file in files)
         {
+            busy.Report($"Reading {file.Name}…");
             await using var stream = await file.OpenReadAsync();
             List<Brushes.BrushAsset> brushes;
             try { brushes = await System.Threading.Tasks.Task.Run(() => Brushes.AbrImporter.Import(stream, out lastDiag)); }
             catch (Exception ex) { CrashLog.Write(ex, "MainWindow.BrushLibrary.AbrImport"); continue; }
+
+            busy.Report($"Saving {file.Name}…");
 
             var categoryName = Path.GetFileNameWithoutExtension(file.Name);
             var assetIds = new List<string>();

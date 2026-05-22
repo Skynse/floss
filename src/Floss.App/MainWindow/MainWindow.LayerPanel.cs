@@ -107,12 +107,23 @@ public partial class MainWindow
                 _canvas.SetActiveLayerBlendMode(mode);
         };
 
-        // Opacity
+        // Opacity — Krita-style: live preview while dragging, one undo step on release.
         _layerOpacitySlider = MkSlider(0, 1, 1, "Layer opacity");
+        _layerOpacitySlider.PointerPressed += (_, _) =>
+        {
+            if (_syncingLayerUi) return;
+            _canvas.BeginActiveLayerOpacityScrub();
+            _layerOpacityScrubActive = true;
+        };
+        _layerOpacitySlider.PointerReleased += (_, _) => CommitLayerOpacityScrubIfActive();
+        _layerOpacitySlider.PointerCaptureLost += (_, _) => CommitLayerOpacityScrubIfActive();
         _layerOpacitySlider.PropertyChanged += (_, e) =>
         {
             if (_syncingLayerUi || e.Property != Slider.ValueProperty) return;
-            _canvas.SetActiveLayerOpacity(_layerOpacitySlider.Value);
+            if (_layerOpacityScrubActive)
+                _canvas.PreviewActiveLayerOpacity(_layerOpacitySlider.Value);
+            else
+                _canvas.SetActiveLayerOpacity(_layerOpacitySlider.Value);
         };
 
         // Blend + Opacity row
@@ -478,6 +489,13 @@ public partial class MainWindow
         if (layer.IsPaper) flags.Add("Paper");
         var suffix = flags.Count == 0 ? "" : "  " + string.Join(" ", flags);
         return $"{Math.Round(layer.Opacity * 100):0}%  {layer.BlendMode}{suffix}";
+    }
+
+    private void CommitLayerOpacityScrubIfActive()
+    {
+        if (!_layerOpacityScrubActive) return;
+        _layerOpacityScrubActive = false;
+        _canvas.CommitActiveLayerOpacityScrub();
     }
 
     private Button LayerDisclosureBtn(DrawingLayer layer, int index)

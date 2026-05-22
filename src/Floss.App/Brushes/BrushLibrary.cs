@@ -126,6 +126,8 @@ public sealed class BrushLibrary
                 TipDirection = BrushTipDirection.Horizontal,
                 SmudgeMode = SmudgeMode.Smudge,
                 Smoothing = 0.45,
+                AutoSpacingActive = true,
+                SpeedSpacingStrength = 0.35,
                 Tip = new ProceduralBrushTip(BrushTipShape.Circle)
             }, category: "Mixing");
 
@@ -145,6 +147,8 @@ public sealed class BrushLibrary
                 TipDirection = BrushTipDirection.Horizontal,
                 SmudgeMode = SmudgeMode.Blend,
                 Smoothing = 0.45,
+                AutoSpacingActive = true,
+                SpeedSpacingStrength = 0.35,
                 Tip = new ProceduralBrushTip(BrushTipShape.Circle)
             }, category: "Mixing");
 
@@ -164,6 +168,8 @@ public sealed class BrushLibrary
                 TipDirection = BrushTipDirection.Horizontal,
                 SmudgeMode = SmudgeMode.Smear,
                 Smoothing = 0.45,
+                AutoSpacingActive = true,
+                SpeedSpacingStrength = 0.35,
                 Tip = new ProceduralBrushTip(BrushTipShape.Circle)
             }, category: "Mixing");
 

@@ -33,12 +33,14 @@ public sealed class BrushStrokeInputProcess : IInputProcess
 
     // History buffer for Gaussian-weighted moving-average stabilization.
     private readonly List<CanvasInputSample> _history = new(32);
+    private float _lastSpeed01;
 
     public void PointerDown(CanvasInputSample s)
     {
         _raw.Clear();
         _smoothed.Clear();
         _history.Clear();
+        _lastSpeed01 = 0;
 
         if (IsStraightLine && _straightLineAnchorSet)
         {
@@ -55,6 +57,7 @@ public sealed class BrushStrokeInputProcess : IInputProcess
         _raw.Add(s);
         _smoothed.Add(s);
         _lastSmoothed = s;
+        _history.Add(s);
         _active = true;
     }
 
@@ -63,8 +66,11 @@ public sealed class BrushStrokeInputProcess : IInputProcess
         _lastKnownPos = s;
         if (!_active) return;
 
-        _raw.Add(s);
         var smoothed = ApplyStabilization(s);
+        if (ShouldSkipSample(smoothed))
+            return;
+
+        _raw.Add(s);
         _smoothed.Add(smoothed);
         _lastSmoothed = smoothed;
     }
@@ -74,7 +80,9 @@ public sealed class BrushStrokeInputProcess : IInputProcess
         if (!_active) return;
 
         _raw.Add(s);
-        _smoothed.Add(ApplyStabilization(s));
+        var smoothed = ApplyStabilization(s);
+        if (_smoothed.Count == 0 || !ShouldSkipSample(smoothed))
+            _smoothed.Add(smoothed);
         FinishStroke();
     }
 
@@ -91,6 +99,7 @@ public sealed class BrushStrokeInputProcess : IInputProcess
         _raw.Clear();
         _smoothed.Clear();
         _history.Clear();
+        _lastSpeed01 = 0;
     }
 
     public IProcessedInput? GetImmediateResult()
@@ -147,19 +156,28 @@ public sealed class BrushStrokeInputProcess : IInputProcess
 
     private CanvasInputSample ApplyStabilization(CanvasInputSample raw)
     {
-        if (Stabilization <= 0) return raw;
+        _lastSpeed01 = ComputeSpeed01(raw);
 
-        var maxWindow = 20;
-        var windowSize = Math.Max(1, (int)(Stabilization * maxWindow));
+        if (Stabilization <= 0)
+            return raw;
+
+        // Krita-style: fast strokes use a smaller smooth window, slow strokes a larger one.
+        const int maxWindow = 24;
+        const int minWindow = 4;
+        var speedBlend = Math.Clamp(_lastSpeed01, 0f, 1f);
+        var targetWindow = (1.0 - speedBlend * 0.7) * Stabilization * maxWindow
+            + speedBlend * 0.7 * minWindow;
+        var windowSize = Math.Max(minWindow, (int)Math.Round(targetWindow));
 
         _history.Add(raw);
         while (_history.Count > windowSize)
             _history.RemoveAt(0);
 
-        if (_history.Count == 1) return raw;
+        if (_history.Count == 1)
+            return raw;
 
         var center = _history.Count - 1;
-        var sigma = Math.Max(1.0, _history.Count / 3.0);
+        var sigma = Math.Max(1.0, windowSize / 3.0);
         var totalWeight = 0.0;
         var sumX = 0.0;
         var sumY = 0.0;
@@ -181,4 +199,31 @@ public sealed class BrushStrokeInputProcess : IInputProcess
             raw.TimeMicros);
     }
 
+    private float ComputeSpeed01(CanvasInputSample raw)
+    {
+        if (_history.Count == 0)
+            return 0;
+
+        var prev = _history[^1];
+        var dx = raw.X - prev.X;
+        var dy = raw.Y - prev.Y;
+        var dt = Math.Max(0.001, (raw.TimeMicros - prev.TimeMicros) / 1_000_000.0);
+        var dist = Math.Sqrt(dx * dx + dy * dy);
+        return Math.Clamp((float)(dist / dt / 5000.0), 0f, 1f);
+    }
+
+    // Drop redundant samples on fast strokes — fewer segments reach the engine without
+    // changing nominal brush spacing on slow, detail work.
+    private bool ShouldSkipSample(CanvasInputSample smoothed)
+    {
+        if (_smoothed.Count == 0)
+            return false;
+
+        var dx = smoothed.X - _lastSmoothed.X;
+        var dy = smoothed.Y - _lastSmoothed.Y;
+        var dist = Math.Sqrt(dx * dx + dy * dy);
+        var speedFactor = 0.2 + _lastSpeed01 * 0.8;
+        var minDist = Math.Max(0.5, BrushSize * 0.006 * speedFactor);
+        return dist < minDist;
+    }
 }

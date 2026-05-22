@@ -11,28 +11,25 @@ namespace Floss.App;
 class Program
 {
     /// <summary>
-    /// Module initializer runs at the earliest possible point — before any
-    /// type initializer, before Main, before the JIT compiles anything else.
-    /// This is the only reliable place to set DOTNET_EnableCrashReport so
-    /// the .NET runtime's native crash handler is armed before any native
-    /// code (SkiaSharp, etc.) has a chance to fault.
+    /// IMPORTANT: setting DOTNET_EnableCrashReport / DOTNET_DbgEnableMiniDump
+    /// from a ModuleInitializer DOES NOT WORK. The runtime reads those env vars
+    /// during its own initialization, before any managed code (including module
+    /// initializers) runs. To capture native crashes (SIGSEGV in SkiaSharp etc.)
+    /// you MUST launch the app via the run.sh launcher, which sets the env vars
+    /// in the parent shell before invoking dotnet.
+    ///
+    /// We still create the crash-reports directory here so it exists when a
+    /// properly-launched run produces dumps.
     /// </summary>
     [ModuleInitializer]
     internal static void Initialize()
     {
-        // Enable .NET runtime crash reports for native/fatal errors (SIGSEGV,
-        // stack overflow, etc.).  The runtime writes a JSON crash dump before
-        // exiting.  This MUST be set before any native interop runs.
-        try { Environment.SetEnvironmentVariable("DOTNET_EnableCrashReport", "1"); } catch { }
-
-        // Redirect crash reports to our app data directory so we can find them.
         try
         {
             var dir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "Floss", "crash-reports");
             Directory.CreateDirectory(dir);
-            Environment.SetEnvironmentVariable("DOTNET_CrashReportDirectory", dir);
         }
         catch { }
     }

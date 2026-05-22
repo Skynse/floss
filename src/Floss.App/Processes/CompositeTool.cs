@@ -78,7 +78,9 @@ public sealed class CompositeTool : ITool
         Output.Cancel();
     }
 
-    public bool HasPendingOperation => Input.IsActive;
+    public bool HasPendingOperation =>
+        Input.IsActive ||
+        (Output is DirectDrawOutput directDraw && directDraw.HasPendingWork);
 
     public void RenderOverlay(DrawingContext dc, ToolContext ctx, double zoom)
     {

@@ -186,6 +186,9 @@ public sealed class ToolPreset
     // Brush runtime overrides layered on the linked brush asset (BrushId).
     public BrushPresetOverrideDocument? BrushOverride { get; set; }
 
+    // Saved default for override-only presets (no BrushId), e.g. Smudge tool group.
+    public BrushPresetOverrideDocument? DefaultBrushOverride { get; set; }
+
     // Legacy flat override fields — deserialized from older configs, migrated to BrushOverride on load.
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? BrushSize { get; set; }
@@ -257,6 +260,33 @@ public sealed class ToolPreset
         BrushOverride = null;
         ClearLegacyBrushFields();
     }
+
+    public void EnsureDefaultBrushOverride(BrushPresetOverrideDocument? factoryFallback = null)
+    {
+        if (DefaultBrushOverride != null || BrushId != null) return;
+        if (!InputProcess.IsBrushFamily() || OutputProcess != OutputProcessType.DirectDraw) return;
+
+        DefaultBrushOverride = BrushOverride?.DeepClone()
+            ?? factoryFallback?.DeepClone()
+            ?? (Engine == ToolPresetEngine.Smudge ? ToolGroupConfig.CreateFactorySmudgeOverride().DeepClone() : null);
+    }
+
+    public void RestoreBrushDefaults(BrushPresetOverrideDocument? factoryFallback = null)
+    {
+        if (BrushId != null)
+        {
+            ClearBrushOverrides();
+            return;
+        }
+
+        var fallback = DefaultBrushOverride?.DeepClone()
+            ?? factoryFallback?.DeepClone()
+            ?? (Engine == ToolPresetEngine.Smudge ? ToolGroupConfig.CreateFactorySmudgeOverride().DeepClone() : null);
+        BrushOverride = fallback;
+    }
+
+    public void SaveBrushOverrideAsDefault()
+        => DefaultBrushOverride = BrushOverride?.DeepClone();
 
     public void MigrateBrushOverrideFormat()
     {
@@ -508,6 +538,7 @@ public sealed class ToolGroupConfig
             {
                 preset.MigrateFromLegacy();
                 preset.MigrateBrushOverrideFormat();
+                preset.EnsureDefaultBrushOverride(CreateFactorySmudgeOverride());
             }
 
             if (group.Presets.Count == 0)
@@ -658,11 +689,7 @@ public sealed class ToolGroupConfig
             Presets = [new() { Name = "Brush",  Engine = ToolPresetEngine.Brush, InputProcess = InputProcessType.Brush, OutputProcess = OutputProcessType.DirectDraw }] }),
         WithDefaultCategory(new() { Name = "Eraser", DefaultEngine = ToolPresetEngine.Eraser, Shortcut = new(Key.E),
             Presets = [new() { Name = "Eraser", InputProcess = InputProcessType.Eraser, OutputProcess = OutputProcessType.DirectDraw, BrushOverride = new BrushPresetOverrideDocument { BlendMode = SkiaSharp.SKBlendMode.DstOut } }] }),
-        WithDefaultCategory(new()
-        {
-            Name = "Smudge", DefaultEngine = ToolPresetEngine.Smudge, Shortcut = new(Key.U),
-            Presets = [new() { Name = "Smudge", Engine = ToolPresetEngine.Smudge, InputProcess = InputProcessType.Smudge, OutputProcess = OutputProcessType.DirectDraw, BrushOverride = new BrushPresetOverrideDocument { ColorMix = true, SmudgeMode = SmudgeMode.Smudge, AmountOfPaint = 0.0, DensityOfPaint = 0.0 } }]
-        }),
+        WithDefaultCategory(CreateDefaultSmudgeGroup()),
         WithDefaultCategory(new()
         {
             Name = "Select", DefaultEngine = ToolPresetEngine.Select, Shortcut = new(Key.S),
@@ -753,5 +780,36 @@ public sealed class ToolGroupConfig
     {
         EnsureFallbackCategory(group);
         return group;
+    }
+
+    internal static BrushPresetOverrideDocument CreateFactorySmudgeOverride() => new()
+    {
+        ColorMix = true,
+        SmudgeMode = SmudgeMode.Smudge,
+        AmountOfPaint = 0.0,
+        DensityOfPaint = 0.0,
+    };
+
+    private static ToolGroup CreateDefaultSmudgeGroup()
+    {
+        var smudgeOverride = CreateFactorySmudgeOverride();
+        return new ToolGroup
+        {
+            Name = "Smudge",
+            DefaultEngine = ToolPresetEngine.Smudge,
+            Shortcut = new(Key.U),
+            Presets =
+            [
+                new ToolPreset
+                {
+                    Name = "Smudge",
+                    Engine = ToolPresetEngine.Smudge,
+                    InputProcess = InputProcessType.Smudge,
+                    OutputProcess = OutputProcessType.DirectDraw,
+                    BrushOverride = smudgeOverride.DeepClone(),
+                    DefaultBrushOverride = smudgeOverride.DeepClone(),
+                }
+            ]
+        };
     }
 }

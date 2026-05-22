@@ -146,6 +146,7 @@ public partial class MainWindow
         try
         {
             var path = file.Path.LocalPath;
+            using var busy = BeginBusy("Exporting timelapse video…");
             await session.ExportVideoAsync(path, settings);
             _footerStatusText.Text = $"Exported timelapse video {Path.GetFileName(path)}";
         }

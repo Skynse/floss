@@ -146,6 +146,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private Slider _grainSlider = null!;
     private Slider _flowSlider = null!;
     private Slider _layerOpacitySlider = null!;
+    private bool _layerOpacityScrubActive;
     private TextBlock _activeBrushLabel = null!;
     private ComboBox _blendModeComboBox = null!;
     private TextBox _layerNameBox = null!;
@@ -259,7 +260,10 @@ public partial class MainWindow : Window, Tools.IViewportController
     }
 
     private bool CanExecuteCanvasShortcut()
-        => Input.KeyboardFocusScope.ShouldRouteToCanvas(FocusManager.GetFocusedElement() as IInputElement);
+    {
+        var focused = FocusManager.GetFocusedElement() as IInputElement;
+        return _keyboardInputScope.ShouldRouteToCanvas(focused);
+    }
 
     private bool CanExecuteCanvasDocumentShortcut()
         => _canvas.HasDocument && CanExecuteCanvasShortcut();
@@ -318,8 +322,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         AddShortcut(s.BrushSizeIncreaseLarge, () => NudgeBrushSize(1, true), CanExecuteCanvasDocumentShortcut);
 
         // Brush - opacity
-        AddShortcut(s.BrushOpacityDecrease, () => { _opacitySlider.Value = Math.Max(_opacitySlider.Minimum, _opacitySlider.Value - s.BrushOpacityStep); });
-        AddShortcut(s.BrushOpacityIncrease, () => { _opacitySlider.Value = Math.Min(_opacitySlider.Maximum, _opacitySlider.Value + s.BrushOpacityStep); });
+        AddShortcut(s.BrushOpacityDecrease, () => { _opacitySlider.Value = Math.Max(_opacitySlider.Minimum, _opacitySlider.Value - s.BrushOpacityStep); }, CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.BrushOpacityIncrease, () => { _opacitySlider.Value = Math.Min(_opacitySlider.Maximum, _opacitySlider.Value + s.BrushOpacityStep); }, CanExecuteCanvasDocumentShortcut);
 
         // Color
         AddShortcut(s.ColorCycle, () => CycleColor());
@@ -590,14 +594,14 @@ public partial class MainWindow : Window, Tools.IViewportController
             Background = new SolidColorBrush(Color.Parse(Bg1)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 1, 0, 0),
-            Height = 20,
+            Height = 24,
             Padding = new Thickness(8, 0),
-            Child = _footerStatusText,
+            Child = BuildFooterPanel(),
             IsHitTestVisible = false
         };
 
         BuildTabBar();
-        var centerArea = new Grid { RowDefinitions = new RowDefinitions("26,22,*,20") };
+        var centerArea = new Grid { RowDefinitions = new RowDefinitions("26,22,*,24") };
         Grid.SetRow(_tabBarContainer, 0);
         Grid.SetRow(statusBar, 1);
         Grid.SetRow(_workspaceViewport, 2);
@@ -606,6 +610,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         centerArea.Children.Add(statusBar);
         centerArea.Children.Add(_workspaceViewport);
         centerArea.Children.Add(footer);
+        AttachBusyOverlay();
         AttachNodeGraphDockToCenter(centerArea);
 
         _dockerRows.Clear();
@@ -2357,6 +2362,7 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         AddHandler(KeyDownEvent, OnKeyDownTunnel, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         AddHandler(KeyUpEvent, OnKeyUpTunnel, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        WireKeyboardRegionTracking();
         RegisterShortcuts();
     }
 

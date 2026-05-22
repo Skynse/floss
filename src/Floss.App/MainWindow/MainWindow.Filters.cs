@@ -462,16 +462,17 @@ public partial class MainWindow
 
         var minDist = (int)slider.Value;
 
-        // Flatten canvas
-        var bitmap = DocumentRasterizer.RenderFlattenedBitmap(_canvas.Document);
-        var w = bitmap.Width;
-        var h = bitmap.Height;
-        var raw = new byte[w * h * 4];
-        Marshal.Copy(bitmap.GetPixels(), raw, 0, raw.Length);
-        bitmap.Dispose();
-
-        // Run algorithm natively
-        var masks = BaseColorMaskEngine.GenerateMasks(raw, w, h, minDist);
+        using var busy = BeginBusy("Generating base color masks…");
+        var masks = await System.Threading.Tasks.Task.Run(() =>
+        {
+            var bitmap = DocumentRasterizer.RenderFlattenedBitmap(_canvas.Document);
+            var w = bitmap.Width;
+            var h = bitmap.Height;
+            var raw = new byte[w * h * 4];
+            Marshal.Copy(bitmap.GetPixels(), raw, 0, raw.Length);
+            bitmap.Dispose();
+            return BaseColorMaskEngine.GenerateMasks(raw, w, h, minDist);
+        });
 
         if (masks.Count == 0)
         {
@@ -482,6 +483,8 @@ public partial class MainWindow
 
         // Import mask below the sketch layer
         var insertIdx = Math.Max(0, _canvas.ActiveLayerIndex);
+        var w = _canvas.Document.Width;
+        var h = _canvas.Document.Height;
         for (var i = 0; i < masks.Count; i++)
         {
             var layer = new DrawingLayer("Base Color", w, h);
@@ -732,6 +735,17 @@ public partial class MainWindow
         var previewOn = buildPreview != null;
         DispatcherTimer? debounce = null;
 
+        PixelRegion FilterPreviewDirtyRegion()
+        {
+            var region = PixelRegion.Empty;
+            foreach (var idx in layers)
+            {
+                if (idx >= 0 && idx < _canvas.Layers.Count)
+                    region = region.Union(_canvas.Document.GetLayerDirtyRegion(idx));
+            }
+            return region.ClipTo(_canvas.Document.Width, _canvas.Document.Height);
+        }
+
         void ApplyPreviewNow()
         {
             if (!previewOn || buildPreview == null) return;
@@ -750,7 +764,9 @@ public partial class MainWindow
                         action(layer);
                 }
             }
-            _canvas.Document.NotifyChanged();
+            var dirty = FilterPreviewDirtyRegion();
+            if (!dirty.IsEmpty)
+                _canvas.Document.NotifyChanged(dirty, layers.Count == 1 ? layers[0] : null);
         }
 
         void SchedulePreview()
@@ -774,7 +790,11 @@ public partial class MainWindow
                 _canvas.Layers[idx].MarkThumbnailDirty();
             }
             if (captured.Count > 0)
-                _canvas.Document.NotifyChanged();
+            {
+                var dirty = FilterPreviewDirtyRegion();
+                if (!dirty.IsEmpty)
+                    _canvas.Document.NotifyChanged(dirty, layers.Count == 1 ? layers[0] : null);
+            }
         }
 
         if (previewHandle != null)

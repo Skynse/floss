@@ -3,7 +3,9 @@ using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.VisualTree;
 using Floss.App.Canvas;
 using Floss.App.Document;
 using Floss.App.Processes.Input;
@@ -19,6 +21,24 @@ using static Floss.App.AppColors;
 public partial class MainWindow : ICanvasInputHost
 {
     private CanvasInputRouter _inputRouter = null!;
+    private readonly KeyboardInputScope _keyboardInputScope = new();
+
+    private void ActivateCanvasKeyboardRegion()
+        => _keyboardInputScope.Activate(KeyboardInputRegion.Canvas);
+
+    private void WireKeyboardRegionTracking()
+    {
+        KeyboardSurface.Wire(_workspaceViewport, _keyboardInputScope, KeyboardInputRegion.Canvas);
+        if (_nodeGraphEditor != null)
+            WireNodeGraphKeyboardSurface();
+    }
+
+    private void WireNodeGraphKeyboardSurface()
+    {
+        if (_nodeGraphEditor == null)
+            return;
+        KeyboardSurface.Wire(_nodeGraphEditor, _keyboardInputScope, KeyboardInputRegion.NodeGraph);
+    }
 
     // ── Viewport ──────────────────────────────────────────────────────────────
     private void SyncCanvasViewport()
@@ -55,16 +75,19 @@ public partial class MainWindow : ICanvasInputHost
 
     private void Workspace_OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
+        ActivateCanvasKeyboardRegion();
         _inputRouter.PointerPressed(e);
     }
 
     private void Workspace_OnPointerMoved(object? sender, PointerEventArgs e)
     {
+        ActivateCanvasKeyboardRegion();
         _inputRouter.PointerMoved(e);
     }
 
     private void Workspace_OnPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
+        ActivateCanvasKeyboardRegion();
         _inputRouter.PointerReleased(e);
     }
 
@@ -476,7 +499,15 @@ public partial class MainWindow : ICanvasInputHost
         }
 
         var focused = FocusManager.GetFocusedElement() as IInputElement;
-        if (!Input.KeyboardFocusScope.ShouldRouteToCanvas(focused))
+
+        if (_keyboardInputScope.ShouldRouteToNodeGraph(focused))
+        {
+            if (_nodeGraphEditor?.TryHandleKeyDown(e) == true)
+                e.Handled = true;
+            return;
+        }
+
+        if (!_keyboardInputScope.ShouldRouteToCanvas(focused))
             return;
 
         _inputRouter.KeyDown(e);
@@ -497,7 +528,15 @@ public partial class MainWindow : ICanvasInputHost
     private void OnKeyUpTunnel(object? sender, KeyEventArgs e)
     {
         var focused = FocusManager.GetFocusedElement() as IInputElement;
-        if (!Input.KeyboardFocusScope.ShouldRouteToCanvas(focused))
+
+        if (_keyboardInputScope.ShouldRouteToNodeGraph(focused))
+        {
+            if (_nodeGraphEditor?.TryHandleKeyUp(e) == true)
+                e.Handled = true;
+            return;
+        }
+
+        if (!_keyboardInputScope.ShouldRouteToCanvas(focused))
             return;
 
         _inputRouter.KeyUp(e);

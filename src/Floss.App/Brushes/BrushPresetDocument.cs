@@ -31,6 +31,9 @@ public sealed class BrushPresetDocument
     public BrushTipSelectionMode TipSelectionMode { get; set; } = BrushTipSelectionMode.Single;
     public double Grain { get; set; }
     public double Smoothing { get; set; }
+    public bool AutoSpacingActive { get; set; }
+    public double AutoSpacingCoeff { get; set; } = 1.0;
+    public double SpeedSpacingStrength { get; set; }
     public BrushQuality Quality { get; set; } = BrushQuality.High;
     public string? Texture { get; set; }
     public SKBlendMode BlendMode { get; set; }
@@ -65,6 +68,9 @@ public sealed class BrushPresetDocument
         TipSelectionMode = preset.TipSelectionMode,
         Grain = preset.Grain,
         Smoothing = preset.Smoothing,
+        AutoSpacingActive = preset.AutoSpacingActive,
+        AutoSpacingCoeff = preset.AutoSpacingCoeff,
+        SpeedSpacingStrength = preset.SpeedSpacingStrength,
         Quality = preset.Quality,
         Texture = preset.Texture,
         BlendMode = preset.BlendMode,
@@ -95,6 +101,9 @@ public sealed class BrushPresetDocument
             TipSelectionMode = TipSelectionMode,
             Grain = Grain,
             Smoothing = Smoothing,
+            AutoSpacingActive = AutoSpacingActive,
+            AutoSpacingCoeff = AutoSpacingCoeff <= 0 ? 1.0 : AutoSpacingCoeff,
+            SpeedSpacingStrength = SpeedSpacingStrength,
             Quality = Quality,
             Texture = Texture,
             BlendMode = BlendMode,

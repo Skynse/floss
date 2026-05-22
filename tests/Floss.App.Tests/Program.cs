@@ -65,6 +65,10 @@ internal static class Program
         ("Input router: Ctrl+Shift resolves through stale tool-specific None", CanvasInputRouterTests.CtrlShiftFallsThroughStaleSpecificNone),
         ("Input router: capture lost cancels only active transaction", CanvasInputRouterTests.CaptureLostCancelsOnlyActiveTransaction),
 
+        ("Keyboard region routes canvas shortcuts over viewport", KeyboardInputScopeTests.RoutesCanvasOverViewport),
+        ("Keyboard region routes node graph shortcuts over dock", KeyboardInputScopeTests.RoutesNodeGraphOverDock),
+        ("Keyboard region blocks shortcuts during text entry", KeyboardInputScopeTests.BlocksShortcutsDuringTextEntry),
+
         ("CubicCurve identity and linear evaluation", BrushTests.CubicCurve_EvaluatesIdentityAndLinearCurves),
         ("CubicCurve clamps, sorts, serializes, and clones points", BrushTests.CubicCurve_PointManagementAndSerialization),
         ("SensorConfig maps raw stroke values", BrushTests.SensorConfig_RawValuesAreNormalized),
@@ -84,10 +88,17 @@ internal static class Program
         ("Brush engine color image tips use cached tile-major path", BrushTests.BrushEngine_ColorImageTipsUseCachedTileMajorPath),
         ("Brush engine dab cache survives batched unique stamps", BrushTests.BrushEngine_DabCacheSurvivesBatchedUniqueStamps),
         ("Brush engine batched segments match sequential dry stroke", BrushTests.BrushEngine_BatchedSegmentsMatchSequentialDryStroke),
-        ("Brush engine color mix uses cached tile-major path", BrushTests.BrushEngine_ColorMixUsesCachedTileMajorPath),
+        ("Brush engine color mix uses scratch composite path", BrushTests.BrushEngine_ColorMixUsesScratchCompositePath),
+        ("Brush engine smear zero paint on empty canvas", BrushTests.BrushEngine_SmearZeroPaintOnEmptyCanvas),
+        ("Brush engine smear density scales deposition", BrushTests.BrushEngine_SmearDensityScalesDeposition),
+        ("Brush engine color mix renders large brush via Skia fallback", BrushTests.BrushEngine_ColorMixLargeBrushFallsBackToSkia),
+        ("Brush engine smear blur softens color boundary", BrushTests.BrushEngine_SmearBlurSoftensColorBoundary),
         ("Direct draw splits fast long brush segments before rendering", BrushTests.DirectDraw_SplitsFastLongBrushSegments),
         ("Direct draw color mixing samples pre-stroke pixels", BrushTests.DirectDraw_ColorMixingDoesNotSampleOwnStroke),
         ("Brush engine color mixing amount controls deposited color", BrushTests.BrushEngine_ColorMixAmountControlsDepositedColor),
+        ("Brush engine color mix samples under brush footprint", BrushTests.BrushEngine_ColorMixSamplesUnderBrushFootprint),
+        ("Brush engine smudge stress on empty layer", BrushTests.BrushEngine_SmudgeStressEmptyLayer),
+        ("Brush engine color mix survives negative coords with grain", BrushTests.BrushEngine_ColorMixSurvivesNegativeCoordsWithGrain),
         ("Brush engine does not dispose tip-owned cached masks", BrushTests.BrushEngine_DoesNotDisposeTipOwnedCachedMasks),
         ("Tool controller does not restore stale engine brush state", BrushTests.ToolController_DoesNotOverridePresetBrushState),
         ("Composite tool deactivation keeps completed output intact", BrushTests.CompositeTool_DeactivateDoesNotCancelCompletedOutput),
@@ -1257,6 +1268,41 @@ internal static class KeyBindingTests
     }
 }
 
+internal static class KeyboardInputScopeTests
+{
+    public static void RoutesCanvasOverViewport()
+    {
+        var scope = new KeyboardInputScope();
+        scope.Activate(KeyboardInputRegion.Canvas);
+        AssertEx.True(scope.ShouldRouteToCanvas(null));
+        scope.Activate(KeyboardInputRegion.NodeGraph);
+        AssertEx.False(scope.ShouldRouteToCanvas(null));
+        scope.Activate(KeyboardInputRegion.Chrome);
+        AssertEx.False(scope.ShouldRouteToCanvas(null));
+    }
+
+    public static void RoutesNodeGraphOverDock()
+    {
+        var scope = new KeyboardInputScope();
+        scope.Activate(KeyboardInputRegion.NodeGraph);
+        AssertEx.True(scope.ShouldRouteToNodeGraph(null));
+        scope.Activate(KeyboardInputRegion.Canvas);
+        AssertEx.False(scope.ShouldRouteToNodeGraph(null));
+        scope.Activate(KeyboardInputRegion.Chrome);
+        AssertEx.False(scope.ShouldRouteToNodeGraph(null));
+    }
+
+    public static void BlocksShortcutsDuringTextEntry()
+    {
+        var scope = new KeyboardInputScope();
+        scope.Activate(KeyboardInputRegion.Canvas);
+        var textBox = new Avalonia.Controls.TextBox();
+        AssertEx.False(scope.ShouldRouteToCanvas(textBox));
+        scope.Activate(KeyboardInputRegion.NodeGraph);
+        AssertEx.False(scope.ShouldRouteToNodeGraph(textBox));
+    }
+}
+
 internal static class BrushSizeAdjustmentTests
 {
     public static void ScalesSmoothlyAcrossSizes()
@@ -1723,18 +1769,23 @@ internal static class BrushTests
         AssertEx.SequenceEqual(sequentialLayer.Pixels.Capture(bounds), batchedLayer.Pixels.Capture(bounds));
     }
 
-    public static void BrushEngine_ColorMixUsesCachedTileMajorPath()
+    public static void BrushEngine_ColorMixUsesScratchCompositePath()
     {
         using var engine = new BrushEngine();
         using var layer = new DrawingLayer("Layer", 512, 256);
-        var brush = new BrushPreset("Wet cached", 36, 1, 0.75, 0.02, Colors.Black, 0)
+        for (var x = 0; x < 80; x++)
+            layer.Pixels.SetPixel(x, 128, 0, 0, 0, 255);
+
+        var brush = new BrushPreset("Wet smear", 36, 1, 0.75, 0.02, Colors.Black, 0)
         {
             Tip = new ProceduralBrushTip(BrushTipShape.Circle),
             Shape = null,
             ColorMix = true,
-            SmudgeMode = SmudgeMode.Blend,
-            AmountOfPaint = 1,
-            DensityOfPaint = 1,
+            SmudgeMode = SmudgeMode.Smear,
+            AmountOfPaint = 0,
+            DensityOfPaint = 0.06,
+            ColorStretch = 0.8,
+            BlurAmount = 0.94,
             Grain = 0,
             Dynamics = new BrushDynamics()
         };
@@ -1745,10 +1796,144 @@ internal static class BrushTests
         var dirty = engine.RasterizeSegment(layer, brush, from, to);
 
         AssertEx.False(dirty.IsEmpty);
-        AssertEx.Equal("CachedTileMajor", engine.LastStats.Path);
-        AssertEx.True(engine.LastStats.CachedDabCount > 10);
-        layer.Pixels.GetPixel(240, 128, out _, out _, out _, out var alpha);
+        AssertEx.True(
+            engine.LastStats.Path is "SpatialSmear" or "SmudgeSequential" or "ColorMixScratch" or "CachedTileMajor",
+            $"Unexpected color-mix render path: {engine.LastStats.Path}");
+        layer.Pixels.GetPixel(200, 128, out _, out _, out _, out var alpha);
         AssertEx.True(alpha > 0);
+    }
+
+    public static void BrushEngine_SmearZeroPaintOnEmptyCanvas()
+    {
+        using var engine = new BrushEngine();
+        var layer = new DrawingLayer("Layer", 512, 256);
+        var brush = new BrushPreset("Dry smear", 48, 1, 0.75, 0.05, Colors.Black, 0)
+        {
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null,
+            ColorMix = true,
+            SmudgeMode = SmudgeMode.Smear,
+            AmountOfPaint = 0,
+            DensityOfPaint = 0,
+            BlurAmount = 0.94,
+            MixingMode = MixingMode.Perceptual
+        };
+        var from = Sample(80, 128, 0);
+        var to = Sample(400, 128, 16_000);
+
+        engine.BeginStroke(brush, from);
+        engine.RasterizeSegment(layer, brush, from, to);
+        engine.EndStroke();
+
+        for (var x = 60; x < 420; x++)
+        {
+            layer.Pixels.GetPixel(x, 128, out _, out _, out _, out var alpha);
+            AssertEx.Equal((byte)0, alpha, $"Smear with amount=0 density=0 must not paint on empty canvas at x={x}.");
+        }
+    }
+
+    public static void BrushEngine_ColorMixLargeBrushFallsBackToSkia()
+    {
+        // Brush sizes that produce a cached dab larger than the engine's
+        // MaxCachedDabPixels (currently 1024²) must fall back to Skia,
+        // otherwise stamps were silently dropped — a long-standing reason
+        // big brushes "did nothing" with color mixing on.
+        using var engine = new BrushEngine();
+        var layer = new DrawingLayer("Layer", 2400, 1600);
+        for (var y = 200; y < 1400; y++)
+        {
+            for (var x = 200; x < 1400; x++)
+                layer.Pixels.SetPixel(x, y, 80, 120, 200, 255);
+        }
+
+        var brush = new BrushPreset("Huge mixer", 1200, 1, 0.7, 0.18, Colors.White, 0)
+        {
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null,
+            ColorMix = true,
+            SmudgeMode = SmudgeMode.Blend,
+            AmountOfPaint = 0.5,
+            DensityOfPaint = 0.5,
+            BlurAmount = 0
+        };
+        var from = Sample(400, 800, 0);
+        var to = Sample(1800, 800, 8_000);
+
+        engine.BeginStroke(brush, from);
+        var dirty = engine.RasterizeSegment(layer, brush, from, to);
+        engine.EndStroke();
+
+        AssertEx.False(dirty.IsEmpty);
+        AssertEx.Equal("SkiaFallback", engine.LastStats.Path);
+        layer.Pixels.GetPixel(1100, 800, out _, out _, out _, out var alpha);
+        AssertEx.True(alpha > 0, "Large color-mix brush must actually paint instead of dropping stamps.");
+    }
+
+    public static void BrushEngine_SmearDensityScalesDeposition()
+    {
+        using var engine = new BrushEngine();
+        var layer = new DrawingLayer("Layer", 256, 64);
+        for (var y = 16; y <= 48; y++)
+        {
+            for (var x = 0; x < 96; x++)
+                layer.Pixels.SetPixel(x, y, 100, 150, 200, 255);
+        }
+
+        var brush = new BrushPreset("Smear density", 32, 1, 0.75, 0.5, Colors.White, 0)
+        {
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null,
+            ColorMix = true,
+            SmudgeMode = SmudgeMode.Smear,
+            AmountOfPaint = 0,
+            DensityOfPaint = 0.06,
+            BlurAmount = 0
+        };
+        var from = Sample(48, 32, 0);
+        var to = Sample(180, 32, 4_000);
+
+        engine.BeginStroke(brush, from);
+        engine.RasterizeSegment(layer, brush, from, to);
+        engine.EndStroke();
+
+        layer.Pixels.GetPixel(150, 32, out var b, out var g, out var r, out var a);
+        AssertEx.True(a > 0, "Smear should drag pigment from the painted source region.");
+        AssertEx.True(b > 0 || g > 0 || r > 0);
+    }
+
+    public static void BrushEngine_SmearBlurSoftensColorBoundary()
+    {
+        using var engine = new BrushEngine();
+        var layer = new DrawingLayer("Layer", 128, 64);
+        for (var y = 20; y <= 44; y++)
+        {
+            for (var x = 0; x < 64; x++)
+                layer.Pixels.SetPixel(x, y, 0, 0, 255, 255);
+            for (var x = 64; x < 128; x++)
+                layer.Pixels.SetPixel(x, y, 255, 255, 0, 255);
+        }
+
+        var brush = new BrushPreset("Smear blur", 32, 1, 0.75, 0.5, Colors.White, 0)
+        {
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null,
+            ColorMix = true,
+            SmudgeMode = SmudgeMode.Smear,
+            AmountOfPaint = 0,
+            DensityOfPaint = 0.06,
+            ColorStretch = 0.8,
+            BlurAmount = 0.94,
+            MixingMode = MixingMode.Perceptual
+        };
+        var sample = Sample(64, 32, 0);
+
+        engine.BeginStroke(brush, sample);
+        engine.RasterizeDab(layer, brush, sample, velocity: 0);
+        engine.EndStroke();
+
+        layer.Pixels.GetPixel(64, 32, out _, out var g, out var r, out var a);
+        AssertEx.True(a > 0);
+        AssertEx.True(r > 0 && g > 0, "High smear blur should average red/yellow boundary into a mixed stroke color.");
     }
 
     public static void DirectDraw_SplitsFastLongBrushSegments()
@@ -1929,6 +2114,93 @@ internal static class BrushTests
         lowLayer.Pixels.GetPixel(20, 30, out _, out _, out var lowRed, out _);
         highLayer.Pixels.GetPixel(20, 30, out _, out _, out var highRed, out _);
         AssertEx.True(highRed > lowRed, "Amount of paint should increase drawing color contribution.");
+    }
+
+    public static void BrushEngine_ColorMixSamplesUnderBrushFootprint()
+    {
+        using var engine = new BrushEngine();
+        var layer = new DrawingLayer("Layer", 64, 64);
+        for (var y = 0; y < 64; y++)
+        for (var x = 0; x < 64; x++)
+            layer.Pixels.SetPixel(x, y, 0, 0, 0, 255);
+        for (var y = 24; y <= 36; y++)
+        for (var x = 36; x <= 48; x++)
+            layer.Pixels.SetPixel(x, y, 0, 0, 255, 255);
+
+        var brush = new BrushPreset("Mix", 24, 1, 0.75, 0.5, Colors.White, 0)
+        {
+            ColorMix = true,
+            SmudgeMode = SmudgeMode.Blend,
+            AmountOfPaint = 0,
+            DensityOfPaint = 1,
+            ColorStretch = 1,
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null
+        };
+        var sample = Sample(30, 30, 0);
+
+        engine.BeginStroke(brush, sample);
+        engine.RasterizeDab(layer, brush, sample, velocity: 0);
+
+        layer.Pixels.GetPixel(38, 30, out _, out _, out var sampledRed, out var alpha);
+        AssertEx.True(alpha > 0);
+        AssertEx.True(sampledRed > 32, "Footprint-weighted sampling should pick up nearby canvas pigment outside the dab center.");
+    }
+
+    public static void BrushEngine_SmudgeStressEmptyLayer()
+    {
+        using var engine = new BrushEngine();
+        var layer = new DrawingLayer("Layer", 1024, 1024);
+        var brush = new BrushPreset("Smudge", 36, 0.68, 0.75, 0.05, Colors.White, 0)
+        {
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null,
+            ColorMix = true,
+            SmudgeMode = SmudgeMode.Smudge,
+            MixingMode = MixingMode.Perceptual,
+            AmountOfPaint = 0,
+            DensityOfPaint = 0,
+            ColorStretch = 0.79,
+            BlurAmount = 0.81,
+            Grain = 0.12,
+            Dynamics = new BrushDynamics()
+        };
+
+        engine.BeginStroke(brush, Sample(100, 100, 0));
+        var from = Sample(100, 100, 0);
+        for (var i = 1; i <= 400; i++)
+        {
+            var to = Sample(100 + i * 3, 100 + (i % 7), i * 500L);
+            var dirty = engine.RasterizeSegment(layer, brush, from, to);
+            if (!dirty.IsEmpty)
+                layer.Pixels.GetPixel(dirty.X + 1, dirty.Y + 1, out _, out _, out _, out _);
+            from = to;
+        }
+        engine.EndStroke();
+    }
+
+    public static void BrushEngine_ColorMixSurvivesNegativeCoordsWithGrain()
+    {
+        using var engine = new BrushEngine();
+        var layer = new DrawingLayer("Layer", 256, 256);
+        var brush = new BrushPreset("Smudge edge", 48, 1, 0.75, 0.05, Colors.White, 0)
+        {
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null,
+            ColorMix = true,
+            SmudgeMode = SmudgeMode.Blend,
+            AmountOfPaint = 0.5,
+            DensityOfPaint = 1,
+            ColorStretch = 0.5,
+            Grain = 0.35,
+            Dynamics = new BrushDynamics()
+        };
+
+        engine.BeginStroke(brush, Sample(-12, -12, 0));
+        var dirty = engine.RasterizeSegment(layer, brush, Sample(-12, -12, 0), Sample(40, 30, 1_000));
+        engine.EndStroke();
+
+        AssertEx.False(dirty.IsEmpty, "Negative-coordinate smudge segments should render without crashing.");
     }
 
     public static void BrushEngine_DoesNotDisposeTipOwnedCachedMasks()

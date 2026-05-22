@@ -36,6 +36,9 @@ public sealed record BrushPreset(
     public double Grain { get; init; } = 0.0;
     public string? Texture { get; init; } = null;
     public double Smoothing { get; init; } = 0.3;
+    public bool AutoSpacingActive { get; init; } = false;
+    public double AutoSpacingCoeff { get; init; } = 1.0;
+    public double SpeedSpacingStrength { get; init; } = 0.0;
     public BrushQuality Quality { get; init; } = BrushQuality.High;
     public IBrushTip Tip { get; init; } = new ProceduralBrushTip();
     public SkiaSharp.SKBlendMode BlendMode { get; init; } = SkiaSharp.SKBlendMode.SrcOver;
@@ -136,7 +139,9 @@ public sealed record BrushPreset(
             TipThickness = 0.42,
             TipDirection = BrushTipDirection.Horizontal,
             SmudgeMode = SmudgeMode.Smudge,
-            Smoothing = 0.45
+            Smoothing = 0.45,
+            AutoSpacingActive = true,
+            SpeedSpacingStrength = 0.35
         },
         new("Blend",       24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
         {
@@ -155,7 +160,9 @@ public sealed record BrushPreset(
             TipThickness = 0.42,
             TipDirection = BrushTipDirection.Horizontal,
             SmudgeMode = SmudgeMode.Blend,
-            Smoothing = 0.45
+            Smoothing = 0.45,
+            AutoSpacingActive = true,
+            SpeedSpacingStrength = 0.35
         },
         new("Smear",       24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
         {
@@ -174,7 +181,9 @@ public sealed record BrushPreset(
             TipThickness = 0.42,
             TipDirection = BrushTipDirection.Horizontal,
             SmudgeMode = SmudgeMode.Smear,
-            Smoothing = 0.45
+            Smoothing = 0.45,
+            AutoSpacingActive = true,
+            SpeedSpacingStrength = 0.35
         },
     ];
 }

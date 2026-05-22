@@ -30,10 +30,19 @@ public sealed class MoveLayerOutput : IOutputProcess
         int dx = (int)(drag.Current.X - drag.Start.X);
         int dy = (int)(drag.Current.Y - drag.Start.Y);
 
-        layer.OffsetX = _origOffsetX + dx;
-        layer.OffsetY = _origOffsetY + dy;
+        var newX = _origOffsetX + dx;
+        var newY = _origOffsetY + dy;
+
+        layer.OffsetX = newX;
+        layer.OffsetY = newY;
         layer.MarkThumbnailDirty();
-        ctx.Document.NotifyChanged(null, ctx.ActiveLayerIndex);
+
+        var dirty = new PixelRegion(
+            Math.Min(newX, _origOffsetX),
+            Math.Min(newY, _origOffsetY),
+            layer.Width + Math.Abs(newX - _origOffsetX),
+            layer.Height + Math.Abs(newY - _origOffsetY));
+        ctx.Document.NotifyChanged(dirty, ctx.ActiveLayerIndex);
         ctx.InvalidateRender();
     }
 

@@ -173,11 +173,14 @@ public partial class MainWindow
         });
         if (files.Count == 0) return;
 
+        var path = files[0].Path.LocalPath;
         try
         {
-            var path = files[0].Path.LocalPath;
+            using var busy = BeginBusy($"Opening {Path.GetFileName(path)}…");
             await using var stream = await files[0].OpenReadAsync();
+            busy.Report($"Reading {Path.GetFileName(path)}…");
             var imported = await System.Threading.Tasks.Task.Run(() => LoadDocumentFromStream(stream, path));
+            busy.Report("Applying document…");
             await NewTabAsync();
             ApplyOpenedDocument(imported, path);
         }
@@ -199,8 +202,11 @@ public partial class MainWindow
                 return;
             }
 
+            using var busy = BeginBusy($"Opening {Path.GetFileName(path)}…");
             await using var stream = File.OpenRead(path);
+            busy.Report($"Reading {Path.GetFileName(path)}…");
             var imported = await System.Threading.Tasks.Task.Run(() => LoadDocumentFromStream(stream, path));
+            busy.Report("Applying document…");
             await NewTabAsync();
             ApplyOpenedDocument(imported, path);
         }
@@ -302,8 +308,14 @@ public partial class MainWindow
     {
         try
         {
-            await using var stream = File.Open(path, FileMode.Create, FileAccess.Write);
-            FlossFileFormat.Save(stream, _canvas.Document);
+            var doc = _canvas.Document;
+            using var busy = BeginBusy($"Saving {Path.GetFileName(path)}…");
+            await System.Threading.Tasks.Task.Run(() =>
+            {
+                using var read = doc.RenderLock.Read();
+                using var stream = File.Open(path, FileMode.Create, FileAccess.Write);
+                FlossFileFormat.Save(stream, doc);
+            });
 
             _currentFilePath = path;
             if (_activeTab != null)
@@ -328,8 +340,16 @@ public partial class MainWindow
     {
         try
         {
-            await using var stream = File.Open(path, FileMode.Create, FileAccess.Write);
-            PsdExporter.Export(stream, _canvas.Document);
+            var doc = _canvas.Document;
+            using var busy = BeginBusy(updateDocumentState
+                ? $"Saving {Path.GetFileName(path)}…"
+                : $"Exporting PSD {Path.GetFileName(path)}…");
+            await System.Threading.Tasks.Task.Run(() =>
+            {
+                using var read = doc.RenderLock.Read();
+                using var stream = File.Open(path, FileMode.Create, FileAccess.Write);
+                PsdExporter.Export(stream, doc);
+            });
 
             if (!updateDocumentState)
             {
@@ -386,8 +406,13 @@ public partial class MainWindow
 
         try
         {
+            using var busy = BeginBusy($"Exporting {Path.GetFileName(path)}…");
             await using var stream = await file.OpenWriteAsync();
-            ImageFileExporter.Export(stream, doc, path, settings);
+            await System.Threading.Tasks.Task.Run(() =>
+            {
+                using var read = doc.RenderLock.Read();
+                ImageFileExporter.Export(stream, doc, path, settings);
+            });
             _footerStatusText.Text = $"Exported {Path.GetFileName(path)}  ({settings.TargetWidth}×{settings.TargetHeight})";
         }
         catch (Exception ex)

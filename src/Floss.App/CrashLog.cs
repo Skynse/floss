@@ -13,8 +13,12 @@ namespace Floss.App;
 ///   1. FirstChanceException    – logs EVERY exception at throw-time, even if caught.
 ///   2. Dispatcher.Unhandled     – Avalonia UI thread crashes.
 ///   3. AppDomain.Unhandled      – background thread crashes.
-///   4. DOTNET_EnableCrashReport – native crashes (SIGSEGV, stack overflow) via .NET runtime.
-///                                 Writes a JSON crash dump to ~/.dotnet/core/crash-reports/.
+///   4. Native crash dumps       – SIGSEGV / stack overflow / etc. To enable, launch
+///                                 the app via ./run.sh which sets DOTNET_DbgEnableMiniDump
+///                                 in the parent shell BEFORE the runtime starts.
+///                                 Setting that env var from a ModuleInitializer is too
+///                                 late — the runtime has already decided whether to
+///                                 install its native crash handler.
 /// </summary>
 public static class CrashLog
 {

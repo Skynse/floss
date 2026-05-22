@@ -33,6 +33,8 @@ public sealed class NodeGraphEditorPanel : UserControl
     private ContextMenu? _openMenu;
     private Point _pendingAddPosition;
 
+    public bool IsDocked => _docked;
+
     public NodeGraphEditorPanel(BrushTipNodeGraph graph, Action<BrushTipNodeGraph> onCommit,
         Action<BrushTipNodeGraph, string>? onSaveAsNew = null,
         IReadOnlyList<BrushTipData>? imageSamplers = null,
@@ -227,10 +229,25 @@ public sealed class NodeGraphEditorPanel : UserControl
             else
                 _view.SetView(50, 50, 1.2);
         };
-        _view.KeyDown += OnPanelKeyDown;
+        _view.KeyDown += (_, e) =>
+        {
+            if (!_docked && TryHandleKeyDown(e))
+                e.Handled = true;
+        };
+        _view.KeyUp += (_, e) =>
+        {
+            if (!_docked && TryHandleKeyUp(e))
+                e.Handled = true;
+        };
         Focusable = true;
         AddHandler(PointerPressedEvent, OnPanelPointerPressed, RoutingStrategies.Tunnel | RoutingStrategies.Bubble);
     }
+
+    public bool TryHandleKeyDown(KeyEventArgs e)
+        => IsVisible && _view.TryHandleKeyDown(e);
+
+    public bool TryHandleKeyUp(KeyEventArgs e)
+        => IsVisible && _view.TryHandleKeyUp(e);
 
     private void OnPanelPointerPressed(object? sender, PointerPressedEventArgs e)
     {
@@ -287,22 +304,6 @@ public sealed class NodeGraphEditorPanel : UserControl
             SetBrushTitle(brushTitle);
         if (_docked)
             ScheduleFitToView();
-    }
-
-    private void OnPanelKeyDown(object? sender, KeyEventArgs e)
-    {
-        var sc = App.Shortcuts;
-        if (sc.Undo.Matches(e))
-        {
-            _view.Undo();
-            e.Handled = true;
-            return;
-        }
-        if (sc.Redo.Matches(e) || sc.RedoAlt.Matches(e))
-        {
-            _view.Redo();
-            e.Handled = true;
-        }
     }
 
     private void OnNodeSelected(BrushTipNode? node)

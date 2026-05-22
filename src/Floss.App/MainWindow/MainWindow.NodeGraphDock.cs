@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Floss.App.Brushes;
+using Floss.App.Input;
 
 namespace Floss.App;
 
@@ -77,6 +78,7 @@ public partial class MainWindow
         Grid.SetRow(_nodeGraphEditor!, 4);
         centerArea.Children.Add(_nodeGraphDockSplitter!);
         centerArea.Children.Add(_nodeGraphEditor!);
+        WireNodeGraphKeyboardSurface();
 
         SetNodeGraphDockVisible(App.Config.ShowNodeGraphDock, reload: false);
     }
@@ -108,10 +110,10 @@ public partial class MainWindow
         if (visible && reload)
             ReloadNodeGraphDock(force: true);
         else if (!visible)
+        {
             _nodeGraphLoadedKey = null;
-
-        if (visible)
-            _nodeGraphEditor.Focus();
+            _keyboardInputScope.Activate(KeyboardInputRegion.Canvas);
+        }
 
         PersistWorkspaceLayout();
     }

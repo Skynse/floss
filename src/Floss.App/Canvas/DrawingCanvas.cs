@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -125,18 +126,21 @@ public sealed class DrawingCanvas : Control, IDisposable
 
         _document.Changed += (_, e) =>
         {
-            _projectionScheduler.Invalidate(e.DirtyRegion, _document.Layers, e.LayerIndex);
-            StatsChanged?.Invoke(this, EventArgs.Empty);
+            _projectionScheduler.Invalidate(e.DirtyRegion, _document.Layers, e.LayerIndex, e.MetadataOnly);
+            if (!e.MetadataOnly)
+                StatsChanged?.Invoke(this, EventArgs.Empty);
         };
         _document.HistoryChanged += (_, _) => HistoryChanged?.Invoke(this, EventArgs.Empty);
         _document.SelectionChanged += (_, _) => NotifySelectionChanged();
         _document.LayersChanged += (_, _) =>
         {
-            _projectionScheduler.Invalidate(null);
             LayersChanged?.Invoke(this, EventArgs.Empty);
         };
         _document.LayerRemoved += (_, layer) => _compositor.RemoveGroupCache(layer);
         _document.LayerMetadataChanged += (_, e) => LayerMetadataChanged?.Invoke(this, e);
+        _document.StrokeSuspendBegan += (_, r) => _compositor.BeginStrokeSuspend(r);
+        _document.StrokeSuspendExtended += (_, r) => _compositor.ExtendStrokeSuspend(r);
+        _document.StrokeSuspendEnded += (_, _) => _compositor.EndStrokeSuspend();
     }
 
     public void InvalidateCompositor() => _projectionScheduler.Invalidate(null);
@@ -173,8 +177,8 @@ public sealed class DrawingCanvas : Control, IDisposable
 
     public int ActiveSampleCount => _toolController.ActiveTool.HasPendingOperation ? 1 : 0;
     public int CommittedStrokeCount => _document.CommittedStrokeCount;
-    public bool CanUndo => _document.CanUndo;
-    public bool CanRedo => _document.CanRedo;
+    public bool CanUndo => !IsStrokeOutputPending() && _document.CanUndo;
+    public bool CanRedo => !IsStrokeOutputPending() && _document.CanRedo;
     public bool CanDeleteLayer => _document.CanDeleteLayer;
     public BrushPreset Brush => _brush;
     public Color PaintColor => _paintColor;
@@ -978,16 +982,36 @@ public sealed class DrawingCanvas : Control, IDisposable
     }
     public void Undo()
     {
+        EnsureStrokeOutputIdle();
         if (_toolController.HasPendingOperation)
             _toolController.Cancel();
+        EnsureStrokeOutputIdle();
         _document.Undo();
+        InvalidateCompositor();
+        InvalidateVisual();
     }
 
     public void Redo()
     {
+        EnsureStrokeOutputIdle();
         if (_toolController.HasPendingOperation)
             _toolController.Cancel();
+        EnsureStrokeOutputIdle();
         _document.Redo();
+        InvalidateCompositor();
+        InvalidateVisual();
+    }
+
+    private bool IsStrokeOutputPending()
+        => (_brushTool.Output as DirectDrawOutput)?.HasPendingWork == true
+        || (_eraserTool.Output as DirectDrawOutput)?.HasPendingWork == true;
+
+    private void EnsureStrokeOutputIdle()
+    {
+        if (_brushTool.Output is DirectDrawOutput brushDraw)
+            brushDraw.WaitUntilIdle();
+        if (_eraserTool.Output is DirectDrawOutput eraserDraw)
+            eraserDraw.WaitUntilIdle();
     }
     public void AddLayer() => _document.AddLayer();
     public void AddGroupLayer() => _document.AddGroupLayer();
@@ -1010,6 +1034,9 @@ public sealed class DrawingCanvas : Control, IDisposable
     public void MoveLayer(int sourceIndex, int targetIndex, LayerDropPlacement placement) => _document.MoveLayer(sourceIndex, targetIndex, placement);
     public void MoveActiveLayer(int delta) => _document.MoveActiveLayer(delta);
     public void SetActiveLayerOpacity(double opacity) => _document.SetActiveLayerOpacity(opacity);
+    public void BeginActiveLayerOpacityScrub() => _document.BeginActiveLayerOpacityScrub();
+    public void PreviewActiveLayerOpacity(double opacity) => _document.PreviewActiveLayerOpacity(opacity);
+    public void CommitActiveLayerOpacityScrub() => _document.CommitActiveLayerOpacityScrub();
     public void SetActiveLayerBlendMode(string blendMode) => _document.SetActiveLayerBlendMode(blendMode);
     public void SetActiveLayerName(string name) => _document.SetActiveLayerName(name);
     public void SetActiveLayerColor(Avalonia.Media.Color? color) => _document.SetActiveLayerColor(color);
@@ -1115,6 +1142,7 @@ public sealed class DrawingCanvas : Control, IDisposable
         var viewport = ComputeVisibleViewport();
         var canvasBounds = new Rect(Bounds.Size);
         _projectionScheduler.ApplyPending(_compositor);
+        _compositor.DrainDisposalQueue();
         {
             var paper = _document.PaperLayer;
             bool hasSolidPaper = paper is { IsVisible: true } && _document.PaperColor.A == 255;
@@ -1127,19 +1155,32 @@ public sealed class DrawingCanvas : Control, IDisposable
         {
             var paper = _document.PaperLayer;
             uint paperUint = paper is { IsVisible: true } ? ColorToBgraUint(_document.PaperColor) : 0u;
-            using (_document.RenderLock.Read())
+
+            // Composite runs on a background thread. UI thread draws the cached
+            // tiles (kept visible until recomposited — no tile drops on partial
+            // invalidation). First paint is synchronous so the canvas isn't blank.
+            bool needSync = !_compositor.HasAnyTiles && !_compositor.IsCompositeActive;
+            if (needSync)
             {
-                if (_compositor.Composite(_document.Layers, _document.Width, _document.Height, paperUint, viewport, CanvasZoom))
-                    QueueDeferredTileRender();
-                using (context.PushClip(new RoundedRect(canvasBounds)))
-                using (context.PushRenderOptions(new RenderOptions
+                using (_document.RenderLock.Read())
                 {
-                    BitmapInterpolationMode = CanvasZoom >= 1.0 ? BitmapInterpolationMode.None : BitmapInterpolationMode.HighQuality,
-                    EdgeMode = EdgeMode.Aliased
-                }))
-                {
-                    _compositor.DrawTiles(context, canvasBounds, viewport);
+                    if (_compositor.Composite(_document.Layers, _document.Width, _document.Height, paperUint, viewport, CanvasZoom))
+                        QueueDeferredTileRender();
                 }
+            }
+            else
+            {
+                ScheduleBackgroundComposite(paperUint, viewport, CanvasZoom);
+            }
+
+            using (context.PushClip(new RoundedRect(canvasBounds)))
+            using (context.PushRenderOptions(new RenderOptions
+            {
+                BitmapInterpolationMode = CanvasZoom >= 1.0 ? BitmapInterpolationMode.None : BitmapInterpolationMode.HighQuality,
+                EdgeMode = EdgeMode.Aliased
+            }))
+            {
+                _compositor.DrawTiles(context, canvasBounds, viewport);
             }
         }
         else
@@ -1237,6 +1278,67 @@ public sealed class DrawingCanvas : Control, IDisposable
             _deferredTileRenderQueued = false;
             InvalidateVisual();
         }, DispatcherPriority.Background);
+    }
+
+    // ── Background compositor ────────────────────────────────────────────────
+    // Composite() is dispatched to a worker thread so a heavy layer-stack
+    // recomposite cannot stall the UI. Safety rules to avoid the prior
+    // RenderLock deadlock:
+    //   - Background thread takes RenderLock.Read ONLY (never Write).
+    //   - Background thread NEVER calls back into the dispatcher synchronously.
+    //   - Only ONE composite pass runs at a time (Interlocked sentinel).
+    //   - If new dirty rects arrive during a pass, a follow-up pass is
+    //     scheduled when this one finishes.
+    private int _bgCompositeScheduled;
+    private volatile bool _bgCompositeNeedsAnotherPass;
+
+    private void ScheduleBackgroundComposite(uint paperColor, PixelRegion? viewport, double zoom)
+    {
+        if (Interlocked.CompareExchange(ref _bgCompositeScheduled, 1, 0) != 0)
+        {
+            _bgCompositeNeedsAnotherPass = true;
+            return;
+        }
+
+        Task.Run(() => BackgroundCompositePass(paperColor, viewport, zoom));
+    }
+
+    private void BackgroundCompositePass(uint paperColor, PixelRegion? viewport, double zoom)
+    {
+        bool deferred = false;
+        try
+        {
+            // Read lock is brief on the document — the heavy work is the
+            // compositor pass itself. We never take Write here, so we cannot
+            // be the holder that starves a UI-thread Read.
+            using (_document.RenderLock.Read())
+            {
+                deferred = _compositor.Composite(_document.Layers, _document.Width, _document.Height,
+                    paperColor, viewport, zoom);
+            }
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write(ex, "DrawingCanvas.BackgroundCompositePass");
+        }
+        finally
+        {
+            // Release the sentinel BEFORE posting the UI-thread continuation
+            // so the next ScheduleBackgroundComposite from inside InvalidateVisual
+            // can claim the slot cleanly.
+            Volatile.Write(ref _bgCompositeScheduled, 0);
+        }
+
+        // Always invalidate so DrawTiles picks up the new bitmaps. If we
+        // deferred work (DirtyTileBudget exhausted) or a new pass was requested
+        // mid-flight, schedule another pass via the next Render() tick.
+        var needsRerun = deferred || _bgCompositeNeedsAnotherPass;
+        _bgCompositeNeedsAnotherPass = false;
+        Dispatcher.UIThread.Post(() =>
+        {
+            InvalidateVisual();
+            if (needsRerun) QueueDeferredTileRender();
+        }, DispatcherPriority.Render);
     }
 
     private BrushCursorMode ActiveCursorMode()

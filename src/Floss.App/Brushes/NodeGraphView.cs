@@ -9,6 +9,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.VisualTree;
 using Floss.App.Input;
 using SkiaSharp;
 
@@ -1651,45 +1652,39 @@ public sealed class NodeGraphView : Control
         e.Handled = true;
     }
 
-    protected override void OnKeyDown(KeyEventArgs e)
+    public bool TryHandleKeyDown(KeyEventArgs e)
     {
         var sc = App.Shortcuts;
         if (sc.Undo.Matches(e))
         {
             Undo();
-            e.Handled = true;
-            return;
+            return true;
         }
         if (sc.Redo.Matches(e) || sc.RedoAlt.Matches(e))
         {
             Redo();
-            e.Handled = true;
-            return;
+            return true;
         }
 
         if (sc.ZoomIn.Matches(e) || sc.ZoomInAlt.Matches(e))
         {
             SetZoomAround(_zoom * sc.ZoomKeyFactor, ViewCenter());
-            e.Handled = true;
-            return;
+            return true;
         }
         if (sc.ZoomOut.Matches(e))
         {
             SetZoomAround(_zoom / sc.ZoomKeyFactor, ViewCenter());
-            e.Handled = true;
-            return;
+            return true;
         }
         if (sc.ZoomReset.Matches(e))
         {
             SetZoomAround(1.2, ViewCenter());
-            e.Handled = true;
-            return;
+            return true;
         }
         if (sc.ZoomFit.Matches(e))
         {
             FitGraphToView();
-            e.Handled = true;
-            return;
+            return true;
         }
 
         if (e.Key == Key.Delete || e.Key == Key.Back)
@@ -1697,42 +1692,71 @@ public sealed class NodeGraphView : Control
             if (_selectedNodeId != null && _selectedNodeId != _graph?.OutputNodeId)
             {
                 DeleteNode(_selectedNodeId);
-                e.Handled = true;
-                return;
+                return true;
             }
         }
         if (e.Key == Key.Space)
         {
             _spaceHeld = true;
             UpdateViewportShortcut(e.Key, Floss.App.Input.KeyBinding.ModifiersWithKeyDown(e.Key, e.KeyModifiers));
-            e.Handled = true;
-            return;
+            return true;
         }
         if (_spaceHeld && IsModifierKey(e.Key))
         {
             UpdateViewportShortcut(e.Key, Floss.App.Input.KeyBinding.ModifiersWithKeyDown(e.Key, e.KeyModifiers));
-            e.Handled = true;
-            return;
+            return true;
         }
-        base.OnKeyDown(e);
+
+        return false;
     }
 
-    protected override void OnKeyUp(KeyEventArgs e)
+    public bool TryHandleKeyUp(KeyEventArgs e)
     {
         if (e.Key == Key.Space)
         {
             _spaceHeld = false;
             _shortcutAction = CanvasAction.None;
-            e.Handled = true;
-            return;
+            return true;
         }
         if (_spaceHeld && IsModifierKey(e.Key))
         {
             UpdateViewportShortcut(Key.Space, Floss.App.Input.KeyBinding.ModifiersAfterKeyUp(e.Key, e.KeyModifiers));
+            return true;
+        }
+
+        return false;
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (HandlesKeyboardDirectly() && TryHandleKeyDown(e))
+        {
             e.Handled = true;
             return;
         }
-        base.OnKeyUp(e);
+
+        base.OnKeyDown(e);
+    }
+
+    protected override void OnKeyUp(KeyEventArgs e)
+    {
+        if (HandlesKeyboardDirectly() && TryHandleKeyUp(e))
+            e.Handled = true;
+        else
+            base.OnKeyUp(e);
+    }
+
+    private bool HandlesKeyboardDirectly()
+    {
+        for (var current = this as Visual; current != null; current = current.GetVisualParent())
+        {
+            if (current is NodeGraphEditorPanel panel)
+                return !panel.IsDocked;
+            if (current is NodeGraphEditorWindow)
+                return true;
+        }
+
+        return true;
     }
 
     private bool HitPort(Point worldPos, Point portWorldPos)

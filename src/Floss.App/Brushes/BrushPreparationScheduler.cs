@@ -42,23 +42,43 @@ public sealed class BrushPreparationScheduler : IDisposable
 
     private static void PrepareCore(BrushPreset brush, int size, float hardness, CancellationToken token)
     {
-        token.ThrowIfCancellationRequested();
-        brush.Tip.GenerateMask(size, hardness);
-        if (brush.Tip.HasColor)
-            brush.Tip.GenerateColorStamp(size);
-
-        if (brush.Shape != null)
-            brush.Shape.GenerateMask(size, hardness);
-
-        foreach (var tip in brush.Tips)
+        // Warm the SHARED brush.Tip caches so the engine thread gets cache hits
+        // when it reads masks. Cloning the tip per prepare-run made every brush
+        // size change pay the full mask-generation cost (the engine still reads
+        // from the shared tip, whose cache stayed empty).
+        //
+        // Tip caches are already thread-safe (each tip implementation guards
+        // its dictionary with an internal lock). Nothing in the codebase
+        // disposes a shared brush.Tip while a stroke is in flight, so the
+        // engine's raw-pointer access to a cached mask is safe.
+        try
         {
             token.ThrowIfCancellationRequested();
-            var liveTip = tip.CreateTip();
-            liveTip.GenerateMask(size, hardness);
-            if (liveTip.HasColor)
-                liveTip.GenerateColorStamp(size);
-            if (liveTip is IDisposable disposable)
-                disposable.Dispose();
+            brush.Tip.GenerateMask(size, hardness);
+            if (brush.Tip.HasColor)
+                brush.Tip.GenerateColorStamp(size);
+
+            if (brush.Shape != null)
+            {
+                token.ThrowIfCancellationRequested();
+                brush.Shape.GenerateMask(size, hardness);
+            }
+
+            foreach (var tip in brush.Tips)
+            {
+                token.ThrowIfCancellationRequested();
+                var liveTip = tip.CreateTip();
+                liveTip.GenerateMask(size, hardness);
+                if (liveTip.HasColor)
+                    liveTip.GenerateColorStamp(size);
+                if (liveTip is IDisposable disposable)
+                    disposable.Dispose();
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            CrashLog.Write(ex, "BrushPreparationScheduler.PrepareCore", flushToDisk: true);
         }
     }
 
