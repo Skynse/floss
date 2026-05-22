@@ -762,6 +762,36 @@ public sealed class TiledPixelBuffer : IDisposable
         return false;
     }
 
+    /// <summary>
+    /// True when every 64px tile overlapping <paramref name="region"/> exists
+    /// (raw or compressed). Used by the stroke-below compositor cache to detect
+    /// regions that were never warmed after FlushFullDirty().
+    /// </summary>
+    public bool HasTileCoverageForRegion(PixelRegion region)
+    {
+        if (region.IsEmpty) return false;
+
+        var firstTileX = FloorDiv(region.X, TileSize);
+        var firstTileY = FloorDiv(region.Y, TileSize);
+        var lastTileX = FloorDiv(region.Right - 1, TileSize);
+        var lastTileY = FloorDiv(region.Bottom - 1, TileSize);
+
+        lock (_lock)
+        {
+            for (var ty = firstTileY; ty <= lastTileY; ty++)
+            {
+                for (var tx = firstTileX; tx <= lastTileX; tx++)
+                {
+                    var key = (tx, ty);
+                    if (!_tiles.ContainsKey(key) && !_compressed.ContainsKey(key))
+                        return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
     // ── Blend onto flat buffer ─────────────────────────────────────────────────
 
     public void BlendOnto(byte[] dst, int dstWidth, int dstHeight, double opacity)

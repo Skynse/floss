@@ -152,6 +152,33 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
         return stamp;
     }
 
+    /// <summary>
+    /// Bilinearly samples the tip mask at normalized coordinates in [0,1]×[0,1].
+    /// </summary>
+    public unsafe float SampleMaskAlpha(float u, float v, int baseSize, float hardness)
+    {
+        var mask = GenerateMask(baseSize, hardness);
+        var size = mask.Width;
+        var mx = u * size - 0.5f;
+        var my = v * size - 0.5f;
+        if (mx < 0f || my < 0f || mx >= size - 1f || my >= size - 1f)
+            return 0f;
+
+        var maskPx = (byte*)mask.GetPixels().ToPointer();
+        var maskStride = mask.RowBytes;
+        var ix0 = (int)mx;
+        var iy0 = (int)my;
+        var ix1 = Math.Min(ix0 + 1, size - 1);
+        var iy1 = Math.Min(iy0 + 1, size - 1);
+        var fx = mx - ix0;
+        var fy = my - iy0;
+        var a00 = maskPx[iy0 * maskStride + ix0];
+        var a10 = maskPx[iy0 * maskStride + ix1];
+        var a01 = maskPx[iy1 * maskStride + ix0];
+        var a11 = maskPx[iy1 * maskStride + ix1];
+        return (a00 + (a10 - a00) * fx + (a01 - a00) * fy + (a00 - a10 - a01 + a11) * fx * fy) / 255f;
+    }
+
     public void Dispose()
     {
         lock (_cacheLock)

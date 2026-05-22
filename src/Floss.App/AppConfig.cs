@@ -22,7 +22,7 @@ public sealed class AppConfig
     public int NewCanvasDpi { get; set; } = 72;
     public string NewCanvasBackground { get; set; } = "White";
     public string LastColor { get; set; } = "#111111";
-    public string LastBrushName { get; set; } = "Technical Pen";
+    public string LastBrushName { get; set; } = "Round Sable";
     public string? LastToolGroupId { get; set; }
     public string? LastToolCategoryName { get; set; }
     public string? LastToolPresetId { get; set; }

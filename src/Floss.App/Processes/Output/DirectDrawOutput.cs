@@ -353,6 +353,7 @@ public sealed class DirectDrawOutput : IOutputProcess
 
         // Extend the stroke suspend region so the compositor knows the brush
         // wandered. Generously inflated so the brush radius fits comfortably.
+        tx.Ctx.Document.NotifyStrokeSuspendExtend(tx.PendingPreviewDirty);
         tx.Ctx.Document.NotifyChanged(tx.PendingPreviewDirty, tx.LayerIndex);
         tx.Ctx.InvalidateRender();
         tx.PendingPreviewDirty = PixelRegion.Empty;

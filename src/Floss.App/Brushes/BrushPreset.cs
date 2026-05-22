@@ -75,51 +75,72 @@ public sealed record BrushPreset(
 
     public static IReadOnlyList<BrushPreset> Defaults { get; } =
     [
-        new("Technical Pen", 8, 1.0, 0.95, 0.10, Color.Parse("#000000"), 100)
+        new("Round Sable", 20, 0.90, 0.68, 0.11, Color.Parse("#000000"), 100)
         {
             Dynamics = new BrushDynamics
             {
-                Size    = CurveOption.PressureSpeed(1.25f, 0.18f),
+                Size    = CurveOption.Pressure(1.55f),
+                Opacity = CurveOption.Pressure(1.4f)
+            },
+            Flow = 0.86,
+            Smoothing = 0.46,
+            Tip = new ProceduralBrushTip(BrushTipShape.Ellipse, 0.82f)
+        },
+        new("Technical Pen", 8, 1.0, 0.96, 0.09, Color.Parse("#000000"), 100)
+        {
+            Dynamics = new BrushDynamics
+            {
+                Size    = CurveOption.Pressure(1.25f),
                 Opacity = CurveOption.Off()
             },
-            Smoothing = 0.45,
-
+            Smoothing = 0.42,
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle)
         },
-        new("Studio Pen",  16, 0.92, 0.72, 0.13, Color.Parse("#000000"), 100)
+        new("Soft Round", 32, 0.78, 0.42, 0.14, Color.Parse("#000000"), 100)
         {
             Dynamics = new BrushDynamics
             {
-                Size    = CurveOption.PressureSpeed(1.45f, 0.28f),
-                Opacity = CurveOption.PressureSpeed(1.45f, 0.16f)
+                Size    = CurveOption.Pressure(1.45f),
+                Opacity = CurveOption.Pressure(1.3f)
             },
-            Smoothing = 0.5
+            Flow = 0.72,
+            Smoothing = 0.38,
+            Tip = new ProceduralBrushTip(BrushTipShape.SoftRound)
         },
-        new("Soft Pencil", 22, 0.58, 0.28, 0.18, Color.Parse("#000000"), 100)
+        new("Soft Graphite", 22, 0.58, 0.26, 0.17, Color.Parse("#000000"), 100)
         {
             Dynamics = new BrushDynamics
             {
-                Size    = CurveOption.PressureSpeed(1.1f, 0.42f),
-                Opacity = CurveOption.PressureSpeed(1.1f, 0.35f)
+                Size    = CurveOption.Pressure(1.1f),
+                Opacity = CurveOption.Pressure(1.1f)
             },
-            Smoothing = 0.2, Grain = 0.45
+            Flow = 0.74,
+            Smoothing = 0.16,
+            Grain = 0.52,
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle)
         },
-        new("Marker",      34, 0.70, 0.48, 0.20, Color.Parse("#000000"), 100)
+        new("Chisel Marker", 42, 0.68, 0.46, 0.18, Color.Parse("#000000"), 100)
         {
             Dynamics = new BrushDynamics
             {
-                Size    = CurveOption.PressureSpeed(0.9f, 0.12f),
+                Size    = CurveOption.Pressure(0.95f),
                 Opacity = CurveOption.Off()
             },
-            Flow = 0.6, Smoothing = 0.55
+            Flow = 0.58,
+            Smoothing = 0.50,
+            Tip = new ProceduralBrushTip(BrushTipShape.Rectangle, 2.8f)
         },
-        new("Airbrush",    48, 0.35, 0.12, 0.16, Color.Parse("#000000"), 100)
+        new("Soft Airbrush", 64, 0.34, 0.08, 0.12, Color.Parse("#000000"), 100)
         {
             Dynamics = new BrushDynamics
             {
                 Size    = CurveOption.Pressure(1.0f),
                 Opacity = CurveOption.Pressure(1.0f)
             },
-            Flow = 0.25, Smoothing = 0.65, Grain = 0.04
+            Flow = 0.24,
+            Smoothing = 0.62,
+            Grain = 0.04,
+            Tip = new ProceduralBrushTip(BrushTipShape.SoftRound)
         },
         new("Smudge",      24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
         {
@@ -140,8 +161,6 @@ public sealed record BrushPreset(
             TipDirection = BrushTipDirection.Horizontal,
             SmudgeMode = SmudgeMode.Smudge,
             Smoothing = 0.45,
-            AutoSpacingActive = true,
-            SpeedSpacingStrength = 0.35
         },
         new("Blend",       24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
         {
@@ -161,8 +180,6 @@ public sealed record BrushPreset(
             TipDirection = BrushTipDirection.Horizontal,
             SmudgeMode = SmudgeMode.Blend,
             Smoothing = 0.45,
-            AutoSpacingActive = true,
-            SpeedSpacingStrength = 0.35
         },
         new("Smear",       24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
         {
@@ -182,8 +199,6 @@ public sealed record BrushPreset(
             TipDirection = BrushTipDirection.Horizontal,
             SmudgeMode = SmudgeMode.Smear,
             Smoothing = 0.45,
-            AutoSpacingActive = true,
-            SpeedSpacingStrength = 0.35
         },
     ];
 }

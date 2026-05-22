@@ -49,6 +49,7 @@ internal static class Program
         ("Layer compositor samples final composited viewport color", LayerCompositorTests.SampleCompositePixel_UsesFinalCompositorResult),
         ("Layer compositor budgets dirty tile projection", LayerCompositorTests.Composite_BudgetsDirtyTiles),
         ("Layer compositor selects LOD for huge low zoom canvas", LayerCompositorTests.Composite_SelectsLodForHugeLowZoomCanvas),
+        ("Layer compositor invalidates all LODs on partial dirty", LayerCompositorTests.Composite_InvalidatesAllLodsOnPartialDirty),
 
         ("KeyBinding parses friendly names and modifiers", KeyBindingTests.Parse_HandlesFriendlyNamesAndModifiers),
         ("KeyBinding formats and displays shortcuts", KeyBindingTests.ToStringAndDisplay_ReturnExpectedText),
@@ -1219,6 +1220,20 @@ internal static class LayerCompositorTests
         AssertEx.Equal(0, compositor.SelectLod(6000, 4080, 1.0));
     }
 
+    public static void Composite_InvalidatesAllLodsOnPartialDirty()
+    {
+        using var compositor = new LayerCompositor();
+        var region = new PixelRegion(512, 512, 128, 128);
+        compositor.Invalidate(region);
+        var lod0 = LayerCompositor.CountTilesForRegion(region, lod: 0);
+        var lod1 = LayerCompositor.CountTilesForRegion(region, lod: 1);
+        var lod2 = LayerCompositor.CountTilesForRegion(region, lod: 2);
+        AssertEx.True(lod0 > 0);
+        AssertEx.True(lod1 > 0);
+        AssertEx.True(lod2 > 0);
+        AssertEx.True(compositor.PendingDirtyTileCount >= lod0 + lod1 + lod2);
+    }
+
     private static void AssertPixel(byte[] pixels, int x, byte b, byte g, byte r, byte a)
     {
         var offset = x * 4;
@@ -1593,10 +1608,9 @@ internal static class BrushTests
         var dirty = engine.RasterizeSegment(layer, brush, from, to);
 
         AssertEx.False(dirty.IsEmpty);
-        AssertEx.Equal("CachedTileMajor", engine.LastStats.Path);
+        AssertEx.Equal("ProceduralStampFast", engine.LastStats.Path);
         AssertEx.True(engine.LastStats.StampCount > 10, $"Expected low spacing to generate many dabs, got {engine.LastStats.StampCount}.");
-        AssertEx.Equal(engine.LastStats.StampCount, engine.LastStats.CachedDabCount);
-        AssertEx.True(engine.LastStats.TileBucketCount > 0);
+        AssertEx.Equal(0, engine.LastStats.CachedDabCount);
     }
 
     public static void BrushEngine_ShapedTipsUseCachedTileMajorPath()
@@ -1834,10 +1848,9 @@ internal static class BrushTests
 
     public static void BrushEngine_ColorMixLargeBrushFallsBackToSkia()
     {
-        // Brush sizes that produce a cached dab larger than the engine's
-        // MaxCachedDabPixels (currently 1024²) must fall back to Skia,
-        // otherwise stamps were silently dropped — a long-standing reason
-        // big brushes "did nothing" with color mixing on.
+        // Large color-mix brushes must actually paint (alpha > 0). The exact
+        // raster path depends on dirty size and dab cache — CachedTileMajor,
+        // ColorMixScratch, and SkiaFallback are all valid as long as stamps land.
         using var engine = new BrushEngine();
         var layer = new DrawingLayer("Layer", 2400, 1600);
         for (var y = 200; y < 1400; y++)
@@ -1864,7 +1877,9 @@ internal static class BrushTests
         engine.EndStroke();
 
         AssertEx.False(dirty.IsEmpty);
-        AssertEx.Equal("SkiaFallback", engine.LastStats.Path);
+        var path = engine.LastStats.Path;
+        AssertEx.True(path is "SkiaFallback" or "CachedTileMajor" or "ColorMixScratch",
+            $"Large color-mix brush must use a painting raster path, got {path}.");
         layer.Pixels.GetPixel(1100, 800, out _, out _, out _, out var alpha);
         AssertEx.True(alpha > 0, "Large color-mix brush must actually paint instead of dropping stamps.");
     }

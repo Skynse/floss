@@ -391,19 +391,11 @@ public sealed class BrushEngine : IDisposable
         // and blitting a huge scratch bitmap exceeds the cost of direct per-stamp draw.
         bool isMultiTipSingle = false;
         var primaryTip = stroke.TipFor(0);
-        bool canDirect = _stampColors.Count == 0
-            && (brush.BlendMode == SKBlendMode.SrcOver || brush.BlendMode == SKBlendMode.DstOut)
-            && brush.Shape == null
-            && !HasMultiTipSelection(brush)
-            && !primaryTip.HasColor
-            && primaryTip is
-                (ProceduralBrushTip { Shape: BrushTipShape.Circle or BrushTipShape.SoftRound or BrushTipShape.Ellipse }
-                 or ImageBrushTip
-                 or NodeBrushTip { IsDirectImageSampler: true });
+        bool usesProceduralStamp = UsesProceduralStampEvaluation(brush, primaryTip, _stampColors.Count);
 
         bool blendModeCanRasterize = brush.BlendMode == SKBlendMode.SrcOver || brush.BlendMode == SKBlendMode.DstOut;
 
-        if (blendModeCanRasterize && !isMultiTipSingle)
+        if (blendModeCanRasterize && !isMultiTipSingle && !usesProceduralStamp)
         {
             var baseColor = stroke.BaseColor;
             float brushGrain = (float)brush.Grain;
@@ -440,14 +432,14 @@ public sealed class BrushEngine : IDisposable
         }
 
         var blurAmount = Math.Clamp((float)brush.BlurAmount, 0f, 1f);
-        bool useScratch = !canDirect
+        bool useScratch = !usesProceduralStamp
             && brush.BlendMode == SKBlendMode.SrcOver
             && dirty.Width <= 4096 && dirty.Height <= 4096 // guard against OOM
             && (long)dirty.Width * dirty.Height <= MaxColorMixScratchPixels
             && _stamps.Count >= 1
             && (_stampColors.Count == 0 || _stampColors.Count == _stamps.Count);
 
-        if (canDirect)
+        if (usesProceduralStamp)
             RasterizeStampsDirect(layer, stroke, brush, dirty);
         else if (useScratch)
         {
@@ -1193,9 +1185,28 @@ public sealed class BrushEngine : IDisposable
     {
         var procTip = brush.Tip as ProceduralBrushTip;
         bool isImageTip = brush.Tip is ImageBrushTip or NodeBrushTip { IsDirectImageSampler: true };
+        BrushTipNodeGraph? stampGraph = brush.Tip switch
+        {
+            ProceduralBrushTip p => p.Graph,
+            NodeBrushTip n when !n.IsDirectImageSampler => n.Graph,
+            _ => null
+        };
+        bool useGraphEval = stampGraph != null && BrushTipStampContext.CanEvaluate(stampGraph);
+        BrushTipStampFastPath.AlphaAt? fastAlpha = null;
+        if (useGraphEval && stampGraph != null &&
+            BrushTipStampFastPath.TryCreate(stampGraph, (float)brush.Hardness, out var fast))
+            fastAlpha = fast;
         bool isSoft = procTip?.Shape == BrushTipShape.SoftRound;
         bool isCircle = procTip?.Shape is BrushTipShape.Circle or BrushTipShape.SoftRound;
-        float aspect = (procTip != null && !isCircle) ? MathF.Max(0.05f, MathF.Min(20f, procTip.AspectRatio)) : 1f;
+        float aspect = procTip != null && !isCircle
+            ? MathF.Max(0.05f, MathF.Min(20f, procTip.AspectRatio))
+            : stampGraph?.BuiltInAspectRatio is > 0f and var ar
+                ? MathF.Max(0.05f, MathF.Min(20f, ar))
+                : 1f;
+
+        _lastRasterPath = fastAlpha != null ? "ProceduralStampFast"
+            : useGraphEval ? "ProceduralStamp"
+            : "AnalyticalDirect";
 
         var baseColor = stroke.BaseColor;
         int brushB = baseColor.Blue, brushG = baseColor.Green, brushR = baseColor.Red;
@@ -1224,21 +1235,16 @@ public sealed class BrushEngine : IDisposable
         // those is worse than computing grain inline.
         var grainTable = PrecomputeGrain(dirty, texPx, texW, texH, texStride, brushGrain);
 
-        if (_stamps.Count >= 1 &&
-            TryRasterizeCachedDabsTileMajor(layer, stroke, brush, isDstOut, brushB, brushG, brushR, baseAlpha, brushGrain, texPx, texW, texH, texStride, dirty, grainTable))
-        {
-            _lastRasterPath = "CachedTileMajor";
-            layer.Pixels.PruneRegion(dirty);
-            return;
-        }
-
         for (int si = 0; si < _stamps.Count; si++)
         {
             var stamp = _stamps[si];
             if (stamp.Opacity <= 0 || stamp.Size <= 0) continue;
 
-            if (TryRasterizeCachedDab(layer, stroke, brush, stamp, isDstOut, brushB, brushG, brushR, baseAlpha, brushGrain, texPx, texW, texH, texStride, grainTable, dirty))
-                continue;
+            BrushTipStampContext? stampEval = null;
+            if (useGraphEval && stampGraph != null && fastAlpha == null)
+                stampEval = new BrushTipStampContext(stampGraph, stamp.Hardness);
+            try
+            {
 
             float thickMul = MathF.Max(0.01f, MathF.Min(4f, brushThickness * stamp.TipThicknessMultiplier));
             float scale = stamp.Size / MathF.Max(1f, baseMaskSize);
@@ -1261,8 +1267,8 @@ public sealed class BrushEngine : IDisposable
             float bboxHalfY = isImageTip ? halfBms * MathF.Abs(scaleY) : ry;
             if (bboxHalfX < 0.5f || bboxHalfY < 0.5f) continue;
 
-            // Always rotate for image tips (texture has directionality); skip for rotationally-symmetric procedural shapes
-            bool hasRot = MathF.Abs(stamp.Angle) > 0.1f && (isImageTip || !isCircle);
+            // Always rotate for image tips (texture has directionality); skip for rotationally-symmetric circles
+            bool hasRot = MathF.Abs(stamp.Angle) > 0.1f && (isImageTip || useGraphEval || !isCircle);
             float cosA = 1f, sinA = 0f;
             if (hasRot)
             {
@@ -1361,6 +1367,16 @@ public sealed class BrushEngine : IDisposable
                                 float a11 = maskPx[iy1 * maskStride + ix1];
                                 alpha = (a00 + (a10 - a00) * fx + (a01 - a00) * fy + (a00 - a10 - a01 + a11) * fx * fy) / 255f;
                             }
+                            else if (useGraphEval)
+                            {
+                                float u = 0.5f + fdx / (rx * 2f);
+                                float v = 0.5f + fdy / (ry * 2f);
+                                if (u < 0f || v < 0f || u > 1f || v > 1f) continue;
+                                alpha = fastAlpha != null
+                                    ? fastAlpha(u, v)
+                                    : stampEval!.EvaluateAlpha(u, v);
+                                if (alpha <= 0f) continue;
+                            }
                             else
                             {
                                 // Analytical radial alpha for procedural circle/round/ellipse
@@ -1440,12 +1456,13 @@ public sealed class BrushEngine : IDisposable
 
             if (maskBmp != null)
                 stroke.ReleaseMask(maskBmp);
+            }
+            finally
+            {
+                stampEval?.Dispose();
+            }
         }
 
-        if (_lastRasterPath == "None")
-            _lastRasterPath = _lastCachedDabCount > 0 ? "CachedStampMajorMixed" : "AnalyticalDirect";
-
-        stroke.TrimDabCache();
         layer.Pixels.PruneRegion(dirty);
     }
 
@@ -3264,7 +3281,9 @@ public sealed class BrushEngine : IDisposable
                 brush, initSize, Math.Clamp(initSpacingMul, 0.05f, 4f), 0f);
 
             BaseMaskSize = Math.Max(1, Math.Min(256, (int)Math.Ceiling(brush.Size)));
-            Mask = TipFor(0).GenerateMask(BaseMaskSize, (float)brush.Hardness);
+            _deferMaskGeneration = UsesProceduralStampEvaluation(brush, TipFor(0), 0);
+            if (!_deferMaskGeneration)
+                _mask = TipFor(0).GenerateMask(BaseMaskSize, (float)brush.Hardness);
             _baseColor = ToSkColor(brush.Color);
             _currentColor = _baseColor;
             var initDensity = (float)brush.DensityOfPaint;
@@ -3285,7 +3304,9 @@ public sealed class BrushEngine : IDisposable
         public float StrokeRandom { get; }
         public StrokeState State;
         public int BaseMaskSize { get; }
-        public SKBitmap Mask { get; }
+        private SKBitmap? _mask;
+        private readonly bool _deferMaskGeneration;
+        public SKBitmap Mask => _mask ??= TipFor(0).GenerateMask(BaseMaskSize, (float)_brush.Hardness);
         public SKPaint Paint { get; }
         public SKMatrix Matrix;
         public SKColor CarriedColor;
@@ -3741,6 +3762,21 @@ public sealed class BrushEngine : IDisposable
             h ^= h >> 16;
             return (h & 0xFFFF) / 65535.0f;
         }
+    }
+
+    public static bool UsesProceduralStampEvaluation(BrushPreset brush, IBrushTip primaryTip, int stampColorCount)
+    {
+        if (stampColorCount != 0) return false;
+        if (brush.ColorMix) return false;
+        if (brush.BlendMode != SKBlendMode.SrcOver && brush.BlendMode != SKBlendMode.DstOut) return false;
+        if (brush.Shape != null) return false;
+        if (HasMultiTipSelection(brush)) return false;
+        if (primaryTip.HasColor) return false;
+
+        return primaryTip is ImageBrushTip
+            or NodeBrushTip { IsDirectImageSampler: true }
+            or ProceduralBrushTip
+            or NodeBrushTip;
     }
 
     private static bool HasMultiTipSelection(BrushPreset brush)

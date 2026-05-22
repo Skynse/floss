@@ -56,6 +56,8 @@ public sealed class DrawingCanvas : Control, IDisposable
     private bool _isCursorPreviewLocked;
     private bool _forceBrushOutlineCursor;
     private bool _deferredTileRenderQueued;
+    private int _renderLod = -1;
+    private double _lastRenderZoom = double.NaN;
     private (IBrushTip? Tip, SKBitmap? Outline) _cursorOutlineCache;
 
     // Ctrl+Shift layer-pick drag state
@@ -1159,18 +1161,38 @@ public sealed class DrawingCanvas : Control, IDisposable
             // Composite runs on a background thread. UI thread draws the cached
             // tiles (kept visible until recomposited — no tile drops on partial
             // invalidation). First paint is synchronous so the canvas isn't blank.
+            // LOD transitions and zoom ticks with pending work run synchronously
+            // so the viewport doesn't flash fallback tiles for a few frames.
+            var zoom = CanvasZoom;
+            var nextLod = _compositor.SelectLod(_document.Width, _document.Height, zoom);
+            var lodTransition = _renderLod >= 0 && nextLod != _renderLod;
+            var zoomTick = !double.IsNaN(_lastRenderZoom) && Math.Abs(_lastRenderZoom - zoom) > 1e-12;
+            _lastRenderZoom = zoom;
+
             bool needSync = !_compositor.HasAnyTiles && !_compositor.IsCompositeActive;
-            if (needSync)
+            bool preferSync = lodTransition
+                || (zoomTick && _compositor.PendingDirtyTileCount > 0 && !_compositor.IsCompositeActive);
+            if ((needSync || preferSync) && !_compositor.IsCompositeActive)
             {
                 using (_document.RenderLock.Read())
                 {
-                    if (_compositor.Composite(_document.Layers, _document.Width, _document.Height, paperUint, viewport, CanvasZoom))
-                        QueueDeferredTileRender();
+                    var passes = 0;
+                    do
+                    {
+                        if (_compositor.Composite(_document.Layers, _document.Width, _document.Height,
+                                paperUint, viewport, zoom))
+                            passes++;
+                        else
+                            break;
+                    } while (lodTransition && passes < 4 && _compositor.PendingDirtyTileCount > 0);
                 }
+                _renderLod = _compositor.LastLod;
+                if (_compositor.PendingDirtyTileCount > 0)
+                    QueueDeferredTileRender();
             }
             else
             {
-                ScheduleBackgroundComposite(paperUint, viewport, CanvasZoom);
+                ScheduleBackgroundComposite(paperUint, viewport, zoom);
             }
 
             using (context.PushClip(new RoundedRect(canvasBounds)))
@@ -1336,8 +1358,13 @@ public sealed class DrawingCanvas : Control, IDisposable
         _bgCompositeNeedsAnotherPass = false;
         Dispatcher.UIThread.Post(() =>
         {
+            _projectionScheduler.ApplyPending(_compositor);
+            _renderLod = _compositor.LastLod;
             InvalidateVisual();
-            if (needsRerun) QueueDeferredTileRender();
+            var needMore = needsRerun
+                || _compositor.PendingDirtyTileCount > 0
+                || _projectionScheduler.PendingCount > 0;
+            if (needMore) QueueDeferredTileRender();
         }, DispatcherPriority.Render);
     }
 
