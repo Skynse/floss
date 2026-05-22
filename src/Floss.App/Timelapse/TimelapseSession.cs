@@ -7,7 +7,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Floss.App.Canvas;
 using Floss.App.Document;
-using Floss.App.ImageFiles;
 using SkiaSharp;
 
 namespace Floss.App.Timelapse;
@@ -40,6 +39,8 @@ public sealed class TimelapseManifest
     public string DocumentName { get; set; } = "Untitled";
     public int DocumentWidth { get; set; }
     public int DocumentHeight { get; set; }
+    public int CaptureWidth { get; set; }
+    public int CaptureHeight { get; set; }
     public DateTimeOffset CreatedUtc { get; set; }
     public List<TimelapseFrame> Frames { get; set; } = [];
 }
@@ -51,85 +52,14 @@ public sealed class TimelapseExportSettings
     public int LongestSidePixels { get; set; } = 1280;
 }
 
-public sealed class TimelapseDocumentSnapshot : IDisposable
-{
-    public int Width { get; }
-    public int Height { get; }
-    public uint PaperColor { get; }
-    public IReadOnlyList<DrawingLayer> Layers { get; }
-
-    private TimelapseDocumentSnapshot(int width, int height, uint paperColor, IReadOnlyList<DrawingLayer> layers)
-    {
-        Width = width;
-        Height = height;
-        PaperColor = paperColor;
-        Layers = layers;
-    }
-
-    public static TimelapseDocumentSnapshot Capture(DrawingDocument document)
-    {
-        var clones = new List<DrawingLayer>(document.Layers.Count);
-        var map = new Dictionary<DrawingLayer, DrawingLayer>(document.Layers.Count);
-
-        foreach (var layer in document.Layers)
-        {
-            var clone = CloneLayerShallow(layer);
-            clones.Add(clone);
-            map[layer] = clone;
-        }
-
-        for (var i = 0; i < document.Layers.Count; i++)
-        {
-            var source = document.Layers[i];
-            var clone = clones[i];
-            if (source.Parent != null && map.TryGetValue(source.Parent, out var parent))
-            {
-                clone.Parent = parent;
-                if (!parent.Children.Contains(clone))
-                    parent.Children.Add(clone);
-            }
-        }
-
-        var paper = document.PaperColor;
-        var paperColor = (uint)(paper.B | (paper.G << 8) | (paper.R << 16) | (paper.A << 24));
-        return new TimelapseDocumentSnapshot(document.Width, document.Height, paperColor, clones);
-    }
-
-    public void Dispose()
-    {
-        foreach (var layer in Layers)
-            layer.Dispose();
-    }
-
-    private static DrawingLayer CloneLayerShallow(DrawingLayer source)
-    {
-        var clone = new DrawingLayer(source.Name, source.Width, source.Height)
-        {
-            IsVisible = source.IsVisible,
-            IsLocked = source.IsLocked,
-            IsAlphaLocked = source.IsAlphaLocked,
-            IsReference = source.IsReference,
-            IsPaper = source.IsPaper,
-            Opacity = source.Opacity,
-            BlendMode = source.BlendMode,
-            LayerColor = source.LayerColor,
-            ExpressionColor = source.ExpressionColor,
-            OffsetX = source.OffsetX,
-            OffsetY = source.OffsetY,
-            IsGroup = source.IsGroup,
-            IsOpen = source.IsOpen,
-            IsClipping = source.IsClipping,
-            IndentLevel = source.IndentLevel
-        };
-        clone.RestoreTiles(source.CaptureTiles());
-        return clone;
-    }
-}
-
-public sealed class TimelapseSession
+public sealed class TimelapseSession : IDisposable
 {
     private const int ExportFps = 12;
+    private const int MaxCaptureLongestSide = 4096;
+    private const long MaxAssemblePixels = 64_000_000;
+    private const int StoredFrameJpegQuality = 92;
     private const string ManifestFileName = "manifest.json";
+    private const string FrameLogFileName = "frames.jsonl";
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
@@ -140,7 +70,20 @@ public sealed class TimelapseSession
 
     private readonly object _gate = new();
     private readonly SemaphoreSlim _captureSemaphore = new(1, 1);
+    private readonly LayerCompositor _compositor = new();
+    private readonly List<DrawingLayer> _layerCache = [];
     private bool _isRecording;
+    private bool _manifestDirty;
+    private bool _pendingFullRefresh = true;
+    private PixelRegion _pendingDirtyRegion = PixelRegion.Empty;
+    private int _docWidth;
+    private int _docHeight;
+    private int _captureWidth;
+    private int _captureHeight;
+    private uint _paperColor;
+    private int _cachedLayerCount;
+    private int _cachedDocWidth;
+    private int _cachedDocHeight;
 
     private TimelapseSession(string directoryPath, TimelapseManifest manifest, bool isRecording)
     {
@@ -156,12 +99,15 @@ public sealed class TimelapseSession
         var directory = Path.Combine(AppPaths.TimelapsesDirectory, $"{safeName}-{sessionId}");
         Directory.CreateDirectory(directory);
 
+        var (captureWidth, captureHeight) = ComputeCaptureDimensions(document.Width, document.Height);
         var session = new TimelapseSession(directory, new TimelapseManifest
         {
             SessionId = sessionId,
             DocumentName = string.IsNullOrWhiteSpace(documentName) ? "Untitled" : documentName.Trim(),
             DocumentWidth = Math.Max(1, document.Width),
             DocumentHeight = Math.Max(1, document.Height),
+            CaptureWidth = captureWidth,
+            CaptureHeight = captureHeight,
             CreatedUtc = DateTimeOffset.UtcNow
         }, isRecording: true);
         session.SaveManifest();
@@ -172,15 +118,52 @@ public sealed class TimelapseSession
     {
         lock (_gate)
             _isRecording = isRecording;
-        SaveManifest();
+        FlushManifest();
     }
 
-    public async Task<bool> CaptureFrameAsync(TimelapseDocumentSnapshot snapshot)
+    public void PrepareCaptureFromDocument(DrawingDocument document)
+    {
+        using (document.RenderLock.Read())
+        {
+            _docWidth = document.Width;
+            _docHeight = document.Height;
+            (_captureWidth, _captureHeight) = ComputeCaptureDimensions(_docWidth, _docHeight);
+            var paper = document.PaperColor;
+            _paperColor = (uint)(paper.B | (paper.G << 8) | (paper.R << 16) | (paper.A << 24));
+            _pendingDirtyRegion = document.LastHistoryVisualDirtyRegion;
+            _pendingFullRefresh = document.LastHistoryRequiresFullVisualRefresh;
+
+            var layerCount = document.Layers.Count;
+            var structureChanged = _layerCache.Count == 0
+                || layerCount != _cachedLayerCount
+                || _docWidth != _cachedDocWidth
+                || _docHeight != _cachedDocHeight;
+
+            if (structureChanged || _pendingFullRefresh)
+                RebuildLayerCache(document);
+            else
+                UpdateLayerCache(document, _pendingDirtyRegion);
+
+            _cachedLayerCount = layerCount;
+            _cachedDocWidth = _docWidth;
+            _cachedDocHeight = _docHeight;
+
+            lock (_gate)
+            {
+                Manifest.DocumentWidth = Math.Max(1, _docWidth);
+                Manifest.DocumentHeight = Math.Max(1, _docHeight);
+                Manifest.CaptureWidth = _captureWidth;
+                Manifest.CaptureHeight = _captureHeight;
+            }
+        }
+    }
+
+    public async Task<bool> CapturePreparedFrameAsync()
     {
         await _captureSemaphore.WaitAsync().ConfigureAwait(false);
         try
         {
-            return await Task.Run(() => CaptureFrameCore(snapshot)).ConfigureAwait(false);
+            return await Task.Run(CapturePreparedFrameCore).ConfigureAwait(false);
         }
         finally
         {
@@ -192,9 +175,48 @@ public sealed class TimelapseSession
     {
         await _captureSemaphore.WaitAsync().ConfigureAwait(false);
         _captureSemaphore.Release();
+        FlushManifest();
     }
 
-    private bool CaptureFrameCore(TimelapseDocumentSnapshot snapshot)
+    public void Dispose()
+    {
+        _captureSemaphore.Dispose();
+        _compositor.Dispose();
+        foreach (var layer in _layerCache)
+            layer.Dispose();
+        _layerCache.Clear();
+    }
+
+    public static (int Width, int Height) ComputeCaptureDimensions(int docWidth, int docHeight, int maxLongestSide = MaxCaptureLongestSide)
+    {
+        if (docWidth <= 0 || docHeight <= 0)
+            return (Math.Max(1, docWidth), Math.Max(1, docHeight));
+
+        var longest = Math.Max(docWidth, docHeight);
+        if (longest <= maxLongestSide)
+            return (docWidth, docHeight);
+
+        var scale = maxLongestSide / (double)longest;
+        return (
+            Math.Max(1, (int)Math.Round(docWidth * scale)),
+            Math.Max(1, (int)Math.Round(docHeight * scale)));
+    }
+
+    public static int ChooseAssembleLod(int docWidth, int docHeight)
+    {
+        for (var lod = 0; lod <= MaxCompositeLod; lod++)
+        {
+            var width = Math.Max(1, docWidth >> lod);
+            var height = Math.Max(1, docHeight >> lod);
+            if ((long)width * height <= MaxAssemblePixels)
+                return lod;
+        }
+        return MaxCompositeLod;
+    }
+
+    private const int MaxCompositeLod = 2;
+
+    private bool CapturePreparedFrameCore()
     {
         lock (_gate)
         {
@@ -202,7 +224,7 @@ public sealed class TimelapseSession
                 return false;
         }
 
-        if (snapshot.Width <= 0 || snapshot.Height <= 0 || snapshot.Layers.Count == 0)
+        if (_docWidth <= 0 || _docHeight <= 0 || _layerCache.Count == 0)
             return false;
 
         Directory.CreateDirectory(DirectoryPath);
@@ -210,16 +232,17 @@ public sealed class TimelapseSession
         int index;
         lock (_gate)
             index = Manifest.Frames.Count;
-        var fileName = $"frame_{index:D6}.png";
+        var fileName = $"frame_{index:D6}.jpg";
         var path = Path.Combine(DirectoryPath, fileName);
 
-        using var bitmap = RenderSnapshotBitmap(snapshot);
+        using var bitmap = RenderPreparedFrameBitmap();
         using var image = SKImage.FromBitmap(bitmap);
-        using var data = image.Encode(SKEncodedImageFormat.Png, 100)
+        using var data = image.Encode(SKEncodedImageFormat.Jpeg, StoredFrameJpegQuality)
             ?? throw new InvalidDataException("Failed to encode timelapse frame.");
         using (var stream = File.Open(path, FileMode.Create, FileAccess.Write, FileShare.Read))
             data.SaveTo(stream);
 
+        TimelapseFrame frame;
         lock (_gate)
         {
             if (!_isRecording)
@@ -228,27 +251,123 @@ public sealed class TimelapseSession
                 return false;
             }
 
-            Manifest.Frames.Add(new TimelapseFrame
+            frame = new TimelapseFrame
             {
                 Index = index,
                 CreatedUtc = DateTimeOffset.UtcNow,
                 FileName = fileName
-            });
+            };
+            Manifest.Frames.Add(frame);
+            _manifestDirty = true;
         }
-        SaveManifest();
+
+        AppendFrameRecord(frame);
         return true;
     }
 
-    private static unsafe SKBitmap RenderSnapshotBitmap(TimelapseDocumentSnapshot snapshot)
+    private SKBitmap RenderPreparedFrameBitmap()
     {
-        var bgra = new LayerCompositor().CompositeToBgra(snapshot.Layers, snapshot.Width, snapshot.Height, snapshot.PaperColor);
-        var bitmap = new SKBitmap(new SKImageInfo(snapshot.Width, snapshot.Height, SKColorType.Bgra8888, SKAlphaType.Unpremul));
-        fixed (byte* src = bgra)
+        var assembleLod = ChooseAssembleLod(_docWidth, _docHeight);
+        var effectiveWidth = Math.Max(1, _docWidth >> assembleLod);
+        var effectiveHeight = Math.Max(1, _docHeight >> assembleLod);
+
+        // Timelapse frames must capture the whole canvas. The live-viewport compositor
+        // composites tiles in budgeted batches (32/frame) and AssembleSkBitmap only
+        // blits finished tiles — partial passes leave black gaps that grow with each stroke.
+        _compositor.Invalidate(null);
+        var fullViewport = new PixelRegion(0, 0, _docWidth, _docHeight);
+        var guard = 0;
+        while (_compositor.Composite(_layerCache, _docWidth, _docHeight, _paperColor, fullViewport, forceLod: assembleLod))
         {
-            var dst = (byte*)bitmap.GetPixels().ToPointer();
-            Buffer.MemoryCopy(src, dst, bgra.Length, bgra.Length);
+            if (++guard > 8192)
+                throw new InvalidOperationException("Timelapse composite did not finish.");
         }
-        return bitmap;
+
+        using var assembled = _compositor.AssembleSkBitmap(effectiveWidth, effectiveHeight, assembleLod, _paperColor);
+        if (assembled.Width == _captureWidth && assembled.Height == _captureHeight)
+            return assembled.Copy();
+
+        return assembled.Resize(
+            new SKImageInfo(_captureWidth, _captureHeight, SKColorType.Bgra8888, SKAlphaType.Unpremul),
+            SKSamplingOptions.Default);
+    }
+
+    private void RebuildLayerCache(DrawingDocument document)
+    {
+        foreach (var layer in _layerCache)
+            layer.Dispose();
+        _layerCache.Clear();
+
+        var map = new Dictionary<DrawingLayer, DrawingLayer>(document.Layers.Count);
+        foreach (var layer in document.Layers)
+        {
+            var clone = CloneLayer(layer);
+            _layerCache.Add(clone);
+            map[layer] = clone;
+        }
+
+        for (var i = 0; i < document.Layers.Count; i++)
+        {
+            var source = document.Layers[i];
+            var clone = _layerCache[i];
+            if (source.Parent != null && map.TryGetValue(source.Parent, out var parent))
+            {
+                clone.Parent = parent;
+                if (!parent.Children.Contains(clone))
+                    parent.Children.Add(clone);
+            }
+        }
+    }
+
+    private void UpdateLayerCache(DrawingDocument document, PixelRegion dirtyRegion)
+    {
+        for (var i = 0; i < document.Layers.Count; i++)
+            SyncLayerProperties(document.Layers[i], _layerCache[i]);
+
+        if (dirtyRegion.IsEmpty)
+            return;
+
+        for (var i = 0; i < document.Layers.Count; i++)
+        {
+            var source = document.Layers[i];
+            var clone = _layerCache[i];
+            var layerRegion = source.DocumentContentBounds
+                .Translate(source.OffsetX, source.OffsetY)
+                .ClipTo(_docWidth, _docHeight);
+            var region = dirtyRegion.Intersect(layerRegion);
+            if (region.IsEmpty)
+                continue;
+
+            foreach (var (key, data) in source.CaptureTiles(region))
+                clone.RestoreTile(key.X, key.Y, data);
+        }
+    }
+
+    private static DrawingLayer CloneLayer(DrawingLayer source)
+    {
+        var clone = new DrawingLayer(source.Name, source.Width, source.Height);
+        SyncLayerProperties(source, clone);
+        clone.RestoreTiles(source.CaptureTiles());
+        return clone;
+    }
+
+    private static void SyncLayerProperties(DrawingLayer source, DrawingLayer clone)
+    {
+        clone.IsVisible = source.IsVisible;
+        clone.IsLocked = source.IsLocked;
+        clone.IsAlphaLocked = source.IsAlphaLocked;
+        clone.IsReference = source.IsReference;
+        clone.IsPaper = source.IsPaper;
+        clone.Opacity = source.Opacity;
+        clone.BlendMode = source.BlendMode;
+        clone.LayerColor = source.LayerColor;
+        clone.ExpressionColor = source.ExpressionColor;
+        clone.OffsetX = source.OffsetX;
+        clone.OffsetY = source.OffsetY;
+        clone.IsGroup = source.IsGroup;
+        clone.IsOpen = source.IsOpen;
+        clone.IsClipping = source.IsClipping;
+        clone.IndentLevel = source.IndentLevel;
     }
 
     public IReadOnlyList<string> FramePaths()
@@ -277,7 +396,7 @@ public sealed class TimelapseSession
 
         for (var i = 0; i < frames.Length; i++)
         {
-            using var source = SKBitmap.Decode(frames[i])
+            using var source = DecodeFrame(frames[i])
                 ?? throw new InvalidDataException($"Timelapse frame could not be decoded: {frames[i]}");
             using var composed = ComposeFrame(source, settings);
             using var image = SKImage.FromBitmap(composed);
@@ -294,24 +413,15 @@ public sealed class TimelapseSession
 
     public async Task ExportVideoAsync(string outputPath, TimelapseExportSettings settings, CancellationToken cancellationToken = default)
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), "floss-timelapse-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tempDir);
-        try
-        {
-            ExportSequence(tempDir, settings);
-            await Task.Run(() => TranscodeImageSequence(tempDir, outputPath, cancellationToken), cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            try { Directory.Delete(tempDir, recursive: true); } catch { }
-        }
+        await Task.Run(() => ExportVideoCore(outputPath, settings, cancellationToken), cancellationToken)
+            .ConfigureAwait(false);
     }
 
-    private static void TranscodeImageSequence(string frameDirectory, string outputPath, CancellationToken cancellationToken)
+    private void ExportVideoCore(string outputPath, TimelapseExportSettings settings, CancellationToken cancellationToken)
     {
-        var frames = Directory.EnumerateFiles(frameDirectory, "timelapse_*.png").OrderBy(p => p).ToArray();
+        var frames = SelectFrames(FramePaths(), settings.Length).ToArray();
         if (frames.Length == 0)
-            throw new InvalidOperationException("No timelapse frames were rendered for video export.");
+            throw new InvalidOperationException("No timelapse frames have been recorded.");
 
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? ".");
         if (File.Exists(outputPath))
@@ -330,8 +440,10 @@ public sealed class TimelapseSession
         using var mux = Mp4Muxer.Open(sequentialMode: true, fragmentation: false, writeCb, fs)
             ?? throw new InvalidOperationException("Failed to initialize MP4 muxer.");
 
-        // Use the first frame to get dimensions
-        using var firstFrame = SKBitmap.Decode(frames[0]);
+        using var firstSource = DecodeFrame(frames[0])
+            ?? throw new InvalidDataException($"Timelapse frame could not be decoded: {frames[0]}");
+        using var firstComposed = ComposeFrame(firstSource, settings);
+
         var tr = new Mp4TrackInfo
         {
             ObjectTypeIndication = Mp4ObjectType.Mjpeg,
@@ -342,30 +454,48 @@ public sealed class TimelapseSession
             TimeScale = ExportFps,
             DefaultDuration = 1
         };
-        tr.U.VideoWidth = firstFrame.Width;
-        tr.U.VideoHeight = firstFrame.Height;
+        tr.U.VideoWidth = firstComposed.Width;
+        tr.U.VideoHeight = firstComposed.Height;
 
         var trackId = mux.AddTrack(tr);
-        var frameDuration = 1;
+        const int frameDuration = 1;
 
-        foreach (var framePath in frames)
+        EncodeAndMuxFrame(mux, trackId, firstComposed, frameDuration);
+
+        for (var i = 1; i < frames.Length; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            using var bitmap = SKBitmap.Decode(framePath)
-                ?? throw new InvalidDataException($"Could not decode frame: {framePath}");
-
-            using var image = SKImage.FromBitmap(bitmap);
-            using var jpegData = image.Encode(SKEncodedImageFormat.Jpeg, 92)
-                ?? throw new InvalidDataException("Failed to encode JPEG frame.");
-
-            var jpegBytes = jpegData.ToArray();
-
-            var err = mux.PutSample(trackId, jpegBytes, frameDuration, Mp4SampleKind.RandomAccess);
-            if (err != Mp4Status.Ok)
-                throw new InvalidOperationException($"MP4 muxer error: {err}");
+            using var source = DecodeFrame(frames[i])
+                ?? throw new InvalidDataException($"Timelapse frame could not be decoded: {frames[i]}");
+            using var composed = ComposeFrame(source, settings);
+            EncodeAndMuxFrame(mux, trackId, composed, frameDuration);
         }
+    }
 
+    private static SKBitmap? DecodeFrame(string path)
+    {
+        if (!File.Exists(path))
+            return null;
+
+        var ext = Path.GetExtension(path);
+        if (ext.Equals(".png", StringComparison.OrdinalIgnoreCase)
+            || ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
+            || ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase))
+            return SKBitmap.Decode(path);
+
+        return null;
+    }
+
+    private static void EncodeAndMuxFrame(Mp4Muxer mux, int trackId, SKBitmap composed, int frameDuration)
+    {
+        using var image = SKImage.FromBitmap(composed);
+        using var jpegData = image.Encode(SKEncodedImageFormat.Jpeg, 92)
+            ?? throw new InvalidDataException("Failed to encode JPEG frame.");
+
+        var err = mux.PutSample(trackId, jpegData.ToArray(), frameDuration, Mp4SampleKind.RandomAccess);
+        if (err != Mp4Status.Ok)
+            throw new InvalidOperationException($"MP4 muxer error: {err}");
     }
 
     public static IReadOnlyList<string> SelectFrames(IReadOnlyList<string> framePaths, TimelapseLength length)
@@ -433,15 +563,33 @@ public sealed class TimelapseSession
         return result;
     }
 
+    private void AppendFrameRecord(TimelapseFrame frame)
+    {
+        var line = JsonSerializer.Serialize(frame) + Environment.NewLine;
+        File.AppendAllText(Path.Combine(DirectoryPath, FrameLogFileName), line);
+    }
+
+    private void FlushManifest()
+    {
+        lock (_gate)
+        {
+            if (!_manifestDirty)
+                return;
+        }
+        SaveManifest();
+    }
+
     private void SaveManifest()
     {
         Directory.CreateDirectory(DirectoryPath);
         string json;
         lock (_gate)
+        {
             json = JsonSerializer.Serialize(Manifest, JsonOptions);
+            _manifestDirty = false;
+        }
 
-        File.WriteAllText(Path.Combine(DirectoryPath, ManifestFileName),
-            json);
+        File.WriteAllText(Path.Combine(DirectoryPath, ManifestFileName), json);
     }
 
     private static string SafePathPart(string value)

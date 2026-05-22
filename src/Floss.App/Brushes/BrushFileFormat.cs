@@ -14,8 +14,8 @@ public static class BrushFileFormat
     public const string Extension = ".flbr";
     private const uint Magic = 0x52424C46; // FLBR, little endian
 
-    // Version 12 adds parameter graph storage groundwork.
-    private const int Version = 12;
+    // Version 13 adds material-tip id/label on library entries.
+    private const int Version = 13;
 
     public static BrushAsset Load(string path)
     {
@@ -318,6 +318,11 @@ public static class BrushFileFormat
             PngBytes = png,
             NodeGraph = nodeGraph
         };
+        if (version >= 13)
+        {
+            tip.Id = reader.ReadString();
+            tip.Label = reader.ReadString();
+        }
 
         if ((int)kind == 2) // legacy Compound — no longer exists
         {
@@ -350,6 +355,8 @@ public static class BrushFileFormat
         writer.Write(tip.Kind == BrushTipStorageKind.NodeGraph && tip.NodeGraph != null
             ? JsonSerializer.Serialize(tip.NodeGraph)
             : string.Empty);
+        writer.Write(tip.Id ?? "");
+        writer.Write(tip.Label ?? "");
     }
 
     private static IReadOnlyList<BrushParameterGraph> ReadParameterGraphs(BinaryReader reader, int version)

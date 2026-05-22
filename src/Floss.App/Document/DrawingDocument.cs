@@ -80,7 +80,7 @@ public sealed class DrawingDocument : IDisposable
     {
         if (color == PaperColor) return;
         var oldColor = PaperColor;
-        PushHistoryState(new DocumentPropertyHistoryState<Avalonia.Media.Color>(oldColor, color, v => PaperColor = v));
+        PushHistoryState(new DocumentPropertyHistoryState<Avalonia.Media.Color>(oldColor, color, v => PaperColor = v, true, PixelRegion.Empty));
         PaperColor = color;
         DirtyStateChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -102,6 +102,10 @@ public sealed class DrawingDocument : IDisposable
     public bool CanModifyActiveLayer => ActiveLayer is { IsLocked: false, IsGroup: false };
     public bool IsDirty => _currentStateId != _savedStateId;
     public DocumentHistoryChangeKind LastHistoryChangeKind { get; private set; } = DocumentHistoryChangeKind.Mutation;
+    public bool LastHistoryAffectsVisual { get; private set; } = true;
+    public PixelRegion LastHistoryVisualDirtyRegion { get; private set; } = PixelRegion.Empty;
+    public bool LastHistoryRequiresFullVisualRefresh =>
+        LastHistoryAffectsVisual && LastHistoryVisualDirtyRegion.IsEmpty;
 
     // --- Save State Management ---
     public void MarkAsSaved()
@@ -120,8 +124,24 @@ public sealed class DrawingDocument : IDisposable
         _redoIds.Clear();
 
         MarkHistoryMutation();
+        ApplyHistoryVisualState(state);
         HistoryChanged?.Invoke(this, EventArgs.Empty);
         DirtyStateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ApplyHistoryVisualState(IHistoryState state)
+    {
+        if (_activeHistoryReplayKind.HasValue)
+            return;
+
+        LastHistoryAffectsVisual = state.AffectsVisual;
+        LastHistoryVisualDirtyRegion = state.VisualDirtyRegion;
+    }
+
+    private void MarkVisualHistoryChanged(bool affectsVisual, PixelRegion visualDirtyRegion)
+    {
+        LastHistoryAffectsVisual = affectsVisual;
+        LastHistoryVisualDirtyRegion = visualDirtyRegion;
     }
 
     private void MarkHistoryMutation()
@@ -894,6 +914,8 @@ public sealed class DrawingDocument : IDisposable
         _currentStateId = _undoIds.Pop();
 
         LastHistoryChangeKind = DocumentHistoryChangeKind.Undo;
+        LastHistoryAffectsVisual = state.AffectsVisual;
+        LastHistoryVisualDirtyRegion = state.VisualDirtyRegion;
         HistoryChanged?.Invoke(this, EventArgs.Empty);
         DirtyStateChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -919,6 +941,8 @@ public sealed class DrawingDocument : IDisposable
         _currentStateId = _redoIds.Pop();
 
         LastHistoryChangeKind = DocumentHistoryChangeKind.Redo;
+        LastHistoryAffectsVisual = state.AffectsVisual;
+        LastHistoryVisualDirtyRegion = state.VisualDirtyRegion;
         HistoryChanged?.Invoke(this, EventArgs.Empty);
         DirtyStateChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -942,6 +966,7 @@ public sealed class DrawingDocument : IDisposable
         LayersChanged?.Invoke(this, EventArgs.Empty);
         Changed?.Invoke(this, new DocumentChangedEventArgs(null, null));
         MarkHistoryMutation();
+        MarkVisualHistoryChanged(affectsVisual: true, visualDirtyRegion: PixelRegion.Empty);
         HistoryChanged?.Invoke(this, EventArgs.Empty);
         DirtyStateChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -1120,10 +1145,37 @@ public sealed class DrawingDocument : IDisposable
     private sealed record DocumentSnapshot(int Width, int Height, int ActiveLayerIndex, LayerSnapshot[] Layers, SelectionMask.Snapshot Selection);
     private sealed record LayerSnapshot(string Name, bool IsVisible, bool IsLocked, bool IsAlphaLocked, bool IsReference, bool IsPaper, double Opacity, string BlendMode, int OffsetX, int OffsetY, bool IsGroup, bool IsOpen, bool IsClipping, int IndentLevel, int ParentIndex, int BitmapWidth, int BitmapHeight, Dictionary<(int X, int Y), byte[]> Tiles);
 
-    private interface IHistoryState { IHistoryState CaptureRedo(DrawingDocument document); void Restore(DrawingDocument document); }
+    private interface IHistoryState
+    {
+        IHistoryState CaptureRedo(DrawingDocument document);
+        void Restore(DrawingDocument document);
+        bool AffectsVisual { get; }
+        PixelRegion VisualDirtyRegion { get; }
+    }
 
     private sealed record CompositeHistoryState(IHistoryState[] States) : IHistoryState
     {
+        public bool AffectsVisual => States.Any(static s => s.AffectsVisual);
+
+        public PixelRegion VisualDirtyRegion
+        {
+            get
+            {
+                if (!AffectsVisual)
+                    return PixelRegion.Empty;
+
+                var region = PixelRegion.Empty;
+                foreach (var state in States)
+                {
+                    if (!state.AffectsVisual)
+                        continue;
+                    if (state.VisualDirtyRegion.IsEmpty)
+                        return PixelRegion.Empty;
+                    region = region.IsEmpty ? state.VisualDirtyRegion : region.Union(state.VisualDirtyRegion);
+                }
+                return region;
+            }
+        }
         public IHistoryState CaptureRedo(DrawingDocument document)
         {
             var redo = new IHistoryState[States.Length];
@@ -1141,36 +1193,54 @@ public sealed class DrawingDocument : IDisposable
 
     private sealed record SnapshotHistoryState(DocumentSnapshot Snapshot) : IHistoryState
     {
+        public bool AffectsVisual => true;
+        public PixelRegion VisualDirtyRegion => new(0, 0, Snapshot.Width, Snapshot.Height);
+
         public IHistoryState CaptureRedo(DrawingDocument document) => new SnapshotHistoryState(document.CaptureSnapshot());
         public void Restore(DrawingDocument document) => document.RestoreSnapshot(Snapshot);
     }
 
     private sealed record InsertLayerHistoryState(int InsertedIndex, int PreviousActiveIndex) : IHistoryState
     {
+        public bool AffectsVisual => true;
+        public PixelRegion VisualDirtyRegion => PixelRegion.Empty;
+
         public IHistoryState CaptureRedo(DrawingDocument document) => new RemoveLayerHistoryState(InsertedIndex, document.ActiveLayerIndex, document.CaptureLayerSnapshot(document._layers[InsertedIndex]));
         public void Restore(DrawingDocument document) { var removed = document._layers[InsertedIndex]; document._layers.RemoveAt(InsertedIndex); document.NotifyLayerRemovedRecursive(removed); removed.Dispose(); document.ActiveLayerIndex = document._layers.Count > 0 ? Math.Clamp(PreviousActiveIndex, 0, document._layers.Count - 1) : -1; document.NotifyLayersChanged(); }
     }
 
     private sealed record RemoveLayerHistoryState(int RemovedIndex, int PreviousActiveIndex, LayerSnapshot RemovedSnap) : IHistoryState
     {
+        public bool AffectsVisual => true;
+        public PixelRegion VisualDirtyRegion => PixelRegion.Empty;
+
         public IHistoryState CaptureRedo(DrawingDocument document) => new InsertLayerHistoryState(RemovedIndex, document.ActiveLayerIndex);
         public void Restore(DrawingDocument document) { document._layers.Insert(RemovedIndex, document.CreateLayerFromSnapshot(RemovedSnap)); document.ActiveLayerIndex = document._layers.Count > 0 ? Math.Clamp(PreviousActiveIndex, 0, document._layers.Count - 1) : -1; document.NotifyLayersChanged(); }
     }
 
     private sealed record MoveLayerHistoryState(int FromIndex, int ToIndex) : IHistoryState
     {
+        public bool AffectsVisual => true;
+        public PixelRegion VisualDirtyRegion => PixelRegion.Empty;
+
         public IHistoryState CaptureRedo(DrawingDocument document) => new MoveLayerHistoryState(ToIndex, FromIndex);
         public void Restore(DrawingDocument document) { var layer = document._layers[FromIndex]; document._layers.RemoveAt(FromIndex); document._layers.Insert(ToIndex, layer); document.ActiveLayerIndex = ToIndex; document.NotifyLayersChanged(); }
     }
 
     private sealed record LayerOffsetHistoryState(int LayerIndex, int OldOffsetX, int OldOffsetY, int NewOffsetX, int NewOffsetY, PixelRegion DirtyRegion) : IHistoryState
     {
+        public bool AffectsVisual => true;
+        public PixelRegion VisualDirtyRegion => DirtyRegion;
+
         public IHistoryState CaptureRedo(DrawingDocument document) => new LayerOffsetHistoryState(LayerIndex, NewOffsetX, NewOffsetY, OldOffsetX, OldOffsetY, DirtyRegion);
         public void Restore(DrawingDocument document) { if (LayerIndex < 0 || LayerIndex >= document._layers.Count) return; var layer = document._layers[LayerIndex]; layer.OffsetX = OldOffsetX; layer.OffsetY = OldOffsetY; document.NotifyLayerMetadataChanged(DirtyRegion, LayerIndex); }
     }
 
     private sealed record LayerRegionHistoryState(int LayerIndex, LayerRegionPatch[] Patches, PixelRegion DirtyRegion) : IHistoryState
     {
+        public bool AffectsVisual => true;
+        public PixelRegion VisualDirtyRegion => DirtyRegion;
+
         public IHistoryState CaptureRedo(DrawingDocument document)
         {
             if (LayerIndex < 0 || LayerIndex >= document._layers.Count) return new LayerRegionHistoryState(LayerIndex, [], DirtyRegion);
@@ -1184,6 +1254,9 @@ public sealed class DrawingDocument : IDisposable
     private readonly record struct LayerTilePatch(int TileX, int TileY, byte[]? BeforePixels, byte[]? AfterPixels);
     private sealed record LayerTileHistoryState(int LayerIndex, LayerTilePatch[] Patches, PixelRegion DirtyRegion) : IHistoryState
     {
+        public bool AffectsVisual => true;
+        public PixelRegion VisualDirtyRegion => DirtyRegion;
+
         public IHistoryState CaptureRedo(DrawingDocument document)
         {
             var redoPatches = new LayerTilePatch[Patches.Length];
@@ -1195,6 +1268,9 @@ public sealed class DrawingDocument : IDisposable
 
     private sealed record SelectionHistoryState(SelectionMask.Snapshot Before, SelectionMask.Snapshot After) : IHistoryState
     {
+        public bool AffectsVisual => false;
+        public PixelRegion VisualDirtyRegion => PixelRegion.Empty;
+
         public IHistoryState CaptureRedo(DrawingDocument document)
             => new SelectionHistoryState(After, Before);
 
@@ -1207,13 +1283,16 @@ public sealed class DrawingDocument : IDisposable
 
     private sealed record LayerPropertyHistoryState<T>(int LayerIndex, T OldValue, T NewValue, Action<DrawingLayer, T> Apply, bool AffectsComposite, PixelRegion DirtyRegion) : IHistoryState
     {
+        public bool AffectsVisual => AffectsComposite && !DirtyRegion.IsEmpty;
+        public PixelRegion VisualDirtyRegion => DirtyRegion;
+
         public IHistoryState CaptureRedo(DrawingDocument document) => new LayerPropertyHistoryState<T>(LayerIndex, NewValue, OldValue, Apply, AffectsComposite, DirtyRegion);
         public void Restore(DrawingDocument document) { if (LayerIndex < 0 || LayerIndex >= document._layers.Count) return; Apply(document._layers[LayerIndex], OldValue); document.NotifyLayerMetadataChanged(AffectsComposite ? DirtyRegion : null, LayerIndex); }
     }
 
-    private sealed record DocumentPropertyHistoryState<T>(T OldValue, T NewValue, Action<T> Apply) : IHistoryState
+    private sealed record DocumentPropertyHistoryState<T>(T OldValue, T NewValue, Action<T> Apply, bool AffectsVisual, PixelRegion VisualDirtyRegion) : IHistoryState
     {
-        public IHistoryState CaptureRedo(DrawingDocument document) => new DocumentPropertyHistoryState<T>(NewValue, OldValue, Apply);
+        public IHistoryState CaptureRedo(DrawingDocument document) => new DocumentPropertyHistoryState<T>(NewValue, OldValue, Apply, AffectsVisual, VisualDirtyRegion);
         public void Restore(DrawingDocument document) { Apply(OldValue); document.DirtyStateChanged?.Invoke(document, EventArgs.Empty); }
     }
 }

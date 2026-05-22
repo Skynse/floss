@@ -550,6 +550,7 @@ public sealed class PresetStore
                 BrushTipStorageKind.EmbeddedPng => new BrushTipData
                 {
                     Kind = BrushTipStorageKind.EmbeddedPng,
+                    Id = ResourceId ?? "",
                     PngBytes = ResourceId != null && resources.TryGetValue(ResourceId, out var bytes)
                         ? bytes.ToArray()
                         : []

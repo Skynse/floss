@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using SkiaSharp;
 
 namespace Floss.App.Brushes;
@@ -37,6 +38,9 @@ public sealed class ProceduralBrushTip : IBrushTip
     public BrushTipShape Shape { get; }
     public float AspectRatio { get; }
     public BrushTipNodeGraph Graph { get; }
+
+    public void BindMaterialTips(IReadOnlyList<BrushTipData> materialTips)
+        => _graphTip.BindMaterialTips(materialTips);
 
     public SKBitmap GenerateMask(int baseSize, float hardness)
         => _graphTip.GenerateMask(baseSize, hardness);

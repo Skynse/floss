@@ -28,6 +28,7 @@ public sealed class TimelapseExportDialog : Window
     private readonly DispatcherTimer _timer;
     private int _index;
     private bool _playing;
+    private Bitmap? _previewBitmap;
 
     public TimelapseExportDialog(TimelapseSession session)
     {
@@ -180,10 +181,15 @@ public sealed class TimelapseExportDialog : Window
         try
         {
             using var stream = File.OpenRead(_frames[_index]);
-            _preview.Source = new Bitmap(stream);
+            var next = new Bitmap(stream);
+            _previewBitmap?.Dispose();
+            _previewBitmap = next;
+            _preview.Source = next;
         }
         catch
         {
+            _previewBitmap?.Dispose();
+            _previewBitmap = null;
             _preview.Source = null;
         }
 

@@ -54,6 +54,7 @@ public sealed class BrushPreparationScheduler : IDisposable
         try
         {
             token.ThrowIfCancellationRequested();
+            BrushMaterialTips.BindToPreset(brush);
             if (!BrushEngine.UsesProceduralStampEvaluation(brush, brush.Tip, 0))
             {
                 brush.Tip.GenerateMask(size, hardness);

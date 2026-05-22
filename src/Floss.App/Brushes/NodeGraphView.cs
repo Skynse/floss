@@ -111,6 +111,7 @@ public sealed class NodeGraphView : Control
     // Preview cache
     private readonly Dictionary<string, IImage> _previewCache = new();
     private List<ImageSamplerOption> _imageSamplers = [];
+    private IReadOnlyList<BrushTipData> _materialTips = [];
 
     private Popup? _paramEditPopup;
     private TextBox? _paramEditBox;
@@ -122,7 +123,7 @@ public sealed class NodeGraphView : Control
     public event Action<BrushTipNode>? NodeRightClicked;
     public event Action? GraphModified;
     public event Action<Point>? CanvasRightClicked;
-    public event Action<string, byte[]>? ImageSamplerChanged;
+    public event Action<string, string>? ImageSamplerChanged;
 
     public string? SelectedNodeId => _selectedNodeId;
     public BrushTipNodeGraph Graph => _graph;
@@ -147,7 +148,9 @@ public sealed class NodeGraphView : Control
 
     public void SetImageSamplerOptions(IReadOnlyList<BrushTipData>? tips)
     {
-        _imageSamplers = ImageSamplerOptions.FromTips(tips);
+        _materialTips = tips?.Select(BrushMaterialTips.NormalizeTip).ToList() ?? [];
+        _imageSamplers = ImageSamplerOptions.FromTips(_materialTips);
+        InvalidatePreviews();
         InvalidateVisual();
     }
 
@@ -191,11 +194,15 @@ public sealed class NodeGraphView : Control
 
         const int prevSize = 32;
 
-        if (node.Kind == BrushTipNodeKind.ImageSampler && node.PngBytes.Length > 0)
+        if (node.Kind == BrushTipNodeKind.ImageSampler)
         {
-            var thumb = DecodeImagePreview(node.PngBytes);
-            _previewCache[node.Id] = thumb;
-            return thumb;
+            var png = BrushMaterialTips.ResolveSamplerPng(node, _materialTips);
+            if (png.Length > 0)
+            {
+                var thumb = DecodeImagePreview(png);
+                _previewCache[node.Id] = thumb;
+                return thumb;
+            }
         }
 
         if (node.Kind == BrushTipNodeKind.Coordinates)
@@ -207,11 +214,11 @@ public sealed class NodeGraphView : Control
 
         var tempGraph = _graph.DeepClone();
         tempGraph.OutputNodeId = node.Id;
-        using var bitmap = BrushTipNodeGraphEvaluator.EvaluateColor(tempGraph, prevSize, 1.0f)
-            ?? BrushTipNodeGraphEvaluator.Evaluate(tempGraph, prevSize, 1.0f);
+        using var bitmap = BrushTipNodeGraphEvaluator.EvaluateColor(tempGraph, prevSize, 1.0f, _materialTips)
+            ?? BrushTipNodeGraphEvaluator.Evaluate(tempGraph, prevSize, 1.0f, _materialTips);
         using var skImg = SKImage.FromBitmap(bitmap);
-        using var png = skImg.Encode(SKEncodedImageFormat.Png, 60);
-        using var stream = new MemoryStream(png.ToArray());
+        using var encoded = skImg.Encode(SKEncodedImageFormat.Png, 60);
+        using var stream = new MemoryStream(encoded.ToArray());
         var avaloniaBmp = new Bitmap(stream);
         _previewCache[node.Id] = avaloniaBmp;
         return avaloniaBmp;
@@ -1101,10 +1108,7 @@ public sealed class NodeGraphView : Control
             if (inputCount > 0) y += BodyPadding;
             var selectorRect = ImageSelectorRect(pos, node);
             context.DrawRectangle(SliderBgBrush, null, selectorRect, 3, 3);
-            var label = _imageSamplers.Count == 0
-                ? "No images"
-                : ImageSamplerOptions.Match(_imageSamplers, node.PngBytes)?.Label
-                  ?? (_imageSamplers.Count > 0 ? _imageSamplers[0].Label : "—");
+            var label = BrushMaterialTips.SamplerDisplayLabel(node, _imageSamplers);
             var labelFt = new FormattedText(label, CultureInfo.InvariantCulture,
                 FlowDirection.LeftToRight, DefaultTypeface, 9, BodyTextBrush);
             var maxLabelW = selectorRect.Width - 18;
@@ -1390,7 +1394,7 @@ public sealed class NodeGraphView : Control
                         _scrubParamIdx = pi;
                         var param = nodeParams[pi];
                         param.Set(node, ScrubValueFromWorldX(bar, param, worldPos.X));
-                        InvalidatePreviews();
+                        InvalidateVisual();
                         e.Pointer.Capture(this);
                         e.Handled = true;
                         return;
@@ -1543,7 +1547,6 @@ public sealed class NodeGraphView : Control
                     if (Math.Abs(newValue - param.Get(node)) > 0.0001f)
                     {
                         param.Set(node, newValue);
-                        InvalidatePreviews();
                         InvalidateVisual();
                     }
                 }
@@ -1623,6 +1626,7 @@ public sealed class NodeGraphView : Control
                 if (_scrubParamIdx < nodeParams.Length)
                 {
                     PushHistory();
+                    InvalidatePreviews();
                     InvalidateVisual();
                     GraphModified?.Invoke();
                 }
@@ -1827,12 +1831,7 @@ public sealed class NodeGraphView : Control
             var captured = option;
             item.Click += (_, _) =>
             {
-                if (ImageSamplerOptions.SameBytes(node.PngBytes, captured.Tip.PngBytes))
-                    return;
-                PushHistory();
-                UpdateNode(node.Id, n => n.PngBytes = captured.Tip.PngBytes.ToArray());
-                ImageSamplerChanged?.Invoke(node.Id, captured.Tip.PngBytes);
-                GraphModified?.Invoke();
+                SetImageSamplerMaterialTip(node.Id, captured.Tip.Id);
             };
             menu.Items.Add(item);
         }
@@ -1840,12 +1839,21 @@ public sealed class NodeGraphView : Control
         menu.Open(this);
     }
 
-    public void SetImageSamplerPng(string nodeId, byte[] pngBytes, bool pushHistory = true)
+    public void SetImageSamplerMaterialTip(string nodeId, string materialTipId, bool pushHistory = true, bool notify = true)
     {
+        var node = _graph.Nodes.FirstOrDefault(n => n.Id == nodeId);
+        if (node == null)
+            return;
+        if (string.Equals(node.MaterialTipId, materialTipId, StringComparison.Ordinal) && node.PngBytes.Length == 0)
+            return;
+
         if (pushHistory)
             PushHistory();
-        UpdateNode(nodeId, n => n.PngBytes = pngBytes.ToArray());
-        ImageSamplerChanged?.Invoke(nodeId, pngBytes);
-        GraphModified?.Invoke();
+        UpdateNode(nodeId, n =>
+        {
+            n.MaterialTipId = materialTipId;
+            n.PngBytes = [];
+        }, pushHistory: false, notify: notify);
+        ImageSamplerChanged?.Invoke(nodeId, materialTipId);
     }
 }

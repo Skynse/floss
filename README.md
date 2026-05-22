@@ -26,3 +26,7 @@ The first canvas backend is CPU raster into one `WriteableBitmap`. That is not t
 # Builds (Windows)
 
 dotnet publish src/Floss.App/Floss.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:PublishTrimmed=false -o artifacts/floss-win-x64-compact
+
+# Builds (linux)
+
+dotnet publish src/Floss.App/Floss.App.csproj -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:PublishTrimmed=false -o artifacts/floss-linux-x64-compact

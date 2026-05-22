@@ -14,11 +14,20 @@ public enum BrushTipStorageKind
 
 public sealed class BrushTipData
 {
+    /// <summary>Stable id for material-tip library entries. Image Sampler nodes reference this.</summary>
+    public string Id { get; set; } = "";
+    public string Label { get; set; } = "";
     public BrushTipStorageKind Kind { get; set; } = BrushTipStorageKind.Procedural;
     public BrushTipShape Shape { get; set; } = BrushTipShape.Circle;
     public float AspectRatio { get; set; } = 1.0f;
     public byte[] PngBytes { get; set; } = [];
     public BrushTipNodeGraph? NodeGraph { get; set; }
+
+    public void EnsureId()
+    {
+        if (string.IsNullOrEmpty(Id))
+            Id = Guid.NewGuid().ToString("N");
+    }
 
     public IBrushTip CreateTip() => Kind switch
     {
@@ -60,15 +69,19 @@ public sealed class BrushTipData
     {
         BrushTipStorageKind.EmbeddedPng => new BrushTipData
         {
+            Id = Id,
+            Label = Label,
             Kind = Kind,
             PngBytes = PngBytes.ToArray()
         },
         BrushTipStorageKind.NodeGraph => new BrushTipData
         {
+            Id = Id,
+            Label = Label,
             Kind = Kind,
             NodeGraph = NodeGraph?.DeepClone()
         },
-        _ => new BrushTipData { Kind = Kind, Shape = Shape, AspectRatio = AspectRatio }
+        _ => new BrushTipData { Id = Id, Label = Label, Kind = Kind, Shape = Shape, AspectRatio = AspectRatio }
     };
 }
 

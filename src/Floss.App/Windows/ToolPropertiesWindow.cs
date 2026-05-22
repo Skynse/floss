@@ -363,13 +363,19 @@ public sealed class ToolPropertiesWindow : Window
             trashBtn.PointerPressed += (_, e) => e.Handled = true;
             trashBtn.Click += (_, _) =>
             {
-                var newList = materialTips.Where(t => !TipDataEquals(t, td)).Select(t => t.DeepClone()).ToList();
+                var newList = materialTips
+                    .Where(t => !BrushMaterialTips.ReferencesSame(t, td))
+                    .Select(t => t.DeepClone())
+                    .ToList();
                 Commit(p =>
                 {
                     if (newList.Count == 0 && IsMaterialTip(p.Tip)
-                        && ActiveMaterialTipData(p) is { } active && TipDataEquals(active, td))
+                        && ActiveMaterialTipData(p) is { } active
+                        && BrushMaterialTips.ReferencesSame(active, td))
                         return p with { Tip = RestoreProceduralTip(), Tips = [] };
-                    return p with { Tips = newList };
+
+                    var (tips, tip) = BrushMaterialTips.ApplyLibraryChange(p, newList, removed: td);
+                    return p with { Tips = tips, Tip = tip };
                 });
                 _contentHost.Child = WrapContent(BuildBrushTipContent());
             };
@@ -402,16 +408,19 @@ public sealed class ToolPropertiesWindow : Window
             var browser = new BrushTipBrowserWindow(this, tip =>
             {
                 RememberProceduralTip(_brushPreset.Tip);
-                var td = BrushTipData.FromTip(tip);
+                var td = BrushMaterialTips.NormalizeTip(BrushTipData.FromTip(tip));
                 var newList = MaterialTipsFor(_brushPreset)
-                    .Where(t => !TipDataEquals(t, td))
-                    .Select(t => t.DeepClone())
-                    .Append(td.DeepClone())
+                    .Where(t => !BrushMaterialTips.ReferencesSame(t, td))
+                    .Select(BrushMaterialTips.NormalizeTip)
+                    .Append(td)
                     .ToList();
                 Commit(p =>
                 {
                     if (p.Tip is NodeBrushTip { IsDirectImageSampler: false })
-                        return p with { Tips = newList };
+                    {
+                        var (tips, updatedTip) = BrushMaterialTips.ApplyLibraryChange(p, newList);
+                        return p with { Tips = tips, Tip = updatedTip };
+                    }
                     return p with { Tip = CreateGraphTipFromTipData(td), Tips = newList };
                 });
                 if (_activeCategory == 4)
@@ -502,13 +511,18 @@ public sealed class ToolPropertiesWindow : Window
                 return;
             }
 
-            var editor = new NodeGraphEditorWindow(graph.DeepClone(), g =>
+            var materialTips = MaterialTipsFor(_brushPreset).Select(BrushMaterialTips.NormalizeTip).ToList();
+            var boundGraph = BrushMaterialTips.BindGraphToLibrary(graph.DeepClone(), materialTips);
+            var editor = new NodeGraphEditorWindow(boundGraph, g =>
             {
                 if (g.Validate().Count > 0) return;
-                var clone = g.DeepClone();
+                var tips = MaterialTipsFor(_brushPreset).Select(BrushMaterialTips.NormalizeTip).ToList();
+                var clone = BrushMaterialTips.BindGraphToLibrary(g.DeepClone(), tips);
                 clone.BuiltInShape = null;
                 var tip = (IBrushTip)new NodeBrushTip(clone);
-                Commit(p => p with { Tip = tip, Tips = PreserveMaterialTipsWithActiveFirst(p) });
+                if (tip is NodeBrushTip nodeTip)
+                    nodeTip.BindMaterialTips(tips);
+                Commit(p => p with { Tip = tip, Tips = tips });
             }, (g, name) =>
             {
                 if (g.Validate().Count > 0) return;
@@ -1931,9 +1945,12 @@ public sealed class ToolPropertiesWindow : Window
         => BrushMaterialTips.ActiveEmbedded(preset);
 
     private static IBrushTip CreateGraphTipFromTipData(BrushTipData data)
-        => data.Kind == BrushTipStorageKind.EmbeddedPng && data.PngBytes.Length > 0
-            ? new NodeBrushTip(BrushTipNodeGraph.FromImageTip(data.PngBytes))
+    {
+        data = BrushMaterialTips.NormalizeTip(data);
+        return data.Kind == BrushTipStorageKind.EmbeddedPng && data.PngBytes.Length > 0
+            ? new NodeBrushTip(BrushTipNodeGraph.FromImageTip(data.PngBytes, data.Id))
             : data.CreateTip();
+    }
 
     private static ProceduralBrushTip? BuiltInProceduralTipFor(IBrushTip tip)
         => tip switch

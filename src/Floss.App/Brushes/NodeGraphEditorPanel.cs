@@ -326,6 +326,8 @@ public sealed class NodeGraphEditorPanel : UserControl
     private void OnGraphModified()
     {
         _graph = _view.Graph;
+        if (_selectedNode != null)
+            _selectedNode = _graph.Nodes.FirstOrDefault(n => n.Id == _selectedNode.Id);
         RefreshPropertyPanel();
         DoCommit();
     }
@@ -448,7 +450,25 @@ public sealed class NodeGraphEditorPanel : UserControl
         }
     }
 
+    private bool _refreshingPropertyPanel;
+
     private void RefreshPropertyPanel()
+    {
+        if (_refreshingPropertyPanel)
+            return;
+
+        _refreshingPropertyPanel = true;
+        try
+        {
+            RefreshPropertyPanelCore();
+        }
+        finally
+        {
+            _refreshingPropertyPanel = false;
+        }
+    }
+
+    private void RefreshPropertyPanelCore()
     {
         _propertyContent.Children.Clear();
         if (_selectedNode != null && !_graph.Nodes.Any(n => n.Id == _selectedNode.Id))
@@ -737,10 +757,8 @@ public sealed class NodeGraphEditorPanel : UserControl
             return;
         }
 
-        var selected = ImageSamplerOptions.Match(_imageSamplers, _selectedNode!.PngBytes)
+        var selected = ImageSamplerOptions.Match(_imageSamplers, _selectedNode!)
             ?? _imageSamplers[0];
-        if (_selectedNode!.PngBytes.Length == 0)
-            SetImageSamplerBytes(_selectedNode.Id, selected.Tip.PngBytes);
 
         var combo = new ComboBox
         {
@@ -754,7 +772,9 @@ public sealed class NodeGraphEditorPanel : UserControl
         {
             if (combo.SelectedItem is not ImageSamplerOption option || _selectedNode == null)
                 return;
-            SetImageSamplerBytes(_selectedNode.Id, option.Tip.PngBytes);
+            if (string.Equals(_selectedNode.MaterialTipId, option.Tip.Id, StringComparison.Ordinal))
+                return;
+            SetMaterialTipReference(_selectedNode.Id, option.Tip, notify: true);
             DoCommit();
         };
         _propertyContent.Children.Add(combo);
@@ -762,14 +782,19 @@ public sealed class NodeGraphEditorPanel : UserControl
 
     private void InitializeNewNode(BrushTipNode node)
     {
-        if (node.Kind != BrushTipNodeKind.ImageSampler || node.PngBytes.Length > 0 || _imageSamplers.Count == 0)
+        if (node.Kind != BrushTipNodeKind.ImageSampler || _imageSamplers.Count == 0)
             return;
-        SetImageSamplerBytes(node.Id, _imageSamplers[0].Tip.PngBytes);
+        if (!string.IsNullOrEmpty(node.MaterialTipId))
+            return;
+        if (BrushMaterialTips.ResolveSamplerPng(node, _imageSamplers.Select(o => o.Tip).ToList()).Length > 0)
+            return;
+        SetMaterialTipReference(node.Id, _imageSamplers[0].Tip, notify: false);
     }
 
-    private void SetImageSamplerBytes(string nodeId, byte[] pngBytes)
+    private void SetMaterialTipReference(string nodeId, BrushTipData tip, bool notify = false)
     {
-        _view.UpdateNode(nodeId, n => n.PngBytes = pngBytes.ToArray(), notify: false);
+        var normalized = BrushMaterialTips.NormalizeTip(tip);
+        _view.SetImageSamplerMaterialTip(nodeId, normalized.Id, pushHistory: false, notify: notify);
         _graph = _view.Graph;
         _selectedNode = _graph.Nodes.FirstOrDefault(x => x.Id == nodeId) ?? _selectedNode;
     }

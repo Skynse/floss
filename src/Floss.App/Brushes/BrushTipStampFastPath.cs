@@ -45,7 +45,7 @@ public static class BrushTipStampFastPath
             return false;
 
         var edge = Math.Clamp(step.Threshold, 0f, 1f);
-        var softness = Math.Max(0.0001f, Math.Clamp(step.Hardness, 0.0001f, 1f));
+        var softness = BrushTipNodeGraphEvaluator.CombinedSoftness(step, brushHardness);
         var opacity = Math.Clamp(step.Opacity, 0f, 1f);
 
         switch (field.Kind)

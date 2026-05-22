@@ -59,6 +59,9 @@ public sealed class BrushTipNode
     public float Scale { get; set; } = 1.0f;
     public float Threshold { get; set; } = 0.5f;
     public int Seed { get; set; } = 1;
+    /// <summary>Reference into <see cref="BrushPreset.Tips"/> — PNG bytes live in the library, not here.</summary>
+    public string? MaterialTipId { get; set; }
+    /// <summary>Legacy embedded bytes; cleared once bound to <see cref="MaterialTipId"/>.</summary>
     public byte[] PngBytes { get; set; } = [];
 
     public BrushTipNode DeepClone() => new()
@@ -78,6 +81,7 @@ public sealed class BrushTipNode
         Scale = Scale,
         Threshold = Threshold,
         Seed = Seed,
+        MaterialTipId = MaterialTipId,
         PngBytes = PngBytes.ToArray()
     };
 }
@@ -102,6 +106,9 @@ public sealed class BrushTipNodeGraph
         OutputNodeId = OutputNodeId,
         Nodes = Nodes.Select(n => n.DeepClone()).ToList()
     };
+
+    public bool ContainsImageSampler(IReadOnlyList<BrushTipData>? materialTips = null)
+        => Nodes.Exists(n => BrushMaterialTips.HasResolvedSampler(n, materialTips));
 
     public IReadOnlyList<string> Validate(int maxNodes = 128)
     {
@@ -180,6 +187,7 @@ public sealed class BrushTipNodeGraph
                 .Append(':').Append(F(node.Scale))
                 .Append(':').Append(F(node.Threshold))
                 .Append(':').Append(node.Seed)
+                .Append(':').Append(node.MaterialTipId ?? "")
                 .Append(':').Append(node.PngBytes.Length == 0 ? "" : Convert.ToHexString(SHA256.HashData(node.PngBytes)));
         }
         return sb.ToString();
@@ -320,7 +328,7 @@ public sealed class BrushTipNodeGraph
             };
     }
 
-    public static BrushTipNodeGraph FromImageTip(byte[] pngBytes)
+    public static BrushTipNodeGraph FromImageTip(byte[] pngBytes, string? materialTipId = null)
         => new()
         {
             BuiltInShape = null,
@@ -332,14 +340,15 @@ public sealed class BrushTipNodeGraph
                 {
                     Id = "image",
                     Kind = BrushTipNodeKind.ImageSampler,
-                    PngBytes = pngBytes.ToArray(),
+                    MaterialTipId = materialTipId,
+                    PngBytes = string.IsNullOrEmpty(materialTipId) ? pngBytes.ToArray() : [],
                     Opacity = 1.0f
                 },
                 new BrushTipNode { Id = "output", Kind = BrushTipNodeKind.Output, Inputs = ["image"] }
             ]
         };
 
-    public bool TryGetDirectImageSampler(out byte[] pngBytes)
+    public bool TryGetDirectImageSampler(IReadOnlyList<BrushTipData>? materialTips, out byte[] pngBytes)
     {
         pngBytes = [];
         var output = Nodes.FirstOrDefault(n => n.Id == OutputNodeId);
@@ -352,11 +361,19 @@ public sealed class BrushTipNodeGraph
         else if (output.Kind == BrushTipNodeKind.Output && output.Inputs.Count > 0)
             image = Nodes.FirstOrDefault(n => n.Id == output.Inputs[0] && n.Kind == BrushTipNodeKind.ImageSampler);
 
-        if (image is not { PngBytes.Length: > 0 })
+        if (image == null)
             return false;
-        pngBytes = image.PngBytes.ToArray();
+
+        var bytes = BrushMaterialTips.ResolveSamplerPng(image, materialTips);
+        if (bytes.Length == 0)
+            return false;
+
+        pngBytes = bytes.ToArray();
         return true;
     }
+
+    public bool TryGetDirectImageSampler(out byte[] pngBytes)
+        => TryGetDirectImageSampler(null, out pngBytes);
 
     public ProceduralBrushTip? ToBuiltInProceduralTip()
         => BuiltInShape.HasValue
@@ -367,61 +384,79 @@ public sealed class BrushTipNodeGraph
 public sealed class NodeBrushTip : IBrushTip, IDisposable
 {
     private readonly object _cacheLock = new();
-    private readonly Dictionary<(int Size, int Hardness, string Graph), SKBitmap> _maskCache = [];
-    private readonly Lazy<ImageBrushTip?> _directImageTip;
+    private readonly Dictionary<(int Size, int Hardness, string Graph, string Material), SKBitmap> _maskCache = [];
     private readonly string _graphCacheKey;
+    private IReadOnlyList<BrushTipData> _materialTips = [];
+    private ImageBrushTip? _directImageTip;
+    private string _directImageKey = "";
 
     public NodeBrushTip(BrushTipNodeGraph graph)
     {
         Graph = graph.Validate().Count == 0 ? graph.DeepClone() : new BrushTipNodeGraph();
         _graphCacheKey = Graph.CacheKey();
-        _directImageTip = new Lazy<ImageBrushTip?>(() =>
-            Graph.TryGetDirectImageSampler(out var bytes) ? new ImageBrushTip(bytes) : null);
     }
 
     public BrushTipNodeGraph Graph { get; }
 
-    public bool IsDirectImageSampler => _directImageTip.Value != null;
-
-    public bool HasColor => _directImageTip.Value?.HasColor
-        ?? BrushTipNodeGraphEvaluator.GraphUsesColor(Graph);
-
-    public SKBitmap? GenerateColorStamp(int baseSize)
+    public void BindMaterialTips(IReadOnlyList<BrushTipData> materialTips)
     {
-        if (!HasColor)
-            return null;
-        if (_directImageTip.Value is { } direct)
-            return direct.GenerateColorStamp(baseSize);
-        return BrushTipNodeGraphEvaluator.EvaluateColor(Graph, baseSize, 1.0f);
-    }
-
-    public void Dispose()
-    {
+        _materialTips = materialTips ?? [];
+        ResetDirectImageTip();
         lock (_cacheLock)
         {
             foreach (var mask in _maskCache.Values)
                 mask.Dispose();
             _maskCache.Clear();
         }
+    }
 
-        if (_directImageTip.IsValueCreated)
-            _directImageTip.Value?.Dispose();
+    public bool IsDirectImageSampler => Graph.TryGetDirectImageSampler(_materialTips, out _);
+
+    public bool HasColor
+    {
+        get
+        {
+            if (Graph.TryGetDirectImageSampler(_materialTips, out var bytes))
+                return GetDirectImageTip(bytes).HasColor;
+            return BrushTipNodeGraphEvaluator.GraphUsesColor(Graph, _materialTips);
+        }
+    }
+
+    public SKBitmap? GenerateColorStamp(int baseSize)
+    {
+        if (!HasColor)
+            return null;
+        if (Graph.TryGetDirectImageSampler(_materialTips, out var directBytes))
+            return GetDirectImageTip(directBytes).GenerateColorStamp(baseSize);
+        return BrushTipNodeGraphEvaluator.EvaluateColor(Graph, baseSize, 1.0f, _materialTips);
+    }
+
+    public void Dispose()
+    {
+        ResetDirectImageTip();
+        lock (_cacheLock)
+        {
+            foreach (var mask in _maskCache.Values)
+                mask.Dispose();
+            _maskCache.Clear();
+        }
     }
 
     public SKBitmap GenerateMask(int baseSize, float hardness)
     {
-        if (_directImageTip.Value is { } imageTip)
-            return imageTip.GenerateMask(baseSize, hardness);
+        if (Graph.TryGetDirectImageSampler(_materialTips, out var directBytes) && directBytes.Length > 0)
+            return GetDirectImageTip(directBytes).GenerateMask(baseSize, hardness);
 
         var size = Math.Max(1, baseSize);
         var h = Math.Clamp(hardness, 0.001f, 1.0f);
-        var key = (size, QuantizeHardness(h), _graphCacheKey);
+        var materialKey = BrushMaterialTips.LibraryCacheKey(_materialTips);
+        var key = (size, QuantizeHardness(h), _graphCacheKey, materialKey);
 
         lock (_cacheLock)
             if (_maskCache.TryGetValue(key, out var cached))
                 return cached;
 
-        var mask = BrushTipNodeGraphEvaluator.Evaluate(Graph, size, h);
+        var mask = BrushTipNodeGraphEvaluator.Evaluate(Graph, size, h, _materialTips);
         lock (_cacheLock)
         {
             if (_maskCache.TryGetValue(key, out var existing))
@@ -436,11 +471,30 @@ public sealed class NodeBrushTip : IBrushTip, IDisposable
 
     private static int QuantizeHardness(float hardness)
         => Math.Clamp((int)MathF.Round(Math.Clamp(hardness, 0.001f, 1f) * 255f), 0, 255);
+
+    private ImageBrushTip GetDirectImageTip(byte[] pngBytes)
+    {
+        var key = Convert.ToHexString(SHA256.HashData(pngBytes));
+        if (_directImageTip != null && _directImageKey == key)
+            return _directImageTip;
+
+        ResetDirectImageTip();
+        _directImageKey = key;
+        _directImageTip = new ImageBrushTip(pngBytes);
+        return _directImageTip;
+    }
+
+    private void ResetDirectImageTip()
+    {
+        _directImageTip?.Dispose();
+        _directImageTip = null;
+        _directImageKey = "";
+    }
 }
 
 public static class BrushTipNodeGraphEvaluator
 {
-    public static unsafe SKBitmap Evaluate(BrushTipNodeGraph graph, int size, float brushHardness)
+    public static unsafe SKBitmap Evaluate(BrushTipNodeGraph graph, int size, float brushHardness, IReadOnlyList<BrushTipData>? materialTips = null)
     {
         size = Math.Max(1, size);
         var nodes = graph.Nodes.ToDictionary(n => n.Id, StringComparer.Ordinal);
@@ -482,7 +536,7 @@ public static class BrushTipNodeGraphEvaluator
                 BrushTipNodeKind.Rectangle => Scalar(Rectangle(node)),
                 BrushTipNodeKind.LinearGradient => Scalar(LinearGradient(node, stack)),
                 BrushTipNodeKind.Stripe => Scalar(Stripe(node, stack)),
-                BrushTipNodeKind.ImageSampler => Scalar(ImageSampler(node)),
+                BrushTipNodeKind.ImageSampler => Scalar(ImageSampler(node, materialTips)),
                 BrushTipNodeKind.Noise => Scalar(Noise(node, stack)),
                 BrushTipNodeKind.Bristle => Scalar(Bristle(node)),
                 BrushTipNodeKind.Add => Scalar(Combine(node, stack, (a, b) => Math.Clamp(a + b, 0f, 1f))),
@@ -624,7 +678,7 @@ public static class BrushTipNodeGraphEvaluator
             var input = EvalScalarInput(node, 0, stack);
             var result = new float[size * size];
             var edge = Math.Clamp(node.Threshold, 0f, 1f);
-            var softness = Math.Max(0.0001f, Math.Clamp(node.Hardness, 0.0001f, 1f));
+            var softness = CombinedSoftness(node, brushHardness);
             var opacity = Math.Clamp(node.Opacity, 0f, 1f);
             for (var i = 0; i < result.Length; i++)
             {
@@ -774,13 +828,14 @@ public static class BrushTipNodeGraphEvaluator
             return result;
         }
 
-        float[] ImageSampler(BrushTipNode node)
+        float[] ImageSampler(BrushTipNode node, IReadOnlyList<BrushTipData>? tips)
         {
             var result = new float[size * size];
-            if (node.PngBytes.Length == 0)
+            var png = BrushMaterialTips.ResolveSamplerPng(node, tips);
+            if (png.Length == 0)
                 return result;
 
-            using var tip = new ImageBrushTip(node.PngBytes);
+            using var tip = new ImageBrushTip(png);
             var mask = tip.GenerateMask(size, CombinedHardness(node, brushHardness));
             var opacity = Math.Clamp(node.Opacity, 0f, 1f);
             var ptr = (byte*)mask.GetPixels().ToPointer();
@@ -922,6 +977,17 @@ public static class BrushTipNodeGraphEvaluator
     private static float CombinedHardness(BrushTipNode node, float brushHardness)
         => Math.Clamp(node.Hardness * Math.Clamp(brushHardness, 0.001f, 1f), 0.001f, 1f);
 
+    /// <summary>
+    /// SmoothStep nodes store edge width in <see cref="BrushTipNode.Hardness"/> (softness).
+    /// Brush hardness scales that down: 0 = full preset softness, 1 = minimal edge feather.
+    /// </summary>
+    internal static float CombinedSoftness(BrushTipNode node, float brushHardness)
+    {
+        var baseSoftness = Math.Clamp(node.Hardness, 0.0001f, 1f);
+        var hard = Math.Clamp(brushHardness, 0f, 1f);
+        return Math.Max(0.0001f, baseSoftness * (1f - hard));
+    }
+
     private static float Falloff(float t, float hardness)
     {
         if (t >= 1f) return 0f;
@@ -950,13 +1016,16 @@ public static class BrushTipNodeGraphEvaluator
     private static SKBitmap NewAlpha8(int size)
         => new(new SKImageInfo(size, size, SKColorType.Alpha8, SKAlphaType.Unpremul));
 
-    public static bool GraphUsesColor(BrushTipNodeGraph graph)
+    public static bool GraphUsesColor(BrushTipNodeGraph graph, IReadOnlyList<BrushTipData>? materialTips = null)
     {
         foreach (var node in graph.Nodes)
         {
-            if (node.Kind != BrushTipNodeKind.ImageSampler || node.PngBytes.Length == 0)
+            if (node.Kind != BrushTipNodeKind.ImageSampler)
                 continue;
-            using var tip = new ImageBrushTip(node.PngBytes);
+            var png = BrushMaterialTips.ResolveSamplerPng(node, materialTips);
+            if (png.Length == 0)
+                continue;
+            using var tip = new ImageBrushTip(png);
             if (tip.HasColor)
                 return true;
         }
@@ -967,9 +1036,9 @@ public static class BrushTipNodeGraphEvaluator
     /// Evaluates the graph to an RGBA stamp when any ImageSampler carries color data.
     /// Grayscale samplers contribute white RGB weighted by mask alpha; combine nodes blend color and alpha.
     /// </summary>
-    public static SKBitmap? EvaluateColor(BrushTipNodeGraph graph, int size, float brushHardness)
+    public static SKBitmap? EvaluateColor(BrushTipNodeGraph graph, int size, float brushHardness, IReadOnlyList<BrushTipData>? materialTips = null)
     {
-        if (!GraphUsesColor(graph))
+        if (!GraphUsesColor(graph, materialTips))
             return null;
 
         size = Math.Max(1, size);
@@ -1008,7 +1077,7 @@ public static class BrushTipNodeGraphEvaluator
             var result = node.Kind switch
             {
                 BrushTipNodeKind.Output => EvalColorInput(node, 0, stack),
-                BrushTipNodeKind.ImageSampler => ImageSamplerColor(node),
+                BrushTipNodeKind.ImageSampler => ImageSamplerColor(node, materialTips),
                 BrushTipNodeKind.Add => CombineColor(node, stack, (a, b) => Math.Clamp(a + b, 0f, 1f)),
                 BrushTipNodeKind.Multiply => CombineColor(node, stack, (a, b) => a * b),
                 BrushTipNodeKind.Max => CombineColor(node, stack, MathF.Max),
@@ -1075,21 +1144,22 @@ public static class BrushTipNodeGraphEvaluator
             return new ColorField(r, g, b, alpha, false);
         }
 
-        ColorField ImageSamplerColor(BrushTipNode node)
+        ColorField ImageSamplerColor(BrushTipNode node, IReadOnlyList<BrushTipData>? tips)
         {
             var n = size * size;
             var r = new float[n];
             var g = new float[n];
             var b = new float[n];
             var a = new float[n];
-            if (node.PngBytes.Length == 0)
+            var png = BrushMaterialTips.ResolveSamplerPng(node, tips);
+            if (png.Length == 0)
                 return new ColorField(r, g, b, a, false);
 
-            using var tip = new ImageBrushTip(node.PngBytes);
-            using var mask = tip.GenerateMask(size, CombinedHardness(node, brushHardness));
+            using var tip = new ImageBrushTip(png);
+            var mask = tip.GenerateMask(size, CombinedHardness(node, brushHardness));
             var opacity = Math.Clamp(node.Opacity, 0f, 1f);
             var hasColor = tip.HasColor;
-            SKBitmap? stamp = hasColor ? tip.GenerateColorStamp(size) : null;
+            var stamp = hasColor ? tip.GenerateColorStamp(size) : null;
             unsafe
             {
                 var maskPtr = (byte*)mask.GetPixels().ToPointer();
@@ -1119,7 +1189,6 @@ public static class BrushTipNodeGraphEvaluator
                     }
                 }
             }
-            stamp?.Dispose();
             return new ColorField(r, g, b, a, hasColor);
         }
 
@@ -1191,7 +1260,7 @@ public static class BrushTipNodeGraphEvaluator
             var input = EvalColorInput(node, 0, stack);
             var scalar = EvalScalarInput(node, 0, stack);
             var edge = Math.Clamp(node.Threshold, 0f, 1f);
-            var softness = Math.Max(0.0001f, Math.Clamp(node.Hardness, 0.0001f, 1f));
+            var softness = CombinedSoftness(node, brushHardness);
             var opacity = Math.Clamp(node.Opacity, 0f, 1f);
             var n = input.A.Length;
             var r = new float[n];

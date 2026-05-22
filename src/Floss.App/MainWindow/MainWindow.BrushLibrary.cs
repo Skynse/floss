@@ -22,7 +22,18 @@ public partial class MainWindow : Window
 {
     // ── Brush section ─────────────────────────────────────────────────────────
     private const int BrushPresetAutosaveDebounceMs = 700;
+    private const int ToolGroupsSaveDebounceMs = 400;
     private DispatcherTimer? _brushPresetAutosaveTimer;
+    private DispatcherTimer? _toolGroupsSaveTimer;
+    private readonly Dictionary<string, BrushPresetRowHost> _brushPresetRowCache = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _lastCapturedBrushByPresetId = new(StringComparer.Ordinal);
+
+    private sealed class BrushPresetRowHost
+    {
+        public required Button Row { get; init; }
+        public required BrushStrokePreview Preview { get; init; }
+        public string PreviewKey = "";
+    }
 
     private Control BuildBrushSection()
     {
@@ -51,6 +62,7 @@ public partial class MainWindow : Window
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
             Content = _presetPanel
         };
+        _brushPresetScroll = presetScroll;
 
         _sizeSlider = MkSlider(1, 2000, 20, "Size");
         _opacitySlider = MkSlider(0.01, 1, 1.0, "Opacity");
@@ -102,8 +114,8 @@ public partial class MainWindow : Window
         root.Children.Add(presetScroll);
         root.Children.Add(brushToolRow);
 
-        // Cache brush panel — complex but mostly static between brush changes
-        root.CacheMode = new Avalonia.Media.BitmapCache();
+        // Cache preset list only — the live stroke preview must repaint when the brush changes.
+        presetScroll.CacheMode = new Avalonia.Media.BitmapCache();
 
         return root;
     }
@@ -224,21 +236,64 @@ public partial class MainWindow : Window
                 if (preset.BrushId != null)
                 {
                     var asset = _brushAssets.FirstOrDefault(a => a.Id == preset.BrushId);
-                    if (asset != null) brushPreset = asset.Preset;
+                    if (asset != null)
+                        brushPreset = preset.ApplyToBrushPreset(asset.ToPreset());
                 }
                 brushPreset ??= _activePreset ?? _canvas.Brush;
-                _presetPanel.Children.Add(BuildBrushPresetRow(group, preset, brushPreset, isActive));
+                _presetPanel.Children.Add(GetOrUpdateBrushPresetRow(group, preset, brushPreset, isActive));
                 continue;
             }
             _presetPanel.Children.Add(BuildSimplePresetRow(group, preset, isActive));
         }
+
+        var visiblePresetIds = presets.Select(p => p.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var staleId in _brushPresetRowCache.Keys.Where(id => !visiblePresetIds.Contains(id)).ToList())
+            _brushPresetRowCache.Remove(staleId);
+
+        _brushPresetScroll?.InvalidateVisual();
     }
+
+    private Button GetOrUpdateBrushPresetRow(ToolGroup group, ToolPreset preset, BrushPreset brushPreset, bool isActive)
+    {
+        if (!_brushPresetRowCache.TryGetValue(preset.Id, out var host))
+        {
+            host = BuildBrushPresetRowHost(group, preset, brushPreset, isActive);
+            _brushPresetRowCache[preset.Id] = host;
+            return host.Row;
+        }
+
+        var previewKey = BuildBrushPreviewKey(brushPreset);
+        if (!string.Equals(host.PreviewKey, previewKey, StringComparison.Ordinal))
+        {
+            host.Preview.Brush = brushPreset;
+            host.PreviewKey = previewKey;
+        }
+
+        host.Row.BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke));
+        return host.Row;
+    }
+
+    private BrushPresetRowHost BuildBrushPresetRowHost(ToolGroup group, ToolPreset preset, BrushPreset brushPreset, bool isActive)
+    {
+        var row = BuildBrushPresetRow(group, preset, brushPreset, isActive);
+        var preview = (BrushStrokePreview)((Panel)row.Content!).Children[0];
+        return new BrushPresetRowHost
+        {
+            Row = row,
+            Preview = preview,
+            PreviewKey = BuildBrushPreviewKey(brushPreset)
+        };
+    }
+
+    private static string BuildBrushPreviewKey(BrushPreset brushPreset)
+        => $"{GraphForBrushTip(brushPreset.Tip).CacheKey()}|{brushPreset.Size:F2}|{brushPreset.Hardness:F3}|{brushPreset.Opacity:F3}|{brushPreset.Flow:F3}";
 
     private Button BuildBrushPresetRow(ToolGroup group, ToolPreset preset, BrushPreset brushPreset, bool isActive)
     {
         var strokePreview = new BrushStrokePreview
         {
             Brush = brushPreset,
+            CompactPreview = true,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
         };
@@ -390,7 +445,7 @@ public partial class MainWindow : Window
 
     private async Task ExportSubToolAsync(ToolGroup group, ToolPreset preset)
     {
-        CaptureActiveBrushToPreset();
+        CaptureActiveBrushToPresetIfChanged();
 
         var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
@@ -458,7 +513,7 @@ public partial class MainWindow : Window
         }
         else
         {
-            CaptureActiveBrushToPreset();
+            CaptureActiveBrushToPresetIfChanged();
             preset.SaveBrushOverrideAsDefault();
             App.ToolGroups.Save();
         }
@@ -830,7 +885,7 @@ public partial class MainWindow : Window
         var name = (await tcs.Task)?.Trim();
         if (string.IsNullOrWhiteSpace(name)) return;
 
-        CaptureActiveBrushToPreset();
+        CaptureActiveBrushToPresetIfChanged();
 
         var brushPreset = new BrushPreset(name, 40, 1.0, 0.9, 0.10, Colors.Black, 0)
         {
@@ -1105,7 +1160,7 @@ public partial class MainWindow : Window
 
     private async Task ExportSubToolGroupAsync(ToolGroup group, ToolCategory cat)
     {
-        CaptureActiveBrushToPreset();
+        CaptureActiveBrushToPresetIfChanged();
 
         var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
@@ -1367,7 +1422,7 @@ public partial class MainWindow : Window
     {
         var group = _activeToolGroup;
         if (group == null) return;
-        CaptureActiveBrushToPreset();
+        CaptureActiveBrushToPresetIfChanged();
 
         var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
@@ -1667,6 +1722,7 @@ public partial class MainWindow : Window
             activeToolPreset.OutputProcess == OutputProcessType.DirectDraw)
         {
             activeToolPreset.CaptureFromBrushPreset(updated);
+            _lastCapturedBrushByPresetId[activeToolPreset.Id] = BuildBrushCaptureSignature(updated);
             App.ToolGroups.Save();
         }
         ScheduleBrushPresetAutosave();
@@ -1686,6 +1742,7 @@ public partial class MainWindow : Window
             activeToolPreset.OutputProcess == OutputProcessType.DirectDraw)
         {
             activeToolPreset.CaptureFromBrushPreset(updated);
+            _lastCapturedBrushByPresetId[activeToolPreset.Id] = BuildBrushCaptureSignature(updated);
             App.ToolGroups.Save();
         }
         ScheduleBrushPresetAutosave();
@@ -1981,6 +2038,31 @@ public partial class MainWindow : Window
         };
     }
 
+    private void ScheduleToolGroupsSave()
+    {
+        if (_toolGroupsSaveTimer == null)
+        {
+            _toolGroupsSaveTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(ToolGroupsSaveDebounceMs)
+            };
+            _toolGroupsSaveTimer.Tick += (_, _) =>
+            {
+                _toolGroupsSaveTimer.Stop();
+                App.ToolGroups.Save();
+            };
+        }
+
+        _toolGroupsSaveTimer.Stop();
+        _toolGroupsSaveTimer.Start();
+    }
+
+    private void FlushToolGroupsSave()
+    {
+        _toolGroupsSaveTimer?.Stop();
+        App.ToolGroups.Save();
+    }
+
     private void ScheduleBrushPresetAutosave()
     {
         if (_brushPresetAutosaveTimer == null)
@@ -2004,7 +2086,7 @@ public partial class MainWindow : Window
     {
         _brushPresetAutosaveTimer?.Stop();
 
-        CaptureActiveBrushToPreset();
+        CaptureActiveBrushToPresetIfChanged();
 
         if (_activeBrushAsset != null && _dirtyBrushAssetIds.Contains(_activeBrushAsset.Id))
         {
@@ -2022,7 +2104,40 @@ public partial class MainWindow : Window
             _dirtyBrushAssetIds.Remove(assetId);
         }
 
-        App.ToolGroups.Save();
+        ScheduleToolGroupsSave();
+    }
+
+    internal void CaptureActiveBrushToPresetIfChanged()
+    {
+        if (_activeToolGroup == null) return;
+        var active = _activeToolGroup.ActivePreset;
+        if (active == null || _activePreset == null) return;
+        if (!active.InputProcess.IsBrushFamily() || active.OutputProcess != OutputProcessType.DirectDraw) return;
+
+        var signature = BuildBrushCaptureSignature(_activePreset);
+        if (_lastCapturedBrushByPresetId.TryGetValue(active.Id, out var previous)
+            && string.Equals(previous, signature, StringComparison.Ordinal))
+            return;
+
+        active.CaptureFromBrushPreset(_activePreset);
+        _lastCapturedBrushByPresetId[active.Id] = signature;
+    }
+
+    private static string BuildBrushCaptureSignature(BrushPreset preset)
+    {
+        return string.Join('|',
+            GraphForBrushTip(preset.Tip).CacheKey(),
+            preset.Size.ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
+            preset.Opacity.ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
+            preset.Hardness.ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
+            preset.Spacing.ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
+            preset.Flow.ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
+            preset.Grain.ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
+            preset.Smoothing.ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
+            preset.Angle.ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
+            preset.TipDensity.ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
+            preset.TipThickness.ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
+            ((int)preset.BlendMode).ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
 }

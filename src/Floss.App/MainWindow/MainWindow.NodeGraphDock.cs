@@ -122,9 +122,7 @@ public partial class MainWindow
     {
         var assetId = _activeBrushAsset?.Id ?? "";
         var presetId = _activeToolGroup?.ActivePreset?.Id ?? "";
-        _activePreset ??= _canvas.Brush;
-        var tipKey = GraphForBrushTip(_activePreset.Tip).CacheKey();
-        return $"{assetId}|{presetId}|{tipKey}";
+        return $"{assetId}|{presetId}";
     }
 
     private void InvalidateNodeGraphDockState()
@@ -156,8 +154,9 @@ public partial class MainWindow
 
         _nodeGraphLoadedKey = key;
         _activePreset ??= _canvas.Brush;
-        var graph = GraphForBrushTip(_activePreset.Tip);
-        _nodeGraphEditor.SetImageSamplerOptions(BrushMaterialTips.ForPreset(_activePreset));
+        var tipsList = BrushMaterialTips.NormalizeLibrary(BrushMaterialTips.ForPreset(_activePreset));
+        var graph = BrushMaterialTips.BindGraphToLibrary(GraphForBrushTip(_activePreset.Tip), tipsList);
+        _nodeGraphEditor.SetImageSamplerOptions(tipsList);
         _nodeGraphEditor.LoadGraph(graph, _activePreset.Name);
     }
 
@@ -177,14 +176,12 @@ public partial class MainWindow
         _nodeGraphCommitInProgress = true;
         try
         {
-            var clone = graph.DeepClone();
+            var tips = BrushMaterialTips.NormalizeLibrary(BrushMaterialTips.ForPreset(_activePreset ?? _canvas.Brush));
+            var clone = BrushMaterialTips.BindGraphToLibrary(graph.DeepClone(), tips);
             clone.BuiltInShape = null;
-            var tip = (IBrushTip)new NodeBrushTip(clone);
-            UpdateCurrentBrush(p => p with
-            {
-                Tip = tip,
-                Tips = BrushMaterialTips.PreserveForPreset(p)
-            });
+            var tip = new NodeBrushTip(clone);
+            tip.BindMaterialTips(tips);
+            UpdateCurrentBrush(p => p with { Tip = tip, Tips = tips });
         }
         finally
         {

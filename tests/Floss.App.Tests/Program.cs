@@ -120,9 +120,12 @@ internal static class Program
         ("Node graph ports enforce scalar vs vector compatibility", BrushTests.BrushTipNodePorts_EnforceCompatibility),
         ("Node brush tips evaluate deterministic graphs", BrushTests.NodeBrushTip_EvaluatesDeterministicGraph),
         ("Node brush tips compose procedural primitives", BrushTests.NodeBrushTip_ComposesProceduralPrimitives),
+        ("Brush hardness affects SmoothStep edge falloff", BrushTests.BrushHardness_AffectsSmoothStepEdge),
+        ("Image sampler graphs use baked stamp masks", BrushTests.ImageSamplerGraph_UsesBakedStampMask),
         ("Node brush tips support coordinate warping", BrushTests.NodeBrushTip_SupportsCoordinateWarping),
         ("Node brush tips sample embedded image tips", BrushTests.NodeBrushTip_SamplesEmbeddedImageTip),
         ("Brush material tips resolve active embedded image tips", BrushTests.BrushMaterialTips_ResolveActiveEmbeddedTip),
+        ("Removing material tip clears Image Sampler references", BrushTests.BrushMaterialTips_RemovingLibraryEntryClearsSampler),
         ("Node brush tips evaluate color with procedural output", BrushTests.NodeBrushTip_EvaluateColorWithProceduralOutput),
         ("Image brush tips with color paint as colored stamps", BrushTests.ImageBrushTip_ColorStampPreservesColor),
         ("ABR preset mapping keeps usable brush dynamics", BrushTests.AbrPresetMapping_KeepsDynamics),
@@ -161,6 +164,9 @@ internal static class Program
         ("ToolFactory maps eyedropper sampling options", DrawingDocumentTests.ToolFactory_EyedropperOptions),
         ("Timelapse frame selection samples requested duration", TimelapseTests.SelectFrames_SamplesRequestedDuration),
         ("Timelapse export composition respects portrait and landscape", TimelapseTests.ComposeFrame_RespectsAspectModes),
+        ("Timelapse capture dimensions downscale large documents", TimelapseTests.ComputeCaptureDimensions_DownscalesLargeDocuments),
+        ("Timelapse assemble LOD keeps buffers within limit", TimelapseTests.ChooseAssembleLod_StaysWithinPixelBudget),
+        ("DrawingDocument metadata-only history does not affect visuals", DrawingDocumentTests.RenameLayer_DoesNotAffectVisualHistory),
 
         ("PSD exporter writes parseable layer records", PsdExporterTests.Export_CanBeReadBack),
         ("PSD exporter aligns layer extra data and channel blocks", PsdExporterTests.Export_WritesValidLayerInfoStructure),
@@ -2576,6 +2582,54 @@ internal static class BrushTests
         AssertEx.True(center > corner, $"Circle multiplied by noise should stay stronger near center than corner, got center={center}, corner={corner}.");
     }
 
+    public static void BrushHardness_AffectsSmoothStepEdge()
+    {
+        var graph = BrushTipNodeGraph.FromProceduralShape(BrushTipShape.SoftRound);
+        AssertEx.True(BrushTipStampFastPath.TryCreate(graph, 0.15f, out var softEval));
+        AssertEx.True(BrushTipStampFastPath.TryCreate(graph, 0.95f, out var hardEval));
+
+        const float u = 0.76f;
+        const float v = 0.5f;
+        var softAlpha = softEval(u, v);
+        var hardAlpha = hardEval(u, v);
+
+        AssertEx.True(MathF.Abs(softAlpha - hardAlpha) > 0.05f,
+            $"Brush hardness should change SmoothStep falloff, got soft={softAlpha:F3}, hard={hardAlpha:F3}.");
+        AssertEx.True(softAlpha < hardAlpha,
+            $"Lower hardness should feather further out (less alpha mid-falloff), got soft={softAlpha:F3}, hard={hardAlpha:F3}.");
+
+        using var softMask = new NodeBrushTip(graph).GenerateMask(96, 0.15f);
+        using var hardMask = new NodeBrushTip(graph).GenerateMask(96, 0.95f);
+        AssertEx.True(!AlphaBytes(softMask).SequenceEqual(AlphaBytes(hardMask)),
+            "Mask cache should produce different tips for different brush hardness.");
+    }
+
+    public static void ImageSamplerGraph_UsesBakedStampMask()
+    {
+        var png = ColoredTipPngBytes(SKColors.Black);
+        var graph = new BrushTipNodeGraph
+        {
+            OutputNodeId = "output",
+            Nodes =
+            [
+                new BrushTipNode { Id = "image", Kind = BrushTipNodeKind.ImageSampler, PngBytes = png },
+                new BrushTipNode { Id = "edge", Kind = BrushTipNodeKind.SmoothStep, Inputs = ["image"], Threshold = 0.5f, Hardness = 0.08f },
+                new BrushTipNode { Id = "output", Kind = BrushTipNodeKind.Output, Inputs = ["edge"] }
+            ]
+        };
+
+        AssertEx.True(graph.ContainsImageSampler(), "Fixture graph should contain an ImageSampler node.");
+        var tip = new NodeBrushTip(graph);
+        var brush = new BrushPreset("Image Graph", 32, 1, 0.85, 0.1, Colors.Black, 0) { Tip = tip };
+
+        AssertEx.False(BrushEngine.UsesProceduralStampEvaluation(brush, tip, 0),
+            "ImageSampler node graphs should bake masks instead of per-pixel graph evaluation.");
+        AssertEx.True(BrushEngine.UsesProceduralStampEvaluation(
+                brush with { Tip = new ProceduralBrushTip(BrushTipShape.Circle) },
+                new ProceduralBrushTip(BrushTipShape.Circle), 0),
+            "Pure procedural tips should keep the fast per-pixel path.");
+    }
+
     public static void NodeBrushTip_SupportsCoordinateWarping()
     {
         var plainGraph = new BrushTipNodeGraph
@@ -2634,6 +2688,42 @@ internal static class BrushTests
         var options = ImageSamplerOptions.FromTips(BrushMaterialTips.ForPreset(preset));
         AssertEx.Equal(1, options.Count);
         AssertEx.True(ImageSamplerOptions.SameBytes(png, options[0].Tip.PngBytes));
+    }
+
+    public static void BrushMaterialTips_RemovingLibraryEntryClearsSampler()
+    {
+        var png = ColoredTipPngBytes(SKColors.Red);
+        var tips = BrushMaterialTips.NormalizeLibrary([
+            new BrushTipData
+            {
+                Kind = BrushTipStorageKind.EmbeddedPng,
+                PngBytes = png,
+                Label = "plgr"
+            }
+        ]);
+        var graph = BrushMaterialTips.BindGraphToLibrary(BrushTipNodeGraph.FromImageTip(png), tips);
+        var preset = new BrushPreset("Graphite", 32, 1, 1, 0.1, Colors.Black, 0)
+        {
+            Tip = new NodeBrushTip(graph),
+            Tips = tips
+        };
+
+        BrushMaterialTips.BindToPreset(preset);
+        using (var before = preset.Tip.GenerateMask(48, 0.9f))
+            AssertEx.True(AlphaBytes(before).Any(b => b > 0), "Sampler should paint before removal.");
+
+        var (emptyTips, tip) = BrushMaterialTips.ApplyLibraryChange(preset, [], removed: tips[0]);
+        preset = preset with { Tips = emptyTips, Tip = tip };
+        BrushMaterialTips.BindToPreset(preset);
+
+        var boundGraph = (preset.Tip as NodeBrushTip)!.Graph;
+        var sampler = boundGraph.Nodes.First(n => n.Id == "image");
+        AssertEx.True(string.IsNullOrEmpty(sampler.MaterialTipId),
+            "Image Sampler should have no material reference after library removal.");
+        AssertEx.Equal(0, sampler.PngBytes.Length, "Embedded sampler bytes should be cleared.");
+
+        using var after = preset.Tip.GenerateMask(48, 0.9f);
+        AssertEx.True(AlphaBytes(after).All(b => b == 0), "Removing the library image should produce an empty mask.");
     }
 
     public static void NodeBrushTip_EvaluateColorWithProceduralOutput()
@@ -3052,6 +3142,14 @@ internal static class DrawingDocumentTests
         AssertEx.Equal(DocumentHistoryChangeKind.Redo, document.LastHistoryChangeKind);
     }
 
+    public static void RenameLayer_DoesNotAffectVisualHistory()
+    {
+        var document = new DrawingDocument(4, 4);
+        document.AddLayer();
+        document.SetActiveLayerName("Ink");
+        AssertEx.False(document.LastHistoryAffectsVisual);
+    }
+
     public static void ImportLifecycle_ReplacesDocumentState()
     {
         var document = new DrawingDocument(4, 4);
@@ -3160,6 +3258,23 @@ internal static class TimelapseTests
         AssertEx.Equal(90, landscape.Height);
         AssertEx.Equal(90, portrait.Width);
         AssertEx.Equal(160, portrait.Height);
+    }
+
+    public static void ComputeCaptureDimensions_DownscalesLargeDocuments()
+    {
+        var (width, height) = TimelapseSession.ComputeCaptureDimensions(8000, 6000);
+        AssertEx.Equal(4096, width);
+        AssertEx.Equal(3072, height);
+
+        var (smallW, smallH) = TimelapseSession.ComputeCaptureDimensions(1920, 1080);
+        AssertEx.Equal(1920, smallW);
+        AssertEx.Equal(1080, smallH);
+    }
+
+    public static void ChooseAssembleLod_StaysWithinPixelBudget()
+    {
+        AssertEx.Equal(0, TimelapseSession.ChooseAssembleLod(4096, 4096));
+        AssertEx.Equal(1, TimelapseSession.ChooseAssembleLod(12000, 9000));
     }
 }
 

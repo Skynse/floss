@@ -136,6 +136,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private WrapPanel _swatchPanel = null!;
     private WrapPanel _brushCategoryPanel = null!;
     private StackPanel _presetPanel = null!;
+    private ScrollViewer? _brushPresetScroll;
     private StackPanel _toolPropertyPanel = null!;
     private TextBlock _toolPropertyTitle = null!;
     private Slider _sizeSlider = null!;
@@ -2283,7 +2284,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private void SaveToConfig()
     {
         FlushLayoutToConfig();
-        App.ToolGroups.Save();
+        FlushToolGroupsSave();
     }
 
     internal void FlushLayoutToConfig()
@@ -2408,7 +2409,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     internal void ActivatePreset(ToolGroup group, ToolPreset preset)
     {
         // Snapshot ALL tool settings into the preset we're leaving
-        CaptureActiveBrushToPreset();
+        CaptureActiveBrushToPresetIfChanged();
 
         // Save the current category for the group we're leaving
         if (_activeToolGroup != null && _activeToolGroup != group)
@@ -2520,20 +2521,14 @@ public partial class MainWindow : Window, Tools.IViewportController
         if (btn != null) btn.Content = MaterialIcon(group.ActiveIcon, 18);
 
         RefreshGroupPresets();
-        App.ToolGroups.Save();
+        ScheduleToolGroupsSave();
         SaveActiveToolSelection();
         RefreshToolProperties();
         SyncNodeGraphDockToActiveBrush();
     }
 
     private void CaptureActiveBrushToPreset()
-    {
-        if (_activeToolGroup == null) return;
-        var active = _activeToolGroup.ActivePreset;
-        if (active == null || _activePreset == null) return;
-        if (!active.InputProcess.IsBrushFamily() || active.OutputProcess != OutputProcessType.DirectDraw) return;
-        active.CaptureFromBrushPreset(_activePreset);
-    }
+        => CaptureActiveBrushToPresetIfChanged();
 
     private static bool IsViewportNavigationPreset(string presetId)
         => presetId is ToolGroupConfig.ViewHandPresetId

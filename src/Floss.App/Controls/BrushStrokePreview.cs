@@ -23,6 +23,11 @@ public sealed class BrushStrokePreview : Control
     private int _renderedH;
     private DispatcherTimer? _debounceTimer;
 
+    /// <summary>
+    /// List-row mode: short horizontal stroke with a small fixed mask (cheap enough for many presets).
+    /// </summary>
+    public bool CompactPreview { get; set; }
+
     public BrushPreset? Brush
     {
         get => _brush;
@@ -62,7 +67,7 @@ public sealed class BrushStrokePreview : Control
         if (_bitmap == null || _renderedW != w || _renderedH != h)
         {
             _bitmap?.Dispose();
-            _bitmap = RenderPreview(w, h, _brush);
+            _bitmap = RenderPreview(w, h, _brush, CompactPreview);
             _renderedW = w;
             _renderedH = h;
         }
@@ -70,7 +75,7 @@ public sealed class BrushStrokePreview : Control
         context.DrawImage(_bitmap, new Rect(0, 0, w, h));
     }
 
-    private static unsafe WriteableBitmap RenderPreview(int w, int h, BrushPreset brush)
+    private static unsafe WriteableBitmap RenderPreview(int w, int h, BrushPreset brush, bool compact)
     {
         var bmp = new WriteableBitmap(
             new PixelSize(w, h),
@@ -84,13 +89,106 @@ public sealed class BrushStrokePreview : Control
         if (surface == null) return bmp;
         var canvas = surface.Canvas;
         canvas.Clear(BgColor);
-        PaintStroke(canvas, w, h, brush);
+        if (compact)
+            PaintListRowStroke(canvas, w, h, brush);
+        else
+            PaintStroke(canvas, w, h, brush);
         surface.Flush();
         return bmp;
     }
 
+    private static void PaintListRowStroke(SKCanvas canvas, int w, int h, BrushPreset brush)
+    {
+        BrushMaterialTips.BindToPreset(brush);
+        const int steps = 96;
+        const int maxMaskSize = 28;
+        var baseSize = (float)Math.Clamp(Math.Min(brush.Size, h * 0.82), 6.0, maxMaskSize);
+        var maskSize = Math.Max(1, (int)Math.Ceiling(baseSize));
+
+        var tip = brush.Tip;
+        var stamp = tip.HasColor
+            ? tip.GenerateColorStamp(maskSize)
+            : tip.GenerateMask(maskSize, (float)brush.Hardness);
+        if (stamp == null) return;
+
+        using var colorFilter = SKColorFilter.CreateBlendMode(SKColors.White, SKBlendMode.SrcIn);
+        using var paint = new SKPaint
+        {
+            IsAntialias = true,
+            BlendMode = SKBlendMode.SrcOver,
+            ColorFilter = colorFilter,
+        };
+        using var colorStampPaint = new SKPaint
+        {
+            IsAntialias = true,
+            BlendMode = SKBlendMode.SrcOver
+        };
+
+        var hPad = w * 0.04f;
+        var pathW = w - hPad * 2f;
+        float prevX = hPad, prevY = h * 0.5f;
+        double accum = 0;
+        double nextSpacing = Math.Max(0.5, baseSize * brush.Spacing);
+        int dabIdx = 0;
+
+        for (var i = 1; i <= steps; i++)
+        {
+            var t = i / (float)steps;
+            var envelope = (float)Math.Sin(t * Math.PI);
+            var px = hPad + pathW * t;
+            var py = h * 0.5f + (float)Math.Sin(t * Math.PI * 2.0) * h * 0.18f * envelope;
+
+            var segDx = px - prevX;
+            var segDy = py - prevY;
+            var segLen = (float)Math.Sqrt(segDx * segDx + segDy * segDy);
+            if (segLen < 0.001f) { prevX = px; prevY = py; continue; }
+
+            var drawAngle = (float)Math.Atan2(segDy, segDx);
+            accum += segLen;
+
+            while (accum >= nextSpacing)
+            {
+                accum -= nextSpacing;
+                var frac = Math.Clamp((float)(1.0 - accum / segLen), 0f, 1f);
+                var dabX = prevX + segDx * frac;
+                var dabY = prevY + segDy * frac;
+
+                var opacity = (float)Math.Clamp(
+                    brush.Opacity * brush.Flow * brush.TipDensity * (0.15f + 0.85f * envelope),
+                    0.0, 1.0);
+                var stampAlpha = (byte)(opacity * 255);
+                paint.Color = new SKColor(255, 255, 255, stampAlpha);
+                colorStampPaint.Color = new SKColor(255, 255, 255, stampAlpha);
+
+                var stampSize = baseSize;
+                var scale = stampSize / Math.Max(1, stamp.Width);
+                var mx = SKMatrix.CreateTranslation(-stamp.Width * 0.5f, -stamp.Height * 0.5f)
+                    .PostConcat(SKMatrix.CreateScale(scale, scale));
+
+                var angle = (float)brush.Angle;
+                if (brush.BaseAngleSource == BrushDynamics.AngleSource.DirectionOfLine)
+                    angle += drawAngle * (180f / MathF.PI);
+                if (MathF.Abs(angle) > 0.001f)
+                    mx = mx.PostConcat(SKMatrix.CreateRotationDegrees(angle));
+                mx = mx.PostConcat(SKMatrix.CreateTranslation(dabX, dabY));
+
+                canvas.Save();
+                canvas.Concat(in mx);
+                canvas.DrawBitmap(stamp, 0, 0, tip.HasColor ? colorStampPaint : paint);
+                canvas.Restore();
+
+                nextSpacing = Math.Max(0.5, stampSize * brush.Spacing);
+                dabIdx++;
+            }
+
+            prevX = px;
+            prevY = py;
+        }
+    }
+
     private static void PaintStroke(SKCanvas canvas, int w, int h, BrushPreset brush)
     {
+        BrushMaterialTips.BindToPreset(brush);
         // Cap size: large brushes still show their shape/texture
         var baseSize = (float)Math.Clamp(brush.Size, 1.0, h * 0.72);
         var maskSize = Math.Max(1, (int)Math.Ceiling(baseSize));

@@ -324,6 +324,8 @@ public partial class MainWindow
             {
                 tab.Timelapse.SetRecording(false);
                 await tab.Timelapse.WaitForIdleAsync();
+                tab.Timelapse.Dispose();
+                tab.Timelapse = null;
             }
             tab.Canvas.Dispose();
             BuildLayerList();
@@ -345,6 +347,8 @@ public partial class MainWindow
         {
             tab.Timelapse.SetRecording(false);
             await tab.Timelapse.WaitForIdleAsync();
+            tab.Timelapse.Dispose();
+            tab.Timelapse = null;
         }
         tab.Canvas.Dispose();
         ScheduleDocumentGc();

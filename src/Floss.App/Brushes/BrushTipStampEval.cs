@@ -14,6 +14,7 @@ public sealed class BrushTipStampContext : IDisposable
 
     private readonly BrushTipNodeGraph _graph;
     private readonly float _brushHardness;
+    private readonly IReadOnlyList<BrushTipData>? _materialTips;
     private readonly Dictionary<string, BrushTipNode> _nodes;
     private readonly string _outputId;
     private readonly Dictionary<string, float> _scalarCache = new(StringComparer.Ordinal);
@@ -21,18 +22,19 @@ public sealed class BrushTipStampContext : IDisposable
     private readonly Dictionary<string, ImageBrushTip> _imageTips = new(StringComparer.Ordinal);
     private readonly HashSet<string> _visitStack = new(StringComparer.Ordinal);
 
-    public BrushTipStampContext(BrushTipNodeGraph graph, float brushHardness)
+    public BrushTipStampContext(BrushTipNodeGraph graph, float brushHardness, IReadOnlyList<BrushTipData>? materialTips = null)
     {
         _graph = graph;
         _brushHardness = Math.Clamp(brushHardness, 0.001f, 1f);
+        _materialTips = materialTips;
         _nodes = graph.Nodes.ToDictionary(n => n.Id, StringComparer.Ordinal);
         _outputId = _nodes.ContainsKey(graph.OutputNodeId)
             ? graph.OutputNodeId
             : graph.Nodes.FirstOrDefault()?.Id ?? "output";
     }
 
-    public static bool CanEvaluate(BrushTipNodeGraph graph)
-        => !BrushTipNodeGraphEvaluator.GraphUsesColor(graph);
+    public static bool CanEvaluate(BrushTipNodeGraph graph, IReadOnlyList<BrushTipData>? materialTips = null)
+        => !BrushTipNodeGraphEvaluator.GraphUsesColor(graph, materialTips);
 
     public float EvaluateAlpha(float u, float v)
     {
@@ -191,7 +193,7 @@ public sealed class BrushTipStampContext : IDisposable
     {
         var input = EvalScalarInput(node, 0, u, v, stack);
         var edge = Math.Clamp(node.Threshold, 0f, 1f);
-        var softness = Math.Max(0.0001f, Math.Clamp(node.Hardness, 0.0001f, 1f));
+        var softness = CombinedSoftness(node);
         var opacity = Math.Clamp(node.Opacity, 0f, 1f);
         var t = Math.Clamp((input - (edge - softness)) / softness, 0f, 1f);
         var smooth = t * t * (3f - 2f * t);
@@ -302,11 +304,12 @@ public sealed class BrushTipStampContext : IDisposable
 
     private float ImageSampler(BrushTipNode node, float u, float v)
     {
-        if (node.PngBytes.Length == 0)
+        var png = BrushMaterialTips.ResolveSamplerPng(node, _materialTips);
+        if (png.Length == 0)
             return 0f;
         if (!_imageTips.TryGetValue(node.Id, out var tip))
         {
-            tip = new ImageBrushTip(node.PngBytes);
+            tip = new ImageBrushTip(png);
             _imageTips[node.Id] = tip;
         }
         var opacity = Math.Clamp(node.Opacity, 0f, 1f);
@@ -363,6 +366,9 @@ public sealed class BrushTipStampContext : IDisposable
 
     private float CombinedHardness(BrushTipNode node)
         => Math.Clamp(node.Hardness * _brushHardness, 0.001f, 1f);
+
+    private float CombinedSoftness(BrushTipNode node)
+        => BrushTipNodeGraphEvaluator.CombinedSoftness(node, _brushHardness);
 
     private static float Falloff(float t, float hardness)
     {

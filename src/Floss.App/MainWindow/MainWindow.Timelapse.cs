@@ -14,6 +14,7 @@ public partial class MainWindow
 {
     private bool _timelapseCaptureRunning;
     private bool _timelapseCapturePending;
+    private bool _timelapseCaptureScheduled;
 
     private void StartTimelapseForActiveDocument(string documentName)
     {
@@ -35,12 +36,12 @@ public partial class MainWindow
     {
         if (_activeTab == null || !_canvas.HasDocument) return;
 
-        var shouldRecord = !(_activeTab.Timelapse?.IsRecording == true);
+        var shouldRecord = !(_activeTab?.Timelapse?.IsRecording == true);
         App.Config.RecordTimelapse = shouldRecord;
         App.Config.Save();
 
         if (shouldRecord)
-            StartTimelapseForActiveDocument(_activeTab.DocumentName);
+            StartTimelapseForActiveDocument(_activeTab!.DocumentName);
         else
             StopTimelapseForActiveDocument();
     }
@@ -54,34 +55,56 @@ public partial class MainWindow
         if (_canvas.Document.LastHistoryChangeKind == DocumentHistoryChangeKind.Undo)
             return;
 
-        var document = _canvas.Document;
-        TimelapseDocumentSnapshot snapshot;
-        try
-        {
-            snapshot = TimelapseDocumentSnapshot.Capture(document);
-        }
-        catch (Exception ex)
-        {
-            CrashLog.Write(ex, "MainWindow.Timelapse.Snapshot");
-            _footerStatusText.Text = $"Timelapse snapshot error: {ex.Message}";
+        if (!_canvas.Document.LastHistoryAffectsVisual)
             return;
-        }
+
+        // CommitLayerTileMutation and CommitStroke both fire HistoryChanged in the same
+        // synchronous commit — defer to Background so they coalesce into one capture.
+        if (_timelapseCaptureScheduled)
+            return;
+
+        _timelapseCaptureScheduled = true;
+        Dispatcher.UIThread.Post(CaptureTimelapseFrameDeferred, DispatcherPriority.Background);
+    }
+
+    private void CaptureTimelapseFrameDeferred()
+    {
+        _timelapseCaptureScheduled = false;
+
+        var session = _activeTab?.Timelapse;
+        if (session?.IsRecording != true || !_canvas.HasDocument)
+            return;
+
+        if (_canvas.Document.LastHistoryChangeKind == DocumentHistoryChangeKind.Undo)
+            return;
+
+        if (!_canvas.Document.LastHistoryAffectsVisual)
+            return;
 
         if (_timelapseCaptureRunning)
         {
-            snapshot.Dispose();
             _timelapseCapturePending = true;
             return;
         }
 
-        RunTimelapseCaptureLoopAsync(session, document, snapshot)
+        try
+        {
+            session.PrepareCaptureFromDocument(_canvas.Document);
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write(ex, "MainWindow.Timelapse.Prepare");
+            _footerStatusText.Text = $"Timelapse snapshot error: {ex.Message}";
+            return;
+        }
+
+        RunTimelapseCaptureLoopAsync(session, _canvas.Document)
             .FireAndForget("MainWindow.Timelapse.CaptureLoop");
     }
 
-    private async Task RunTimelapseCaptureLoopAsync(TimelapseSession session, DrawingDocument document, TimelapseDocumentSnapshot initialSnapshot)
+    private async Task RunTimelapseCaptureLoopAsync(TimelapseSession session, DrawingDocument document)
     {
         _timelapseCaptureRunning = true;
-        var snapshot = initialSnapshot;
         try
         {
             while (true)
@@ -89,7 +112,7 @@ public partial class MainWindow
                 _timelapseCapturePending = false;
                 try
                 {
-                    var captured = await session.CaptureFrameAsync(snapshot);
+                    var captured = await session.CapturePreparedFrameAsync();
                     await Dispatcher.UIThread.InvokeAsync(() =>
                     {
                         if (captured)
@@ -97,25 +120,22 @@ public partial class MainWindow
                         UpdateTimelapseMenuState();
                     });
                 }
-                finally
+                catch (Exception ex)
                 {
-                    snapshot.Dispose();
+                    CrashLog.Write(ex, "MainWindow.Timelapse.Capture");
+                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        _footerStatusText.Text = $"Timelapse capture error: {ex.Message}";
+                        UpdateTimelapseMenuState();
+                    });
+                    break;
                 }
 
                 if (!_timelapseCapturePending || !session.IsRecording)
                     break;
 
-                snapshot = await Dispatcher.UIThread.InvokeAsync(() => TimelapseDocumentSnapshot.Capture(document));
+                await Dispatcher.UIThread.InvokeAsync(() => session.PrepareCaptureFromDocument(document));
             }
-        }
-        catch (Exception ex)
-        {
-            CrashLog.Write(ex, "MainWindow.Timelapse.Capture");
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                _footerStatusText.Text = $"Timelapse capture error: {ex.Message}";
-                UpdateTimelapseMenuState();
-            });
         }
         finally
         {

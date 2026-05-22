@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
+using System.Security.Cryptography;
 using SkiaSharp;
 
 namespace Floss.App.Brushes;
@@ -12,13 +12,22 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
     private const int MaxSourceDimension = 1024;
     private const int MaxGeneratedSize = 1024;
 
+    private static readonly object SharedLock = new();
+    private static readonly Dictionary<ulong, SharedSource> SharedSources = new();
+
     private readonly byte[] _pngBytes;
-    private readonly SKBitmap _source;
-    private readonly bool _hasColor;
-    private readonly bool _sourceHasUsefulAlpha;
+    private readonly ulong _pngKey;
+    private readonly SharedSource _shared;
     private readonly object _cacheLock = new();
     private readonly Dictionary<(int Size, int Hardness), SKBitmap> _maskCache = [];
     private readonly Dictionary<int, SKBitmap> _colorStampCache = [];
+
+    private sealed class SharedSource
+    {
+        public required SKBitmap Source { get; init; }
+        public required bool HasColor { get; init; }
+        public required bool SourceHasUsefulAlpha { get; init; }
+    }
 
     public ImageBrushTip(string pngPath)
         : this(File.ReadAllBytes(pngPath))
@@ -27,15 +36,19 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
 
     public ImageBrushTip(byte[] pngBytes)
     {
-        _pngBytes = pngBytes.ToArray();
-        _source = DecodeSource(_pngBytes);
-        _sourceHasUsefulAlpha = DetectUsefulAlpha(_source);
-        _hasColor = DetectColor(_source);
+        _pngBytes = pngBytes;
+        _pngKey = PngKey(pngBytes);
+        _shared = AcquireSharedSource(_pngBytes, _pngKey);
     }
 
-    public byte[] GetPngBytes() => _pngBytes.ToArray();
+    public byte[] GetPngBytes()
+    {
+        var copy = new byte[_pngBytes.Length];
+        _pngBytes.AsSpan().CopyTo(copy);
+        return copy;
+    }
 
-    public bool HasColor => _hasColor;
+    public bool HasColor => _shared.HasColor;
 
     public SKBitmap GenerateMask(int baseSize, float hardness)
     {
@@ -44,10 +57,30 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
         var key = (size, QuantizeHardness(clampedHardness));
 
         lock (_cacheLock)
+        {
             if (_maskCache.TryGetValue(key, out var cached))
                 return cached;
+        }
 
-        // Step 1: scale source to target size with optional blur for hardness.
+        var mask = BuildMask(size, clampedHardness);
+
+        lock (_cacheLock)
+        {
+            if (_maskCache.TryGetValue(key, out var existing))
+            {
+                mask.Dispose();
+                return existing;
+            }
+            _maskCache[key] = mask;
+            return mask;
+        }
+    }
+
+    private SKBitmap BuildMask(int size, float clampedHardness)
+    {
+        var source = _shared.Source;
+        var sourceHasUsefulAlpha = _shared.SourceHasUsefulAlpha;
+
         using var scaled = new SKBitmap(new SKImageInfo(size, size, SKColorType.Bgra8888, SKAlphaType.Premul));
         using (var canvas = new SKCanvas(scaled))
         using (var paint = new SKPaint { IsAntialias = true })
@@ -59,14 +92,13 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
             }
 
             canvas.Clear(SKColors.Transparent);
-            var scale = Math.Min(size / (float)_source.Width, size / (float)_source.Height);
-            var dstW = _source.Width * scale;
-            var dstH = _source.Height * scale;
+            var scale = Math.Min(size / (float)source.Width, size / (float)source.Height);
+            var dstW = source.Width * scale;
+            var dstH = source.Height * scale;
             var dst = SKRect.Create((size - dstW) * 0.5f, (size - dstH) * 0.5f, dstW, dstH);
-            canvas.DrawBitmap(_source, dst, paint);
+            canvas.DrawBitmap(source, dst, paint);
         }
 
-        // Step 2: extract alpha into Alpha8
         var mask = new SKBitmap(new SKImageInfo(size, size, SKColorType.Alpha8, SKAlphaType.Unpremul));
         unsafe
         {
@@ -88,56 +120,42 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
                     var a = srcRow[x * 4 + 3];
 
                     byte alpha;
-                    if (_sourceHasUsefulAlpha)
-                    {
+                    if (sourceHasUsefulAlpha)
                         alpha = a;
-                    }
                     else
-                    {
                         alpha = (byte)Math.Clamp((int)(r * 0.2126f + g * 0.7152f + b * 0.0722f), 0, 255);
-                    }
 
                     dstRow[x] = alpha;
                 }
             }
         }
 
-        lock (_cacheLock)
-        {
-            if (_maskCache.TryGetValue(key, out var existing))
-            {
-                mask.Dispose();
-                return existing;
-            }
-            _maskCache[key] = mask;
-        }
         return mask;
     }
 
-    /// <summary>
-    /// Returns the tip image scaled to the given size, preserving aspect ratio,
-    /// as an RGBA bitmap. Used for color-stamp rendering when <see cref="HasColor"/> is true.
-    /// </summary>
     public SKBitmap GenerateColorStamp(int baseSize)
     {
-        if (!_hasColor)
+        if (!_shared.HasColor)
             return GenerateMask(baseSize, 1.0f);
 
         var size = Math.Clamp(baseSize, 1, MaxGeneratedSize);
         lock (_cacheLock)
+        {
             if (_colorStampCache.TryGetValue(size, out var cached))
                 return cached;
+        }
 
-        var stamp = new SKBitmap(new SKImageInfo(size, size, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+        var source = _shared.Source;
+        var stamp = new SKBitmap(new SKImageInfo(size, size, SKColorType.Bgra8888, SKAlphaType.Premul));
         using (var canvas = new SKCanvas(stamp))
         using (var paint = new SKPaint { IsAntialias = true })
         {
             canvas.Clear(SKColors.Transparent);
-            var scale = Math.Min(size / (float)_source.Width, size / (float)_source.Height);
-            var dstW = _source.Width * scale;
-            var dstH = _source.Height * scale;
+            var scale = Math.Min(size / (float)source.Width, size / (float)source.Height);
+            var dstW = source.Width * scale;
+            var dstH = source.Height * scale;
             var dst = SKRect.Create((size - dstW) * 0.5f, (size - dstH) * 0.5f, dstW, dstH);
-            canvas.DrawBitmap(_source, dst, paint);
+            canvas.DrawBitmap(source, dst, paint);
         }
 
         lock (_cacheLock)
@@ -148,13 +166,10 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
                 return existing;
             }
             _colorStampCache[size] = stamp;
+            return stamp;
         }
-        return stamp;
     }
 
-    /// <summary>
-    /// Bilinearly samples the tip mask at normalized coordinates in [0,1]×[0,1].
-    /// </summary>
     public unsafe float SampleMaskAlpha(float u, float v, int baseSize, float hardness)
     {
         var mask = GenerateMask(baseSize, hardness);
@@ -183,7 +198,6 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
     {
         lock (_cacheLock)
         {
-            _source.Dispose();
             foreach (var mask in _maskCache.Values)
                 mask.Dispose();
             _maskCache.Clear();
@@ -191,6 +205,33 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
                 stamp.Dispose();
             _colorStampCache.Clear();
         }
+    }
+
+    private static SharedSource AcquireSharedSource(byte[] pngBytes, ulong pngKey)
+    {
+        lock (SharedLock)
+        {
+            if (SharedSources.TryGetValue(pngKey, out var existing))
+                return existing;
+
+            var source = DecodeSource(pngBytes);
+            var entry = new SharedSource
+            {
+                Source = source,
+                SourceHasUsefulAlpha = DetectUsefulAlpha(source),
+                HasColor = DetectColor(source)
+            };
+            SharedSources[pngKey] = entry;
+            return entry;
+        }
+    }
+
+    internal static ulong PngKey(byte[] pngBytes)
+    {
+        if (pngBytes.Length == 0)
+            return 0;
+        var hash = SHA256.HashData(pngBytes);
+        return BitConverter.ToUInt64(hash, 0) ^ BitConverter.ToUInt64(hash, 8);
     }
 
     private static unsafe bool DetectColor(SKBitmap bitmap)
@@ -264,5 +305,4 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
 
         return min < 250 && max - min > 4;
     }
-
 }

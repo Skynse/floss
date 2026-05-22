@@ -309,7 +309,7 @@ public partial class MainWindow
         try
         {
             var doc = _canvas.Document;
-            using var busy = BeginBusy($"Saving {Path.GetFileName(path)}…");
+            using var busy = BeginBusy($"Saving {Path.GetFileName(path)}…", blockInput: false);
             await System.Threading.Tasks.Task.Run(() =>
             {
                 using var read = doc.RenderLock.Read();
@@ -343,7 +343,7 @@ public partial class MainWindow
             var doc = _canvas.Document;
             using var busy = BeginBusy(updateDocumentState
                 ? $"Saving {Path.GetFileName(path)}…"
-                : $"Exporting PSD {Path.GetFileName(path)}…");
+                : $"Exporting PSD {Path.GetFileName(path)}…", blockInput: false);
             await System.Threading.Tasks.Task.Run(() =>
             {
                 using var read = doc.RenderLock.Read();

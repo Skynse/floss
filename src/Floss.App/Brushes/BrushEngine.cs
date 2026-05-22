@@ -1191,7 +1191,7 @@ public sealed class BrushEngine : IDisposable
             NodeBrushTip n when !n.IsDirectImageSampler => n.Graph,
             _ => null
         };
-        bool useGraphEval = stampGraph != null && BrushTipStampContext.CanEvaluate(stampGraph);
+        bool useGraphEval = stampGraph != null && BrushTipStampContext.CanEvaluate(stampGraph, BrushMaterialTips.ForPreset(brush));
         BrushTipStampFastPath.AlphaAt? fastAlpha = null;
         if (useGraphEval && stampGraph != null &&
             BrushTipStampFastPath.TryCreate(stampGraph, (float)brush.Hardness, out var fast))
@@ -1242,7 +1242,7 @@ public sealed class BrushEngine : IDisposable
 
             BrushTipStampContext? stampEval = null;
             if (useGraphEval && stampGraph != null && fastAlpha == null)
-                stampEval = new BrushTipStampContext(stampGraph, stamp.Hardness);
+                stampEval = new BrushTipStampContext(stampGraph, stamp.Hardness, BrushMaterialTips.ForPreset(brush));
             try
             {
 
@@ -3259,6 +3259,7 @@ public sealed class BrushEngine : IDisposable
         public ActiveStroke(BrushPreset brush, CanvasInputSample sample)
         {
             _brush = brush;
+            BrushMaterialTips.BindToPreset(brush);
             if (brush.TipSelectionMode != BrushTipSelectionMode.Single && brush.Tips.Count > 0)
                 _ownedTipSet = brush.Tips.Select(t => t.CreateTip()).ToList();
             HasAnyColorTip = _ownedTipSet is { Count: > 0 }
@@ -3773,10 +3774,17 @@ public sealed class BrushEngine : IDisposable
         if (HasMultiTipSelection(brush)) return false;
         if (primaryTip.HasColor) return false;
 
-        return primaryTip is ImageBrushTip
-            or NodeBrushTip { IsDirectImageSampler: true }
-            or ProceduralBrushTip
-            or NodeBrushTip;
+        return primaryTip switch
+        {
+            ImageBrushTip => true,
+            NodeBrushTip { IsDirectImageSampler: true } => true,
+            ProceduralBrushTip => true,
+            // ImageSampler graphs must bake a mask once — per-pixel graph eval re-samples
+            // the PNG for every stamp pixel and stalls the UI thread.
+            NodeBrushTip node when node.Graph.ContainsImageSampler(BrushMaterialTips.ForPreset(brush)) => false,
+            NodeBrushTip => true,
+            _ => false
+        };
     }
 
     private static bool HasMultiTipSelection(BrushPreset brush)

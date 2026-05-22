@@ -15,6 +15,7 @@ using Avalonia.Platform;
 using Avalonia.Threading;
 using Floss.App;
 using Floss.App.Document;
+using SkiaSharp;
 
 namespace Floss.App.Canvas;
 
@@ -380,7 +381,7 @@ public sealed class LayerCompositor : IDisposable
         }
     }
 
-    public bool Composite(IReadOnlyList<DrawingLayer> layers, int width, int height, uint paperColor = 0, PixelRegion? viewport = null, double zoom = 1.0)
+    public bool Composite(IReadOnlyList<DrawingLayer> layers, int width, int height, uint paperColor = 0, PixelRegion? viewport = null, double zoom = 1.0, int? forceLod = null)
     {
         // Hold the gate for the entire pass so:
         //   1. Invalidate() and SetSize() are blocked until we finish.
@@ -394,7 +395,7 @@ public sealed class LayerCompositor : IDisposable
         {
             lock (CompositeGate)
             {
-                return CompositeCore(layers, width, height, paperColor, viewport, zoom);
+                return CompositeCore(layers, width, height, paperColor, viewport, zoom, forceLod);
             }
         }
         finally
@@ -403,7 +404,7 @@ public sealed class LayerCompositor : IDisposable
         }
     }
 
-    private unsafe bool CompositeCore(IReadOnlyList<DrawingLayer> layers, int width, int height, uint paperColor, PixelRegion? viewport, double zoom)
+    private unsafe bool CompositeCore(IReadOnlyList<DrawingLayer> layers, int width, int height, uint paperColor, PixelRegion? viewport, double zoom, int? forceLod)
     {
         var started = Stopwatch.GetTimestamp();
         SetSize(width, height);
@@ -413,7 +414,7 @@ public sealed class LayerCompositor : IDisposable
         foreach (var l in layers)
             if (l.Parent == null && !l.IsPaper) rootLayers.Add(l);
 
-        var lod = SelectLod(width, height, zoom);
+        var lod = forceLod ?? SelectLod(width, height, zoom);
         var lodChanged = lod != _currentLod;
         _currentLod = lod;
         var scale = 1 << lod;
@@ -624,13 +625,19 @@ public sealed class LayerCompositor : IDisposable
             var tileRect = new PixelRegion(tx * strideLocal, ty * strideLocal, strideLocal, strideLocal).ClipTo(widthLocal, heightLocal);
             if (tileRect.IsEmpty) tileRect = new PixelRegion(tx * strideLocal, ty * strideLocal, 1, 1);
             CompositeTileCpu(compTilesLocal[(tx, ty, lodLocal)], tileRect, renderListLocal, tx * strideLocal, ty * strideLocal, lodLocal, paperLocal, strokeSplitLocal);
-            _tilesPendingComposite.Remove((tx, ty, lodLocal));
         }
 
         if (allTiles.Length >= 4 && Environment.ProcessorCount > 1)
             Parallel.For(0, allTiles.Length, CompositeOne);
         else
             for (var i = 0; i < allTiles.Length; i++) CompositeOne(i);
+
+        // HashSet is not thread-safe — clear pending flags on the composite thread only.
+        for (var i = 0; i < allTiles.Length; i++)
+        {
+            var (tx, ty) = allTiles[i];
+            _tilesPendingComposite.Remove((tx, ty, lodLocal));
+        }
 
         _tilesToPrune.Clear();
         foreach (var (tx, ty) in tileKeys) _tilesToPrune.Add((tx, ty, lod));
@@ -1293,6 +1300,65 @@ public sealed class LayerCompositor : IDisposable
             if (_groupCaches.TryGetValue(parent, out var cache))
                 cache.Invalidate(region.Value);
         }
+    }
+
+    public unsafe SKBitmap AssembleSkBitmap(int outputWidth, int outputHeight, int lod = -1, uint paperColor = 0)
+    {
+        if (outputWidth <= 0 || outputHeight <= 0)
+            throw new ArgumentOutOfRangeException(nameof(outputWidth));
+
+        if (lod < 0)
+            lod = _currentLod;
+
+        var bitmap = new SKBitmap(new SKImageInfo(outputWidth, outputHeight, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+        var dstPtr = (byte*)bitmap.GetPixels().ToPointer();
+        var dstStride = bitmap.RowBytes;
+        var tileStride = CmpTileSize * (1 << lod);
+
+        if (paperColor != 0)
+        {
+            var pixels = (uint*)dstPtr;
+            var count = outputWidth * outputHeight;
+            for (var i = 0; i < count; i++)
+                pixels[i] = paperColor;
+        }
+        else
+        {
+            new Span<byte>(dstPtr, bitmap.ByteCount).Clear();
+        }
+
+        lock (CompositeGate)
+        {
+            foreach (var ((tx, ty, tileLod), srcBmp) in _compTiles)
+            {
+                if (tileLod != lod)
+                    continue;
+
+                var dx = tx * tileStride;
+                var dy = ty * tileStride;
+                if (dx >= outputWidth || dy >= outputHeight)
+                    continue;
+
+                using var srcFrame = srcBmp.Lock();
+                var src = (byte*)srcFrame.Address;
+                var tw = Math.Min(srcBmp.PixelSize.Width, outputWidth - dx);
+                var th = Math.Min(srcBmp.PixelSize.Height, outputHeight - dy);
+                if (tw <= 0 || th <= 0)
+                    continue;
+
+                var rowBytes = tw * 4;
+                for (var y = 0; y < th; y++)
+                {
+                    Buffer.MemoryCopy(
+                        src + y * srcFrame.RowBytes,
+                        dstPtr + (dy + y) * dstStride + dx * 4,
+                        rowBytes,
+                        rowBytes);
+                }
+            }
+        }
+
+        return bitmap;
     }
 
     public unsafe byte[] CompositeToBgra(IReadOnlyList<DrawingLayer> layers, int width, int height, uint paperColor = 0)
