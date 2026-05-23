@@ -151,7 +151,7 @@ public partial class MainWindow
         SetDocumentPanelsVisible(true);
         SyncCanvasFrameToDocument(fitToViewport: true);
         Avalonia.Threading.Dispatcher.UIThread.Post(
-            () => _canvas.EnsureDisplayCompositeSync(forceLod: 0),
+            () => _canvas.EnsureDisplayCompositeSync(),
             Avalonia.Threading.DispatcherPriority.Loaded);
         SyncBrushSizeLimits();
         BuildLayerList();
@@ -254,7 +254,7 @@ public partial class MainWindow
         SyncCanvasFrameToDocument(fitToViewport: true);
         // Layout + viewport must be valid before compositing visible tiles.
         Avalonia.Threading.Dispatcher.UIThread.Post(
-            () => _canvas.EnsureDisplayCompositeSync(forceLod: 0),
+            () => _canvas.EnsureDisplayCompositeSync(),
             Avalonia.Threading.DispatcherPriority.Loaded);
         SyncBrushSizeLimits();
         BuildLayerList();

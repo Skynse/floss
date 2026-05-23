@@ -77,24 +77,15 @@ public sealed class LayerCompositor : IDisposable
     // fast path. Reference-counted for overlapping queued strokes.
     private int _strokeSuspendDepth;
     private int _strokePaintLayerIndex = -1;
-    private PixelRegion? _strokeDirtyRegion;
     public bool StrokeSuspendActive => _strokeSuspendDepth > 0;
 
-    public void BeginStrokeSuspend(PixelRegion region)
+    public void BeginStrokeSuspend(PixelRegion _)
     {
         lock (CompositeGate)
         {
-            if (_strokeSuspendDepth == 0)
-                _strokeDirtyRegion = null;
             _strokeSuspendDepth++;
             _strokePaintLayerIndex = -1;
             Projection.ResetStrokeBelow();
-            if (!region.IsEmpty)
-            {
-                _strokeDirtyRegion = _strokeDirtyRegion is { } existing
-                    ? existing.Union(region)
-                    : region;
-            }
         }
     }
 
@@ -105,47 +96,29 @@ public sealed class LayerCompositor : IDisposable
         {
             if (_strokeSuspendDepth == 0) return;
             Projection.InvalidateStrokeBelow(region);
-            _strokeDirtyRegion = _strokeDirtyRegion is { } existing
-                ? existing.Union(region)
-                : region;
         }
     }
 
     public void EndStrokeSuspend()
     {
-        PixelRegion? refreshRegion = null;
         lock (CompositeGate)
         {
             if (_strokeSuspendDepth > 0) _strokeSuspendDepth--;
             if (_strokeSuspendDepth > 0) return;
-            refreshRegion = _strokeDirtyRegion;
-            _strokeDirtyRegion = null;
             _strokePaintLayerIndex = -1;
             Projection.ResetStrokeBelow();
         }
-
-        // Rebuild coarser display LODs from the stroke bbox — live drawing
-        // only touched LOD 0 tiles to avoid patchwork fallback holes.
-        if (refreshRegion is { } region && !region.IsEmpty && _width > 0 && _height > 0)
-            QueueDirtyTilesForRegionAllLods(region.ClipTo(_width, _height));
     }
 
     /// <summary>Force-clear stroke-suspend state after an abandoned or interrupted stroke.</summary>
     public void ResetStrokeSuspend()
     {
-        PixelRegion? refreshRegion = null;
         lock (CompositeGate)
         {
-            if (_strokeSuspendDepth == 0) return;
-            refreshRegion = _strokeDirtyRegion;
-            _strokeDirtyRegion = null;
             _strokeSuspendDepth = 0;
             _strokePaintLayerIndex = -1;
             Projection.ResetStrokeBelow();
         }
-
-        if (refreshRegion is { } region && !region.IsEmpty && _width > 0 && _height > 0)
-            QueueDirtyTilesForRegionAllLods(region.ClipTo(_width, _height));
     }
     public int LastDirtyTileCount { get; private set; }
     public int LastMissingTileCount { get; private set; }
@@ -234,9 +207,7 @@ public sealed class LayerCompositor : IDisposable
         // which is exactly the freeze users notice. Bitmaps removed mid-iter
         // stay alive via the disposal queue until the next UI tick.
         var snapshot = _compTiles.ToArray();
-        // Live strokes always composite and display LOD 0 — mixing in coarser
-        // cached tiles during a stroke is what produces rectangular patch holes.
-        var displayLod = StrokeSuspendActive ? 0 : _currentLod;
+        var displayLod = _currentLod;
         var pendingCurrentLod = new HashSet<(int X, int Y)>();
         foreach (var kv in _tilesPendingComposite)
         {
@@ -244,7 +215,7 @@ public sealed class LayerCompositor : IDisposable
                 pendingCurrentLod.Add((kv.Key.X, kv.Key.Y));
         }
 
-        if (!StrokeSuspendActive && CurrentLodHasVisibleHoles(visibleViewport, snapshot, pendingCurrentLod, displayLod))
+        if (CurrentLodHasVisibleHoles(visibleViewport, snapshot, pendingCurrentLod, displayLod))
         {
             foreach (var lod in CachedFallbackLods(snapshot, displayLod))
             {
@@ -262,9 +233,7 @@ public sealed class LayerCompositor : IDisposable
             var ((tx, ty, lod), bmp) = snapshot[i];
             if (lod != displayLod) continue;
             // Skip not-yet-composited tiles — they are cleared to transparent and
-            // punch through to paper white. During strokes at LOD 0 there is no
-            // finer fallback; briefly showing checkerboard is preferable to a
-            // solid white tile hole that persists until composite finishes.
+            // punch through to paper white. Prefer finer-LOD fallback when available.
             if (pendingCurrentLod.Contains((tx, ty)))
             {
                 if (displayLod > 0 && HasFinerLodFallback(snapshot, tx, ty, displayLod))
@@ -443,19 +412,9 @@ public sealed class LayerCompositor : IDisposable
                 {
                     if (!_fullDirty)
                         _dirtyRegion = _dirtyRegion is { } existing ? existing.Union(tileRegion) : tileRegion;
-                    // Property previews (opacity scrub, visibility) only need the
-                    // display LOD; other LODs refresh on zoom change.
-                    if (metadataOnly)
-                        QueueDirtyTilesForRegionAtLod(tileRegion, _currentLod);
-                    else if (_strokeSuspendDepth > 0)
-                    {
-                        QueueDirtyTilesForRegionAtLod(tileRegion, 0);
-                        _strokeDirtyRegion = _strokeDirtyRegion is { } strokeDirty
-                            ? strokeDirty.Union(tileRegion)
-                            : tileRegion;
-                    }
-                    else
-                        QueueDirtyTilesForRegionAllLods(tileRegion);
+                    // Only mark the active display LOD dirty — other LODs refresh
+                    // on zoom change (lodChanged + missing-tile bootstrap).
+                    QueueDirtyTilesForRegionAtLod(tileRegion, _currentLod);
                 }
 
                 InvalidateGroupCaches(cacheRegion, layers, layerIndex);
@@ -501,7 +460,7 @@ public sealed class LayerCompositor : IDisposable
         var rootLayers = LayerStackComposition.SelectLayersForComposite(layers);
 
         var prevLod = _currentLod;
-        var lod = forceLod ?? (_strokeSuspendDepth > 0 ? 0 : SelectLod(width, height, zoom));
+        var lod = forceLod ?? SelectLod(width, height, zoom);
         var lodChanged = lod != prevLod;
         _currentLod = lod;
         var scale = 1 << lod;

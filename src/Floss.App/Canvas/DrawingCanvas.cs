@@ -151,7 +151,7 @@ public sealed class DrawingCanvas : Control, IDisposable
 
     /// <summary>
     /// Call after replacing the document (open/import). Clears display LOD state so the
-    /// next paint bootstraps compositor tiles at full resolution.
+    /// next paint bootstraps compositor tiles at the zoom-appropriate LOD.
     /// </summary>
     public void ResetDisplayAfterDocumentLoad()
     {
@@ -162,8 +162,9 @@ public sealed class DrawingCanvas : Control, IDisposable
 
     /// <summary>
     /// Synchronously fill viewport compositor tiles (used after open/import).
+    /// Uses the LOD for the current zoom — not forced full resolution.
     /// </summary>
-    public void EnsureDisplayCompositeSync(int? forceLod = 0)
+    public void EnsureDisplayCompositeSync()
     {
         if (!HasAnyLayerContent(_document.Layers)) return;
 
@@ -177,7 +178,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             for (var pass = 0; pass < 64; pass++)
             {
                 if (!_compositor.Composite(_document.Layers, _document.Width, _document.Height,
-                        paperUint, viewport, zoom, forceLod))
+                        paperUint, viewport, zoom))
                     break;
                 if (_compositor.PendingDirtyTileCount == 0)
                     break;
@@ -1204,8 +1205,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             _lastRenderZoom = zoom;
 
             bool needSync = !_compositor.HasAnyTiles && !_compositor.IsCompositeActive;
-            bool preferSync = _compositor.StrokeSuspendActive
-                || lodTransition
+            bool preferSync = lodTransition
                 || (zoomTick && _compositor.PendingDirtyTileCount > 0 && !_compositor.IsCompositeActive)
                 || (_projectionScheduler.LastApplyWasMetadataOnly
                     && _compositor.PendingDirtyTileCount > 0

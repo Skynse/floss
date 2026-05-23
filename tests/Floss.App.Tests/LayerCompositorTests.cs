@@ -102,22 +102,22 @@ public class LayerCompositorTests
     }
 
     [Fact]
-    public void Composite_InvalidatesAllLodsOnPartialDirty()
+    public void Composite_InvalidatesActiveLodOnPartialDirty()
     {
+        EnsureAvalonia();
         using var compositor = new LayerCompositor();
+        compositor.SetSize(1024, 1024);
         var region = new PixelRegion(512, 512, 128, 128);
+        compositor.Composite([], 1024, 1024, viewport: new PixelRegion(0, 0, 1024, 1024), zoom: 0.05);
+        var activeLod = compositor.LastLod;
         compositor.Invalidate(region);
-        var lod0 = LayerCompositor.CountTilesForRegion(region, lod: 0);
-        var lod1 = LayerCompositor.CountTilesForRegion(region, lod: 1);
-        var lod2 = LayerCompositor.CountTilesForRegion(region, lod: 2);
-        TestAssertions.True(lod0 > 0);
-        TestAssertions.True(lod1 > 0);
-        TestAssertions.True(lod2 > 0);
-        TestAssertions.True(compositor.PendingDirtyTileCount >= lod0 + lod1 + lod2);
+        var expected = LayerCompositor.CountTilesForRegion(region, lod: activeLod);
+        TestAssertions.True(expected > 0);
+        TestAssertions.Equal(expected, compositor.PendingDirtyTileCount);
     }
 
     [Fact]
-    public void Composite_UsesLodZeroDuringStrokeSuspend()
+    public void Composite_UsesZoomLodDuringStrokeSuspend()
     {
         EnsureAvalonia();
         var background = new DrawingLayer("Background", 64, 64);
@@ -126,27 +126,8 @@ public class LayerCompositorTests
         using var compositor = new LayerCompositor();
         compositor.BeginStrokeSuspend(new PixelRegion(0, 0, 64, 64));
         compositor.Composite([background], 64, 64, viewport: new PixelRegion(0, 0, 64, 64), zoom: 0.05);
-        TestAssertions.Equal(0, compositor.LastLod);
+        TestAssertions.True(compositor.LastLod > 0, "Low zoom should use a coarser display LOD during strokes.");
         compositor.EndStrokeSuspend();
-    }
-
-    [Fact]
-    public void Invalidate_DuringStrokeSuspend_OnlyQueuesLodZeroUntilStrokeEnds()
-    {
-        using var compositor = new LayerCompositor();
-        compositor.SetSize(1024, 1024);
-        var region = new PixelRegion(512, 512, 128, 128);
-        var lod0 = LayerCompositor.CountTilesForRegion(region, lod: 0);
-        var allLods = lod0
-            + LayerCompositor.CountTilesForRegion(region, lod: 1)
-            + LayerCompositor.CountTilesForRegion(region, lod: 2);
-
-        compositor.BeginStrokeSuspend(region);
-        compositor.Invalidate(region);
-        TestAssertions.Equal(lod0, compositor.PendingDirtyTileCount);
-
-        compositor.EndStrokeSuspend();
-        TestAssertions.True(compositor.PendingDirtyTileCount >= allLods);
     }
 
     [Fact]
