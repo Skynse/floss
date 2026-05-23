@@ -1204,7 +1204,8 @@ public sealed class DrawingCanvas : Control, IDisposable
             _lastRenderZoom = zoom;
 
             bool needSync = !_compositor.HasAnyTiles && !_compositor.IsCompositeActive;
-            bool preferSync = lodTransition
+            bool preferSync = _compositor.StrokeSuspendActive
+                || lodTransition
                 || (zoomTick && _compositor.PendingDirtyTileCount > 0 && !_compositor.IsCompositeActive)
                 || (_projectionScheduler.LastApplyWasMetadataOnly
                     && _compositor.PendingDirtyTileCount > 0

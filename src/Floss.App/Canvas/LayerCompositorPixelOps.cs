@@ -11,6 +11,61 @@ internal static class LayerCompositorPixelOps
 {
     internal const int MonochromeThreshold = 128;
 
+    internal static unsafe void CompositeBgraBuffer(
+        byte* dst,
+        int dstStride,
+        byte* src,
+        int srcStride,
+        string blendMode,
+        double opacity,
+        PixelRegion clip,
+        int originX,
+        int originY)
+    {
+        if (opacity <= 0) return;
+
+        if (blendMode == "Normal")
+        {
+            var opacityByte = (uint)Math.Round(opacity * 255);
+            for (var docY = clip.Y; docY < clip.Bottom; docY++)
+            {
+                var srcRow = src + (docY - clip.Y) * srcStride;
+                var dstRow = dst + (docY - originY) * dstStride;
+                var dstPtr = dstRow + (clip.X - originX) * 4;
+                CompositeNormalRowManaged.Composite(dstPtr, srcRow, clip.Width, opacityByte);
+            }
+            return;
+        }
+
+        for (var docY = clip.Y; docY < clip.Bottom; docY++)
+        {
+            var srcRow = src + (docY - clip.Y) * srcStride;
+            var dstRow = dst + (docY - originY) * dstStride;
+
+            for (var docX = clip.X; docX < clip.Right; docX++)
+            {
+                var srcIdx = (docX - clip.X) * 4;
+                var rawA = srcRow[srcIdx + 3];
+                if (rawA == 0) continue;
+
+                var dstIdx = (docX - originX) * 4;
+                var srcA = rawA / 255.0 * opacity;
+                if (srcA <= 0) continue;
+
+                var srcB = srcRow[srcIdx + 0] / 255.0;
+                var srcG = srcRow[srcIdx + 1] / 255.0;
+                var srcR = srcRow[srcIdx + 2] / 255.0;
+                var dstB = dstRow[dstIdx + 0] / 255.0;
+                var dstG = dstRow[dstIdx + 1] / 255.0;
+                var dstR = dstRow[dstIdx + 2] / 255.0;
+                var dstA = dstRow[dstIdx + 3] / 255.0;
+
+                var (blendR, blendG, blendB) = ApplyBlendMode(srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendMode);
+                BlendPixel(dstRow + dstIdx, srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendR, blendG, blendB);
+            }
+        }
+    }
+
     internal static unsafe void CompositeProjectionBuffer(
         byte* dst,
         int dstStride,

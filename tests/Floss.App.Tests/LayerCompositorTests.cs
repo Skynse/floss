@@ -117,6 +117,39 @@ public class LayerCompositorTests
     }
 
     [Fact]
+    public void Composite_UsesLodZeroDuringStrokeSuspend()
+    {
+        EnsureAvalonia();
+        var background = new DrawingLayer("Background", 64, 64);
+        background.Pixels.SetPixel(5, 5, 255, 0, 0, 255);
+
+        using var compositor = new LayerCompositor();
+        compositor.BeginStrokeSuspend(new PixelRegion(0, 0, 64, 64));
+        compositor.Composite([background], 64, 64, viewport: new PixelRegion(0, 0, 64, 64), zoom: 0.05);
+        TestAssertions.Equal(0, compositor.LastLod);
+        compositor.EndStrokeSuspend();
+    }
+
+    [Fact]
+    public void Invalidate_DuringStrokeSuspend_OnlyQueuesLodZeroUntilStrokeEnds()
+    {
+        using var compositor = new LayerCompositor();
+        compositor.SetSize(1024, 1024);
+        var region = new PixelRegion(512, 512, 128, 128);
+        var lod0 = LayerCompositor.CountTilesForRegion(region, lod: 0);
+        var allLods = lod0
+            + LayerCompositor.CountTilesForRegion(region, lod: 1)
+            + LayerCompositor.CountTilesForRegion(region, lod: 2);
+
+        compositor.BeginStrokeSuspend(region);
+        compositor.Invalidate(region);
+        TestAssertions.Equal(lod0, compositor.PendingDirtyTileCount);
+
+        compositor.EndStrokeSuspend();
+        TestAssertions.True(compositor.PendingDirtyTileCount >= allLods);
+    }
+
+    [Fact]
     public void SampleCompositePixel_MatchesCompositeToBgra_ForRealCharacterLayerOnly()
     {
         const string path = "/home/neckles/Downloads/electrichearts_20250824A_kiki.kra";

@@ -24,6 +24,13 @@ internal sealed class LayerProjectionPlane : IDisposable
     /// <summary>Cached composite of layers below the active stroke layer (stroke fast path).</summary>
     public GroupProjectionCache? StrokeBelow { get; private set; }
 
+    /// <summary>
+    /// When true, non–pass-through groups merge children directly into a temp
+    /// buffer instead of the group projection cache. Avoids clear-and-refill
+    /// races on the cache during live brush strokes inside folders.
+    /// </summary>
+    public bool LiveMergeGroups { get; set; }
+
     public LayerProjectionPlane(ILayerMergeHost host)
     {
         _host = host;
@@ -61,7 +68,11 @@ internal sealed class LayerProjectionPlane : IDisposable
     }
 
     public void InvalidateStrokeBelow(PixelRegion? region)
-        => StrokeBelow?.Invalidate(region);
+    {
+        if (StrokeBelow is not { } strokeBelow) return;
+        lock (strokeBelow.SyncRoot)
+            strokeBelow.Invalidate(region);
+    }
 
     public GroupProjectionCache GetOrCreateStrokeBelow(int width, int height)
     {
@@ -75,40 +86,57 @@ internal sealed class LayerProjectionPlane : IDisposable
         return StrokeBelow;
     }
 
-    public void InvalidateGroupCaches(PixelRegion? region, IReadOnlyList<DrawingLayer>? layers, int? layerIndex)
+    public void InvalidateGroupCaches(PixelRegion? region, IReadOnlyList<DrawingLayer>? layers, int? layerIndex, bool fullGroupInvalidation = false)
     {
         DrawingLayer? changed = null;
         if (layers != null && layerIndex is >= 0 and var idx && idx < layers.Count)
             changed = layers[idx];
-        InvalidateGroupCaches(region, changed);
+        InvalidateGroupCaches(region, changed, fullGroupInvalidation);
     }
 
     /// <summary>
     /// Invalidate group projection caches along the parent chain (KisMergeWalker-style).
     /// </summary>
-    public void InvalidateGroupCaches(PixelRegion? region, DrawingLayer? changedLayer)
+    public void InvalidateGroupCaches(PixelRegion? region, DrawingLayer? changedLayer, bool fullGroupInvalidation = false)
     {
         if (region is null || region.Value.IsEmpty || changedLayer is null)
         {
             foreach (var cache in _groupCaches.Values)
-                cache.Invalidate(region);
-            StrokeBelow?.Invalidate(region);
+            {
+                lock (cache.SyncRoot)
+                    cache.Invalidate(region);
+            }
+            if (StrokeBelow is { } strokeBelow)
+            {
+                lock (strokeBelow.SyncRoot)
+                    strokeBelow.Invalidate(region);
+            }
             return;
         }
 
         var r = region.Value;
         if (changedLayer.IsGroup && _groupCaches.TryGetValue(changedLayer, out var ownCache))
-            ownCache.Invalidate(r);
+        {
+            lock (ownCache.SyncRoot)
+                ownCache.Invalidate(fullGroupInvalidation ? null : r);
+        }
 
         for (var parent = changedLayer.Parent; parent != null; parent = parent.Parent)
         {
             if (_groupCaches.TryGetValue(parent, out var cache))
-                cache.Invalidate(r);
+            {
+                lock (cache.SyncRoot)
+                    cache.Invalidate(fullGroupInvalidation ? null : r);
+            }
         }
 
         // A group that obliges this layer reads its pixels directly — no cache entry, but
         // any cached ancestor above that group still needs invalidation (handled by parent walk).
-        StrokeBelow?.Invalidate(r);
+        if (StrokeBelow is { } strokeBelowInv)
+        {
+            lock (strokeBelowInv.SyncRoot)
+                strokeBelowInv.Invalidate(r);
+        }
     }
 
     /// <summary>
@@ -218,6 +246,12 @@ internal sealed class LayerProjectionPlane : IDisposable
             return;
         }
 
+        if (LiveMergeGroups)
+        {
+            LiveMergeGroupNode(dst, dstStride, width, height, group, groupOpacity, clip, originX, originY);
+            return;
+        }
+
         if (TryObligeChild(group, clip, out var _, out var obligedProjection) && obligedProjection != null)
         {
             _host.CompositeProjectionBuffer(dst, dstStride, obligedProjection, group.BlendMode, groupOpacity, clip,
@@ -227,6 +261,41 @@ internal sealed class LayerProjectionPlane : IDisposable
 
         var projection = GetGroupProjection(group, clip);
         _host.CompositeProjectionBuffer(dst, dstStride, projection, group.BlendMode, groupOpacity, clip, originX, originY);
+    }
+
+    private unsafe void LiveMergeGroupNode(
+        byte* dst,
+        int dstStride,
+        int width,
+        int height,
+        DrawingLayer group,
+        double groupOpacity,
+        PixelRegion clip,
+        int originX,
+        int originY)
+    {
+        var tempLen = clip.Width * clip.Height * 4;
+        var temp = ArrayPool<byte>.Shared.Rent(tempLen);
+        try
+        {
+            Array.Clear(temp, 0, tempLen);
+            var stack = BuildSiblingStack(group.Children);
+            fixed (byte* tempPtr = temp)
+            {
+                CompositeSiblingStack(tempPtr, clip.Width * 4, clip.Width, clip.Height,
+                    stack, 1.0, clip, clip.X, clip.Y);
+            }
+
+            fixed (byte* tempPtr = temp)
+            {
+                LayerCompositorPixelOps.CompositeBgraBuffer(dst, dstStride, tempPtr, clip.Width * 4,
+                    group.BlendMode, groupOpacity, clip, originX, originY);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(temp);
+        }
     }
 
     /// <summary>
@@ -335,13 +404,9 @@ internal sealed class LayerProjectionPlane : IDisposable
                     }
 
                     cache.Buffer.CopyFromBgra(dirty, temp, dirty.Width * 4);
-                    // CompressTiles touches every cached tile in the group buffer;
-                    // doing it inline during interactive editing is what makes
-                    // opacity/visibility/blend previews feel laggy. Skip it on
-                    // the hot path — compression is a memory-pressure relief,
-                    // not required for correctness.
-                    if (cache.Buffer.HasContentTiles(dirty))
-                        cache.NoteRegionComposited(dirty);
+                    // Always mark the dirty rect composited — even when every
+                    // pixel is transparent, the cache was cleared and merged.
+                    cache.NoteRegionComposited(dirty);
                 }
                 finally
                 {
@@ -421,22 +486,29 @@ internal sealed class LayerProjectionPlane : IDisposable
             if (_fullDirty)
                 return clip;
 
+            // Pending dirty always wins over a previously composited clean region.
+            // Checking clean first caused rectangular holes when painting inside
+            // folders: the parent group cache was marked clean for a compositor
+            // tile while _dirtyRegion still covered the live stroke bbox.
+            if (_dirtyRegion is { } dirty)
+            {
+                var dirtyClip = dirty.Intersect(clip);
+                if (!dirtyClip.IsEmpty)
+                {
+                    if (dirtyClip.X == dirty.X && dirtyClip.Y == dirty.Y &&
+                        dirtyClip.Width == dirty.Width && dirtyClip.Height == dirty.Height)
+                        _dirtyRegion = null;
+                    return dirtyClip;
+                }
+            }
+
             if (_cleanRegion is { } clean && IsRegionCovered(clip, clean))
                 return PixelRegion.Empty;
 
-            if (_dirtyRegion is not { } dirty)
+            if (_dirtyRegion is null)
                 return clip;
 
-            var dirtyClip = dirty.Intersect(clip);
-            if (dirtyClip.IsEmpty)
-                return PixelRegion.Empty;
-
-            var remaining = dirtyClip.Width == dirty.Width && dirtyClip.Height == dirty.Height &&
-                            dirtyClip.X == dirty.X && dirtyClip.Y == dirty.Y
-                ? PixelRegion.Empty
-                : dirty;
-            _dirtyRegion = remaining.IsEmpty ? null : remaining;
-            return dirtyClip;
+            return PixelRegion.Empty;
         }
 
         public void FlushFullDirty()
