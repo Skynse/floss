@@ -1,0 +1,78 @@
+# GitLab CI — build Floss installers (no auto-update deploy).
+#
+# CI variables (optional):
+#   FLOSS_VERSION — override csproj Version at pack time
+#
+# Windows job needs a Windows runner (GitLab SaaS: tag saas-windows-medium-amd64,
+# or your own shell runner with .NET SDK installed).
+
+stages:
+  - test
+  - pack
+
+variables:
+  DOTNET_ROLL_FORWARD: LatestMajor
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  NUGET_PACKAGES: "$CI_PROJECT_DIR/.nuget/packages"
+
+.dotnet_cache: &dotnet_cache
+  cache:
+    key: dotnet-$CI_COMMIT_REF_SLUG
+    paths:
+      - .nuget/packages/
+
+test:
+  stage: test
+  image: mcr.microsoft.com/dotnet/sdk:10.0
+  <<: *dotnet_cache
+  script:
+    - dotnet restore
+    - dotnet test tests/Floss.App.Tests/Floss.App.Tests.csproj -c Release --no-restore
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
+pack:linux:
+  stage: pack
+  image: mcr.microsoft.com/dotnet/sdk:10.0
+  <<: *dotnet_cache
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq fuse libfuse2  # AppImage runtime helpers
+  script:
+    - dotnet tool restore
+    - chmod +x packaging/velopack/pack.sh
+    - ./packaging/velopack/pack.sh linux-x64
+  artifacts:
+    name: floss-linux-x64-$CI_COMMIT_REF_SLUG
+    expire_in: 90 days
+    paths:
+      - artifacts/velopack/linux-x64-beta/*.AppImage
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+    - when: manual
+      allow_failure: true
+
+pack:windows:
+  stage: pack
+  tags:
+    - saas-windows-medium-amd64
+  <<: *dotnet_cache
+  before_script:
+    - dotnet tool restore
+  script:
+    - packaging/velopack/pack.ps1 win-x64
+  artifacts:
+    name: floss-win-x64-$CI_COMMIT_REF_SLUG
+    expire_in: 90 days
+    paths:
+      - artifacts/velopack/win-x64-beta/*Setup.exe
+      - artifacts/velopack/win-x64-beta/*Portable.zip
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+    - when: manual
+      allow_failure: true

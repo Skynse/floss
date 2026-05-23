@@ -3,8 +3,7 @@ using System;
 namespace Floss.App.Canvas;
 
 /// <summary>
-/// Managed fallback for <see cref="Native.FlossCompositeNative"/> when the Rust
-/// cdylib is not on the load path.
+/// Integer Normal-blend row/region helpers for the compositor fast path.
 /// </summary>
 internal static unsafe class CompositeNormalRowManaged
 {

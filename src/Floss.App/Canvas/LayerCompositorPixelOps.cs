@@ -4,7 +4,6 @@ using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 using Avalonia.Media;
 using Floss.App.Document;
-using Floss.App.Native;
 
 namespace Floss.App.Canvas;
 
@@ -55,7 +54,7 @@ internal static class LayerCompositorPixelOps
                         var rowWidth = tileRight - tileLeft;
                         var dstPtr = dstRow + (tileLeft - originX) * 4;
                         fixed (byte* tileFix = tile)
-                            FlossCompositeNative.CompositeNormalRow(dstPtr, tileFix + tileRowBase, rowWidth, opacityByte);
+                            CompositeNormalRowManaged.Composite(dstPtr, tileFix + tileRowBase, rowWidth, opacityByte);
                     }
                 }
             }
@@ -499,7 +498,7 @@ internal static class LayerCompositorPixelOps
                             var docX0 = clipLeft + offsetX;
                             var dstPtr = dstRow + (docX0 - originX) * 4;
                             fixed (byte* tileFix = tile)
-                                FlossCompositeNative.CompositeNormalRow(dstPtr, tileFix + tileRowBase, rowWidth, opacityByte);
+                                CompositeNormalRowManaged.Composite(dstPtr, tileFix + tileRowBase, rowWidth, opacityByte);
                             continue;
                         }
 
