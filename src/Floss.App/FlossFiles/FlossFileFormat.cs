@@ -18,13 +18,15 @@ public static class FlossFileFormat
     private const string ManifestPath = "document.json";
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    public static void Save(Stream stream, DrawingDocument document)
+    public sealed record LoadedDocument(DrawingDocument Document, string? TimelapseSessionId);
+
+    public static void Save(Stream stream, DrawingDocument document, string? timelapseSessionId = null)
     {
         using var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true);
 
         WriteTextEntry(archive, "mimetype", MimeType, CompressionLevel.NoCompression);
 
-        var manifest = CreateManifest(document);
+        var manifest = CreateManifest(document, timelapseSessionId);
         WriteJsonEntry(archive, ManifestPath, manifest);
 
         for (var i = 0; i < document.Layers.Count; i++)
@@ -51,7 +53,16 @@ public static class FlossFileFormat
         WriteMergedImage(archive, document, "preview.png", maxSide: 512);
     }
 
+    public static LoadedDocument LoadDocument(Stream stream)
+    {
+        var document = LoadCore(stream, out var timelapseSessionId);
+        return new LoadedDocument(document, timelapseSessionId);
+    }
+
     public static DrawingDocument Load(Stream stream)
+        => LoadDocument(stream).Document;
+
+    private static DrawingDocument LoadCore(Stream stream, out string? timelapseSessionId)
     {
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
         var manifestEntry = archive.GetEntry(ManifestPath)
@@ -63,6 +74,8 @@ public static class FlossFileFormat
             manifest = JsonSerializer.Deserialize<FlossManifest>(manifestStream, JsonOptions)
                 ?? throw new InvalidDataException("Floss document manifest could not be read.");
         }
+
+        timelapseSessionId = manifest.TimelapseSessionId;
 
         if (!string.Equals(manifest.MimeType, MimeType, StringComparison.Ordinal))
             throw new InvalidDataException("File is not a Floss document.");
@@ -119,7 +132,7 @@ public static class FlossFileFormat
         return document;
     }
 
-    private static FlossManifest CreateManifest(DrawingDocument document)
+    private static FlossManifest CreateManifest(DrawingDocument document, string? timelapseSessionId = null)
     {
         var layerIndexes = new Dictionary<DrawingLayer, int>();
         for (var i = 0; i < document.Layers.Count; i++)
@@ -162,7 +175,8 @@ public static class FlossFileFormat
             Height = document.Height,
             ActiveLayerIndex = document.ActiveLayerIndex,
             PaperColor = new SerializableColor(document.PaperColor.R, document.PaperColor.G, document.PaperColor.B, document.PaperColor.A),
-            Layers = layers
+            Layers = layers,
+            TimelapseSessionId = string.IsNullOrWhiteSpace(timelapseSessionId) ? null : timelapseSessionId.Trim()
         };
     }
 
@@ -292,6 +306,7 @@ public static class FlossFileFormat
         [JsonPropertyName("activeLayerIndex")] public int ActiveLayerIndex { get; set; }
         [JsonPropertyName("paperColor")] public SerializableColor? PaperColor { get; set; }
         [JsonPropertyName("layers")] public List<FlossLayerManifest> Layers { get; set; } = [];
+        [JsonPropertyName("timelapseSessionId")] public string? TimelapseSessionId { get; set; }
     }
 
     private sealed class FlossLayerManifest

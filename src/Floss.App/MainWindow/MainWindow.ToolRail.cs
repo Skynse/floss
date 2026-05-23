@@ -223,13 +223,15 @@ public partial class MainWindow
         if (groups.Any(g => !g.Shortcut.IsEmpty && g.Shortcut.ToString() == template.Shortcut.ToString()))
             template.Shortcut = Input.KeyBinding.Empty;
 
+        var newGroup = App.ToolGroups.CreateGroupFromDefault(template, _brushAssets);
+
         var index = groups.IndexOf(afterGroup);
-        groups.Insert(index < 0 ? groups.Count : index + 1, template);
+        groups.Insert(index < 0 ? groups.Count : index + 1, newGroup);
         App.ToolGroups.Save();
         BuildToolRail();
 
-        var preset = template.ActivePreset ?? template.Presets.FirstOrDefault();
-        if (preset != null) ActivatePreset(template, preset);
+        var preset = newGroup.ActivePreset ?? newGroup.Presets.FirstOrDefault();
+        if (preset != null) ActivatePreset(newGroup, preset);
     }
 
     private void MoveToolGroup(ToolGroup group, int delta)

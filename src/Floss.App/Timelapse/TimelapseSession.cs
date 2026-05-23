@@ -37,6 +37,7 @@ public sealed class TimelapseManifest
 {
     public string SessionId { get; set; } = "";
     public string DocumentName { get; set; } = "Untitled";
+    public string? DocumentPath { get; set; }
     public int DocumentWidth { get; set; }
     public int DocumentHeight { get; set; }
     public int CaptureWidth { get; set; }
@@ -65,6 +66,7 @@ public sealed class TimelapseSession : IDisposable
 
     public string DirectoryPath { get; }
     public TimelapseManifest Manifest { get; private set; }
+    public string SessionId => Manifest.SessionId;
     public bool IsRecording { get { lock (_gate) return _isRecording; } }
     public int FrameCount { get { lock (_gate) return Manifest.Frames.Count; } }
 
@@ -112,6 +114,116 @@ public sealed class TimelapseSession : IDisposable
         }, isRecording: true);
         session.SaveManifest();
         return session;
+    }
+
+    public static TimelapseSession? TryLoad(string directoryPath, bool isRecording = false)
+    {
+        if (!Directory.Exists(directoryPath))
+            return null;
+
+        var manifestPath = Path.Combine(directoryPath, ManifestFileName);
+        if (!File.Exists(manifestPath))
+            return null;
+
+        TimelapseManifest manifest;
+        try
+        {
+            manifest = JsonSerializer.Deserialize<TimelapseManifest>(File.ReadAllText(manifestPath), JsonOptions)
+                ?? throw new InvalidDataException("Timelapse manifest was empty.");
+        }
+        catch
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(manifest.SessionId))
+            return null;
+
+        ReconcileFrameRecords(manifest, directoryPath);
+        return new TimelapseSession(directoryPath, manifest, isRecording);
+    }
+
+    public static TimelapseSession? FindForDocument(
+        string? documentPath,
+        string documentName,
+        int documentWidth,
+        int documentHeight,
+        string? sessionId = null,
+        string? timelapsesRoot = null)
+    {
+        var root = timelapsesRoot ?? AppPaths.TimelapsesDirectory;
+        if (!Directory.Exists(root))
+            return null;
+
+        if (!string.IsNullOrWhiteSpace(sessionId))
+        {
+            foreach (var directory in Directory.EnumerateDirectories(root))
+            {
+                var session = TryLoad(directory);
+                if (session != null && string.Equals(session.SessionId, sessionId, StringComparison.Ordinal))
+                    return session;
+            }
+        }
+
+        var normalizedPath = NormalizeDocumentPath(documentPath);
+        TimelapseSession? bestMatch = null;
+        var bestScore = long.MinValue;
+
+        foreach (var directory in Directory.EnumerateDirectories(root))
+        {
+            var session = TryLoad(directory);
+            if (session == null)
+                continue;
+
+            long score;
+            if (!string.IsNullOrEmpty(normalizedPath)
+                && string.Equals(NormalizeDocumentPath(session.Manifest.DocumentPath), normalizedPath, StringComparison.OrdinalIgnoreCase))
+            {
+                score = 1_000_000_000L + session.FrameCount;
+            }
+            else if (string.Equals(session.Manifest.DocumentName, documentName.Trim(), StringComparison.OrdinalIgnoreCase)
+                && session.Manifest.DocumentWidth == Math.Max(1, documentWidth)
+                && session.Manifest.DocumentHeight == Math.Max(1, documentHeight)
+                && session.FrameCount > 0)
+            {
+                score = 100_000_000L + session.FrameCount;
+            }
+            else
+            {
+                continue;
+            }
+
+            var lastFrameUtc = session.Manifest.Frames.Count > 0
+                ? session.Manifest.Frames[^1].CreatedUtc.UtcTicks
+                : session.Manifest.CreatedUtc.UtcTicks;
+            score = score * 10_000_000_000L + lastFrameUtc;
+
+            if (score > bestScore)
+            {
+                bestMatch = session;
+                bestScore = score;
+            }
+        }
+
+        return bestMatch;
+    }
+
+    public void BindDocumentPath(string? documentPath)
+    {
+        var normalized = NormalizeDocumentPath(documentPath);
+        if (string.IsNullOrEmpty(normalized))
+            return;
+
+        lock (_gate)
+        {
+            if (string.Equals(Manifest.DocumentPath, normalized, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            Manifest.DocumentPath = normalized;
+            _manifestDirty = true;
+        }
+
+        FlushManifest();
     }
 
     public void SetRecording(bool isRecording)
@@ -600,5 +712,62 @@ public sealed class TimelapseSession : IDisposable
             .ToArray())
             .Trim(' ', '.', '-');
         return string.IsNullOrWhiteSpace(safe) ? "Untitled" : safe;
+    }
+
+    private static string? NormalizeDocumentPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        try
+        {
+            return Path.GetFullPath(path.Trim());
+        }
+        catch
+        {
+            return path.Trim();
+        }
+    }
+
+    private static void ReconcileFrameRecords(TimelapseManifest manifest, string directoryPath)
+    {
+        var framesByIndex = manifest.Frames
+            .Where(f => !string.IsNullOrWhiteSpace(f.FileName))
+            .GroupBy(f => f.Index)
+            .ToDictionary(g => g.Key, g => g.Last());
+
+        foreach (var file in Directory.EnumerateFiles(directoryPath, "frame_*.jpg"))
+        {
+            var name = Path.GetFileName(file);
+            if (!TryParseFrameIndex(name, out var index))
+                continue;
+
+            if (framesByIndex.ContainsKey(index))
+                continue;
+
+            framesByIndex[index] = new TimelapseFrame
+            {
+                Index = index,
+                CreatedUtc = new DateTimeOffset(File.GetLastWriteTimeUtc(file), TimeSpan.Zero),
+                FileName = name
+            };
+        }
+
+        manifest.Frames = framesByIndex.Values
+            .OrderBy(f => f.Index)
+            .ToList();
+    }
+
+    private static bool TryParseFrameIndex(string fileName, out int index)
+    {
+        index = -1;
+        if (!fileName.StartsWith("frame_", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var stem = Path.GetFileNameWithoutExtension(fileName);
+        if (stem.Length <= "frame_".Length)
+            return false;
+
+        return int.TryParse(stem["frame_".Length..], out index);
     }
 }

@@ -20,9 +20,6 @@ public sealed class DirectDrawOutput : IOutputProcess
     private const double RenderSliceBudgetMs = 3.0;
     private const int MaxSegmentsPerSlice = 8;
     private const int InitialSegmentsPerSlice = 1;
-    private const int TargetMaxDabsPerQueuedSegment = 96;
-    private const double MinQueuedSegmentLength = 8.0;
-    private const double MaxQueuedSegmentLength = 96.0;
 
     public bool IsPaintOutput => true;
     private readonly BrushEngine _brushEngine;
@@ -122,55 +119,14 @@ public sealed class DirectDrawOutput : IOutputProcess
         for (var i = start; i < samples.Count; i++)
         {
             var sample = ToLayerSample(layer, samples[i]);
-            AppendBoundedSample(tx, brush, sample);
+            AppendBoundedSample(tx, sample);
             tx.LastQueuedInputIndex = i;
         }
     }
 
-    private static void AppendBoundedSample(StrokeTransaction tx, BrushPreset brush, CanvasInputSample sample)
+    private static void AppendBoundedSample(StrokeTransaction tx, CanvasInputSample sample)
     {
-        if (tx.QueuedSamples.Count == 0)
-        {
-            tx.QueuedSamples.Add(sample);
-            return;
-        }
-
-        var previous = tx.QueuedSamples[^1];
-        var distance = previous.DistanceTo(sample);
-        var maxLength = QueuedSegmentLength(brush);
-        if (distance <= maxLength)
-        {
-            tx.QueuedSamples.Add(sample);
-            return;
-        }
-
-        var pieces = Math.Clamp((int)Math.Ceiling(distance / maxLength), 1, 4096);
-        for (var i = 1; i <= pieces; i++)
-        {
-            var t = i / (double)pieces;
-            tx.QueuedSamples.Add(LerpSample(previous, sample, t));
-        }
-    }
-
-    private static double QueuedSegmentLength(BrushPreset brush)
-    {
-        var dabSpacing = BrushSpacing.EstimateDistance(brush);
-        return Math.Clamp(dabSpacing * TargetMaxDabsPerQueuedSegment, MinQueuedSegmentLength, MaxQueuedSegmentLength);
-    }
-
-    private static CanvasInputSample LerpSample(CanvasInputSample from, CanvasInputSample to, double t)
-    {
-        return new CanvasInputSample(
-            from.X + (to.X - from.X) * t,
-            from.Y + (to.Y - from.Y) * t,
-            from.Pressure + (to.Pressure - from.Pressure) * t,
-            from.TiltX + (to.TiltX - from.TiltX) * t,
-            from.TiltY + (to.TiltY - from.TiltY) * t,
-            from.Twist + (to.Twist - from.Twist) * t,
-            (long)(from.TimeMicros + (to.TimeMicros - from.TimeMicros) * t),
-            to.PointerId,
-            to.Source,
-            to.Phase);
+        tx.QueuedSamples.Add(sample);
     }
 
     private void EnsureActiveTransaction()

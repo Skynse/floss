@@ -31,9 +31,12 @@ public sealed class BrushPresetDocument
     public BrushTipSelectionMode TipSelectionMode { get; set; } = BrushTipSelectionMode.Single;
     public double Grain { get; set; }
     public double Smoothing { get; set; }
+    public double MaxSizePercent { get; set; } = BrushSizeLimits.DefaultMaxSizePercent;
     public bool AutoSpacingActive { get; set; }
     public double AutoSpacingCoeff { get; set; } = 1.0;
     public double SpeedSpacingStrength { get; set; }
+    public BrushGapMode GapMode { get; set; } = BrushGapMode.Normal;
+    public bool ContinuousSpraying { get; set; }
     public BrushQuality Quality { get; set; } = BrushQuality.High;
     public string? Texture { get; set; }
     public SKBlendMode BlendMode { get; set; }
@@ -68,9 +71,12 @@ public sealed class BrushPresetDocument
         TipSelectionMode = preset.TipSelectionMode,
         Grain = preset.Grain,
         Smoothing = preset.Smoothing,
+        MaxSizePercent = preset.MaxSizePercent,
         AutoSpacingActive = preset.AutoSpacingActive,
         AutoSpacingCoeff = preset.AutoSpacingCoeff,
         SpeedSpacingStrength = preset.SpeedSpacingStrength,
+        GapMode = preset.GapMode,
+        ContinuousSpraying = preset.ContinuousSpraying,
         Quality = preset.Quality,
         Texture = preset.Texture,
         BlendMode = preset.BlendMode,
@@ -101,9 +107,12 @@ public sealed class BrushPresetDocument
             TipSelectionMode = TipSelectionMode,
             Grain = Grain,
             Smoothing = Smoothing,
+            MaxSizePercent = MaxSizePercent <= 0 ? BrushSizeLimits.DefaultMaxSizePercent : MaxSizePercent,
             AutoSpacingActive = AutoSpacingActive,
             AutoSpacingCoeff = AutoSpacingCoeff <= 0 ? 1.0 : AutoSpacingCoeff,
             SpeedSpacingStrength = SpeedSpacingStrength,
+            GapMode = GapMode,
+            ContinuousSpraying = ContinuousSpraying,
             Quality = Quality,
             Texture = Texture,
             BlendMode = BlendMode,

@@ -9,6 +9,7 @@ public struct StrokeState
     public float LastTiltY;
     public float DistanceLeftover;
     public float NextStampDistance;
+    public double TimeLeftoverMs;
     public float TotalDistance;   // cumulative pixels painted in this stroke
     public int DabSeqNo;        // dabs placed since stroke start
     public float DrawingAngle;    // radians, direction of last stroke segment
@@ -22,6 +23,7 @@ public struct StrokeState
         LastTiltY = tiltY;
         DistanceLeftover = 0;
         NextStampDistance = 0;
+        TimeLeftoverMs = 0;
         TotalDistance = 0;
         DabSeqNo = 0;
         DrawingAngle = 0;

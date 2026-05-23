@@ -31,6 +31,26 @@ public sealed class CurveGraph : Control
 
     public event EventHandler<CurveChangedArgs>? CurveChanged;
 
+    public string? LeftAxisLabel { get; set; }
+    public string? RightAxisLabel { get; set; }
+
+    public bool IsEditingEnabled
+    {
+        get => _editingEnabled;
+        set
+        {
+            if (_editingEnabled == value) return;
+            _editingEnabled = value;
+            IsHitTestVisible = value;
+            InvalidateVisual();
+        }
+    }
+
+    private bool _editingEnabled = true;
+    private static readonly IBrush DisabledCurveBrush = new SolidColorBrush(Color.Parse("#3a4560"));
+    private static readonly IBrush DisabledPtBrush = new SolidColorBrush(Color.Parse("#556078"));
+    private static readonly IBrush DisabledLabelBrush = new SolidColorBrush(Color.Parse("#3a4254"));
+
     public float[] CurvePoints
     {
         get => _points.SelectMany(p => new[] { p.X, p.Y }).ToArray();
@@ -69,6 +89,12 @@ public sealed class CurveGraph : Control
         RenderCurve(ctx, w, h);
         RenderPoints(ctx, w, h);
         RenderLabel(ctx, w, h);
+        RenderAxisLabels(ctx, w, h);
+
+        if (!_editingEnabled)
+        {
+            ctx.DrawRectangle(new SolidColorBrush(Color.FromArgb(140, 9, 11, 15)), null, new Rect(0, 0, w, h));
+        }
     }
 
     private static void RenderGrid(DrawingContext ctx, double w, double h)
@@ -92,11 +118,13 @@ public sealed class CurveGraph : Control
             for (var i = 1; i <= Steps; i++)
                 gc.LineTo(CanvasPt(i / (float)Steps, Eval(i / (float)Steps), w, h));
         }
-        ctx.DrawGeometry(null, new Pen(CurveBrush, 2), geo);
+        ctx.DrawGeometry(null, new Pen(_editingEnabled ? CurveBrush : DisabledCurveBrush, 2), geo);
     }
 
     private void RenderPoints(DrawingContext ctx, double w, double h)
     {
+        if (!_editingEnabled) return;
+
         foreach (var (pt, i) in _points.Select((p, i) => (p, i)))
         {
             var cp = CanvasPt(pt.X, pt.Y, w, h);
@@ -107,13 +135,34 @@ public sealed class CurveGraph : Control
 
     private void RenderLabel(DrawingContext ctx, double w, double h)
     {
-        if (_dragIndex >= 0 && _dragIndex < _points.Count)
+        if (!_editingEnabled || _dragIndex < 0 || _dragIndex >= _points.Count) return;
+
+        var pt = _points[_dragIndex];
+        var text = $"({pt.X:0.00}, {pt.Y:0.00})";
+        var ft = new FormattedText(text, CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight, Typeface.Default, 8.5, LabelBrush);
+        ctx.DrawText(ft, new Point(4, 3));
+    }
+
+    private void RenderAxisLabels(DrawingContext ctx, double w, double h)
+    {
+        if (string.IsNullOrWhiteSpace(LeftAxisLabel) && string.IsNullOrWhiteSpace(RightAxisLabel))
+            return;
+
+        var brush = _editingEnabled ? LabelBrush : DisabledLabelBrush;
+
+        if (!string.IsNullOrWhiteSpace(LeftAxisLabel))
         {
-            var pt = _points[_dragIndex];
-            var text = $"({pt.X:0.00}, {pt.Y:0.00})";
-            var ft = new FormattedText(text, CultureInfo.InvariantCulture,
-                FlowDirection.LeftToRight, Typeface.Default, 8.5, LabelBrush);
-            ctx.DrawText(ft, new Point(4, 3));
+            var left = new FormattedText(LeftAxisLabel, CultureInfo.InvariantCulture,
+                FlowDirection.LeftToRight, Typeface.Default, 8.5, brush);
+            ctx.DrawText(left, new Point(4, h - left.Height - 2));
+        }
+
+        if (!string.IsNullOrWhiteSpace(RightAxisLabel))
+        {
+            var right = new FormattedText(RightAxisLabel, CultureInfo.InvariantCulture,
+                FlowDirection.LeftToRight, Typeface.Default, 8.5, brush);
+            ctx.DrawText(right, new Point(w - right.Width - 4, h - right.Height - 2));
         }
     }
 
@@ -165,6 +214,7 @@ public sealed class CurveGraph : Control
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
+        if (!_editingEnabled) return;
         if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
         var pos = e.GetPosition(this);
         var w = Bounds.Width;

@@ -356,7 +356,7 @@ public sealed class DrawingCanvas : Control, IDisposable
 
     public void SetBrushSize(double size)
     {
-        _brush = _brush with { Size = Math.Clamp(size, 1, 2000) };
+        _brush = _brush with { Size = Math.Clamp(size, BrushSizeLimits.MinDiameterPx, BrushSizeLimits.AbsoluteHardCapPx) };
         _ctx.Brush = _brush;
         InvalidateVisual();
     }

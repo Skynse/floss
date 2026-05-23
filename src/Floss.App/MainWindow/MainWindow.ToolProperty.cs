@@ -87,6 +87,7 @@ public partial class MainWindow
         {
             props.AddRange([
                 SliderProp("brush.size", "Brush Size", true, _sizeSlider, "px"),
+                SliderProp("brush.maxSizePercent", "Max Size", false, _maxSizePercentSlider, "%"),
                 SliderProp("brush.flow", "Flow", false, _flowSlider, "%"),
                 SliderProp("brush.hardness", "Hardness", true, _hardnessSlider, "%"),
                 SliderProp("brush.spacing", "Spacing", false, _spacingSlider, "%"),

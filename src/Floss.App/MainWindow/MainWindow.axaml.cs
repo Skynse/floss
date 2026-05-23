@@ -140,6 +140,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private StackPanel _toolPropertyPanel = null!;
     private TextBlock _toolPropertyTitle = null!;
     private Slider _sizeSlider = null!;
+    private Slider _maxSizePercentSlider = null!;
     private Slider _opacitySlider = null!;
     private Slider _hardnessSlider = null!;
     private Slider _spacingSlider = null!;
@@ -2351,6 +2352,11 @@ public partial class MainWindow : Window, Tools.IViewportController
         WireCanvas();
 
         SliderChanged(_sizeSlider, v => UpdateCurrentBrush(p => p with { Size = v }));
+        SliderChanged(_maxSizePercentSlider, v =>
+        {
+            UpdateCurrentBrush(p => p with { MaxSizePercent = v });
+            SyncBrushSizeLimits();
+        });
         SliderChanged(_opacitySlider, v => UpdateCurrentBrush(p => p with { Opacity = v }));
         SliderChanged(_flowSlider, v => UpdateCurrentBrush(p => p with { Flow = v }));
         SliderChanged(_hardnessSlider, v => UpdateCurrentBrush(p => p with { Hardness = v }));

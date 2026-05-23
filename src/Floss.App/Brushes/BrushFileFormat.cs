@@ -285,7 +285,8 @@ public static class BrushFileFormat
             Min = min,
             Max = max,
             VelocityEnabled = velocityEnabled,
-            VelocityStrength = velocityStrength
+            VelocityStrength = velocityStrength,
+            VelocityCurveData = ParameterDynamics.VelocityCurveFromStrength(velocityStrength)
         };
     }
 

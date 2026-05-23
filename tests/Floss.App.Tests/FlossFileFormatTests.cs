@@ -132,4 +132,21 @@ public class FlossFileFormatTests
         TestAssertions.Equal(1, loaded.Layers.Count);
         TestAssertions.Equal(PixelRegion.Empty, loaded.Layers[0].Pixels.ContentTileBounds);
     }
+
+    [Fact]
+    public void RoundTrip_PreservesTimelapseSessionId()
+    {
+        var doc = new DrawingDocument(64, 64);
+        doc.AddLayer();
+        const string sessionId = "20250522-120000-abc123";
+
+        using var stream = new MemoryStream();
+        Floss.App.FlossFiles.FlossFileFormat.Save(stream, doc, sessionId);
+
+        stream.Position = 0;
+        var loaded = Floss.App.FlossFiles.FlossFileFormat.LoadDocument(stream);
+
+        TestAssertions.Equal(sessionId, loaded.TimelapseSessionId);
+        TestAssertions.Equal(64, loaded.Document.Width);
+    }
 }

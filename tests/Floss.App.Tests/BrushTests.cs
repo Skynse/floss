@@ -95,6 +95,114 @@ public class BrushTests
     }
 
     [Fact]
+    public void ParameterDynamics_PreservesIndependentPressureAndVelocityCurves()
+    {
+        var dynamics = new ParameterDynamics
+        {
+            PressureEnabled = true,
+            CurveData = [0f, 0f, 0.5f, 0.25f, 1f, 1f],
+            VelocityEnabled = true,
+            VelocityCurveData = [0f, 1f, 0.5f, 0.55f, 1f, 0.2f],
+            Min = 0.1f,
+            Max = 0.9f
+        };
+
+        var preset = new BrushPreset("Test", 20, 1, 0.8, 0.1, Colors.Black, 0)
+        {
+            SizeDynamics = dynamics
+        };
+        var roundTripped = preset.SizeDynamics;
+
+        TestAssertions.SequenceEqual(dynamics.CurveData, roundTripped.CurveData);
+        TestAssertions.SequenceEqual(dynamics.VelocityCurveData, roundTripped.VelocityCurveData);
+        TestAssertions.True(roundTripped.PressureEnabled);
+        TestAssertions.True(roundTripped.VelocityEnabled);
+
+        var converted = BrushDynamics.ToCurveOption(dynamics);
+        converted.IsEnabled = true;
+        var option = BrushDynamics.ToParameterDynamics(converted);
+        TestAssertions.SequenceEqual(dynamics.VelocityCurveData, option.VelocityCurveData);
+        TestAssertions.False(SequenceEqual(dynamics.CurveData, option.VelocityCurveData));
+
+        static bool SequenceEqual(float[] a, float[] b)
+        {
+            if (a.Length != b.Length) return false;
+            for (var i = 0; i < a.Length; i++)
+                if (Math.Abs(a[i] - b[i]) > 0.0001f) return false;
+            return true;
+        }
+    }
+
+    [Fact]
+    public void ParameterDynamics_RoundTripsAllInputCurves()
+    {
+        var dynamics = new ParameterDynamics
+        {
+            PressureEnabled = true,
+            CurveData = [0f, 0.1f, 1f, 0.9f],
+            Min = 0.2f,
+            Max = 0.8f,
+            VelocityEnabled = true,
+            VelocityCurveData = [0f, 1f, 1f, 0.3f],
+            TiltEnabled = true,
+            TiltCurveData = [0f, 0.2f, 1f, 0.7f],
+            RandomEnabled = true,
+            RandomCurveData = [0f, 0.5f, 1f, 0.5f],
+            DistanceEnabled = true,
+            DistanceLength = 640f,
+            DistanceCurveData = [0f, 1f, 1f, 0.1f],
+            FadeEnabled = true,
+            FadeLength = 80f,
+            FadeCurveData = [0f, 1f, 0.5f, 0.5f]
+        };
+
+        var converted = BrushDynamics.ToCurveOption(dynamics);
+        converted.IsEnabled = true;
+        var roundTripped = BrushDynamics.ToParameterDynamics(converted);
+
+        TestAssertions.True(roundTripped.PressureEnabled);
+        TestAssertions.True(roundTripped.VelocityEnabled);
+        TestAssertions.True(roundTripped.TiltEnabled);
+        TestAssertions.True(roundTripped.RandomEnabled);
+        TestAssertions.True(roundTripped.DistanceEnabled);
+        TestAssertions.True(roundTripped.FadeEnabled);
+        TestAssertions.Near(640, roundTripped.DistanceLength, 0.01);
+        TestAssertions.Near(80, roundTripped.FadeLength, 0.01);
+        TestAssertions.SequenceEqual(dynamics.TiltCurveData, roundTripped.TiltCurveData);
+        TestAssertions.SequenceEqual(dynamics.RandomCurveData, roundTripped.RandomCurveData);
+        TestAssertions.SequenceEqual(dynamics.DistanceCurveData, roundTripped.DistanceCurveData);
+        TestAssertions.SequenceEqual(dynamics.FadeCurveData, roundTripped.FadeCurveData);
+    }
+
+    [Fact]
+    public void SensorConfig_CombinedTiltUsesPenTiltComponents()
+    {
+        var point = StrokePoint(tiltX: 45f, tiltY: 0f);
+        TestAssertions.Near(0.75, new SensorConfig { Type = SensorType.Tilt }.RawValue(point), 0.01);
+    }
+
+    [Fact]
+    public void BrushParameterGraph_FromDynamicsIncludesEnabledSensors()
+    {
+        var option = BrushDynamics.ToCurveOption(new ParameterDynamics
+        {
+            PressureEnabled = true,
+            CurveData = ParameterDynamics.IdentityCurve,
+            VelocityEnabled = true,
+            VelocityCurveData = ParameterDynamics.DefaultVelocityCurveData,
+            RandomEnabled = true,
+            RandomCurveData = ParameterDynamics.IdentityCurve
+        });
+        option.IsEnabled = true;
+
+        var graph = BrushParameterGraph.FromDynamics(BrushParameterTarget.Size, option);
+        TestAssertions.False(graph.Validate().Count > 0);
+        TestAssertions.True(graph.Nodes.Exists(n => n.Id == "velocity" && n.Strength > 0));
+        TestAssertions.True(graph.Nodes.Exists(n => n.Id == "random" && n.Strength > 0));
+        TestAssertions.False(graph.Nodes.Exists(n => n.Id == "tilt" && n.Strength > 0));
+    }
+
+    [Fact]
     public void BrushParameterGraph_EvaluatesStrokeInputs()
     {
         var graph = new BrushParameterGraph
@@ -268,6 +376,7 @@ public class BrushTests
         using var layer = new DrawingLayer("Layer", 512, 256);
         var brush = new BrushPreset("Low spacing", 48, 1, 0.75, 0.01, Colors.Black, 0)
         {
+            GapMode = BrushGapMode.Fixed,
             Tip = new ProceduralBrushTip(BrushTipShape.Circle),
             Shape = null,
             ColorMix = false,
@@ -293,6 +402,7 @@ public class BrushTests
         using var layer = new DrawingLayer("Layer", 512, 256);
         var brush = new BrushPreset("Shaped", 44, 1, 0.8, 0.02, Colors.Black, 0)
         {
+            GapMode = BrushGapMode.Fixed,
             Tip = new ProceduralBrushTip(BrushTipShape.Chalk),
             Shape = new ProceduralBrushTip(BrushTipShape.Rectangle),
             ColorMix = false,
@@ -318,6 +428,7 @@ public class BrushTests
         using var layer = new DrawingLayer("Layer", 512, 256);
         var brush = new BrushPreset("Multi-tip", 42, 1, 0.85, 0.02, Colors.Black, 0)
         {
+            GapMode = BrushGapMode.Fixed,
             Tip = new ProceduralBrushTip(BrushTipShape.Circle),
             Tips =
             [
@@ -398,6 +509,7 @@ public class BrushTests
         using var layer = new DrawingLayer("Layer", 1024, 512);
         var brush = new BrushPreset("Cache stress", 48, 1, 1, 0.008, Colors.Black, 0)
         {
+            GapMode = BrushGapMode.Fixed,
             Tip = new ImageBrushTip(ColoredTipPngBytes(SKColors.Red)),
             Shape = null,
             ColorMix = false,
@@ -636,7 +748,7 @@ public class BrushTests
     }
 
     [Fact]
-    public void DirectDraw_SplitsFastLongBrushSegments()
+    public void DirectDraw_KeepsLongBrushSegmentsIntact()
     {
         var document = new DrawingDocument();
         document.AddLayer();
@@ -644,6 +756,7 @@ public class BrushTests
         var ctx = new ToolContext(document);
         var brush = new BrushPreset("Fast low spacing", 36, 1, 1, 0.005, Colors.Black, 0)
         {
+            GapMode = BrushGapMode.Fixed,
             Dynamics = new BrushDynamics()
         };
         var first = Sample(0, 0, 0);
@@ -663,9 +776,8 @@ public class BrushTests
         var queued = (List<CanvasInputSample>)(txType.GetProperty("QueuedSamples")?.GetValue(tx)
             ?? throw new InvalidOperationException("Missing QueuedSamples."));
 
-        TestAssertions.True(queued.Count > 100, $"Expected long fast input to be split, got {queued.Count} queued samples.");
-        for (var i = 1; i < queued.Count; i++)
-            TestAssertions.True(queued[i - 1].DistanceTo(queued[i]) <= 96.001, "Queued brush segment exceeded render budget length.");
+        TestAssertions.Equal(2, queued.Count);
+        TestAssertions.Near(15_000, queued[0].DistanceTo(queued[1]), 0.001);
     }
 
     [Fact]
@@ -1635,7 +1747,9 @@ public class BrushTests
     private static StrokePoint StrokePoint(
         float pressure = 0.6f,
         float speed = 0.4f,
-        float random = 0.3f)
-        => new(10, 20, pressure, 45, -45, 90, MathF.PI, speed, 150, 10, random, 0.8f);
+        float random = 0.3f,
+        float tiltX = 45f,
+        float tiltY = -45f)
+        => new(10, 20, pressure, tiltX, tiltY, 90, MathF.PI, speed, 150, 10, random, 0.8f);
 }
 

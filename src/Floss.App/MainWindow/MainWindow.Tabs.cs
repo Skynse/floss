@@ -283,6 +283,7 @@ public partial class MainWindow
         _checkerboardOverlay?.InvalidateVisual();
         _resizeOverlay?.InvalidateVisual();
         SyncCanvasViewport();
+        SyncBrushSizeLimits();
         ResetTransientInputState();
         _workspaceViewport?.Focus();
     }

@@ -36,9 +36,13 @@ public sealed record BrushPreset(
     public double Grain { get; init; } = 0.0;
     public string? Texture { get; init; } = null;
     public double Smoothing { get; init; } = 0.3;
+    /// <summary>Brush Studio ceiling for the size slider, as percent of the canvas-scaled default max (100–400).</summary>
+    public double MaxSizePercent { get; init; } = BrushSizeLimits.DefaultMaxSizePercent;
     public bool AutoSpacingActive { get; init; } = false;
     public double AutoSpacingCoeff { get; init; } = 1.0;
     public double SpeedSpacingStrength { get; init; } = 0.0;
+    public BrushGapMode GapMode { get; init; } = BrushGapMode.Normal;
+    public bool ContinuousSpraying { get; init; } = false;
     public BrushQuality Quality { get; init; } = BrushQuality.High;
     public IBrushTip Tip { get; init; } = new ProceduralBrushTip();
     public SkiaSharp.SKBlendMode BlendMode { get; init; } = SkiaSharp.SKBlendMode.SrcOver;
@@ -75,8 +79,9 @@ public sealed record BrushPreset(
 
     public static IReadOnlyList<BrushPreset> Defaults { get; } =
     [
-        new("Round Sable", 20, 0.90, 0.68, 0.11, Color.Parse("#000000"), 100)
+        new("Round Sable", 20, 0.90, 0.68, 0.25, Color.Parse("#000000"), 100)
         {
+            GapMode = BrushGapMode.Normal,
             Dynamics = new BrushDynamics
             {
                 Size    = CurveOption.Pressure(1.55f),
@@ -86,8 +91,9 @@ public sealed record BrushPreset(
             Smoothing = 0.46,
             Tip = new ProceduralBrushTip(BrushTipShape.Ellipse, 0.82f)
         },
-        new("Technical Pen", 8, 1.0, 0.96, 0.09, Color.Parse("#000000"), 100)
+        new("Technical Pen", 8, 1.0, 0.96, 0.12, Color.Parse("#000000"), 100)
         {
+            GapMode = BrushGapMode.Narrow,
             Dynamics = new BrushDynamics
             {
                 Size    = CurveOption.Pressure(1.25f),
@@ -96,8 +102,9 @@ public sealed record BrushPreset(
             Smoothing = 0.42,
             Tip = new ProceduralBrushTip(BrushTipShape.Circle)
         },
-        new("Soft Round", 32, 0.78, 0.42, 0.14, Color.Parse("#000000"), 100)
+        new("Soft Round", 32, 0.78, 0.42, 0.25, Color.Parse("#000000"), 100)
         {
+            GapMode = BrushGapMode.Normal,
             Dynamics = new BrushDynamics
             {
                 Size    = CurveOption.Pressure(1.45f),
@@ -107,8 +114,9 @@ public sealed record BrushPreset(
             Smoothing = 0.38,
             Tip = new ProceduralBrushTip(BrushTipShape.SoftRound)
         },
-        new("Soft Graphite", 22, 0.58, 0.26, 0.17, Color.Parse("#000000"), 100)
+        new("Soft Graphite", 22, 0.58, 0.26, 0.25, Color.Parse("#000000"), 100)
         {
+            GapMode = BrushGapMode.Normal,
             Dynamics = new BrushDynamics
             {
                 Size    = CurveOption.Pressure(1.1f),
@@ -119,8 +127,9 @@ public sealed record BrushPreset(
             Grain = 0.52,
             Tip = new ProceduralBrushTip(BrushTipShape.Circle)
         },
-        new("Chisel Marker", 42, 0.68, 0.46, 0.18, Color.Parse("#000000"), 100)
+        new("Chisel Marker", 42, 0.68, 0.46, 0.25, Color.Parse("#000000"), 100)
         {
+            GapMode = BrushGapMode.Normal,
             Dynamics = new BrushDynamics
             {
                 Size    = CurveOption.Pressure(0.95f),
@@ -130,8 +139,10 @@ public sealed record BrushPreset(
             Smoothing = 0.50,
             Tip = new ProceduralBrushTip(BrushTipShape.Rectangle, 2.8f)
         },
-        new("Soft Airbrush", 64, 0.34, 0.08, 0.12, Color.Parse("#000000"), 100)
+        new("Soft Airbrush", 64, 0.34, 0.08, 0.25, Color.Parse("#000000"), 100)
         {
+            GapMode = BrushGapMode.Normal,
+            ContinuousSpraying = true,
             Dynamics = new BrushDynamics
             {
                 Size    = CurveOption.Pressure(1.0f),
@@ -142,8 +153,9 @@ public sealed record BrushPreset(
             Grain = 0.04,
             Tip = new ProceduralBrushTip(BrushTipShape.SoftRound)
         },
-        new("Smudge",      24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
+        new("Smudge",      24, 0.68, 0.75, 0.25, Color.Parse("#000000"), 0)
         {
+            GapMode = BrushGapMode.Normal,
             Dynamics = new BrushDynamics
             {
                 Size    = CurveOption.Pressure(1.0f),
@@ -162,8 +174,9 @@ public sealed record BrushPreset(
             SmudgeMode = SmudgeMode.Smudge,
             Smoothing = 0.45,
         },
-        new("Blend",       24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
+        new("Blend",       24, 0.68, 0.75, 0.25, Color.Parse("#000000"), 0)
         {
+            GapMode = BrushGapMode.Normal,
             Dynamics = new BrushDynamics
             {
                 Size    = CurveOption.Pressure(1.0f),
@@ -181,8 +194,9 @@ public sealed record BrushPreset(
             SmudgeMode = SmudgeMode.Blend,
             Smoothing = 0.45,
         },
-        new("Smear",       24, 0.68, 0.75, 0.10, Color.Parse("#000000"), 0)
+        new("Smear",       24, 0.68, 0.75, 0.25, Color.Parse("#000000"), 0)
         {
+            GapMode = BrushGapMode.Normal,
             Dynamics = new BrushDynamics
             {
                 Size    = CurveOption.Pressure(1.0f),

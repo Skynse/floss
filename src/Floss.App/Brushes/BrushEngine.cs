@@ -592,11 +592,14 @@ public sealed class BrushEngine : IDisposable
         var elapsedSeconds = Math.Max(0.001, (to.TimeMicros - from.TimeMicros) / 1_000_000.0);
         var velocity01 = Math.Clamp((float)(distance / elapsedSeconds / 5000.0), 0, 1);
 
-        if (distance > 0.001)
-        {
-            var currentAngle = MathF.Atan2((float)dy, (float)dx);
-            stroke.State.DrawingAngle = LerpAngle(stroke.State.DrawingAngle, currentAngle, 0.5f);
-        }
+        if (distance <= 0.001)
+            return BuildStampsContinuous(stroke, brush, from, to, velocity01);
+
+        var currentAngle = MathF.Atan2((float)dy, (float)dx);
+        stroke.State.DrawingAngle = LerpAngle(stroke.State.DrawingAngle, currentAngle, 0.5f);
+
+        if (IsStraightSegment(stroke, from, to))
+            return BuildStampsLinear(stroke, brush, from, to, distance, velocity01, ensureEndpoint);
 
         // Huge brushes: one dab per input segment when the footprint already
         // covers the move distance (Krita-style — avoids dozens of redundant
@@ -701,6 +704,93 @@ public sealed class BrushEngine : IDisposable
         return dirty;
     }
 
+    private static bool IsStraightSegment(ActiveStroke stroke, CanvasInputSample from, CanvasInputSample to)
+    {
+        var segDx = to.X - from.X;
+        var segDy = to.Y - from.Y;
+        var segLenSq = segDx * segDx + segDy * segDy;
+        if (segLenSq < 1e-6) return true;
+
+        var prevDx = from.X - stroke.State.LastX;
+        var prevDy = from.Y - stroke.State.LastY;
+        if (prevDx * prevDx + prevDy * prevDy < 1e-4) return true;
+
+        var cross = prevDx * segDy - prevDy * segDx;
+        var tol = Math.Sqrt(segLenSq) * 0.01 + 0.5;
+        return Math.Abs(cross) <= tol;
+    }
+
+    private PixelRegion BuildStampsLinear(
+        ActiveStroke stroke,
+        BrushPreset brush,
+        CanvasInputSample from,
+        CanvasInputSample to,
+        double distance,
+        float velocity01,
+        bool ensureEndpoint)
+    {
+        if (distance > 0.001)
+        {
+            var endpointSp = BuildStrokePoint(stroke, to, velocity01);
+            var endpointStamp = CreateStamp(stroke, brush, endpointSp);
+            if (ShouldCollapseToSingleStamp(endpointStamp, (float)distance, brush))
+            {
+                var collapsedDirty = PixelRegion.Empty;
+                if (!BrushSpacing.IsStampTooSmall(endpointStamp.Size))
+                {
+                    _stamps.Add(endpointStamp);
+                    collapsedDirty = StampBounds(endpointStamp);
+                    stroke.State.TotalDistance += (float)distance;
+                    stroke.State.DabSeqNo++;
+                }
+
+                stroke.State.DistanceLeftover = 0;
+                stroke.State.NextStampDistance = StampSpacing(brush, endpointStamp);
+                stroke.State.LastX = (float)to.X;
+                stroke.State.LastY = (float)to.Y;
+                stroke.State.LastPressure = (float)to.Pressure;
+                stroke.State.LastTiltX = (float)to.TiltX;
+                stroke.State.LastTiltY = (float)to.TiltY;
+                return collapsedDirty;
+            }
+        }
+
+        var dirty = PixelRegion.Empty;
+        var consumed = stroke.State.NextStampDistance - stroke.State.DistanceLeftover;
+        while (consumed <= distance)
+        {
+            var ratio = (float)(consumed / distance);
+            var sample = LerpCanvas(from, to, ratio);
+            var sp = BuildStrokePoint(stroke, sample, velocity01);
+            var stamp = CreateStamp(stroke, brush, sp);
+
+            if (!BrushSpacing.IsStampTooSmall(stamp.Size))
+            {
+                _stamps.Add(stamp);
+                dirty = dirty.Union(StampBounds(stamp));
+                stroke.State.TotalDistance += stroke.State.NextStampDistance;
+                stroke.State.DabSeqNo++;
+            }
+
+            stroke.State.NextStampDistance = StampSpacing(brush, stamp);
+            consumed += stroke.State.NextStampDistance;
+        }
+
+        stroke.State.DistanceLeftover = (float)distance - (consumed - stroke.State.NextStampDistance);
+        if (stroke.State.DistanceLeftover >= stroke.State.NextStampDistance)
+            stroke.State.DistanceLeftover = 0;
+
+        if (ensureEndpoint && _stamps.Count > 0)
+            dirty = dirty.Inflate((int)(_stamps[^1].Size * 0.25f + 1));
+
+        stroke.State.LastX = (float)to.X;
+        stroke.State.LastY = (float)to.Y;
+        stroke.State.LastPressure = (float)to.Pressure;
+        stroke.State.LastTiltX = (float)to.TiltX;
+        stroke.State.LastTiltY = (float)to.TiltY;
+        return dirty;
+    }
+
     private static StrokePoint BuildStrokePoint(ActiveStroke stroke, CanvasInputSample sample, float velocity01)
         => new(
             x: (float)sample.X, y: (float)sample.Y,
@@ -716,13 +806,61 @@ public sealed class BrushEngine : IDisposable
     private static float StampSpacing(BrushPreset brush, StampSample stamp)
         => BrushSpacing.EffectiveDistance(brush, stamp.Size, stamp.SpacingMultiplier, stamp.Speed);
 
+    private PixelRegion BuildStampsContinuous(
+        ActiveStroke stroke,
+        BrushPreset brush,
+        CanvasInputSample from,
+        CanvasInputSample to,
+        float velocity01)
+    {
+        if (!brush.ContinuousSpraying)
+            return PixelRegion.Empty;
+
+        var elapsedMs = Math.Max(0, (to.TimeMicros - from.TimeMicros) / 1000.0);
+        if (elapsedMs <= 0)
+            return PixelRegion.Empty;
+
+        var sp = BuildStrokePoint(stroke, to, velocity01);
+        var stamp = CreateStamp(stroke, brush, sp);
+        var spacing = StampSpacing(brush, stamp);
+
+        const float referenceVelocity = 1000f;
+        var msPerDab = spacing / referenceVelocity * 1000f;
+        msPerDab = Math.Clamp(msPerDab, 12, 400);
+
+        stroke.State.TimeLeftoverMs += elapsedMs;
+        var dirty = PixelRegion.Empty;
+        while (stroke.State.TimeLeftoverMs >= msPerDab)
+        {
+            stroke.State.TimeLeftoverMs -= msPerDab;
+            sp = BuildStrokePoint(stroke, to, velocity01);
+            stamp = CreateStamp(stroke, brush, sp);
+            if (!BrushSpacing.IsStampTooSmall(stamp.Size))
+            {
+                _stamps.Add(stamp);
+                dirty = dirty.Union(StampBounds(stamp));
+                stroke.State.DabSeqNo++;
+            }
+        }
+
+        stroke.State.LastX = (float)to.X;
+        stroke.State.LastY = (float)to.Y;
+        stroke.State.LastPressure = (float)to.Pressure;
+        stroke.State.LastTiltX = (float)to.TiltX;
+        stroke.State.LastTiltY = (float)to.TiltY;
+        return dirty;
+    }
+
     private static bool ShouldCollapseToSingleStamp(StampSample stamp, float distance, BrushPreset brush)
     {
-        if (stamp.Size < 128f || distance < 0.5f)
+        if (distance < 0.5f)
             return false;
 
         var spacing = BrushSpacing.EffectiveDistance(brush, stamp.Size, stamp.SpacingMultiplier, stamp.Speed);
-        return distance <= stamp.Size * 0.75f || distance <= spacing * 0.5f;
+        if (distance <= spacing * 0.85f)
+            return true;
+
+        return stamp.Size >= 64f && distance <= stamp.Size * 0.75f;
     }
 
     private static StampSample CreateStamp(ActiveStroke stroke, BrushPreset brush, in StrokePoint sp)
@@ -3169,6 +3307,19 @@ public sealed class BrushEngine : IDisposable
             a.Twist + (b.Twist - a.Twist) * t,
             time, to.PointerId, to.Source, to.Phase);
     }
+
+    private static CanvasInputSample LerpCanvas(CanvasInputSample from, CanvasInputSample to, float t)
+        => new(
+            from.X + (to.X - from.X) * t,
+            from.Y + (to.Y - from.Y) * t,
+            from.Pressure + (to.Pressure - from.Pressure) * t,
+            from.TiltX + (to.TiltX - from.TiltX) * t,
+            from.TiltY + (to.TiltY - from.TiltY) * t,
+            from.Twist + (to.Twist - from.Twist) * t,
+            (long)(from.TimeMicros + (to.TimeMicros - from.TimeMicros) * t),
+            to.PointerId,
+            to.Source,
+            to.Phase);
 
     private static SplinePoint CatmullRom(SplinePoint p0, SplinePoint p1, SplinePoint p2, SplinePoint p3, float t)
     {

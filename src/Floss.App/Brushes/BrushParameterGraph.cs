@@ -126,25 +126,41 @@ public sealed class BrushParameterGraph
     public static BrushParameterGraph FromDynamics(BrushParameterTarget target, CurveOption option)
     {
         var dyn = BrushDynamics.ToParameterDynamics(option);
+        var nodes = new List<BrushParameterNode>
+        {
+            new() { Id = "constant", Kind = BrushParameterNodeKind.Constant, Value = 1f }
+        };
+        var mixInputs = new List<string> { "constant" };
+
+        void AddSensor(string id, BrushParameterNodeKind kind, bool enabled, IReadOnlyList<float> curve, float min = 0f, float max = 1f)
+        {
+            nodes.Add(new BrushParameterNode
+            {
+                Id = id,
+                Kind = kind,
+                Strength = enabled ? 1f : 0f,
+                Min = min,
+                Max = max,
+                Curve = curve.ToList()
+            });
+            if (enabled)
+                mixInputs.Add(id);
+        }
+
+        AddSensor("pressure", BrushParameterNodeKind.Pressure, dyn.PressureEnabled, dyn.CurveData, dyn.Min, dyn.Max);
+        AddSensor("velocity", BrushParameterNodeKind.Velocity, dyn.VelocityEnabled, dyn.VelocityCurveData);
+        AddSensor("tilt", BrushParameterNodeKind.Tilt, dyn.TiltEnabled, dyn.TiltCurveData);
+        AddSensor("random", BrushParameterNodeKind.Random, dyn.RandomEnabled, dyn.RandomCurveData);
+
+        const string mixId = "mix";
+        nodes.Add(new BrushParameterNode { Id = mixId, Kind = BrushParameterNodeKind.Multiply, Inputs = mixInputs });
+        nodes.Add(new BrushParameterNode { Id = "output", Kind = BrushParameterNodeKind.Output, Inputs = [mixId] });
+
         return new BrushParameterGraph
         {
             Target = target,
             OutputNodeId = "output",
-            Nodes =
-            [
-                new BrushParameterNode { Id = "constant", Kind = BrushParameterNodeKind.Constant, Value = 1f },
-                new BrushParameterNode
-                {
-                    Id = "pressure",
-                    Kind = BrushParameterNodeKind.Pressure,
-                    Strength = dyn.PressureEnabled ? 1f : 0f,
-                    Min = dyn.Min,
-                    Max = dyn.Max,
-                    Curve = dyn.CurveData.ToList()
-                },
-                new BrushParameterNode { Id = "mix", Kind = BrushParameterNodeKind.Multiply, Inputs = ["constant", "pressure"] },
-                new BrushParameterNode { Id = "output", Kind = BrushParameterNodeKind.Output, Inputs = ["mix"] }
-            ]
+            Nodes = nodes
         };
     }
 

@@ -8,6 +8,7 @@ using Avalonia.Media;
 using Avalonia.VisualTree;
 using Floss.App.Canvas;
 using Floss.App.Document;
+using Floss.App.Brushes;
 using Floss.App.Processes.Input;
 using Floss.App.Processes.Output;
 using Floss.App.Input;
@@ -599,9 +600,35 @@ public partial class MainWindow : ICanvasInputHost
     }
 
     private double GetActiveToolSizeMaximum()
+        => ResolveBrushSizeMaximum();
+
+    private double ResolveBrushSizeMaximum()
     {
         var preset = _activeToolGroup?.ActivePreset;
-        return preset?.OutputProcess == OutputProcessType.Liquify ? 500 : _sizeSlider.Maximum;
+        if (preset?.OutputProcess == OutputProcessType.Liquify)
+            return 500;
+
+        var brushPreset = _activePreset ?? _canvas?.Brush;
+        var maxPercent = brushPreset?.MaxSizePercent ?? BrushSizeLimits.DefaultMaxSizePercent;
+        if (_canvas?.HasDocument == true)
+        {
+            return BrushSizeLimits.EffectiveMaximum(
+                _canvas.Document.Width,
+                _canvas.Document.Height,
+                maxPercent);
+        }
+
+        return BrushSizeLimits.FallbackMaxDiameterPx;
+    }
+
+    internal void SyncBrushSizeLimits()
+    {
+        var max = ResolveBrushSizeMaximum();
+        _sizeSlider.Maximum = max;
+
+        var current = GetActiveToolSize();
+        if (current > max)
+            SetActiveToolSize(max);
     }
 
     private void SetActiveToolSize(double size)

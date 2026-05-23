@@ -149,6 +149,7 @@ public partial class MainWindow
         _canvasFrame.IsVisible = true;
         SetDocumentPanelsVisible(true);
         SyncCanvasFrameToDocument(fitToViewport: true);
+        SyncBrushSizeLimits();
         BuildLayerList();
         UpdateStatus();
         UpdateTitle();
@@ -182,7 +183,7 @@ public partial class MainWindow
             var imported = await System.Threading.Tasks.Task.Run(() => LoadDocumentFromStream(stream, path));
             busy.Report("Applying document…");
             await NewTabAsync();
-            ApplyOpenedDocument(imported, path);
+            ApplyOpenedDocument(imported.Document, path, imported.TimelapseSessionId);
         }
         catch (Exception ex)
         {
@@ -208,7 +209,7 @@ public partial class MainWindow
             var imported = await System.Threading.Tasks.Task.Run(() => LoadDocumentFromStream(stream, path));
             busy.Report("Applying document…");
             await NewTabAsync();
-            ApplyOpenedDocument(imported, path);
+            ApplyOpenedDocument(imported.Document, path, imported.TimelapseSessionId);
         }
         catch (Exception ex)
         {
@@ -217,13 +218,21 @@ public partial class MainWindow
         }
     }
 
-    private static DrawingDocument LoadDocumentFromStream(Stream stream, string path)
-        => IsFlossPath(path) ? FlossFileFormat.Load(stream)
-            : IsPsdPath(path) ? PsdImporter.Load(stream)
+    private static (DrawingDocument Document, string? TimelapseSessionId) LoadDocumentFromStream(Stream stream, string path)
+    {
+        if (IsFlossPath(path))
+        {
+            var loaded = FlossFileFormat.LoadDocument(stream);
+            return (loaded.Document, loaded.TimelapseSessionId);
+        }
+
+        var document = IsPsdPath(path) ? PsdImporter.Load(stream)
             : IsKraPath(path) ? KraImporter.Load(stream)
             : ImageFileImporter.Load(stream, path);
+        return (document, null);
+    }
 
-    private void ApplyOpenedDocument(DrawingDocument imported, string path)
+    private void ApplyOpenedDocument(DrawingDocument imported, string path, string? timelapseSessionId = null)
     {
         _canvas.Document.ReplaceWith(imported);
         _canvasFrame.IsVisible = true;
@@ -235,11 +244,10 @@ public partial class MainWindow
             _activeTab.FilePath = _currentFilePath;
             _activeTab.HasDocument = true;
             _activeTab.DocumentName = Path.GetFileNameWithoutExtension(path);
-            _activeTab.Timelapse = null;
         }
-        if (App.Config.RecordTimelapse)
-            StartTimelapseForActiveDocument(Path.GetFileNameWithoutExtension(path));
+        RestoreTimelapseForActiveDocument(_currentFilePath, timelapseSessionId);
         SyncCanvasFrameToDocument(fitToViewport: true);
+        SyncBrushSizeLimits();
         BuildLayerList();
         UpdateStatus();
         UpdateTitle();
@@ -314,7 +322,8 @@ public partial class MainWindow
             {
                 using var read = doc.RenderLock.Read();
                 using var stream = File.Open(path, FileMode.Create, FileAccess.Write);
-                FlossFileFormat.Save(stream, doc);
+                var timelapseSessionId = _activeTab?.Timelapse?.SessionId;
+                FlossFileFormat.Save(stream, doc, timelapseSessionId);
             });
 
             _currentFilePath = path;
@@ -322,6 +331,7 @@ public partial class MainWindow
             {
                 _activeTab.FilePath = path;
                 _activeTab.DocumentName = Path.GetFileNameWithoutExtension(path);
+                _activeTab.Timelapse?.BindDocumentPath(path);
             }
             App.Config.AddRecentFile(path);
             _canvas.Document.MarkAsSaved(); // Clears IsDirty

@@ -541,7 +541,7 @@ public sealed class ToolGroupConfig
                 preset.EnsureDefaultBrushOverride(CreateFactorySmudgeOverride());
             }
 
-            if (group.Presets.Count == 0)
+            if (group.Presets.Count == 0 && !IsAssetBackedGroup(group))
             {
                 var defaultPreset = new ToolPreset { Name = group.Name, Engine = group.DefaultEngine };
                 defaultPreset.MigrateFromLegacy();
@@ -549,8 +549,101 @@ public sealed class ToolGroupConfig
             }
 
             EnsureFallbackCategory(group);
+            PruneCategories(group);
         }
     }
+
+    /// <summary>Insert a fresh copy of a factory tool group, populated from brush assets when applicable.</summary>
+    public ToolGroup CreateGroupFromDefault(ToolGroup template, IReadOnlyList<BrushAsset> assets)
+    {
+        var group = new ToolGroup
+        {
+            Id = Guid.NewGuid().ToString("N")[..8],
+            Name = template.Name,
+            Shortcut = template.Shortcut,
+            DefaultEngine = template.DefaultEngine,
+            CustomIcon = template.CustomIcon
+        };
+
+        if (IsAssetBackedGroup(group))
+            PopulateGroupFromAssets(group, assets);
+        else
+            CloneTemplatePresets(template, group);
+
+        foreach (var preset in group.Presets)
+        {
+            preset.MigrateFromLegacy();
+            preset.MigrateBrushOverrideFormat();
+            preset.EnsureDefaultBrushOverride(CreateFactorySmudgeOverride());
+        }
+
+        EnsureFallbackCategory(group);
+        PruneCategories(group);
+        return group;
+    }
+
+    private void PopulateGroupFromAssets(ToolGroup group, IReadOnlyList<BrushAsset> assets)
+    {
+        if (group.DefaultEngine == ToolPresetEngine.Smudge)
+        {
+            var template = Defaults().First(g => g.DefaultEngine == ToolPresetEngine.Smudge);
+            foreach (var src in template.Presets)
+                group.Presets.Add(ClonePreset(src));
+            return;
+        }
+
+        var eraserGroup = group.DefaultEngine == ToolPresetEngine.Eraser;
+        foreach (var asset in assets)
+        {
+            var isEraserAsset = asset.Preset.BlendMode == SkiaSharp.SKBlendMode.DstOut;
+            if (eraserGroup != isEraserAsset) continue;
+
+            var preset = new ToolPreset
+            {
+                Name = asset.Preset.Name,
+                Engine = group.DefaultEngine,
+                InputProcess = eraserGroup ? InputProcessType.Eraser : InputProcessType.Brush,
+                OutputProcess = OutputProcessType.DirectDraw,
+                BrushId = asset.Id,
+                BrushBlendMode = asset.Preset.BlendMode
+            };
+            group.Presets.Add(preset);
+            if (asset.Category != null)
+                AddToCategory(group, preset.Id, asset.Category);
+        }
+    }
+
+    private static void CloneTemplatePresets(ToolGroup template, ToolGroup group)
+    {
+        var idMap = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var src in template.Presets)
+        {
+            var preset = ClonePreset(src);
+            idMap[src.Id] = preset.Id;
+            group.Presets.Add(preset);
+        }
+
+        foreach (var srcCat in template.Categories)
+        {
+            var presetIds = srcCat.PresetIds
+                .Select(id => idMap.TryGetValue(id, out var mapped) ? mapped : null)
+                .OfType<string>()
+                .ToList();
+            if (presetIds.Count == 0) continue;
+            group.Categories.Add(new ToolCategory { Name = srcCat.Name, PresetIds = presetIds });
+        }
+    }
+
+    private static ToolPreset ClonePreset(ToolPreset source)
+    {
+        var json = JsonSerializer.Serialize(source, JsonOpts);
+        var clone = JsonSerializer.Deserialize<ToolPreset>(json, JsonOpts)!;
+        clone.Id = Guid.NewGuid().ToString("N")[..8];
+        return clone;
+    }
+
+    private static bool IsAssetBackedGroup(ToolGroup group)
+        => group.DefaultEngine is ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge;
 
     public void Save()
     {
@@ -628,6 +721,24 @@ public sealed class ToolGroupConfig
             group.Presets.RemoveAll(p => p.BrushId == null
                 && p.OutputProcess == OutputProcessType.DirectDraw);
         }
+
+        foreach (var group in Groups)
+            PruneCategories(group);
+    }
+
+    internal static void PruneCategories(ToolGroup group)
+    {
+        var validIds = group.Presets.Select(p => p.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var category in group.Categories)
+            category.PresetIds.RemoveAll(id => !validIds.Contains(id));
+
+        group.Categories.RemoveAll(category => category.PresetIds.Count == 0);
+
+        if (group.LastActiveCategoryName != null &&
+            !group.Categories.Any(category => category.Name == group.LastActiveCategoryName))
+        {
+            group.LastActiveCategoryName = group.Categories.FirstOrDefault()?.Name;
+        }
     }
 
     private static void AddToCategory(ToolGroup group, string presetId, string categoryName)
@@ -686,9 +797,9 @@ public sealed class ToolGroupConfig
     internal static List<ToolGroup> Defaults() =>
     [
         WithDefaultCategory(new() { Name = "Brush",  DefaultEngine = ToolPresetEngine.Brush,  Shortcut = new(Key.B),
-            Presets = [new() { Name = "Brush",  Engine = ToolPresetEngine.Brush, InputProcess = InputProcessType.Brush, OutputProcess = OutputProcessType.DirectDraw }] }),
+            Presets = [], Categories = [] }),
         WithDefaultCategory(new() { Name = "Eraser", DefaultEngine = ToolPresetEngine.Eraser, Shortcut = new(Key.E),
-            Presets = [new() { Name = "Eraser", InputProcess = InputProcessType.Eraser, OutputProcess = OutputProcessType.DirectDraw, BrushOverride = new BrushPresetOverrideDocument { BlendMode = SkiaSharp.SKBlendMode.DstOut } }] }),
+            Presets = [], Categories = [] }),
         WithDefaultCategory(CreateDefaultSmudgeGroup()),
         WithDefaultCategory(new()
         {

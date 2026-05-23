@@ -97,52 +97,57 @@ public sealed partial class BrushDynamics
 
     internal static CurveOption ToCurveOption(ParameterDynamics dyn)
     {
-        bool hasPressure = dyn.PressureEnabled;
-        bool hasVelocity = dyn.VelocityEnabled;
-
         var opt = new CurveOption { MinOutput = dyn.Min, MaxOutput = dyn.Max };
-        if (hasPressure)
+        if (dyn.PressureEnabled)
+            opt.Sensors.Add(new SensorConfig { Type = SensorType.Pressure, Curve = CurveFromData(dyn.CurveData) });
+        if (dyn.VelocityEnabled)
         {
-            var pts = new List<CurvePoint>();
-            for (var i = 0; i < dyn.CurveData.Length; i += 2)
-                pts.Add(new CurvePoint(
-                    Math.Clamp(dyn.CurveData[i], 0, 1),
-                    Math.Clamp(dyn.CurveData[i + 1], 0, 1)));
-            var curve = new CubicCurve();
-            curve.SetPoints([.. pts]);
-            opt.Sensors.Add(new SensorConfig { Type = SensorType.Pressure, Curve = curve });
+            var velocityData = dyn.VelocityCurveData is { Length: >= 4 }
+                ? dyn.VelocityCurveData
+                : ParameterDynamics.VelocityCurveFromStrength(dyn.VelocityStrength);
+            opt.Sensors.Add(new SensorConfig { Type = SensorType.Speed, Curve = CurveFromData(velocityData) });
         }
-        if (hasVelocity)
+        if (dyn.TiltEnabled)
+            opt.Sensors.Add(new SensorConfig { Type = SensorType.Tilt, Curve = CurveFromData(dyn.TiltCurveData) });
+        if (dyn.RandomEnabled)
+            opt.Sensors.Add(new SensorConfig { Type = SensorType.Random, Curve = CurveFromData(dyn.RandomCurveData) });
+        if (dyn.DistanceEnabled)
         {
-            var vc = new CubicCurve();
-            vc.SetPoints([new(0f, 1f), new(1f, Math.Clamp(1f - dyn.VelocityStrength, 0.05f, 1f))]);
-            opt.Sensors.Add(new SensorConfig { Type = SensorType.Speed, Curve = vc });
+            opt.Sensors.Add(new SensorConfig
+            {
+                Type = SensorType.Distance,
+                Length = Math.Max(1f, dyn.DistanceLength),
+                Curve = CurveFromData(dyn.DistanceCurveData)
+            });
+        }
+        if (dyn.FadeEnabled)
+        {
+            opt.Sensors.Add(new SensorConfig
+            {
+                Type = SensorType.Fade,
+                Length = Math.Max(1f, dyn.FadeLength),
+                Curve = CurveFromData(dyn.FadeCurveData)
+            });
         }
         return opt;
     }
 
     internal static ParameterDynamics ToParameterDynamics(CurveOption option)
     {
-        SensorConfig? pressure = null;
-        SensorConfig? speed = null;
-        foreach (var sensor in option.Sensors)
-        {
-            if (sensor.Type == SensorType.Pressure && pressure == null)
-                pressure = sensor;
-            else if (sensor.Type == SensorType.Speed && speed == null)
-                speed = sensor;
-        }
+        var pressure = FindSensor(option, SensorType.Pressure);
+        var speed = FindSensor(option, SensorType.Speed);
+        var tilt = FindSensor(option, SensorType.Tilt) ?? FindSensor(option, SensorType.TiltX);
+        var random = FindSensor(option, SensorType.Random);
+        var distance = FindSensor(option, SensorType.Distance);
+        var fade = FindSensor(option, SensorType.Fade);
 
-        var curveData = new List<float> { 0f, 0f, 1f, 1f };
-        if (pressure != null && pressure.Curve.Points.Count >= 2)
-        {
-            curveData.Clear();
-            foreach (var p in pressure.Curve.Points)
-            {
-                curveData.Add(p.X);
-                curveData.Add(p.Y);
-            }
-        }
+        var curveData = pressure != null && pressure.Curve.Points.Count >= 2
+            ? DataFromCurve(pressure.Curve)
+            : new List<float> { 0f, 0f, 1f, 1f };
+
+        var velocityCurveData = speed == null
+            ? [.. ParameterDynamics.DefaultVelocityCurveData]
+            : DataFromCurve(speed.Curve);
 
         return new ParameterDynamics
         {
@@ -151,8 +156,63 @@ public sealed partial class BrushDynamics
             Min = option.MinOutput,
             Max = option.MaxOutput,
             VelocityEnabled = option.IsEnabled && speed != null,
-            VelocityStrength = speed == null ? 0.3f : Math.Clamp(1f - speed.Curve.Evaluate(1f), 0f, 1f)
+            VelocityCurveData = [.. velocityCurveData],
+            VelocityStrength = speed == null
+                ? 0.3f
+                : Math.Clamp(1f - speed.Curve.Evaluate(1f), 0f, 1f),
+            TiltEnabled = option.IsEnabled && tilt != null,
+            TiltCurveData = tilt == null ? [.. ParameterDynamics.IdentityCurve] : [.. DataFromCurve(tilt.Curve)],
+            RandomEnabled = option.IsEnabled && random != null,
+            RandomCurveData = random == null ? [.. ParameterDynamics.IdentityCurve] : [.. DataFromCurve(random.Curve)],
+            DistanceEnabled = option.IsEnabled && distance != null,
+            DistanceLength = distance?.Length ?? 1000f,
+            DistanceCurveData = distance == null
+                ? [.. ParameterDynamics.DefaultDistanceCurveData]
+                : [.. DataFromCurve(distance.Curve)],
+            FadeEnabled = option.IsEnabled && fade != null,
+            FadeLength = fade?.Length ?? 120f,
+            FadeCurveData = fade == null
+                ? [.. ParameterDynamics.DefaultFadeCurveData]
+                : [.. DataFromCurve(fade.Curve)]
         };
+    }
+
+    private static SensorConfig? FindSensor(CurveOption option, SensorType type)
+    {
+        foreach (var sensor in option.Sensors)
+        {
+            if (sensor.Type == type)
+                return sensor;
+        }
+
+        return null;
+    }
+
+    private static CubicCurve CurveFromData(float[] data)
+    {
+        var pts = new List<CurvePoint>();
+        for (var i = 0; i < data.Length; i += 2)
+            pts.Add(new CurvePoint(
+                Math.Clamp(data[i], 0, 1),
+                Math.Clamp(data[i + 1], 0, 1)));
+        var curve = new CubicCurve();
+        curve.SetPoints([.. pts]);
+        return curve;
+    }
+
+    private static List<float> DataFromCurve(CubicCurve curve)
+    {
+        if (curve.Points.Count < 2)
+            return [0f, 0f, 1f, 1f];
+
+        var curveData = new List<float>(curve.Points.Count * 2);
+        foreach (var p in curve.Points)
+        {
+            curveData.Add(p.X);
+            curveData.Add(p.Y);
+        }
+
+        return curveData;
     }
 
     // ── DTO layer ─────────────────────────────────────────────────────────────

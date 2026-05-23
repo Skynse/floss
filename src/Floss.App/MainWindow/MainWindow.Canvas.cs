@@ -58,6 +58,7 @@ public partial class MainWindow
         _canvas.ResizeCanvas(_resizeOverlay.PreviewW, _resizeOverlay.PreviewH,
                              _resizeOverlay.PreviewOffX, _resizeOverlay.PreviewOffY);
         SyncCanvasFrameToDocument(fitToViewport: true);
+        SyncBrushSizeLimits();
         BuildLayerList();
     }
 

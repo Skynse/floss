@@ -2,11 +2,26 @@ using System;
 
 namespace Floss.App.Brushes;
 
-// Krita-style spacing: manual (size × spacing), auto (√size × coeff), optional speed widening.
+// CSP-style gap spacing: Fixed uses the Spacing slider; Normal/Wide/Narrow pick
+// diameter fractions tuned for smooth strokes without over-stamping large brushes.
 public static class BrushSpacing
 {
     public const float MinDistancePx = 0.5f;
     public const float MinStampSizePx = 0.01f;
+
+    public const float NormalGapFraction = 0.25f;
+    public const float WideGapFraction = 0.40f;
+    public const float NarrowGapFraction = 0.12f;
+
+    public static float GapFraction(BrushGapMode mode, float fixedSpacing)
+        => mode switch
+        {
+            BrushGapMode.Fixed => Math.Clamp(fixedSpacing, 0.005f, 4f),
+            BrushGapMode.Normal => NormalGapFraction,
+            BrushGapMode.Wide => WideGapFraction,
+            BrushGapMode.Narrow => NarrowGapFraction,
+            _ => NormalGapFraction
+        };
 
     public static float CalcAutoSpacing(float brushSize, float coeff)
         => coeff * (brushSize < 1f ? brushSize : MathF.Sqrt(brushSize));
@@ -27,9 +42,8 @@ public static class BrushSpacing
         }
         else
         {
-            baseSpacing = stampSize
-                * Math.Clamp((float)brush.Spacing, 0.005f, 4f)
-                * spacingMultiplier;
+            var gapFraction = GapFraction(brush.GapMode, (float)brush.Spacing);
+            baseSpacing = stampSize * gapFraction * spacingMultiplier;
         }
 
         var flow = Math.Clamp((float)brush.Flow, 0.01f, 1f);

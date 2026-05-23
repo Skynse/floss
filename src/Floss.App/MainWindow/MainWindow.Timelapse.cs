@@ -21,8 +21,38 @@ public partial class MainWindow
         if (_activeTab == null || !_canvas.HasDocument) return;
         _activeTab.DocumentName = string.IsNullOrWhiteSpace(documentName) ? "Untitled" : documentName.Trim();
         _activeTab.Timelapse ??= TimelapseSession.StartNew(_activeTab.DocumentName, _canvas.Document);
+        if (!string.IsNullOrEmpty(_activeTab.FilePath))
+            _activeTab.Timelapse.BindDocumentPath(_activeTab.FilePath);
         _activeTab.Timelapse.SetRecording(true);
         UpdateTimelapseMenuState();
+    }
+
+    private void RestoreTimelapseForActiveDocument(string? filePath, string? timelapseSessionId = null)
+    {
+        if (_activeTab == null || !_canvas.HasDocument)
+            return;
+
+        var bindPath = CanSaveInPlace(filePath ?? "") ? filePath : null;
+        var session = TimelapseSession.FindForDocument(
+            bindPath,
+            _activeTab.DocumentName,
+            _canvas.Document.Width,
+            _canvas.Document.Height,
+            timelapseSessionId);
+
+        if (session != null)
+        {
+            _activeTab.Timelapse = session;
+            if (!string.IsNullOrEmpty(bindPath))
+                session.BindDocumentPath(bindPath);
+
+            if (App.Config.RecordTimelapse)
+                session.SetRecording(true);
+        }
+        else if (App.Config.RecordTimelapse)
+        {
+            StartTimelapseForActiveDocument(_activeTab.DocumentName);
+        }
     }
 
     private void StopTimelapseForActiveDocument()

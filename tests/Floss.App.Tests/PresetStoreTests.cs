@@ -269,8 +269,11 @@ public class PresetStoreTests
     public void ToolGroups_DefaultsHaveCategories()
     {
         var config = new ToolGroupConfig();
+        config.SyncWithAssets(BrushLibrary.DefaultAssets().ToList());
         foreach (var group in config.Groups)
         {
+            if (IsAssetBackedEmptyBeforeSync(group)) continue;
+
             TestAssertions.True(group.Categories.Count > 0, $"{group.Name} should have a default category.");
             foreach (var preset in group.Presets)
             {
@@ -284,7 +287,30 @@ public class PresetStoreTests
 
         var select = config.Groups.First(g => g.Name == "Select");
         TestAssertions.True(select.Categories.Any(c => c.Name == "Select" && c.PresetIds.Count == select.Presets.Count));
+
+        var brush = config.Groups.First(g => g.Name == "Brush");
+        TestAssertions.False(brush.Categories.Any(c => c.Name == "Brush"),
+            "Asset-backed brush group should not keep an empty fallback category.");
+        TestAssertions.True(brush.Categories.Any(c => c.Name == "Ink" && c.PresetIds.Count > 0));
     }
+
+    [Fact]
+    public void ToolGroups_CreateGroupFromDefaultPopulatesBrushCategories()
+    {
+        var config = new ToolGroupConfig();
+        var assets = BrushLibrary.DefaultAssets().ToList();
+        var template = ToolGroupConfig.Defaults().First(g => g.Name == "Brush");
+        var group = config.CreateGroupFromDefault(template, assets);
+
+        TestAssertions.True(group.Categories.Any(c => c.Name == "Ink" && c.PresetIds.Count > 0));
+        TestAssertions.True(group.Categories.Any(c => c.Name == "Paint" && c.PresetIds.Count > 0));
+        TestAssertions.True(group.Presets.Count > 5);
+        TestAssertions.False(group.Categories.Any(c => c.Name == "Brush"));
+    }
+
+    private static bool IsAssetBackedEmptyBeforeSync(ToolGroup group)
+        => group.DefaultEngine is ToolPresetEngine.Brush or ToolPresetEngine.Eraser
+           && group.Presets.Count == 0;
 
     [Fact]
     public void Packages_ExportSubTool()

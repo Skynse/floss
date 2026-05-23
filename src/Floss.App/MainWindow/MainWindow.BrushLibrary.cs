@@ -64,7 +64,12 @@ public partial class MainWindow : Window
         };
         _brushPresetScroll = presetScroll;
 
-        _sizeSlider = MkSlider(1, 2000, 20, "Size");
+        _sizeSlider = MkSlider(1, BrushSizeLimits.FallbackMaxDiameterPx, 20, "Size");
+        _maxSizePercentSlider = MkSlider(
+            BrushSizeLimits.MinMaxSizePercent,
+            BrushSizeLimits.StudioMaxSizePercent,
+            BrushSizeLimits.DefaultMaxSizePercent,
+            "Max size — canvas-scaled ceiling for this brush (100–400%)");
         _opacitySlider = MkSlider(0.01, 1, 1.0, "Opacity");
         _flowSlider = MkSlider(0.01, 1, 1.0, "Flow — controls paint buildup per dab");
         _hardnessSlider = MkSlider(0, 1, 0.9, "Hardness — edge softness");
@@ -213,6 +218,10 @@ public partial class MainWindow : Window
         EnableNewCategoryDrop(newCatBtn, group);
         _brushCategoryPanel.Children.Add(newCatBtn);
 
+        if (_selectedCategory == null)
+            _selectedCategory = group.Categories.FirstOrDefault(c => c.PresetIds.Count > 0)?.Name
+                ?? group.Categories.FirstOrDefault()?.Name;
+
         IEnumerable<ToolPreset> presets;
         if (_selectedCategory == null)
         {
@@ -221,6 +230,14 @@ public partial class MainWindow : Window
         else
         {
             var cat = group.Categories.FirstOrDefault(c => c.Name == _selectedCategory);
+            if (cat == null || cat.PresetIds.Count == 0)
+            {
+                _selectedCategory = group.Categories.FirstOrDefault(c => c.PresetIds.Count > 0)?.Name;
+                cat = _selectedCategory == null
+                    ? null
+                    : group.Categories.FirstOrDefault(c => c.Name == _selectedCategory);
+            }
+
             presets = cat == null
                 ? group.Presets
                 : cat.PresetIds.Select(id => group.Presets.FirstOrDefault(p => p.Id == id)).OfType<ToolPreset>();
@@ -1669,6 +1686,7 @@ public partial class MainWindow : Window
         _activePreset = preset;
         _activeBrushLabel.Text = preset.Name;
 
+        SyncBrushSizeLimits();
         SyncBrushScalarControls(preset);
 
         var applied = preset with { Color = _canvas.PaintColor };
@@ -1698,6 +1716,10 @@ public partial class MainWindow : Window
         try
         {
             _sizeSlider.Value = Math.Clamp(preset.Size, _sizeSlider.Minimum, _sizeSlider.Maximum);
+            _maxSizePercentSlider.Value = Math.Clamp(
+                preset.MaxSizePercent,
+                _maxSizePercentSlider.Minimum,
+                _maxSizePercentSlider.Maximum);
             _opacitySlider.Value = Math.Clamp(preset.Opacity, _opacitySlider.Minimum, _opacitySlider.Maximum);
             _flowSlider.Value = Math.Clamp(preset.Flow, _flowSlider.Minimum, _flowSlider.Maximum);
             _hardnessSlider.Value = Math.Clamp(preset.Hardness, _hardnessSlider.Minimum, _hardnessSlider.Maximum);
