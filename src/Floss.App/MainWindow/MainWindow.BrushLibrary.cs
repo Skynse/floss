@@ -256,7 +256,7 @@ public partial class MainWindow : Window
                     if (asset != null)
                         brushPreset = preset.ApplyToBrushPreset(asset.ToPreset());
                 }
-                brushPreset ??= _activePreset ?? _canvas.Brush;
+                brushPreset ??= preset.ApplyToBrushPreset(BrushPreset.Defaults[0]);
                 _presetPanel.Children.Add(GetOrUpdateBrushPresetRow(group, preset, brushPreset, isActive));
                 continue;
             }
@@ -825,6 +825,10 @@ public partial class MainWindow : Window
 
     private void DeletePreset(ToolGroup group, ToolPreset preset)
     {
+        var wasActive = _activeToolGroup == group && group.LastActivePresetId == preset.Id;
+        if (wasActive)
+            CaptureBrushToPresetIfChanged(preset);
+
         if (preset.BrushId != null)
         {
             var asset = _brushAssets.FirstOrDefault(a => a.Id == preset.BrushId);
@@ -839,7 +843,6 @@ public partial class MainWindow : Window
         if (group.Presets.Count == 0)
         {
             App.ToolGroups.Groups.Remove(group);
-            BuildToolRail();
             if (_activeToolGroup == group)
             {
                 var next = App.ToolGroups.Groups.FirstOrDefault();
@@ -849,6 +852,7 @@ public partial class MainWindow : Window
                     if (fallback != null) ActivatePreset(next, fallback);
                 }
             }
+            BuildToolRail();
         }
         else
         {
@@ -1202,6 +1206,14 @@ public partial class MainWindow : Window
     private void DeleteCategory(ToolGroup group, ToolCategory cat)
     {
         var presetIds = cat.PresetIds.ToList();
+        var activeId = group.LastActivePresetId;
+        if (activeId != null && presetIds.Contains(activeId))
+        {
+            var leaving = group.Presets.FirstOrDefault(p => p.Id == activeId);
+            if (leaving != null)
+                CaptureBrushToPresetIfChanged(leaving);
+        }
+
         group.Categories.Remove(cat);
 
         var wasActiveDeleted = false;
@@ -2131,18 +2143,22 @@ public partial class MainWindow : Window
 
     internal void CaptureActiveBrushToPresetIfChanged()
     {
-        if (_activeToolGroup == null) return;
-        var active = _activeToolGroup.ActivePreset;
-        if (active == null || _activePreset == null) return;
-        if (!active.InputProcess.IsBrushFamily() || active.OutputProcess != OutputProcessType.DirectDraw) return;
+        if (_activeToolGroup?.ActivePreset is { } active)
+            CaptureBrushToPresetIfChanged(active);
+    }
+
+    internal void CaptureBrushToPresetIfChanged(ToolPreset preset)
+    {
+        if (_activePreset == null) return;
+        if (!preset.InputProcess.IsBrushFamily() || preset.OutputProcess != OutputProcessType.DirectDraw) return;
 
         var signature = BuildBrushCaptureSignature(_activePreset);
-        if (_lastCapturedBrushByPresetId.TryGetValue(active.Id, out var previous)
+        if (_lastCapturedBrushByPresetId.TryGetValue(preset.Id, out var previous)
             && string.Equals(previous, signature, StringComparison.Ordinal))
             return;
 
-        active.CaptureFromBrushPreset(_activePreset);
-        _lastCapturedBrushByPresetId[active.Id] = signature;
+        preset.CaptureFromBrushPreset(_activePreset);
+        _lastCapturedBrushByPresetId[preset.Id] = signature;
     }
 
     private static string BuildBrushCaptureSignature(BrushPreset preset)

@@ -1166,14 +1166,17 @@ public sealed class DrawingCanvas : Control, IDisposable
                 using (_document.RenderLock.Read())
                 {
                     var passes = 0;
-                    do
+                    while (passes < 32)
                     {
-                        if (_compositor.Composite(_document.Layers, _document.Width, _document.Height,
+                        if (!_compositor.Composite(_document.Layers, _document.Width, _document.Height,
                                 paperUint, viewport, zoom))
-                            passes++;
-                        else
                             break;
-                    } while (lodTransition && passes < 4 && _compositor.PendingDirtyTileCount > 0);
+                        passes++;
+                        if (_compositor.PendingDirtyTileCount == 0)
+                            break;
+                        if (!needSync && !lodTransition && !preferSync)
+                            break;
+                    }
                 }
                 _renderLod = _compositor.LastLod;
                 if (_compositor.PendingDirtyTileCount > 0)

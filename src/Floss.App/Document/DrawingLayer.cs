@@ -9,8 +9,11 @@ namespace Floss.App.Document;
 
 public sealed class DrawingLayer : IDisposable
 {
+    public const int ThumbnailMaxLongEdge = 44;
+
     private WriteableBitmap? _thumbnail;
-    private int _thumbnailSize;
+    private int _thumbnailWidth;
+    private int _thumbnailHeight;
     private bool _thumbnailDirty = true;
 
     public DrawingLayer(string name, int width, int height)
@@ -55,14 +58,27 @@ public sealed class DrawingLayer : IDisposable
         Pixels?.Dispose();
     }
 
-    public WriteableBitmap GetThumbnail(int size)
+    public static (int Width, int Height) ComputeThumbnailPixelSize(int documentWidth, int documentHeight)
     {
-        if (_thumbnail == null || _thumbnailSize != size)
+        if (documentWidth <= 0 || documentHeight <= 0)
+            return (ThumbnailMaxLongEdge, ThumbnailMaxLongEdge);
+
+        var scale = (double)ThumbnailMaxLongEdge / Math.Max(documentWidth, documentHeight);
+        return (
+            Math.Max(1, (int)Math.Round(documentWidth * scale)),
+            Math.Max(1, (int)Math.Round(documentHeight * scale)));
+    }
+
+    public WriteableBitmap GetThumbnail()
+    {
+        var (tw, th) = ComputeThumbnailPixelSize(Width, Height);
+        if (_thumbnail == null || _thumbnailWidth != tw || _thumbnailHeight != th)
         {
             _thumbnail?.Dispose();
-            _thumbnailSize = size;
+            _thumbnailWidth = tw;
+            _thumbnailHeight = th;
             _thumbnail = new WriteableBitmap(
-                new PixelSize(size, size),
+                new PixelSize(tw, th),
                 new Vector(96, 96),
                 PixelFormat.Bgra8888,
                 AlphaFormat.Unpremul);
@@ -90,78 +106,71 @@ public sealed class DrawingLayer : IDisposable
             var dstW = _thumbnail.PixelSize.Width;
             var dstH = _thumbnail.PixelSize.Height;
             const int ts = TiledPixelBuffer.TileSize;
+            var offsetX = OffsetX;
+            var offsetY = OffsetY;
+            var docW = Math.Max(1, Width);
+            var docH = Math.Max(1, Height);
 
-            // Zoom thumbnail into drawn content bounds for better readability.
-            var content = Pixels.ContentTileBounds;
-            int srcX0, srcY0, srcW, srcH;
-            if (content.IsEmpty)
+            for (var y = 0; y < dstH; y++)
             {
-                // Empty layer — clear thumbnail.
-                for (var y = 0; y < dstH; y++)
-                {
-                    var row = dst + y * dstFrame.RowBytes;
-                    for (var x = 0; x < dstW; x++)
-                        *(uint*)(row + x * 4) = 0;
-                }
-                _thumbnailDirty = false;
-                return;
-            }
-
-            // Clamp to non-negative document coords — tiles written at negative offsets
-            // (e.g. when canvas is shrunk from the left) must not enter the thumbnail scan
-            // because C# integer division truncates toward zero, making tilLocalX negative.
-            srcX0 = Math.Max(content.X, 0);
-            srcY0 = Math.Max(content.Y, 0);
-            srcW = Math.Min(content.Right, Pixels.MaxX) - srcX0;
-            srcH = Math.Min(content.Bottom, Pixels.MaxY) - srcY0;
-            if (srcW <= 0 || srcH <= 0)
-            {
-                for (var y = 0; y < dstH; y++)
-                {
-                    var row = dst + y * dstFrame.RowBytes;
-                    for (var x = 0; x < dstW; x++) *(uint*)(row + x * 4) = 0;
-                }
-                _thumbnailDirty = false;
-                return;
+                var dstRow = (uint*)(dst + y * dstFrame.RowBytes);
+                for (var x = 0; x < dstW; x++)
+                    dstRow[x] = 0xFFFFFFFF;
             }
 
             for (var y = 0; y < dstH; y++)
             {
-                var srcY = srcY0 + Math.Clamp((int)((y + 0.5) * srcH / dstH), 0, srcH - 1);
-                var tilY = srcY / ts;
-                var tilLocalY = srcY - tilY * ts;
+                var docY = Math.Clamp((int)((y + 0.5) * docH / dstH), 0, docH - 1);
+                var localY = docY - offsetY;
+                var tilY = FloorDiv(localY, ts);
+                var tilLocalY = localY - tilY * ts;
                 var dstRow = dst + y * dstFrame.RowBytes;
 
                 int prevTilX = -1;
+                int prevTilY = int.MinValue;
                 byte[]? tile = null;
 
                 for (var x = 0; x < dstW; x++)
                 {
-                    var srcX = srcX0 + Math.Clamp((int)((x + 0.5) * srcW / dstW), 0, srcW - 1);
-                    var tilX = srcX / ts;
-                    var tilLocalX = srcX - tilX * ts;
+                    var docX = Math.Clamp((int)((x + 0.5) * docW / dstW), 0, docW - 1);
+                    var localX = docX - offsetX;
+                    var tilX = FloorDiv(localX, ts);
+                    var tilLocalX = localX - tilX * ts;
                     var dstPx = dstRow + x * 4;
 
-                    if (tilX != prevTilX)
+                    if (tilX != prevTilX || tilY != prevTilY)
                     {
                         tile = Pixels.GetTileOrNull(tilX, tilY);
                         prevTilX = tilX;
+                        prevTilY = tilY;
                     }
 
-                    if (tile == null)
-                    {
-                        *(uint*)dstPx = 0;
-                    }
-                    else
-                    {
-                        var offset = (tilLocalY * ts + tilLocalX) * 4;
-                        *(uint*)dstPx = *(uint*)(System.Runtime.CompilerServices.Unsafe.AsPointer(ref tile[offset]));
-                    }
+                    if (tile == null || tilLocalX is < 0 or >= ts || tilLocalY is < 0 or >= ts)
+                        continue;
+
+                    var offset = (tilLocalY * ts + tilLocalX) * 4;
+                    var b = tile[offset];
+                    var g = tile[offset + 1];
+                    var r = tile[offset + 2];
+                    var a = tile[offset + 3];
+                    *(uint*)dstPx = BlendThumbnailPixelOnWhite(b, g, r, a);
                 }
             }
         }
 
         _thumbnailDirty = false;
+    }
+
+    private static uint BlendThumbnailPixelOnWhite(byte b, byte g, byte r, byte a)
+    {
+        if (a == 0) return 0xFFFFFFFF;
+        if (a == 255) return (uint)(b | (g << 8) | (r << 16) | (255u << 24));
+        var fa = a / 255.0;
+        var inv = 1.0 - fa;
+        var ob = (byte)(b * fa + 255 * inv);
+        var og = (byte)(g * fa + 255 * inv);
+        var or = (byte)(r * fa + 255 * inv);
+        return (uint)(ob | (og << 8) | (or << 16) | (255u << 24));
     }
 
     public void Clear()
@@ -215,6 +224,13 @@ public sealed class DrawingLayer : IDisposable
     {
         Pixels.RestoreTiles(tiles);
         MarkThumbnailDirty();
+    }
+
+    private static int FloorDiv(int value, int divisor)
+    {
+        var result = value / divisor;
+        if ((value ^ divisor) < 0 && value % divisor != 0) result--;
+        return result;
     }
 
 }

@@ -484,6 +484,31 @@ public sealed class TiledPixelBuffer : IDisposable
         Buffer.BlockCopy(bytes, 0, raw, 0, bytes.Length);
     }
 
+    /// <summary>
+    /// Fast tile write for bulk importers. Skips transparent-tile pruning;
+    /// callers should prune once after a batch if needed.
+    /// </summary>
+    internal void ImportTile(int tileX, int tileY, byte[] bytes)
+    {
+        if (bytes == null) return;
+
+        var key = (tileX, tileY);
+        var raw = EnsureRaw(key);
+        if (raw == null || raw.Length != bytes.Length)
+        {
+            raw = new byte[bytes.Length];
+            lock (_lock)
+            {
+                _tiles[key] = raw;
+                _compressed.Remove(key);
+            }
+
+            ExtendBounds(tileX * TileSize, tileY * TileSize, (tileX + 1) * TileSize, (tileY + 1) * TileSize);
+        }
+
+        Buffer.BlockCopy(bytes, 0, raw, 0, bytes.Length);
+    }
+
     // ── Bulk copy ──────────────────────────────────────────────────────────────
 
     public void CopyFromBgra(byte[] src, int srcWidth, int srcHeight)
@@ -526,15 +551,21 @@ public sealed class TiledPixelBuffer : IDisposable
     {
         if (region.IsEmpty) return;
 
-        for (var y = 0; y < region.Height; y++)
+        ForEachTile(region, (tileX, tileY, tile, tileRegion) =>
         {
-            for (var x = 0; x < region.Width; x++)
+            var srcX = tileRegion.X - region.X;
+            var srcY = tileRegion.Y - region.Y;
+            if (!HasAnyAlpha(src, srcStride / BytesPerPixel, srcX, srcY, tileRegion.Width, tileRegion.Height))
+                return;
+
+            for (var y = tileRegion.Y; y < tileRegion.Bottom; y++)
             {
-                var srcOffset = y * srcStride + x * BytesPerPixel;
-                if (src[srcOffset + 3] == 0) continue;
-                WritePixel(region.X + x, region.Y + y, src, srcOffset);
+                var srcOffset = (y - region.Y) * srcStride + srcX * BytesPerPixel;
+                var dstOffset = (y - tileY * TileSize) * TileSize * BytesPerPixel
+                              + (tileRegion.X - tileX * TileSize) * BytesPerPixel;
+                Buffer.BlockCopy(src, srcOffset, tile, dstOffset, tileRegion.Width * BytesPerPixel);
             }
-        }
+        }, create: true);
 
         PruneTransparentTiles(region);
     }

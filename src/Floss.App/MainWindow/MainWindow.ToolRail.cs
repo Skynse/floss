@@ -250,9 +250,14 @@ public partial class MainWindow
     private void DeleteToolGroup(ToolGroup group)
     {
         if (App.ToolGroups.Groups.Count <= 1) return;
+
+        var wasActive = _activeToolGroup == group;
+        if (wasActive && group.ActivePreset is { } leaving)
+            CaptureBrushToPresetIfChanged(leaving);
+
         App.ToolGroups.Groups.Remove(group);
         App.ToolGroups.Save();
-        if (_activeToolGroup == group)
+        if (wasActive)
         {
             var first = App.ToolGroups.Groups.FirstOrDefault();
             if (first != null)

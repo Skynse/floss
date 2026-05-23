@@ -94,6 +94,27 @@ public class TiledPixelBufferTests
     }
 
     [Fact]
+    public void CopyFromBgra_RegionWithByteStride_DoesNotReadPastBuffer()
+    {
+        var pixels = new TiledPixelBuffer(128, 128);
+        var dirty = new PixelRegion(10, 20, 32, 32);
+        var temp = new byte[dirty.Width * dirty.Height * 4];
+        var px = (16 * dirty.Width + 16) * 4;
+        temp[px + 0] = 11;
+        temp[px + 1] = 22;
+        temp[px + 2] = 33;
+        temp[px + 3] = 255;
+
+        pixels.CopyFromBgra(dirty, temp, dirty.Width * 4);
+
+        pixels.GetPixel(26, 36, out var b, out var g, out var r, out var a);
+        TestAssertions.Equal((byte)11, b);
+        TestAssertions.Equal((byte)22, g);
+        TestAssertions.Equal((byte)33, r);
+        TestAssertions.Equal((byte)255, a);
+    }
+
+    [Fact]
     public void CaptureTiles_ReturnsDefensiveCopies()
     {
         var pixels = new TiledPixelBuffer(8, 8);

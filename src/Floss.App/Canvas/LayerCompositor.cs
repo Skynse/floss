@@ -56,6 +56,10 @@ public sealed class LayerCompositor : IDisposable
     private readonly HashSet<(int X, int Y, int Lod)> _tilesPendingComposite = [];
     private readonly HashSet<(int X, int Y, int Lod)> _tilesToPrune = [];
     private readonly Dictionary<DrawingLayer, GroupProjectionCache> _groupCaches = new();
+    // After sequential group-cache warm, parallel tile composite only reads
+    // projection buffers — never TakeDirty/refill (avoids races and prevents
+    // FlushFullDirty from marking unwarmed regions as clean).
+    private bool _groupProjectionReadOnly;
     // Tiles removed during a composite pass — disposed lazily on the UI thread
     // so DrawImage(bitmap) on the UI thread never observes a freed bitmap.
     private readonly ConcurrentQueue<WriteableBitmap> _tilesPendingDispose = new();
@@ -269,18 +273,44 @@ public sealed class LayerCompositor : IDisposable
         var tileRight = Math.Min(tileLeft + stride, _width);
         var tileBottom = Math.Min(tileTop + stride, _height);
 
+        // Require a full cover of finer-LOD tiles — a single overlapping tile
+        // is not enough and produced patchwork holes during LOD transitions.
+        for (var finerLod = _currentLod - 1; finerLod >= 0; finerLod--)
+        {
+            var fStride = CmpTileSize * (1 << finerLod);
+            var firstTX = FloorDiv(tileLeft, fStride);
+            var firstTY = FloorDiv(tileTop, fStride);
+            var lastTX = FloorDiv(tileRight - 1, fStride);
+            var lastTY = FloorDiv(tileBottom - 1, fStride);
+            var complete = true;
+            for (var fty = firstTY; fty <= lastTY && complete; fty++)
+            {
+                for (var ftx = firstTX; ftx <= lastTX; ftx++)
+                {
+                    if (!SnapshotHasReadyTile(snapshot, ftx, fty, finerLod))
+                    {
+                        complete = false;
+                        break;
+                    }
+                }
+            }
+
+            if (complete)
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool SnapshotHasReadyTile(
+        KeyValuePair<(int X, int Y, int Lod), WriteableBitmap>[] snapshot,
+        int tx, int ty, int lod)
+    {
         for (var i = 0; i < snapshot.Length; i++)
         {
             var key = snapshot[i].Key;
-            if (key.Lod >= _currentLod) continue;
-            var fStride = CmpTileSize * (1 << key.Lod);
-            var fLeft = key.X * fStride;
-            var fTop = key.Y * fStride;
-            var fRight = Math.Min(fLeft + fStride, _width);
-            var fBottom = Math.Min(fTop + fStride, _height);
-            if (fRight <= tileLeft || fBottom <= tileTop || fLeft >= tileRight || fTop >= tileBottom)
-                continue;
-            return true;
+            if (key.Lod == lod && key.X == tx && key.Y == ty)
+                return true;
         }
 
         return false;
@@ -426,8 +456,9 @@ public sealed class LayerCompositor : IDisposable
         foreach (var l in layers)
             if (l.Parent == null && !l.IsPaper) rootLayers.Add(l);
 
+        var prevLod = _currentLod;
         var lod = forceLod ?? SelectLod(width, height, zoom);
-        var lodChanged = lod != _currentLod;
+        var lodChanged = lod != prevLod;
         _currentLod = lod;
         var scale = 1 << lod;
         var stride = CmpTileSize * scale;
@@ -459,20 +490,18 @@ public sealed class LayerCompositor : IDisposable
                 }
             }
 
-            // Queue every viewport tile at the new LOD for recomposite. Keep the
-            // existing bitmaps visible until overwritten — dropping them forced a
-            // fallback flash that reads as a zoom artifact for a few frames.
-            if (viewportClip is { IsEmpty: false } vp)
-                QueueViewportLodTilesDirty(lod, vp, width, height);
-
-            // Keep old LOD tiles as visual fallbacks. Throwing them away here is
-            // what caused the hard zoom threshold stalls/blanking.
+            // Finer-LOD tiles stay in the cache as fallbacks while coarser tiles
+            // are built — either via downscale sync (below) or layer recomposite.
         }
 
-        var dirtyClip = (_fullDirty ? new PixelRegion(0, 0, width, height) : _dirtyRegion ?? PixelRegion.Empty).ClipTo(width, height);
+        var wasFullDirty = _fullDirty;
+        var dirtyClip = (wasFullDirty ? new PixelRegion(0, 0, width, height) : _dirtyRegion ?? PixelRegion.Empty).ClipTo(width, height);
+        var queueDirtyClip = dirtyClip;
+        if (wasFullDirty && viewportClip is { IsEmpty: false } bootstrapViewport)
+            queueDirtyClip = bootstrapViewport;
 
         // Fast path: nothing dirty and viewport not provided — nothing to do.
-        if (dirtyClip.IsEmpty && viewportClip is null && _pendingDirtyTiles.Count == 0)
+        if (queueDirtyClip.IsEmpty && viewportClip is null && _pendingDirtyTiles.Count == 0)
         {
             _fullDirty = false;
             _dirtyRegion = null;
@@ -484,17 +513,17 @@ public sealed class LayerCompositor : IDisposable
         var missingTileKeys = new System.Collections.Generic.List<(int tx, int ty)>();
 
         // 1. Dirty tiles.
-        if (!dirtyClip.IsEmpty)
+        if (!queueDirtyClip.IsEmpty)
         {
-            var firstDirtyTX = FloorDiv(dirtyClip.X, stride);
-            var firstDirtyTY = FloorDiv(dirtyClip.Y, stride);
-            var lastDirtyTX = FloorDiv(dirtyClip.Right - 1, stride);
-            var lastDirtyTY = FloorDiv(dirtyClip.Bottom - 1, stride);
+            var firstDirtyTX = FloorDiv(queueDirtyClip.X, stride);
+            var firstDirtyTY = FloorDiv(queueDirtyClip.Y, stride);
+            var lastDirtyTX = FloorDiv(queueDirtyClip.Right - 1, stride);
+            var lastDirtyTY = FloorDiv(queueDirtyClip.Bottom - 1, stride);
 
             for (var ty = firstDirtyTY; ty <= lastDirtyTY; ty++)
                 for (var tx = firstDirtyTX; tx <= lastDirtyTX; tx++)
                 {
-                    var tileRect = new PixelRegion(tx * stride, ty * stride, stride, stride).Intersect(dirtyClip);
+                    var tileRect = new PixelRegion(tx * stride, ty * stride, stride, stride).Intersect(queueDirtyClip);
                     if (!tileRect.IsEmpty)
                         _pendingDirtyTiles.Add((tx, ty, lod));
                 }
@@ -518,22 +547,37 @@ public sealed class LayerCompositor : IDisposable
 
         tileKeys.AddRange(SelectPendingDirtyTiles(viewportClip, stride, lod));
 
+        // Krita KisSyncLodCacheStrokeStrategy: when zooming out, downscale the
+        // existing finer-LOD display cache instead of recompositing the stack.
+        var canBootstrapFromFiner = lodChanged && lod > prevLod && !wasFullDirty && queueDirtyClip.IsEmpty;
+        if (canBootstrapFromFiner)
+        {
+            BootstrapLodFromFinerCache(missingTileKeys, prevLod, lod);
+            for (var i = tileKeys.Count - 1; i >= 0; i--)
+            {
+                var key = tileKeys[i];
+                if (TryBootstrapTileFromFinerLod(key.tx, key.ty, lod, prevLod))
+                {
+                    tileKeys.RemoveAt(i);
+                    _pendingDirtyTiles.Remove((key.tx, key.ty, lod));
+                }
+            }
+        }
+
         // Cap both dirty and missing tiles. Dirty tiles are persistent in
         // _pendingDirtyTiles; missing tiles are naturally rediscovered next frame.
-        // Boost the missing tile budget when recovering from an LOD switch to
-        // repopulate the viewport faster.
-        var maxMissing = lodChanged ? int.MaxValue : MaxMissingTilesPerFrame;
-        if (!lodChanged && dirtyClip.IsEmpty && viewportClip is { IsEmpty: false })
-            maxMissing = Math.Max(maxMissing, MaxMissingTilesPerFrame * 2);
-        var deferredMissingTiles = _pendingDirtyTiles.Count > 0;
-        // During a live stroke, large brushes can dirty dozens of 256px tiles
-        // per stamp — the default budget of 32 leaves permanent holes.
-        var viewportOnlyPass = dirtyClip.IsEmpty && viewportClip is { IsEmpty: false };
-        var dirtyTileBudget = _metadataOnlyPass || _strokeSuspendDepth > 0 || lodChanged
+        // Repopulate every missing viewport tile in one pass when the visible
+        // region is known — Krita uploads the full dirty rect, not N tiles/frame.
+        var maxMissing = lodChanged || wasFullDirty || viewportClip is { IsEmpty: false }
             ? int.MaxValue
-            : viewportOnlyPass
-                ? Math.Max(DirtyTileBudget * 4, 128)
-                : DirtyTileBudget;
+            : MaxMissingTilesPerFrame;
+        var deferredMissingTiles = _pendingDirtyTiles.Count > 0;
+        // Krita-style: when a viewport clip is known, composite every visible
+        // tile in one pass — per-frame caps leave permanent checkerboard grids.
+        var dirtyTileBudget = _metadataOnlyPass || _strokeSuspendDepth > 0 || lodChanged || wasFullDirty
+                              || viewportClip is { IsEmpty: false }
+            ? int.MaxValue
+            : DirtyTileBudget;
         _metadataOnlyPass = false;
         if (tileKeys.Count > dirtyTileBudget)
         {
@@ -579,13 +623,12 @@ public sealed class LayerCompositor : IDisposable
         foreach (var (tx, ty) in tileKeys) EnsureTile(tx, ty, lod);
         foreach (var (tx, ty) in missingTileKeys) EnsureTile(tx, ty, lod);
 
-        // Krita-style pre-warm: fill every group projection cache for the
-        // exact set of tile rects we're about to composite, then mark all
-        // caches clean. After this the parallel pass only READS from
-        // _groupCaches (no Dictionary mutation, no projection refills) so
-        // tile compositing becomes fully data-parallel.
+        // Krita-style pre-warm: merge group projections for every display tile
+        // we're about to upload, sequentially. The parallel pass then only
+        // reads cached projections (no Dictionary mutation, no refills).
         var totalTiles = tileKeys.Count + missingTileKeys.Count;
-        if (totalTiles > 0 && _groupCaches.Count > 0 || ContainsAnyGroup(renderList))
+        var warmGroupProjections = totalTiles > 0 && (ContainsAnyGroup(renderList) || _groupCaches.Count > 0);
+        if (warmGroupProjections)
             WarmGroupProjections(renderList, tileKeys, missingTileKeys, stride, width, height);
 
         // Dirty tiles: composite only the dirty sub-region of the tile.
@@ -639,10 +682,19 @@ public sealed class LayerCompositor : IDisposable
             CompositeTileCpu(compTilesLocal[(tx, ty, lodLocal)], tileRect, renderListLocal, tx * strideLocal, ty * strideLocal, lodLocal, paperLocal, strokeSplitLocal);
         }
 
-        if (allTiles.Length >= 4 && Environment.ProcessorCount > 1)
-            Parallel.For(0, allTiles.Length, CompositeOne);
-        else
-            for (var i = 0; i < allTiles.Length; i++) CompositeOne(i);
+        if (warmGroupProjections)
+            _groupProjectionReadOnly = true;
+        try
+        {
+            if (allTiles.Length >= 4 && Environment.ProcessorCount > 1)
+                Parallel.For(0, allTiles.Length, CompositeOne);
+            else
+                for (var i = 0; i < allTiles.Length; i++) CompositeOne(i);
+        }
+        finally
+        {
+            _groupProjectionReadOnly = false;
+        }
 
         // HashSet is not thread-safe — clear pending flags on the composite thread only.
         for (var i = 0; i < allTiles.Length; i++)
@@ -683,11 +735,6 @@ public sealed class LayerCompositor : IDisposable
             WarmGroupsForTile(renderList, tx, ty, stride, width, height);
         foreach (var (tx, ty) in missingTileKeys)
             WarmGroupsForTile(renderList, tx, ty, stride, width, height);
-
-        // Mark every group cache clean so parallel tile compositing finds
-        // TakeDirty empty → returns cached buffer without further work.
-        foreach (var cache in _groupCaches.Values)
-            cache.FlushFullDirty();
     }
 
     private void WarmGroupsForTile(
@@ -775,39 +822,175 @@ public sealed class LayerCompositor : IDisposable
                 _pendingDirtyTiles.Add((tx, ty, lod));
     }
 
-    private void QueueViewportLodTilesDirty(int lod, PixelRegion viewport, int width, int height)
-    {
-        var clipped = viewport.ClipTo(width, height);
-        if (clipped.IsEmpty) return;
-        var stride = CmpTileSize * (1 << lod);
-        var firstTX = FloorDiv(clipped.X, stride);
-        var firstTY = FloorDiv(clipped.Y, stride);
-        var lastTX = FloorDiv(clipped.Right - 1, stride);
-        var lastTY = FloorDiv(clipped.Bottom - 1, stride);
-        for (var ty = firstTY; ty <= lastTY; ty++)
-            for (var tx = firstTX; tx <= lastTX; tx++)
-                _pendingDirtyTiles.Add((tx, ty, lod));
-    }
-
     public int SelectLod(int width, int height, double zoom)
     {
-        var pixels = (long)width * height;
-        var candidate = 0;
-        if (zoom < 0.18 && pixels > 16_000_000) candidate = 2;
-        else if (zoom < 0.35 && pixels > 8_000_000) candidate = 1;
+        _ = width;
+        _ = height;
+        var candidate = zoom >= 1.0
+            ? 0
+            : Math.Clamp((int)Math.Floor(Math.Log2(1.0 / zoom)), 0, MaxCompositeLod);
 
-        // Hysteresis: require a wider margin to switch LOD, preventing rapid
-        // oscillation when zooming in/out near the boundary.
+        // Krita: floor(log2(1/zoom)). Zooming out switches eagerly; zooming in
+        // waits until the viewport clearly crosses the next threshold.
         if (candidate > _currentLod)
-            return candidate; // zooming out → switch eagerly
+            return candidate;
+
         if (candidate < _currentLod)
         {
-            // zooming in → require more evidence before dropping LOD
-            var leaveThreshold = _currentLod == 1 ? 0.42 : 0.24;
-            if (zoom > leaveThreshold)
+            var threshold = 1.0 / (1 << _currentLod);
+            var margin = _currentLod >= 2 ? 0.08 : 0.06;
+            if (zoom > threshold + margin)
                 return candidate;
         }
+
         return _currentLod;
+    }
+
+    private bool SourceTilesReadyForBootstrap(int docLeft, int docTop, int docW, int docH, int sourceLod)
+    {
+        var sourceStride = CmpTileSize * (1 << sourceLod);
+        var srcFirstTX = FloorDiv(docLeft, sourceStride);
+        var srcFirstTY = FloorDiv(docTop, sourceStride);
+        var srcLastTX = FloorDiv(docLeft + docW - 1, sourceStride);
+        var srcLastTY = FloorDiv(docTop + docH - 1, sourceStride);
+
+        for (var sty = srcFirstTY; sty <= srcLastTY; sty++)
+        {
+            for (var stx = srcFirstTX; stx <= srcLastTX; stx++)
+            {
+                var key = (stx, sty, sourceLod);
+                if (!_compTiles.ContainsKey(key) || _tilesPendingComposite.Contains(key))
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool TryReadCachedPixel(int docX, int docY, int sourceLod, out byte b, out byte g, out byte r, out byte a)
+    {
+        if ((uint)docX >= (uint)_width || (uint)docY >= (uint)_height)
+        {
+            b = g = r = a = 0;
+            return false;
+        }
+
+        var sourceStride = CmpTileSize * (1 << sourceLod);
+        var scale = 1 << sourceLod;
+        var stx = FloorDiv(docX, sourceStride);
+        var sty = FloorDiv(docY, sourceStride);
+        var key = (stx, sty, sourceLod);
+        if (!_compTiles.TryGetValue(key, out var bmp) || _tilesPendingComposite.Contains(key))
+        {
+            b = g = r = a = 0;
+            return false;
+        }
+
+        var localDocX = docX - stx * sourceStride;
+        var localDocY = docY - sty * sourceStride;
+        var bx = localDocX / scale;
+        var by = localDocY / scale;
+
+        var tileDocW = Math.Min(sourceStride, _width - stx * sourceStride);
+        var tileDocH = Math.Min(sourceStride, _height - sty * sourceStride);
+        var bmpW = Math.Max(1, (tileDocW + scale - 1) / scale);
+        var bmpH = Math.Max(1, (tileDocH + scale - 1) / scale);
+        if (bx >= bmpW || by >= bmpH)
+        {
+            b = g = r = a = 0;
+            return false;
+        }
+
+        unsafe
+        {
+            using var frame = bmp.Lock();
+            var src = (byte*)frame.Address;
+            var ptr = src + by * frame.RowBytes + bx * 4;
+            b = ptr[0];
+            g = ptr[1];
+            r = ptr[2];
+            a = ptr[3];
+        }
+
+        return true;
+    }
+
+    private unsafe bool TryBootstrapTileFromFinerLod(int tx, int ty, int targetLod, int sourceLod)
+    {
+        if (sourceLod >= targetLod)
+            return false;
+
+        var targetStride = CmpTileSize * (1 << targetLod);
+        var docLeft = tx * targetStride;
+        var docTop = ty * targetStride;
+        var docW = Math.Min(targetStride, _width - docLeft);
+        var docH = Math.Min(targetStride, _height - docTop);
+        if (docW <= 0 || docH <= 0 || !SourceTilesReadyForBootstrap(docLeft, docTop, docW, docH, sourceLod))
+            return false;
+
+        var target = EnsureTile(tx, ty, targetLod);
+        var docScale = 1 << targetLod;
+
+        using var dstFrame = target.Lock();
+        var dst = (byte*)dstFrame.Address;
+        var dstStride = dstFrame.RowBytes;
+        var outW = target.PixelSize.Width;
+        var outH = target.PixelSize.Height;
+
+        for (var oy = 0; oy < outH; oy++)
+        {
+            for (var ox = 0; ox < outW; ox++)
+            {
+                var docX0 = docLeft + ox * docScale;
+                var docY0 = docTop + oy * docScale;
+                var docX1 = Math.Min(docX0 + docScale, docLeft + docW);
+                var docY1 = Math.Min(docY0 + docScale, docTop + docH);
+
+                var tb = 0;
+                var tg = 0;
+                var tr = 0;
+                var ta = 0;
+                var count = 0;
+                for (var dy = docY0; dy < docY1; dy++)
+                {
+                    for (var dx = docX0; dx < docX1; dx++)
+                    {
+                        if (!TryReadCachedPixel(dx, dy, sourceLod, out var pb, out var pg, out var pr, out var pa))
+                            continue;
+                        tb += pb;
+                        tg += pg;
+                        tr += pr;
+                        ta += pa;
+                        count++;
+                    }
+                }
+
+                var dstPx = dst + oy * dstStride + ox * 4;
+                if (count == 0)
+                {
+                    dstPx[0] = dstPx[1] = dstPx[2] = dstPx[3] = 0;
+                    continue;
+                }
+
+                dstPx[0] = (byte)(tb / count);
+                dstPx[1] = (byte)(tg / count);
+                dstPx[2] = (byte)(tr / count);
+                dstPx[3] = (byte)(ta / count);
+            }
+        }
+
+        _tilesPendingComposite.Remove((tx, ty, targetLod));
+        return true;
+    }
+
+    private void BootstrapLodFromFinerCache(List<(int tx, int ty)> missingTileKeys, int sourceLod, int targetLod)
+    {
+        for (var i = missingTileKeys.Count - 1; i >= 0; i--)
+        {
+            var (tx, ty) = missingTileKeys[i];
+            if (TryBootstrapTileFromFinerLod(tx, ty, targetLod, sourceLod))
+                missingTileKeys.RemoveAt(i);
+        }
     }
 
     public static int CountTilesForRegion(PixelRegion region, int lod)
@@ -1520,6 +1703,9 @@ public sealed class LayerCompositor : IDisposable
         {
             cache.EnsureSize(_width, _height);
         }
+
+        if (_groupProjectionReadOnly)
+            return cache.Buffer;
 
         var dirty = cache.TakeDirty(requestedClip);
         if (!dirty.IsEmpty)
@@ -2750,9 +2936,8 @@ public sealed class LayerCompositor : IDisposable
             var clip = requestedClip.ClipTo(Buffer.Width, Buffer.Height);
             if (clip.IsEmpty) return PixelRegion.Empty;
 
-            // When fully dirty, return clip for every tile — DO NOT consume _fullDirty
-            // here. The compositor calls FlushFullDirty() after all tiles are processed
-            // so that each compositor tile gets a correct re-render of the group.
+            // When fully dirty, return clip for every warm request. Parallel
+            // display upload reads the buffer read-only after sequential warm.
             if (_fullDirty)
                 return clip;
 

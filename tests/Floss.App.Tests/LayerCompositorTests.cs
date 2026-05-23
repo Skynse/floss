@@ -51,6 +51,15 @@ public class LayerCompositorTests
     }
 
     [Fact]
+    public void SelectLod_UsesKritaLog2FormulaForAllDocumentSizes()
+    {
+        using var compositor = new LayerCompositor();
+        TestAssertions.Equal(1, compositor.SelectLod(1000, 1000, 0.4));
+        TestAssertions.Equal(2, compositor.SelectLod(1000, 1000, 0.2));
+        TestAssertions.Equal(0, compositor.SelectLod(1000, 1000, 1.0));
+    }
+
+    [Fact]
     public void Composite_SelectsLodForHugeLowZoomCanvas()
     {
         using var compositor = new LayerCompositor();

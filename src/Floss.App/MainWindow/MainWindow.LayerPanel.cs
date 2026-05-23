@@ -55,7 +55,8 @@ public partial class MainWindow
     private static readonly IBrush GroupPreviewBgActive = new SolidColorBrush(Color.Parse("#334158"));
 
     // Miscellaneous UI Elements
-    private static readonly IBrush PreviewFrameBg = new SolidColorBrush(Color.Parse(Bg0));
+    // Layer thumbnail — white so dark strokes stay visible on the dark panel.
+    private static readonly IBrush PreviewThumbBg = new SolidColorBrush(Colors.White);
     private static readonly IBrush PreviewFrameBorder = new SolidColorBrush(Color.Parse(Stroke));
     private static readonly IBrush SwatchBorder = new SolidColorBrush(Color.Parse(Stroke));
 
@@ -432,7 +433,7 @@ public partial class MainWindow
         row.AddHandler(DragDrop.DropEvent, LayerRowDrop);
 
         // cols: clip-strip | disclosure | visibility | thumbnail | name/status
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("3,14,16,28,*") };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("3,14,16,50,*") };
 
         // Thin pink strip on the left edge to signal "clipped to layer below"
         var clipStrip = new Border
@@ -1127,16 +1128,18 @@ public partial class MainWindow
         bool highlighted,
         Avalonia.Media.Color? paperColor = null)
     {
+        var (thumbW, thumbH) = DrawingLayer.ComputeThumbnailPixelSize(layer.Width, layer.Height);
         var frame = new Border
         {
-            Width = 22,
-            Height = 22,
+            Width = thumbW,
+            Height = thumbH,
             Margin = new Thickness(1, 0, 1, 0),
-            Background = PreviewFrameBg,
+            Background = PreviewThumbBg,
             BorderBrush = PreviewFrameBorder,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(3),
-            ClipToBounds = true
+            ClipToBounds = true,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
 
         if (layer.IsGroup)
@@ -1145,9 +1148,10 @@ public partial class MainWindow
             frame.BorderBrush = highlighted
                 ? new SolidColorBrush(Color.Parse(Accent))
                 : PreviewFrameBorder;
+            var iconSize = Math.Min(22, Math.Min(thumbW, thumbH) - 4);
             frame.Child = Icons.Make(
                 layer.IsOpen ? Icons.FolderOpenOutline : Icons.Folder,
-                15,
+                iconSize,
                 highlighted ? GroupFolderIconActive : GroupFolderIcon);
             return (frame, null);
         }
@@ -1161,7 +1165,8 @@ public partial class MainWindow
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch
             });
-            var docIcon = Icons.Make(Icons.PaperDocument, 14,
+            var docIconSize = Math.Min(18, Math.Min(thumbW, thumbH) - 4);
+            var docIcon = Icons.Make(Icons.PaperDocument, docIconSize,
                 new SolidColorBrush(pc.R + pc.G + pc.B > 384 ? Colors.Black : Colors.White));
             docIcon.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center;
             docIcon.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center;
@@ -1172,10 +1177,10 @@ public partial class MainWindow
 
         var image = new Image
         {
-            Source = layer.GetThumbnail(26),
-            Stretch = Stretch.Uniform,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+            Source = layer.GetThumbnail(),
+            Stretch = Stretch.Fill,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch
         };
         RenderOptions.SetBitmapInterpolationMode(image, Avalonia.Media.Imaging.BitmapInterpolationMode.None);
         frame.Child = image;

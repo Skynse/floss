@@ -2437,8 +2437,10 @@ public partial class MainWindow : Window, Tools.IViewportController
 
     internal void ActivatePreset(ToolGroup group, ToolPreset preset)
     {
-        // Snapshot ALL tool settings into the preset we're leaving
-        CaptureActiveBrushToPresetIfChanged();
+        // Snapshot settings into the preset we're leaving. Callers that repoint
+        // LastActivePresetId before calling us must capture explicitly first.
+        if (_activeToolGroup?.ActivePreset is { } leaving && leaving.Id != preset.Id)
+            CaptureBrushToPresetIfChanged(leaving);
 
         // Save the current category for the group we're leaving
         if (_activeToolGroup != null && _activeToolGroup != group)
@@ -2678,7 +2680,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         {
             layer.MarkThumbnailDirty();
             layer.RefreshThumbnail();
-            refs.PreviewImage.Source = layer.GetThumbnail(26);
+            refs.PreviewImage.Source = layer.GetThumbnail();
         }
     }
 
