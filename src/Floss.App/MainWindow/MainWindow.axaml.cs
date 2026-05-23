@@ -275,6 +275,20 @@ public partial class MainWindow : Window, Tools.IViewportController
     private bool CanExecuteCanvasDocumentShortcut()
         => _canvas.HasDocument && CanExecuteCanvasShortcut();
 
+    /// <summary>
+    /// Viewport/view shortcuts that should work from side panels, not only when
+    /// the pointer is over the canvas workspace.
+    /// </summary>
+    private bool CanExecuteDocumentViewShortcut()
+    {
+        if (!_canvas.HasDocument) return false;
+
+        var focused = FocusManager.GetFocusedElement() as IInputElement;
+        if (KeyboardInputScope.IsTextEntryFocused(focused)) return false;
+        if (KeyboardInputScope.IsPopupNodeGraphFocused(focused)) return false;
+        return !_keyboardInputScope.ShouldRouteToNodeGraph(focused);
+    }
+
     private void RegisterShortcuts()
     {
         var s = App.Shortcuts;
@@ -296,8 +310,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         // View - flip
         AddShortcut(s.FlipHorizontal, () => _canvas.FlipCanvas(horizontal: true), CanExecuteCanvasDocumentShortcut);
         AddShortcut(s.FlipVertical, () => _canvas.FlipCanvas(horizontal: false), CanExecuteCanvasDocumentShortcut);
-        AddShortcut(s.MirrorHorizontal, MirrorHorizontalAction, CanExecuteCanvasDocumentShortcut);
-        AddShortcut(s.MirrorVertical, MirrorVerticalAction, CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.MirrorHorizontal, MirrorHorizontalAction, CanExecuteDocumentViewShortcut);
+        AddShortcut(s.MirrorVertical, MirrorVerticalAction, CanExecuteDocumentViewShortcut);
 
         // View - zoom
         AddShortcut(s.ZoomIn, () => SetZoom(_zoom * s.ZoomKeyFactor, null), CanExecuteCanvasShortcut);
@@ -373,6 +387,12 @@ public partial class MainWindow : Window, Tools.IViewportController
         AddShortcut(new Input.KeyBinding(Key.Enter), () => _canvas.CommitActiveTool(),
             () => CanExecuteCanvasDocumentShortcut() &&
                   _canvas.ActiveTool is TransformTool or CompositeTool { CanCommitFromClick: true });
+    }
+
+    internal void ReloadShortcuts()
+    {
+        KeyBindings.Clear();
+        RegisterShortcuts();
     }
 
     private void DeleteSelectionAction()

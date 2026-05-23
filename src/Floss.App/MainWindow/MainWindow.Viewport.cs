@@ -714,8 +714,12 @@ public partial class MainWindow : ICanvasInputHost
     private void OpenSettings()
     {
         if (_settingsWindow != null) { _settingsWindow.Activate(); return; }
-        _settingsWindow = new SettingsWindow();
-        _settingsWindow.Closed += (_, _) => _settingsWindow = null;
+        _settingsWindow = new SettingsWindow { OnShortcutsChanged = ReloadShortcuts };
+        _settingsWindow.Closed += (_, _) =>
+        {
+            _settingsWindow = null;
+            ReloadShortcuts();
+        };
         _settingsWindow.Show(this);
     }
 

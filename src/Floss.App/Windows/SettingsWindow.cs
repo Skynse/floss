@@ -44,6 +44,8 @@ public sealed class SettingsWindow : Window
     // Used for conflict detection when recording a new shortcut.
     private (string Label, Func<KeyBinding> Getter, Action<KeyBinding> Setter)[] _bindingDescriptors = [];
 
+    public Action? OnShortcutsChanged { get; set; }
+
     public SettingsWindow()
     {
         _sc = App.Shortcuts;
@@ -392,9 +394,7 @@ public sealed class SettingsWindow : Window
         clearBtn.Click += (_, _) =>
         {
             StopRecording();
-            setter(KeyBinding.Empty);
-            keyDisplay.Text = "--";
-            keyDisplay.Foreground = new SolidColorBrush(Color.Parse(TextMuted));
+            ApplyShortcutBinding(KeyBinding.Empty, setter, keyDisplay);
         };
 
         recordBtn.Click += (_, _) =>
@@ -405,12 +405,7 @@ public sealed class SettingsWindow : Window
                 return;
             }
             StopRecording();
-            StartRecording(rowBorder, keyDisplay, gesture, v =>
-            {
-                setter(v);
-                keyDisplay.Text = v.Display();
-                keyDisplay.Foreground = new SolidColorBrush(Color.Parse(v.IsEmpty ? TextMuted : TextPrimary));
-            }, label);
+            StartRecording(rowBorder, keyDisplay, gesture, v => ApplyShortcutBinding(v, setter, keyDisplay), label);
         };
 
         return rowBorder;
@@ -572,6 +567,18 @@ public sealed class SettingsWindow : Window
         "f3" => $"{v:0.000}",
         _ => $"{v:0.##}"
     };
+
+    private void ApplyShortcutBinding(KeyBinding binding, Action<KeyBinding> setter, TextBlock? display)
+    {
+        setter(binding);
+        if (display != null)
+        {
+            display.Text = binding.Display();
+            display.Foreground = new SolidColorBrush(Color.Parse(binding.IsEmpty ? TextMuted : TextPrimary));
+        }
+        App.Shortcuts.Save();
+        OnShortcutsChanged?.Invoke();
+    }
 
     // ── Recording ─────────────────────────────────────────────────────────────
 
