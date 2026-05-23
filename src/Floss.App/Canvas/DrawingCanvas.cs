@@ -128,7 +128,9 @@ public sealed class DrawingCanvas : Control, IDisposable
 
         _document.Changed += (_, e) =>
         {
-            _projectionScheduler.Invalidate(e.DirtyRegion, _document.Layers, e.LayerIndex, e.MetadataOnly);
+            var viewport = ComputeVisibleViewport();
+            _projectionScheduler.Invalidate(
+                e.DirtyRegion, _document.Layers, e.LayerIndex, e.MetadataOnly, viewport);
             if (!e.MetadataOnly)
                 StatsChanged?.Invoke(this, EventArgs.Empty);
         };
@@ -146,6 +148,47 @@ public sealed class DrawingCanvas : Control, IDisposable
     }
 
     public void InvalidateCompositor() => _projectionScheduler.Invalidate(null);
+
+    /// <summary>
+    /// Call after replacing the document (open/import). Clears display LOD state so the
+    /// next paint bootstraps compositor tiles at full resolution.
+    /// </summary>
+    public void ResetDisplayAfterDocumentLoad()
+    {
+        _renderLod = -1;
+        _lastRenderZoom = double.NaN;
+        InvalidateCompositor();
+    }
+
+    /// <summary>
+    /// Synchronously fill viewport compositor tiles (used after open/import).
+    /// </summary>
+    public void EnsureDisplayCompositeSync(int? forceLod = 0)
+    {
+        if (!HasAnyLayerContent(_document.Layers)) return;
+
+        var paper = _document.PaperLayer;
+        var paperUint = paper is { IsVisible: true } ? ColorToBgraUint(_document.PaperColor) : 0u;
+        var viewport = ComputeVisibleViewport();
+        var zoom = CanvasZoom > 0 ? CanvasZoom : 1.0;
+
+        using (_document.RenderLock.Read())
+        {
+            for (var pass = 0; pass < 64; pass++)
+            {
+                if (!_compositor.Composite(_document.Layers, _document.Width, _document.Height,
+                        paperUint, viewport, zoom, forceLod))
+                    break;
+                if (_compositor.PendingDirtyTileCount == 0)
+                    break;
+            }
+        }
+
+        _renderLod = _compositor.LastLod;
+        _projectionScheduler.ApplyPending(_compositor);
+        _compositor.DrainDisposalQueue();
+        InvalidateVisual();
+    }
 
     public void SetCurrentModifiers(Avalonia.Input.KeyModifiers mods) => _ctx.CurrentModifiers = mods;
     public void SetToolAuxMode(ToolAuxOperationType mode)
@@ -1128,10 +1171,12 @@ public sealed class DrawingCanvas : Control, IDisposable
     {
         base.Render(context);
 
+        var canvasBounds = new Rect(Bounds.Size);
+        context.FillRectangle(CheckerboardOverlay.BackgroundBrush, canvasBounds);
+
         // Skip compositing on empty-canvas documents — avoids allocating a
         // full-canvas WriteableBitmap (900MB+ for 15k²) when nothing is drawn.
         var viewport = ComputeVisibleViewport();
-        var canvasBounds = new Rect(Bounds.Size);
         _projectionScheduler.ApplyPending(_compositor);
         _compositor.DrainDisposalQueue();
         {
@@ -1160,7 +1205,10 @@ public sealed class DrawingCanvas : Control, IDisposable
 
             bool needSync = !_compositor.HasAnyTiles && !_compositor.IsCompositeActive;
             bool preferSync = lodTransition
-                || (zoomTick && _compositor.PendingDirtyTileCount > 0 && !_compositor.IsCompositeActive);
+                || (zoomTick && _compositor.PendingDirtyTileCount > 0 && !_compositor.IsCompositeActive)
+                || (_projectionScheduler.LastApplyWasMetadataOnly
+                    && _compositor.PendingDirtyTileCount > 0
+                    && !_compositor.IsCompositeActive);
             if ((needSync || preferSync) && !_compositor.IsCompositeActive)
             {
                 using (_document.RenderLock.Read())

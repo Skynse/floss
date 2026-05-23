@@ -15,6 +15,7 @@ public sealed class ProjectionUpdateScheduler
     private bool _fullDirty;
     private bool _metadataOnly;
     private bool _queued;
+    private PixelRegion? _viewportClip;
 
     public ProjectionUpdateScheduler(Action requestRender)
     {
@@ -23,7 +24,15 @@ public sealed class ProjectionUpdateScheduler
 
     public int PendingCount { get; private set; }
 
-    public void Invalidate(PixelRegion? region, IReadOnlyList<DrawingLayer>? layers = null, int? layerIndex = null, bool metadataOnly = false)
+    /// <summary>True when the last applied invalidation was a layer-property preview (opacity scrub, etc.).</summary>
+    public bool LastApplyWasMetadataOnly { get; private set; }
+
+    public void Invalidate(
+        PixelRegion? region,
+        IReadOnlyList<DrawingLayer>? layers = null,
+        int? layerIndex = null,
+        bool metadataOnly = false,
+        PixelRegion? viewportClip = null)
     {
         lock (_lock)
         {
@@ -32,6 +41,12 @@ public sealed class ProjectionUpdateScheduler
             _pendingLayerIndex = layerIndex;
             if (metadataOnly)
                 _metadataOnly = true;
+            if (viewportClip is { IsEmpty: false })
+            {
+                _viewportClip = _viewportClip is { } existing
+                    ? existing.Union(viewportClip.Value)
+                    : viewportClip.Value;
+            }
             if (region is null || region.Value.IsEmpty)
             {
                 _fullDirty = true;
@@ -46,11 +61,12 @@ public sealed class ProjectionUpdateScheduler
             _queued = true;
         }
 
+        var priority = metadataOnly ? DispatcherPriority.Input : DispatcherPriority.Render;
         Dispatcher.UIThread.Post(() =>
         {
             lock (_lock) _queued = false;
             _requestRender();
-        }, DispatcherPriority.Render);
+        }, priority);
     }
 
     public void ApplyPending(LayerCompositor compositor)
@@ -67,6 +83,7 @@ public sealed class ProjectionUpdateScheduler
         bool fullDirty;
         bool metadataOnly;
 
+        PixelRegion? viewportClip;
         lock (_lock)
         {
             fullDirty = _fullDirty;
@@ -74,17 +91,21 @@ public sealed class ProjectionUpdateScheduler
             layers = _pendingLayers;
             layerIndex = _pendingLayerIndex;
             metadataOnly = _metadataOnly;
+            viewportClip = _viewportClip;
             _fullDirty = false;
             _pendingDirty = null;
             _pendingLayers = null;
             _pendingLayerIndex = null;
             _metadataOnly = false;
+            _viewportClip = null;
             PendingCount = 0;
         }
 
+        LastApplyWasMetadataOnly = metadataOnly;
+
         if (fullDirty)
-            compositor.Invalidate(null, layers, layerIndex, metadataOnly);
+            compositor.Invalidate(null, layers, layerIndex, metadataOnly, viewportClip);
         else if (dirty is { } region && !region.IsEmpty)
-            compositor.Invalidate(region, layers, layerIndex, metadataOnly);
+            compositor.Invalidate(region, layers, layerIndex, metadataOnly, viewportClip);
     }
 }

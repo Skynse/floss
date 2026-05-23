@@ -133,7 +133,7 @@ public partial class MainWindow
 
         // 4. Swap it in and reset session state
         _canvas.Document.ReplaceWith(newDoc);
-        _canvas.InvalidateCompositor();
+        _canvas.ResetDisplayAfterDocumentLoad();
         _currentFilePath = null;
         if (_activeTab != null)
         {
@@ -150,6 +150,9 @@ public partial class MainWindow
         _canvasFrame.IsVisible = true;
         SetDocumentPanelsVisible(true);
         SyncCanvasFrameToDocument(fitToViewport: true);
+        Avalonia.Threading.Dispatcher.UIThread.Post(
+            () => _canvas.EnsureDisplayCompositeSync(forceLod: 0),
+            Avalonia.Threading.DispatcherPriority.Loaded);
         SyncBrushSizeLimits();
         BuildLayerList();
         UpdateStatus();
@@ -236,7 +239,7 @@ public partial class MainWindow
     private void ApplyOpenedDocument(DrawingDocument imported, string path, string? timelapseSessionId = null)
     {
         _canvas.Document.ReplaceWith(imported);
-        _canvas.InvalidateCompositor();
+        _canvas.ResetDisplayAfterDocumentLoad();
         _canvasFrame.IsVisible = true;
         SetDocumentPanelsVisible(true);
         App.Config.AddRecentFile(path);
@@ -249,6 +252,10 @@ public partial class MainWindow
         }
         RestoreTimelapseForActiveDocument(_currentFilePath, timelapseSessionId);
         SyncCanvasFrameToDocument(fitToViewport: true);
+        // Layout + viewport must be valid before compositing visible tiles.
+        Avalonia.Threading.Dispatcher.UIThread.Post(
+            () => _canvas.EnsureDisplayCompositeSync(forceLod: 0),
+            Avalonia.Threading.DispatcherPriority.Loaded);
         SyncBrushSizeLimits();
         BuildLayerList();
         UpdateStatus();

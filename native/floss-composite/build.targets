@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <PropertyGroup>
+    <FlossCompositeCrate Condition="'$(FlossCompositeCrate)' == ''">$(MSBuildThisFileDirectory)</FlossCompositeCrate>
+    <FlossCompositeCargoProfile Condition="'$(Configuration)' == 'Debug'">debug</FlossCompositeCargoProfile>
+    <FlossCompositeCargoProfile Condition="'$(Configuration)' != 'Debug'">release</FlossCompositeCargoProfile>
+    <FlossCompositeCargoReleaseArg Condition="'$(Configuration)' != 'Debug'">--release</FlossCompositeCargoReleaseArg>
+    <FlossCompositeLibName Condition="$([MSBuild]::IsOSPlatform(Linux))">libfloss_composite.so</FlossCompositeLibName>
+    <FlossCompositeLibName Condition="$([MSBuild]::IsOSPlatform('OSX'))">libfloss_composite.dylib</FlossCompositeLibName>
+    <FlossCompositeLibName Condition="'$(OS)' == 'Windows_NT'">floss_composite.dll</FlossCompositeLibName>
+    <FlossCompositeBuilt>$(FlossCompositeCrate)target/$(FlossCompositeCargoProfile)/$(FlossCompositeLibName)</FlossCompositeBuilt>
+    <FlossCompositeTargetDir>$(FlossCompositeCrate)target</FlossCompositeTargetDir>
+  </PropertyGroup>
+
+  <Target Name="BuildFlossCompositeNative"
+          BeforeTargets="BeforeBuild"
+          Condition="'$(SkipFlossCompositeNative)' != 'true'">
+    <Message Importance="high" Text="Building native compositor: $(FlossCompositeCrate) ($(FlossCompositeCargoProfile))" />
+    <Exec Command="cargo build --manifest-path &quot;$(FlossCompositeCrate)Cargo.toml&quot; --target-dir &quot;$(FlossCompositeTargetDir)&quot; $(FlossCompositeCargoReleaseArg)"
+          WorkingDirectory="$(FlossCompositeCrate)"
+          IgnoreExitCode="false" />
+  </Target>
+
+  <Target Name="CopyFlossCompositeNative"
+          AfterTargets="Build"
+          Condition="'$(SkipFlossCompositeNative)' != 'true' And Exists('$(FlossCompositeBuilt)')">
+    <Copy SourceFiles="$(FlossCompositeBuilt)"
+          DestinationFiles="$(OutputPath)$(FlossCompositeLibName)"
+          SkipUnchangedFiles="true" />
+  </Target>
+</Project>

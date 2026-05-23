@@ -1,7 +1,40 @@
 namespace Floss.App.Tests;
 
+using Avalonia;
+using Avalonia.Headless;
+using Floss.App.Kra;
+
 public class LayerCompositorTests
 {
+    private static readonly object AvaloniaGate = new();
+    private static bool _avaloniaInitialized;
+
+    private static void EnsureAvalonia()
+    {
+        lock (AvaloniaGate)
+        {
+            if (_avaloniaInitialized || Application.Current != null)
+            {
+                _avaloniaInitialized = true;
+                return;
+            }
+
+            try
+            {
+                AppBuilder.Configure<Floss.App.App>()
+                    .UseSkia()
+                    .UseHeadless(new AvaloniaHeadlessPlatformOptions())
+                    .SetupWithoutStarting();
+            }
+            catch (InvalidOperationException)
+            {
+                // Another test fixture already initialized Avalonia in this process.
+            }
+
+            _avaloniaInitialized = true;
+        }
+    }
+
     [Fact]
     public void MonochromeExpression_ThresholdsCoverageBeforePaperComposite()
     {
@@ -81,6 +114,418 @@ public class LayerCompositorTests
         TestAssertions.True(lod1 > 0);
         TestAssertions.True(lod2 > 0);
         TestAssertions.True(compositor.PendingDirtyTileCount >= lod0 + lod1 + lod2);
+    }
+
+    [Fact]
+    public void SampleCompositePixel_MatchesCompositeToBgra_ForRealCharacterLayerOnly()
+    {
+        const string path = "/home/neckles/Downloads/electrichearts_20250824A_kiki.kra";
+        if (!File.Exists(path))
+            return;
+
+        using var stream = File.OpenRead(path);
+        var document = KraImporter.Load(stream);
+        var character = FindLayerByName(document.Layers, "Character | 人物");
+        TestAssertions.True(character != null);
+
+        const int x = 2816;
+        const int y = 0;
+        character!.Pixels.GetPixel(x, y, out _, out _, out _, out var srcA);
+        TestAssertions.True(srcA > 0, "Expected character source alpha at test pixel.");
+        TestAssertions.True(character.MaxX > x, $"Character MaxX={character.MaxX} must include x={x}");
+        character.Pixels.EnterPixelReadLock();
+        try
+        {
+            var tile = character.Pixels.GetTileOrNull(x / 64, y / 64);
+            TestAssertions.True(tile != null, "Expected raw tile for character pixel.");
+            TestAssertions.Equal(srcA, tile![(y % 64) * 64 * 4 + (x % 64) * 4 + 3]);
+        }
+        finally
+        {
+            character.Pixels.ExitPixelReadLock();
+        }
+
+        var sampledOnly = new LayerCompositor().SampleCompositePixel([character], document.Width, document.Height, x, y, 0);
+        TestAssertions.True(sampledOnly.HasValue, "SampleCompositePixel alone should hit the character pixel.");
+
+        using var compositor = new LayerCompositor();
+        var pixels = compositor.CompositeToBgra([character], document.Width, document.Height, 0);
+        var offset = (y * document.Width + x) * 4;
+        TestAssertions.True(pixels[offset + 3] > 0, "CompositeToBgra should produce character pixel.");
+        var sampled = compositor.SampleCompositePixel([character], document.Width, document.Height, x, y, 0);
+
+        TestAssertions.True(sampled.HasValue, "SampleCompositePixel should hit the character pixel.");
+        TestAssertions.Equal(pixels[offset + 2], sampled!.Value.R);
+        TestAssertions.Equal(pixels[offset + 1], sampled.Value.G);
+        TestAssertions.Equal(pixels[offset], sampled.Value.B);
+        TestAssertions.Equal(pixels[offset + 3], sampled.Value.A);
+    }
+
+    [Fact]
+    public void SampleCompositePixel_MatchesCompositeToBgra_OnLargeCanvasWithLowAlphaTopGroup()
+    {
+        const int width = 10000;
+        const int height = 5000;
+        const int x = 2816;
+        const int y = 0;
+
+        var background = new DrawingLayer("Background", width, height);
+        background.Pixels.SetPixel(x, y, 0, 0, 255, 255);
+
+        var layers = new List<DrawingLayer> { background };
+        for (var g = 0; g < 4; g++)
+        {
+            var group = new DrawingLayer($"Group{g}", width, height) { IsGroup = true };
+            var child = new DrawingLayer($"Ink{g}", width, height);
+            var alpha = (byte)(g == 3 ? 32 : 255);
+            child.Pixels.SetPixel(x, y, (byte)(10 + g), (byte)(20 + g), (byte)(30 + g), alpha);
+            child.Parent = group;
+            group.Children.Add(child);
+            layers.Add(group);
+        }
+
+        using var compositor = new LayerCompositor();
+        var pixels = compositor.CompositeToBgra(layers, width, height, 0);
+        var sampled = compositor.SampleCompositePixel(layers, width, height, x, y, 0);
+
+        TestAssertions.True(sampled.HasValue);
+        var offset = (y * width + x) * 4;
+        TestAssertions.Equal(pixels[offset + 2], sampled!.Value.R);
+        TestAssertions.Equal(pixels[offset + 1], sampled.Value.G);
+        TestAssertions.Equal(pixels[offset], sampled.Value.B);
+        TestAssertions.Equal(pixels[offset + 3], sampled.Value.A);
+    }
+
+    [Fact]
+    public void SampleCompositePixel_MatchesCompositeToBgra_ForDeepStackedNormalGroupsOffOrigin()
+    {
+        var background = new DrawingLayer("Background", 512, 512);
+        background.Pixels.SetPixel(300, 300, 0, 0, 255, 255);
+
+        var layers = new List<DrawingLayer> { background };
+        for (var g = 0; g < 4; g++)
+        {
+            var group = new DrawingLayer($"Group{g}", 512, 512) { IsGroup = true };
+            for (var c = 0; c < 7; c++)
+            {
+                var child = new DrawingLayer($"Ink{g}_{c}", 512, 512);
+                var alpha = (byte)(c == 6 ? 32 : (255 - c * 20));
+                child.Pixels.SetPixel(300, 300, (byte)(10 + g), (byte)(20 + g), (byte)(30 + g), alpha);
+                child.Parent = group;
+                group.Children.Add(child);
+            }
+
+            layers.Add(group);
+        }
+
+        using var compositor = new LayerCompositor();
+        var pixels = compositor.CompositeToBgra(layers, 512, 512, 0);
+        var sampled = compositor.SampleCompositePixel(layers, 512, 512, 300, 300, 0);
+
+        TestAssertions.True(sampled.HasValue);
+        var offset = (300 * 512 + 300) * 4;
+        TestAssertions.Equal(pixels[offset + 2], sampled!.Value.R);
+        TestAssertions.Equal(pixels[offset + 1], sampled.Value.G);
+        TestAssertions.Equal(pixels[offset], sampled.Value.B);
+        TestAssertions.Equal(pixels[offset + 3], sampled.Value.A);
+    }
+
+    [Fact]
+    public void CompositeToBgra_RendersKikiGroupCharacterPixel()
+    {
+        const string path = "/home/neckles/Downloads/electrichearts_20250824A_kiki.kra";
+        if (!File.Exists(path))
+            return;
+
+        using var stream = File.OpenRead(path);
+        var document = KraImporter.Load(stream);
+        var kiki = FindLayerByName(document.Layers, "Kiki | 琪琪");
+        TestAssertions.True(kiki != null && kiki.IsGroup);
+
+        var sample = FindFirstInBoundsOpaquePixel(kiki!, document);
+        TestAssertions.True(sample.HasValue, "Expected opaque pixel inside Kiki group.");
+        var (x, y) = sample.Value;
+
+        using var compositor = new LayerCompositor();
+        var pixels = compositor.CompositeToBgra([kiki], document.Width, document.Height, 0);
+        var offset = (y * document.Width + x) * 4;
+        TestAssertions.True(pixels[offset + 3] > 0, "Kiki group should produce visible pixels.");
+    }
+
+    [Fact]
+    public void Composite_RealGroupedKra_TiledPathMatchesCompositeToBgra_AtLowAlphaCharacterPixel()
+    {
+        EnsureAvalonia();
+        const string path = "/home/neckles/Downloads/electrichearts_20250824A_kiki.kra";
+        if (!File.Exists(path))
+            return;
+
+        using var stream = File.OpenRead(path);
+        var document = KraImporter.Load(stream);
+        var character = FindLayerByName(document.Layers, "Character | 人物");
+        TestAssertions.True(character != null);
+
+        const int x = 2816;
+        const int y = 0;
+
+        using var expectedCompositor = new LayerCompositor();
+        var expected = expectedCompositor.CompositeToBgra(document.Layers, document.Width, document.Height, 0);
+        var offset = (y * document.Width + x) * 4;
+
+        using var compositor = new LayerCompositor();
+        compositor.SetSize(document.Width, document.Height);
+        compositor.Invalidate(null);
+        var viewport = new PixelRegion(Math.Max(0, x - 256), Math.Max(0, y - 256), 512, 512);
+        for (var pass = 0; pass < 32; pass++)
+        {
+            if (!compositor.Composite(document.Layers, document.Width, document.Height, 0, viewport, zoom: 1.0))
+                break;
+            if (compositor.PendingDirtyTileCount == 0)
+                break;
+        }
+
+        var sampled = compositor.SampleCompositePixel(document.Layers, document.Width, document.Height, x, y, 0);
+        TestAssertions.True(sampled.HasValue, "Grouped KRA pixel should composite.");
+        TestAssertions.Equal(expected[offset + 2], sampled!.Value.R);
+        TestAssertions.Equal(expected[offset + 1], sampled.Value.G);
+        TestAssertions.Equal(expected[offset], sampled.Value.B);
+        TestAssertions.Equal(expected[offset + 3], sampled.Value.A);
+    }
+
+    private static DrawingLayer? FindLayerByName(IReadOnlyList<DrawingLayer> layers, string name)
+    {
+        foreach (var layer in layers)
+        {
+            if (layer.Name == name)
+                return layer;
+
+            if (layer.IsGroup)
+            {
+                var nested = FindLayerByName(layer.Children, name);
+                if (nested != null) return nested;
+            }
+        }
+
+        return null;
+    }
+
+    private static (int X, int Y)? FindFirstInBoundsOpaquePixel(DrawingDocument document)
+    {
+        foreach (var root in document.Layers)
+        {
+            var hit = FindFirstInBoundsOpaquePixel(root, document);
+            if (hit != null) return hit;
+        }
+
+        return null;
+    }
+
+    private static (int X, int Y)? FindFirstInBoundsOpaquePixel(DrawingLayer layer, DrawingDocument document)
+    {
+        if (layer.IsGroup)
+        {
+            foreach (var child in layer.Children)
+            {
+                var hit = FindFirstInBoundsOpaquePixel(child, document);
+                if (hit != null) return hit;
+            }
+
+            return null;
+        }
+
+        if (!layer.IsVisible || layer.Opacity <= 0) return null;
+        for (var y = 0; y < document.Height; y += 32)
+        for (var x = 0; x < document.Width; x += 32)
+        {
+            layer.Pixels.GetPixel(x - layer.OffsetX, y - layer.OffsetY, out _, out _, out _, out var a);
+            if (a > 64)
+                return (x, y);
+        }
+
+        return null;
+    }
+
+    [Fact]
+    public void TiledDisplay_MatchesProjectionMerge_ForStackedNormalGroups()
+    {
+        EnsureAvalonia();
+        var background = new DrawingLayer("Background", 512, 512);
+        background.Pixels.SetPixel(300, 300, 0, 0, 255, 255);
+
+        var layers = new List<DrawingLayer> { background };
+        for (var i = 0; i < 4; i++)
+        {
+            var child = new DrawingLayer($"Ink{i}", 512, 512);
+            child.Pixels.SetPixel(300, 300, (byte)(10 * (i + 1)), (byte)(20 * (i + 1)), (byte)(30 * (i + 1)), (byte)(64 * (i + 1)));
+            var group = new DrawingLayer($"Group{i}", 512, 512) { IsGroup = true };
+            child.Parent = group;
+            group.Children.Add(child);
+            layers.Add(group);
+        }
+
+        const int x = 300;
+        const int y = 300;
+        using var compositor = new LayerCompositor();
+        var expected = compositor.SampleCompositePixel(layers, 512, 512, x, y, 0);
+        TestAssertions.True(expected.HasValue, "Projection merge should hit the stacked group pixel.");
+
+        compositor.SetSize(512, 512);
+        compositor.Invalidate(null);
+        compositor.Composite(layers, 512, 512, paperColor: 0, viewport: new PixelRegion(256, 256, 256, 256), zoom: 1.0);
+
+        TestAssertions.True(compositor.TryReadDisplayPixel(x, y, out var b, out var g, out var r, out var a));
+        TestAssertions.Equal(expected!.Value.R, r);
+        TestAssertions.Equal(expected.Value.G, g);
+        TestAssertions.Equal(expected.Value.B, b);
+        TestAssertions.Equal(expected.Value.A, a);
+    }
+
+    [Fact]
+    public void TiledDisplay_MatchesProjectionMerge_ForSingleNormalGroup()
+    {
+        EnsureAvalonia();
+        var background = new DrawingLayer("Background", 512, 512);
+        background.Pixels.SetPixel(300, 300, 0, 0, 255, 255);
+
+        var child = new DrawingLayer("Ink", 512, 512);
+        child.Pixels.SetPixel(300, 300, 10, 20, 30, 255);
+
+        var group = new DrawingLayer("Group", 512, 512) { IsGroup = true };
+        child.Parent = group;
+        group.Children.Add(child);
+
+        var layers = new[] { background, group };
+        const int x = 300;
+        const int y = 300;
+
+        using var compositor = new LayerCompositor();
+        var expected = compositor.SampleCompositePixel(layers, 512, 512, x, y, 0);
+        TestAssertions.True(expected.HasValue, "Projection merge should hit the group ink pixel.");
+
+        compositor.SetSize(512, 512);
+        compositor.Invalidate(null);
+        compositor.Composite(layers, 512, 512, paperColor: 0, viewport: new PixelRegion(256, 256, 256, 256), zoom: 1.0);
+
+        TestAssertions.True(compositor.TryReadDisplayPixel(x, y, out var b, out var g, out var r, out var a));
+        TestAssertions.Equal(expected!.Value.R, r);
+        TestAssertions.Equal(expected.Value.G, g);
+        TestAssertions.Equal(expected.Value.B, b);
+        TestAssertions.Equal(expected.Value.A, a);
+    }
+
+    [Fact]
+    public void SampleCompositePixel_MatchesCompositeToBgra_ForStackedNormalGroups()
+    {
+        var background = new DrawingLayer("Background", 64, 64);
+        background.Pixels.SetPixel(20, 20, 0, 0, 255, 255);
+
+        var groups = new List<DrawingLayer> { background };
+        for (var i = 0; i < 4; i++)
+        {
+            var child = new DrawingLayer($"Ink{i}", 64, 64);
+            child.Pixels.SetPixel(20, 20, (byte)(10 * (i + 1)), (byte)(20 * (i + 1)), (byte)(30 * (i + 1)), (byte)(64 * (i + 1)));
+            var group = new DrawingLayer($"Group{i}", 64, 64) { IsGroup = true };
+            child.Parent = group;
+            group.Children.Add(child);
+            groups.Add(group);
+        }
+
+        using var compositor = new LayerCompositor();
+        var pixels = compositor.CompositeToBgra(groups, 64, 64, 0);
+        var sampled = compositor.SampleCompositePixel(groups, 64, 64, 20, 20, 0);
+
+        TestAssertions.True(sampled.HasValue);
+        var offset = (20 * 64 + 20) * 4;
+        TestAssertions.Equal(pixels[offset + 2], sampled!.Value.R);
+        TestAssertions.Equal(pixels[offset + 1], sampled.Value.G);
+        TestAssertions.Equal(pixels[offset], sampled.Value.B);
+        TestAssertions.Equal(pixels[offset + 3], sampled.Value.A);
+    }
+
+    [Fact]
+    public void SampleCompositePixel_MatchesCompositeToBgra_ForNormalGroup()
+    {
+        var background = new DrawingLayer("Background", 64, 64);
+        background.Pixels.SetPixel(10, 10, 0, 0, 0, 255);
+
+        var child = new DrawingLayer("Ink", 64, 64);
+        child.Pixels.SetPixel(20, 20, 10, 20, 30, 255);
+
+        var group = new DrawingLayer("Group", 64, 64) { IsGroup = true };
+        child.Parent = group;
+        group.Children.Add(child);
+
+        using var compositor = new LayerCompositor();
+        var pixels = compositor.CompositeToBgra([background, group], 64, 64, 0);
+        var sampled = compositor.SampleCompositePixel([background, group], 64, 64, 20, 20, 0);
+
+        TestAssertions.True(sampled.HasValue);
+        var offset = (20 * 64 + 20) * 4;
+        TestAssertions.Equal(pixels[offset + 2], sampled!.Value.R);
+        TestAssertions.Equal(pixels[offset + 1], sampled.Value.G);
+        TestAssertions.Equal(pixels[offset], sampled.Value.B);
+        TestAssertions.Equal(pixels[offset + 3], sampled.Value.A);
+    }
+
+    [Fact]
+    public void Composite_RendersNormalGroupChildren()
+    {
+        var background = new DrawingLayer("Background", 64, 64);
+        background.Pixels.SetPixel(10, 10, 0, 0, 0, 255);
+
+        var child = new DrawingLayer("Ink", 64, 64);
+        child.Pixels.SetPixel(20, 20, 10, 20, 30, 255);
+
+        var group = new DrawingLayer("Group", 64, 64) { IsGroup = true };
+        child.Parent = group;
+        group.Children.Add(child);
+
+        using var compositor = new LayerCompositor();
+        var pixels = compositor.CompositeToBgra([background, group], 64, 64, 0);
+
+        var offset = (20 * 64 + 20) * 4;
+        TestAssertions.Equal((byte)10, pixels[offset]);
+        TestAssertions.Equal((byte)20, pixels[offset + 1]);
+        TestAssertions.Equal((byte)30, pixels[offset + 2]);
+        TestAssertions.Equal((byte)255, pixels[offset + 3]);
+    }
+
+    [Fact]
+    public void Composite_RendersNormalGroupAtLowLod()
+    {
+        EnsureAvalonia();
+        var background = new DrawingLayer("Background", 64, 64);
+        background.Pixels.SetPixel(5, 5, 1, 2, 3, 255);
+
+        var child = new DrawingLayer("Ink", 64, 64);
+        child.Pixels.SetPixel(30, 30, 40, 50, 60, 200);
+
+        var group = new DrawingLayer("Group", 64, 64) { IsGroup = true };
+        child.Parent = group;
+        group.Children.Add(child);
+
+        using var compositor = new LayerCompositor();
+        compositor.Composite([background, group], 64, 64, paperColor: 0, viewport: new PixelRegion(0, 0, 64, 64), zoom: 0.05);
+
+        var sampled = compositor.SampleCompositePixel([background, group], 64, 64, 30, 30, paperColor: 0);
+        TestAssertions.True(sampled.HasValue);
+        TestAssertions.True(sampled!.Value.A > 20, "Grouped layers should remain visible when composited at low zoom.");
+    }
+
+    [Fact]
+    public void Composite_RendersImportedGroupHierarchy()
+    {
+        using var stream = new MemoryStream(KraImporterTests.BuildGroupedKraPublic());
+        var document = KraImporter.Load(stream);
+
+        using var compositor = new LayerCompositor();
+        var pixels = compositor.CompositeToBgra(document.Layers, document.Width, document.Height, 0);
+
+        var offset = 0;
+        TestAssertions.Equal((byte)1, pixels[offset]);
+        TestAssertions.Equal((byte)2, pixels[offset + 1]);
+        TestAssertions.Equal((byte)3, pixels[offset + 2]);
+        TestAssertions.Equal((byte)255, pixels[offset + 3]);
     }
 
     private static void AssertPixel(byte[] pixels, int x, byte b, byte g, byte r, byte a)

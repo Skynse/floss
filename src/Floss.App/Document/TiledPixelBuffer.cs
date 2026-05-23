@@ -26,6 +26,20 @@ public sealed class TiledPixelBuffer : IDisposable
     private long _compressedBytes;
     private bool _disposed;
 
+    // Bumped whenever the tile-key set changes (add/remove from _tiles or
+    // _compressed). Lets ContentTileBounds cache its result and short-circuit
+    // on the hot composite path — the getter was previously walking every
+    // tile dictionary on every call, which scaled to hundreds of ms per
+    // composite pass on a fully painted 4k×4k document. The version is
+    // bumped under _lock by InvalidateTileKeyCache so writers don't have to
+    // remember to do it manually.
+    private long _tileKeyVersion;
+    private long _cachedBoundsVersion = -1;
+    private PixelRegion _cachedContentBounds;
+
+    /// <summary>Bump the tile-key version. Must be called inside <c>_lock</c>.</summary>
+    private void InvalidateTileKeyCache() => _tileKeyVersion++;
+
     public TiledPixelBuffer(int width, int height)
     {
         MinX = 0;
@@ -85,6 +99,7 @@ public sealed class TiledPixelBuffer : IDisposable
             {
                 _compressedBytes -= compressed.Length;
                 TileSwapManager.ReportCompressedBytes(-compressed.Length);
+                InvalidateTileKeyCache();
                 return compressed.Length;
             }
         }
@@ -97,8 +112,12 @@ public sealed class TiledPixelBuffer : IDisposable
         MinY = 0;
         MaxX = Math.Max(1, width);
         MaxY = Math.Max(1, height);
-        _tiles.Clear();
-        _compressed.Clear();
+        lock (_lock)
+        {
+            _tiles.Clear();
+            _compressed.Clear();
+            InvalidateTileKeyCache();
+        }
     }
 
     private void ExtendBounds(int left, int top, int right, int bottom)
@@ -143,6 +162,9 @@ public sealed class TiledPixelBuffer : IDisposable
                 _compressed[key] = data;
                 addedBytes += data.Length;
             }
+            // _tiles → _compressed shift: union set unchanged but bump anyway
+            // so a reader that captured an early version is told to recheck.
+            InvalidateTileKeyCache();
         }
 
         if (addedBytes > 0)
@@ -167,6 +189,8 @@ public sealed class TiledPixelBuffer : IDisposable
                 _compressed.Remove(key);
                 _compressedBytes -= compressed.Length;
                 TileSwapManager.ReportCompressedBytes(-compressed.Length);
+                // Union set unchanged but bump so a stale reader recomputes.
+                InvalidateTileKeyCache();
                 return raw;
             }
         }
@@ -181,6 +205,7 @@ public sealed class TiledPixelBuffer : IDisposable
         lock (_lock)
         {
             _tiles[key] = raw;
+            InvalidateTileKeyCache();
         }
         return raw;
     }
@@ -237,6 +262,7 @@ public sealed class TiledPixelBuffer : IDisposable
         {
             _tiles[key] = raw;
             _compressed.Remove(key);
+            InvalidateTileKeyCache();
         }
         ExtendBounds(tileX * TileSize, tileY * TileSize, (tileX + 1) * TileSize, (tileY + 1) * TileSize);
         return raw;
@@ -278,6 +304,7 @@ public sealed class TiledPixelBuffer : IDisposable
         {
             _tiles.Clear();
             _compressed.Clear();
+            InvalidateTileKeyCache();
         }
     }
 
@@ -326,6 +353,7 @@ public sealed class TiledPixelBuffer : IDisposable
                     {
                         _tiles.Remove(key);
                         _compressed[key] = fullTileTemplate;
+                        InvalidateTileKeyCache();
                     }
                     ExtendBounds(tx * TileSize, ty * TileSize, (tx + 1) * TileSize, (ty + 1) * TileSize);
                     continue;
@@ -339,6 +367,7 @@ public sealed class TiledPixelBuffer : IDisposable
                     {
                         _tiles[key] = raw;
                         _compressed.Remove(key);
+                        InvalidateTileKeyCache();
                     }
                     ExtendBounds(tx * TileSize, ty * TileSize, (tx + 1) * TileSize, (ty + 1) * TileSize);
                 }
@@ -466,6 +495,7 @@ public sealed class TiledPixelBuffer : IDisposable
             {
                 _tiles.Remove(key);
                 _compressed.Remove(key);
+                InvalidateTileKeyCache();
             }
             return;
         }
@@ -478,6 +508,7 @@ public sealed class TiledPixelBuffer : IDisposable
             {
                 _tiles[key] = raw;
                 _compressed.Remove(key);
+                InvalidateTileKeyCache();
             }
             ExtendBounds(tileX * TileSize, tileY * TileSize, (tileX + 1) * TileSize, (tileY + 1) * TileSize);
         }
@@ -501,6 +532,7 @@ public sealed class TiledPixelBuffer : IDisposable
             {
                 _tiles[key] = raw;
                 _compressed.Remove(key);
+                InvalidateTileKeyCache();
             }
 
             ExtendBounds(tileX * TileSize, tileY * TileSize, (tileX + 1) * TileSize, (tileY + 1) * TileSize);
@@ -542,6 +574,7 @@ public sealed class TiledPixelBuffer : IDisposable
                 {
                     _tiles[(tx, ty)] = tile;
                     _compressed.Remove((tx, ty));
+                    InvalidateTileKeyCache();
                 }
             }
         }
@@ -692,30 +725,45 @@ public sealed class TiledPixelBuffer : IDisposable
     {
         get
         {
-            var total = TileCount;
-            if (total == 0) return PixelRegion.Empty;
-
-            var first = true;
-            var minX = 0;
-            var minY = 0;
-            var maxX = 0;
-            var maxY = 0;
-
-            void Visit(int tx, int ty)
-            {
-                var x = tx * TileSize;
-                var y = ty * TileSize;
-                if (first) { minX = x; minY = y; maxX = x + TileSize; maxY = y + TileSize; first = false; }
-                else { minX = Math.Min(minX, x); minY = Math.Min(minY, y); maxX = Math.Max(maxX, x + TileSize); maxY = Math.Max(maxY, y + TileSize); }
-            }
-
             lock (_lock)
             {
-                foreach (var key in _tiles.Keys) Visit(key.X, key.Y);
-                foreach (var key in _compressed.Keys) Visit(key.X, key.Y);
-            }
+                var version = _tileKeyVersion;
+                if (_cachedBoundsVersion == version)
+                    return _cachedContentBounds;
 
-            return new PixelRegion(minX, minY, maxX - minX, maxY - minY);
+                var total = _tiles.Count + _compressed.Count;
+                if (total == 0)
+                {
+                    _cachedContentBounds = PixelRegion.Empty;
+                    _cachedBoundsVersion = version;
+                    return PixelRegion.Empty;
+                }
+
+                var first = true;
+                var minX = 0;
+                var minY = 0;
+                var maxX = 0;
+                var maxY = 0;
+
+                foreach (var key in _tiles.Keys)
+                {
+                    var x = key.X * TileSize;
+                    var y = key.Y * TileSize;
+                    if (first) { minX = x; minY = y; maxX = x + TileSize; maxY = y + TileSize; first = false; }
+                    else { minX = Math.Min(minX, x); minY = Math.Min(minY, y); maxX = Math.Max(maxX, x + TileSize); maxY = Math.Max(maxY, y + TileSize); }
+                }
+                foreach (var key in _compressed.Keys)
+                {
+                    var x = key.X * TileSize;
+                    var y = key.Y * TileSize;
+                    if (first) { minX = x; minY = y; maxX = x + TileSize; maxY = y + TileSize; first = false; }
+                    else { minX = Math.Min(minX, x); minY = Math.Min(minY, y); maxX = Math.Max(maxX, x + TileSize); maxY = Math.Max(maxY, y + TileSize); }
+                }
+
+                _cachedContentBounds = new PixelRegion(minX, minY, maxX - minX, maxY - minY);
+                _cachedBoundsVersion = version;
+                return _cachedContentBounds;
+            }
         }
     }
 
@@ -763,6 +811,9 @@ public sealed class TiledPixelBuffer : IDisposable
                 _tiles[key] = raw;
                 _compressed.Remove(key);
             }
+            // _compressed → _tiles bulk move: union unchanged but readers may
+            // be tracking _tiles specifically (e.g. cache-warming heuristics).
+            InvalidateTileKeyCache();
         }
 
         return found ? new PixelRegion(minX, minY, maxX - minX + 1, maxY - minY + 1) : PixelRegion.Empty;
@@ -913,6 +964,7 @@ public sealed class TiledPixelBuffer : IDisposable
         {
             _tiles.Clear();
             _compressed.Clear();
+            InvalidateTileKeyCache();
         }
 
         int? minX = null, minY = null, maxX = null, maxY = null;
@@ -924,6 +976,7 @@ public sealed class TiledPixelBuffer : IDisposable
             lock (_lock)
             {
                 _tiles[key] = copy;
+                InvalidateTileKeyCache();
             }
 
             var x = key.X * TileSize;
@@ -956,6 +1009,7 @@ public sealed class TiledPixelBuffer : IDisposable
         {
             _tiles[key] = raw;
             _compressed.Remove(key);
+            InvalidateTileKeyCache();
         }
         ExtendBounds(key.X * TileSize, key.Y * TileSize, key.X * TileSize + TileSize, key.Y * TileSize + TileSize);
         return raw;
@@ -982,6 +1036,7 @@ public sealed class TiledPixelBuffer : IDisposable
                     {
                         _tiles[key] = raw;
                         _compressed.Remove(key);
+                        InvalidateTileKeyCache();
                     }
                     ExtendBounds(tx * TileSize, ty * TileSize, (tx + 1) * TileSize, (ty + 1) * TileSize);
                 }
@@ -1007,16 +1062,23 @@ public sealed class TiledPixelBuffer : IDisposable
                 lock (_lock)
                 {
                     if (_tiles.TryGetValue(key, out var raw) && IsTransparent(raw))
+                    {
                         _tiles.Remove(key);
+                        InvalidateTileKeyCache();
+                    }
                     else if (_compressed.TryGetValue(key, out var compressed))
                     {
                         var decomp = IsProbablyDeflated(compressed) ? Inflate(compressed) : compressed;
                         if (IsTransparent(decomp))
+                        {
                             _compressed.Remove(key);
+                            InvalidateTileKeyCache();
+                        }
                         else
                         {
                             _tiles[key] = decomp;
                             _compressed.Remove(key);
+                            InvalidateTileKeyCache();
                         }
                     }
                 }

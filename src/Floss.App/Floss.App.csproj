@@ -29,4 +29,6 @@
       <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
     </PackageReference>
   </ItemGroup>
+
+  <Import Project="../../native/floss-composite/build.targets" />
 </Project>

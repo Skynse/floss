@@ -14,8 +14,10 @@ namespace Floss.App.Kra;
 public static class KraImporter
 {
     private const string MimeType = "application/x-kra";
+    private static readonly object ZipReadLock = new();
 
     private readonly record struct LayerPixelJob(DrawingLayer Layer, byte[] Data, int OffsetX, int OffsetY);
+    private readonly record struct LayerPendingJob(DrawingLayer Layer, string FileName, int OffsetX, int OffsetY);
 
     public static DrawingDocument Load(Stream stream)
     {
@@ -33,18 +35,20 @@ public static class KraImporter
         var height = ParseRequiredInt(imageElement, "height");
         var imageName = imageElement.Attribute("name")?.Value ?? "Krita Image";
         var archiveRoot = ResolveArchiveRoot(archive, imageName);
+        var zipIndex = new KraZipIndex(archive);
 
         var document = new DrawingDocument(width, height);
         document.ClearForImport();
 
-        var pixelJobs = new List<LayerPixelJob>();
+        var pendingJobs = new List<LayerPendingJob>();
         var importedPaintLayers = 0;
         foreach (var layersElement in imageElement.Elements(ns + "layers"))
         {
-            ImportLayers(archive, archiveRoot, layersElement, ns, document, parent: null, depth: 0,
-                pixelJobs, ref importedPaintLayers);
+            ImportLayers(archiveRoot, layersElement, ns, document, parent: null, depth: 0,
+                pendingJobs, ref importedPaintLayers);
         }
 
+        var pixelJobs = ReadLayerBytesParallel(archive, archiveRoot, zipIndex, pendingJobs);
         var layersWithPixels = DecodeLayerPixels(pixelJobs);
 
         if (importedPaintLayers == 0 || layersWithPixels == 0)
@@ -52,6 +56,34 @@ public static class KraImporter
 
         document.FinalizeImport();
         return document;
+    }
+
+    private static List<LayerPixelJob> ReadLayerBytesParallel(
+        ZipArchive archive,
+        string archiveRoot,
+        KraZipIndex zipIndex,
+        List<LayerPendingJob> pendingJobs)
+    {
+        if (pendingJobs.Count == 0)
+            return [];
+
+        var slots = new LayerPixelJob?[pendingJobs.Count];
+        Parallel.For(0, pendingJobs.Count, i =>
+        {
+            var pending = pendingJobs[i];
+            var bytes = ReadLayerEntryBytes(archive, archiveRoot, zipIndex, pending.FileName);
+            if (bytes != null)
+                slots[i] = new LayerPixelJob(pending.Layer, bytes, pending.OffsetX, pending.OffsetY);
+        });
+
+        var result = new List<LayerPixelJob>(pendingJobs.Count);
+        foreach (var job in slots)
+        {
+            if (job is { } j)
+                result.Add(j);
+        }
+
+        return result;
     }
 
     private static int DecodeLayerPixels(List<LayerPixelJob> pixelJobs)
@@ -68,8 +100,6 @@ public static class KraImporter
                 job.Layer.Pixels,
                 job.OffsetX,
                 job.OffsetY);
-            if (decoded[i])
-                job.Layer.MarkThumbnailDirty();
         });
 
         var count = 0;
@@ -83,29 +113,27 @@ public static class KraImporter
     }
 
     private static void ImportLayers(
-        ZipArchive archive,
         string archiveRoot,
         XElement layersElement,
         XNamespace ns,
         DrawingDocument document,
         DrawingLayer? parent,
         int depth,
-        List<LayerPixelJob> pixelJobs,
+        List<LayerPendingJob> pendingJobs,
         ref int importedPaintLayers)
     {
         foreach (var layerElement in layersElement.Elements(ns + "layer").Reverse())
-            ImportNode(archive, archiveRoot, layerElement, ns, document, parent, depth, pixelJobs, ref importedPaintLayers);
+            ImportNode(archiveRoot, layerElement, ns, document, parent, depth, pendingJobs, ref importedPaintLayers);
     }
 
     private static void ImportNode(
-        ZipArchive archive,
         string archiveRoot,
         XElement element,
         XNamespace ns,
         DrawingDocument document,
         DrawingLayer? parent,
         int depth,
-        List<LayerPixelJob> pixelJobs,
+        List<LayerPendingJob> pendingJobs,
         ref int importedPaintLayers)
     {
         var nodeType = element.Attribute("nodetype")?.Value
@@ -115,22 +143,21 @@ public static class KraImporter
         switch (nodeType)
         {
             case "paintlayer":
-                ImportPaintLayer(archive, archiveRoot, element, document, parent, depth, pixelJobs, ref importedPaintLayers);
+                ImportPaintLayer(archiveRoot, element, document, parent, depth, pendingJobs, ref importedPaintLayers);
                 break;
             case "grouplayer":
-                ImportGroupLayer(archive, archiveRoot, element, ns, document, parent, depth, pixelJobs, ref importedPaintLayers);
+                ImportGroupLayer(archiveRoot, element, ns, document, parent, depth, pendingJobs, ref importedPaintLayers);
                 break;
         }
     }
 
     private static void ImportPaintLayer(
-        ZipArchive archive,
         string archiveRoot,
         XElement element,
         DrawingDocument document,
         DrawingLayer? parent,
         int depth,
-        List<LayerPixelJob> pixelJobs,
+        List<LayerPendingJob> pendingJobs,
         ref int importedPaintLayers)
     {
         if (!IsSupportedColorSpace(element.Attribute("colorspacename")?.Value))
@@ -139,22 +166,21 @@ public static class KraImporter
         var layer = document.AddLayerForImport(ReadName(element, "Paint Layer"));
         ApplyCommonLayerMetadata(element, layer, parent, depth);
 
-        var layerBytes = TryReadLayerEntryBytes(archive, archiveRoot, element);
-        if (layerBytes != null)
-            pixelJobs.Add(new LayerPixelJob(layer, layerBytes, layer.OffsetX, layer.OffsetY));
+        var fileName = ResolveLayerFileName(element);
+        if (fileName != null)
+            pendingJobs.Add(new LayerPendingJob(layer, fileName, layer.OffsetX, layer.OffsetY));
 
         importedPaintLayers++;
     }
 
     private static void ImportGroupLayer(
-        ZipArchive archive,
         string archiveRoot,
         XElement element,
         XNamespace ns,
         DrawingDocument document,
         DrawingLayer? parent,
         int depth,
-        List<LayerPixelJob> pixelJobs,
+        List<LayerPendingJob> pendingJobs,
         ref int importedPaintLayers)
     {
         var group = document.CreateLayerForImport(ReadName(element, "Group"), isGroup: true);
@@ -164,7 +190,7 @@ public static class KraImporter
             group.BlendMode = "PassThrough";
 
         foreach (var childLayers in element.Elements(ns + "layers"))
-            ImportLayers(archive, archiveRoot, childLayers, ns, document, group, depth + 1, pixelJobs, ref importedPaintLayers);
+            ImportLayers(archiveRoot, childLayers, ns, document, group, depth + 1, pendingJobs, ref importedPaintLayers);
 
         document.AppendLayerForImport(group);
     }
@@ -187,24 +213,31 @@ public static class KraImporter
         parent?.Children.Add(layer);
     }
 
-    private static byte[]? TryReadLayerEntryBytes(ZipArchive archive, string archiveRoot, XElement element)
+    private static string? ResolveLayerFileName(XElement element)
     {
         var fileName = element.Attribute("filename")?.Value;
         if (string.IsNullOrWhiteSpace(fileName))
             fileName = element.Attribute("name")?.Value;
-        if (string.IsNullOrWhiteSpace(fileName))
-            return null;
+        return string.IsNullOrWhiteSpace(fileName) ? null : fileName;
+    }
 
-        var entryPath = $"{archiveRoot}/layers/{fileName}";
-        var entry = archive.GetEntry(entryPath)
-            ?? archive.Entries.FirstOrDefault(e => e.FullName.EndsWith($"/layers/{fileName}", StringComparison.Ordinal));
+    private static byte[]? ReadLayerEntryBytes(
+        ZipArchive archive,
+        string archiveRoot,
+        KraZipIndex zipIndex,
+        string fileName)
+    {
+        var entry = zipIndex.GetLayerEntry(archiveRoot, fileName);
         if (entry == null)
             return null;
 
-        using var layerStream = new BufferedStream(entry.Open(), 1 << 20);
-        using var buffer = new MemoryStream((int)Math.Max(entry.Length, 0));
-        layerStream.CopyTo(buffer);
-        return buffer.ToArray();
+        lock (ZipReadLock)
+        {
+            using var layerStream = new BufferedStream(entry.Open(), 1 << 20);
+            using var buffer = new MemoryStream((int)Math.Max(entry.Length, 0));
+            layerStream.CopyTo(buffer);
+            return buffer.ToArray();
+        }
     }
 
     private static DrawingDocument LoadPreviewFallback(ZipArchive archive, int width, int height, string imageName)
@@ -341,5 +374,34 @@ public static class KraImporter
 
         opacity = Math.Clamp(opacity, 0, 255);
         return opacity / 255.0;
+    }
+
+    private sealed class KraZipIndex
+    {
+        private readonly Dictionary<string, ZipArchiveEntry> _byFullPath;
+        private readonly Dictionary<string, ZipArchiveEntry> _byLayerFileName;
+
+        public KraZipIndex(ZipArchive archive)
+        {
+            _byFullPath = new Dictionary<string, ZipArchiveEntry>(StringComparer.Ordinal);
+            _byLayerFileName = new Dictionary<string, ZipArchiveEntry>(StringComparer.Ordinal);
+            foreach (var entry in archive.Entries)
+            {
+                _byFullPath[entry.FullName] = entry;
+                var marker = entry.FullName.LastIndexOf("/layers/", StringComparison.Ordinal);
+                if (marker < 0) continue;
+                var fileName = entry.FullName[(marker + "/layers/".Length)..];
+                if (fileName.Length > 0)
+                    _byLayerFileName[fileName] = entry;
+            }
+        }
+
+        public ZipArchiveEntry? GetLayerEntry(string archiveRoot, string fileName)
+        {
+            var path = $"{archiveRoot}/layers/{fileName}";
+            if (_byFullPath.TryGetValue(path, out var entry))
+                return entry;
+            return _byLayerFileName.GetValueOrDefault(fileName);
+        }
     }
 }

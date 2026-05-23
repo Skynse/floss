@@ -21,7 +21,10 @@ namespace Floss.App.Canvas;
 
 public sealed class LayerCompositor : IDisposable
 {
-    private const int MonochromeThreshold = 128;
+    private LayerProjectionPlane? _projection;
+    private LayerProjectionPlane Projection =>
+        _projection ??= new LayerProjectionPlane(new MergeHost(this));
+
     private const int MaxCompositeLod = 2;
     public const int DirtyTileBudget = 32;
     private const int MaxMissingTilesPerFrame = 96;
@@ -30,9 +33,8 @@ public sealed class LayerCompositor : IDisposable
     public void Dispose()
     {
         ClearAllTiles();
-        foreach (var cache in _groupCaches.Values)
-            cache.Buffer.Dispose();
-        _groupCaches.Clear();
+        _projection?.Dispose();
+        _projection = null;
     }
 
     // Keep compositor cache tiles close to paint tile granularity. 1024px tiles
@@ -53,13 +55,11 @@ public sealed class LayerCompositor : IDisposable
     private readonly HashSet<(int X, int Y, int Lod)> _pendingDirtyTiles = [];
     // Tiles allocated but not yet composited — DrawTiles skips these so lower-LOD
     // fallbacks stay visible instead of flashing uninitialized/garbage alpha.
-    private readonly HashSet<(int X, int Y, int Lod)> _tilesPendingComposite = [];
+    // ConcurrentDictionary so the UI render thread can snapshot it without
+    // acquiring CompositeGate (which the background pass holds for hundreds
+    // of ms on large invalidations and would otherwise freeze the UI).
+    private readonly ConcurrentDictionary<(int X, int Y, int Lod), byte> _tilesPendingComposite = new();
     private readonly HashSet<(int X, int Y, int Lod)> _tilesToPrune = [];
-    private readonly Dictionary<DrawingLayer, GroupProjectionCache> _groupCaches = new();
-    // After sequential group-cache warm, parallel tile composite only reads
-    // projection buffers — never TakeDirty/refill (avoids races and prevents
-    // FlushFullDirty from marking unwarmed regions as clean).
-    private bool _groupProjectionReadOnly;
     // Tiles removed during a composite pass — disposed lazily on the UI thread
     // so DrawImage(bitmap) on the UI thread never observes a freed bitmap.
     private readonly ConcurrentQueue<WriteableBitmap> _tilesPendingDispose = new();
@@ -77,7 +77,6 @@ public sealed class LayerCompositor : IDisposable
     // fast path. Reference-counted for overlapping queued strokes.
     private int _strokeSuspendDepth;
     private int _strokePaintLayerIndex = -1;
-    private GroupProjectionCache? _strokeBelowCache;
     public bool StrokeSuspendActive => _strokeSuspendDepth > 0;
 
     public void BeginStrokeSuspend(PixelRegion _)
@@ -86,8 +85,7 @@ public sealed class LayerCompositor : IDisposable
         {
             _strokeSuspendDepth++;
             _strokePaintLayerIndex = -1;
-            _strokeBelowCache?.Buffer.Dispose();
-            _strokeBelowCache = null;
+            Projection.ResetStrokeBelow();
         }
     }
 
@@ -97,7 +95,7 @@ public sealed class LayerCompositor : IDisposable
         lock (CompositeGate)
         {
             if (_strokeSuspendDepth == 0) return;
-            _strokeBelowCache?.Invalidate(region);
+            Projection.InvalidateStrokeBelow(region);
         }
     }
 
@@ -108,8 +106,7 @@ public sealed class LayerCompositor : IDisposable
             if (_strokeSuspendDepth > 0) _strokeSuspendDepth--;
             if (_strokeSuspendDepth > 0) return;
             _strokePaintLayerIndex = -1;
-            _strokeBelowCache?.Buffer.Dispose();
-            _strokeBelowCache = null;
+            Projection.ResetStrokeBelow();
         }
     }
 
@@ -120,8 +117,7 @@ public sealed class LayerCompositor : IDisposable
         {
             _strokeSuspendDepth = 0;
             _strokePaintLayerIndex = -1;
-            _strokeBelowCache?.Buffer.Dispose();
-            _strokeBelowCache = null;
+            Projection.ResetStrokeBelow();
         }
     }
     public int LastDirtyTileCount { get; private set; }
@@ -142,10 +138,7 @@ public sealed class LayerCompositor : IDisposable
     public void RemoveGroupCache(DrawingLayer group)
     {
         lock (CompositeGate)
-        {
-            if (_groupCaches.Remove(group, out var cache))
-                cache.Buffer.Dispose();
-        }
+            Projection.RemoveGroupCache(group);
     }
 
     public void SetSize(int width, int height)
@@ -157,9 +150,7 @@ public sealed class LayerCompositor : IDisposable
         _fullDirty = true;
         _dirtyRegion = null;
         _pendingDirtyTiles.Clear();
-        foreach (var cache in _groupCaches.Values)
-            cache.Buffer.Dispose();
-        _groupCaches.Clear();
+        Projection.SetSize(width, height);
     }
 
     public void ClearAllTiles()
@@ -210,28 +201,18 @@ public sealed class LayerCompositor : IDisposable
 
     public void DrawTiles(DrawingContext context, Rect target, PixelRegion? visibleViewport = null)
     {
-        // Snapshot the tile map under the gate so a background composite pass
-        // can't remove a bitmap mid-iteration. The snapshot pins references; the
-        // disposal queue defers Dispose() until the next UI tick.
-        KeyValuePair<(int X, int Y, int Lod), WriteableBitmap>[] snapshot;
-        HashSet<(int X, int Y)> pendingCurrentLod;
-        lock (CompositeGate)
+        // Lock-free snapshot — both backing stores are concurrent. Holding
+        // CompositeGate here would block the UI for the full duration of any
+        // background composite pass (often 50–300ms on large invalidations),
+        // which is exactly the freeze users notice. Bitmaps removed mid-iter
+        // stay alive via the disposal queue until the next UI tick.
+        var snapshot = _compTiles.ToArray();
+        var pendingCurrentLod = new HashSet<(int X, int Y)>();
+        var currentLod = _currentLod;
+        foreach (var kv in _tilesPendingComposite)
         {
-            snapshot = new KeyValuePair<(int X, int Y, int Lod), WriteableBitmap>[_compTiles.Count];
-            var i = 0;
-            foreach (var kv in _compTiles)
-            {
-                if (i >= snapshot.Length) break;
-                snapshot[i++] = kv;
-            }
-            if (i < snapshot.Length) Array.Resize(ref snapshot, i);
-
-            pendingCurrentLod = [];
-            foreach (var key in _tilesPendingComposite)
-            {
-                if (key.Lod == _currentLod)
-                    pendingCurrentLod.Add((key.X, key.Y));
-            }
+            if (kv.Key.Lod == currentLod)
+                pendingCurrentLod.Add((kv.Key.X, kv.Key.Y));
         }
 
         if (CurrentLodHasVisibleHoles(visibleViewport, snapshot, pendingCurrentLod))
@@ -254,11 +235,14 @@ public sealed class LayerCompositor : IDisposable
             // Skip not-yet-composited tiles only when a finer-LOD fallback covers
             // this area. During strokes (LOD 0, no fallback) always draw so we
             // don't flash checkerboard over in-progress tiles.
-            if (pendingCurrentLod.Contains((tx, ty))
-                && _currentLod > 0
-                && !StrokeSuspendActive
-                && HasFinerLodFallback(snapshot, tx, ty))
+            // Never draw tiles that exist but have not been composited yet — they
+            // are cleared to transparent and punch through to the desktop on Linux.
+            if (pendingCurrentLod.Contains((tx, ty)) && !StrokeSuspendActive)
+            {
+                if (_currentLod > 0 && HasFinerLodFallback(snapshot, tx, ty))
+                    continue;
                 continue;
+            }
             DrawTile(context, bmp, tx, ty, lod, visibleViewport);
         }
     }
@@ -389,7 +373,12 @@ public sealed class LayerCompositor : IDisposable
     public void Invalidate(PixelRegion? region = null)
         => Invalidate(region, null, null);
 
-    public void Invalidate(PixelRegion? region, IReadOnlyList<DrawingLayer>? layers, int? layerIndex, bool metadataOnly = false)
+    public void Invalidate(
+        PixelRegion? region,
+        IReadOnlyList<DrawingLayer>? layers,
+        int? layerIndex,
+        bool metadataOnly = false,
+        PixelRegion? viewportClip = null)
     {
         lock (CompositeGate)
         {
@@ -404,19 +393,33 @@ public sealed class LayerCompositor : IDisposable
                 _fullDirty = true;
                 _dirtyRegion = null;
                 ClearAllTiles();
-                _strokeBelowCache?.Invalidate(null);
+                Projection.InvalidateStrokeBelow(null);
             }
             else
             {
-                if (!_fullDirty)
-                    _dirtyRegion = _dirtyRegion is { } existing ? existing.Union(region.Value) : region.Value;
-                // Do NOT drop cached compositor tiles here. Removing tiles before
-                // the async composite finishes is what caused the horizontal-band
-                // flashing with large brushes (256px tile holes). Stale tiles stay
-                // visible until recomposited — one frame of lag beats a white gap.
-                // Queue every LOD representation as dirty so zooming out/in never
-                // shows tiles composited before this edit.
-                QueueDirtyTilesForRegionAllLods(region.Value);
+                var tileRegion = region.Value;
+                var cacheRegion = region.Value;
+                if (viewportClip is { IsEmpty: false } vp)
+                {
+                    tileRegion = tileRegion.Intersect(vp);
+                    if (metadataOnly)
+                        cacheRegion = tileRegion;
+                }
+
+                if (!tileRegion.IsEmpty)
+                {
+                    if (!_fullDirty)
+                        _dirtyRegion = _dirtyRegion is { } existing ? existing.Union(tileRegion) : tileRegion;
+                    // Property previews (opacity scrub, visibility) only need the
+                    // display LOD; other LODs refresh on zoom change.
+                    if (metadataOnly)
+                        QueueDirtyTilesForRegionAtLod(tileRegion, _currentLod);
+                    else
+                        QueueDirtyTilesForRegionAllLods(tileRegion);
+                }
+
+                InvalidateGroupCaches(cacheRegion, layers, layerIndex);
+                return;
             }
 
             InvalidateGroupCaches(region, layers, layerIndex);
@@ -452,9 +455,7 @@ public sealed class LayerCompositor : IDisposable
         SetSize(width, height);
 
         // Skip paper layers — they're handled by ClearTile with paperColor.
-        var rootLayers = new System.Collections.Generic.List<DrawingLayer>(layers.Count);
-        foreach (var l in layers)
-            if (l.Parent == null && !l.IsPaper) rootLayers.Add(l);
+        var rootLayers = LayerStackComposition.SelectLayersForComposite(layers);
 
         var prevLod = _currentLod;
         var lod = forceLod ?? SelectLod(width, height, zoom);
@@ -617,29 +618,23 @@ public sealed class LayerCompositor : IDisposable
 
         _fullDirty = false;
         _dirtyRegion = null;
-        var renderList = FlattenForRender(rootLayers);
+        var renderList = LayerProjectionPlane.BuildSiblingStack(rootLayers);
 
         // Ensure all tiles exist first (sequential — dictionary access).
         foreach (var (tx, ty) in tileKeys) EnsureTile(tx, ty, lod);
         foreach (var (tx, ty) in missingTileKeys) EnsureTile(tx, ty, lod);
 
-        // Krita-style pre-warm: merge group projections for every display tile
-        // we're about to upload, sequentially. The parallel pass then only
-        // reads cached projections (no Dictionary mutation, no refills).
-        var totalTiles = tileKeys.Count + missingTileKeys.Count;
-        var warmGroupProjections = totalTiles > 0 && (ContainsAnyGroup(renderList) || _groupCaches.Count > 0);
-        if (warmGroupProjections)
-            WarmGroupProjections(renderList, tileKeys, missingTileKeys, stride, width, height);
-
-        // Dirty tiles: composite only the dirty sub-region of the tile.
         // Missing tiles: composite the FULL tile bounds — the WriteableBitmap has
         // uninitialized memory outside whatever region we clear, and DrawTiles draws
         // the full bitmap. Partial compositing would leave garbage pixels visible.
-        var allTiles = new (int tx, int ty)[totalTiles];
+        // Dedupe — on the first frame after invalidate the same viewport tile
+        // appears in both lists, doubling per-tile work for no reason.
+        var allTileSet = new HashSet<(int tx, int ty)>(tileKeys);
+        foreach (var k in missingTileKeys) allTileSet.Add(k);
+        var allTiles = new (int tx, int ty)[allTileSet.Count];
         {
             var i = 0;
-            foreach (var k in tileKeys) allTiles[i++] = k;
-            foreach (var k in missingTileKeys) allTiles[i++] = k;
+            foreach (var k in allTileSet) allTiles[i++] = k;
         }
 
         // Capture for closure (parallel body must be a value-type closure).
@@ -657,19 +652,44 @@ public sealed class LayerCompositor : IDisposable
 
         if (strokeSplit >= 0)
         {
-            foreach (var (tx, ty) in tileKeys)
+            // Dedupe — tileKeys + missingTileKeys can overlap (e.g. on the
+            // first frame after invalidate, the same viewport tile is in
+            // both lists), and warming the same rect twice is wasted work.
+            var warmSet = new HashSet<(int tx, int ty)>(tileKeys);
+            foreach (var key in missingTileKeys) warmSet.Add(key);
+            var warmList = new (int tx, int ty, PixelRegion rect)[warmSet.Count];
             {
-                var tileRect = new PixelRegion(tx * stride, ty * stride, stride, stride).ClipTo(width, height);
-                if (!tileRect.IsEmpty)
-                    WarmStrokeBelowForTile(renderList, strokeSplit, tileRect, width, height);
+                var i = 0;
+                foreach (var (tx, ty) in warmSet)
+                {
+                    var tileRect = new PixelRegion(tx * stride, ty * stride, stride, stride).ClipTo(width, height);
+                    if (tileRect.IsEmpty) continue;
+                    warmList[i++] = (tx, ty, tileRect);
+                }
+                if (i < warmList.Length) Array.Resize(ref warmList, i);
             }
-            foreach (var (tx, ty) in missingTileKeys)
+
+            // WarmStrokeBelowForTile only touches disjoint regions of
+            // Projection.StrokeBelow.Buffer (TiledPixelBuffer has internal
+            // locks) and ignores TakeDirty's return value, so parallel
+            // warming of disjoint tile rects is safe.
+            if (warmList.Length >= 4 && Environment.ProcessorCount > 1)
             {
-                var tileRect = new PixelRegion(tx * stride, ty * stride, stride, stride).ClipTo(width, height);
-                if (!tileRect.IsEmpty)
-                    WarmStrokeBelowForTile(renderList, strokeSplit, tileRect, width, height);
+                Parallel.For(0, warmList.Length, idx =>
+                {
+                    var (_, _, rect) = warmList[idx];
+                    WarmStrokeBelowForTile(renderList, strokeSplit, rect, width, height);
+                });
             }
-            _strokeBelowCache?.FlushFullDirty();
+            else
+            {
+                for (var i = 0; i < warmList.Length; i++)
+                {
+                    var (_, _, rect) = warmList[i];
+                    WarmStrokeBelowForTile(renderList, strokeSplit, rect, width, height);
+                }
+            }
+            Projection.StrokeBelow?.FlushFullDirty();
         }
 
         var strokeSplitLocal = strokeSplit;
@@ -682,25 +702,23 @@ public sealed class LayerCompositor : IDisposable
             CompositeTileCpu(compTilesLocal[(tx, ty, lodLocal)], tileRect, renderListLocal, tx * strideLocal, ty * strideLocal, lodLocal, paperLocal, strokeSplitLocal);
         }
 
-        if (warmGroupProjections)
-            _groupProjectionReadOnly = true;
-        try
-        {
-            if (allTiles.Length >= 4 && Environment.ProcessorCount > 1)
-                Parallel.For(0, allTiles.Length, CompositeOne);
-            else
-                for (var i = 0; i < allTiles.Length; i++) CompositeOne(i);
-        }
-        finally
-        {
-            _groupProjectionReadOnly = false;
-        }
+        // Group projection caches now have per-cache locks
+        // (LayerProjectionPlane.GroupProjectionCache.SyncRoot), so parallel
+        // workers compositing different tiles only contend when they touch the
+        // same group cache. Paint layers write to their own per-tile bitmap
+        // (no inter-tile sharing). Stroke-suspend warmth path mutates
+        // Projection.StrokeBelow before the parallel loop (above), so it's
+        // read-only by the time we get here.
+        if (allTiles.Length >= 4 && Environment.ProcessorCount > 1)
+            Parallel.For(0, allTiles.Length, CompositeOne);
+        else
+            for (var i = 0; i < allTiles.Length; i++) CompositeOne(i);
 
         // HashSet is not thread-safe — clear pending flags on the composite thread only.
         for (var i = 0; i < allTiles.Length; i++)
         {
             var (tx, ty) = allTiles[i];
-            _tilesPendingComposite.Remove((tx, ty, lodLocal));
+            _tilesPendingComposite.TryRemove((tx, ty, lodLocal), out _);
         }
 
         _tilesToPrune.Clear();
@@ -713,63 +731,6 @@ public sealed class LayerCompositor : IDisposable
         LastMissingTileCount = missingTileKeys.Count;
         RenderTelemetry.RecordComposite(ElapsedMs(started), tileKeys.Count, missingTileKeys.Count, lod, _pendingDirtyTiles.Count);
         return deferredMissingTiles || _pendingDirtyTiles.Count > 0;
-    }
-
-    private static bool ContainsAnyGroup(IReadOnlyList<RenderItem> renderList)
-    {
-        for (var i = 0; i < renderList.Count; i++)
-            if (renderList[i].Layer.IsGroup) return true;
-        return false;
-    }
-
-    private void WarmGroupProjections(
-        IReadOnlyList<RenderItem> renderList,
-        List<(int tx, int ty)> tileKeys,
-        List<(int tx, int ty)> missingTileKeys,
-        int stride, int width, int height)
-    {
-        // Walk every tile rect we'll touch and pre-fill any group cache for it.
-        // This replicates the lazy per-tile fill the old code did inline, but
-        // SEQUENTIALLY before the parallel composite pass.
-        foreach (var (tx, ty) in tileKeys)
-            WarmGroupsForTile(renderList, tx, ty, stride, width, height);
-        foreach (var (tx, ty) in missingTileKeys)
-            WarmGroupsForTile(renderList, tx, ty, stride, width, height);
-    }
-
-    private void WarmGroupsForTile(
-        IReadOnlyList<RenderItem> renderList, int tx, int ty,
-        int stride, int width, int height)
-    {
-        var tileRect = new PixelRegion(tx * stride, ty * stride, stride, stride).ClipTo(width, height);
-        if (tileRect.IsEmpty) return;
-        for (var i = 0; i < renderList.Count; i++)
-        {
-            var layer = renderList[i].Layer;
-            if (layer.IsGroup)
-                WarmGroupRecursive(layer, tileRect);
-        }
-    }
-
-    private void WarmGroupRecursive(DrawingLayer group, PixelRegion clip)
-    {
-        if (group.BlendMode == "PassThrough")
-        {
-            // PassThrough groups don't have their own projection cache —
-            // their children composite directly into the parent. But a
-            // non-passthrough subgroup inside still needs warming.
-            var children = group.Children;
-            for (var i = 0; i < children.Count; i++)
-                if (children[i].IsGroup)
-                    WarmGroupRecursive(children[i], clip);
-            return;
-        }
-
-        // Fills cache.Buffer for the tile clip; GetGroupProjection's
-        // internal CompositeLayerList encounters nested non-passthrough
-        // subgroups and calls THEIR GetGroupProjection, so nested caches
-        // get filled recursively.
-        GetGroupProjection(group, clip);
     }
 
     private List<(int tx, int ty)> SelectPendingDirtyTiles(PixelRegion? viewportClip, int stride, int lod)
@@ -859,7 +820,7 @@ public sealed class LayerCompositor : IDisposable
             for (var stx = srcFirstTX; stx <= srcLastTX; stx++)
             {
                 var key = (stx, sty, sourceLod);
-                if (!_compTiles.ContainsKey(key) || _tilesPendingComposite.Contains(key))
+                if (!_compTiles.ContainsKey(key) || _tilesPendingComposite.ContainsKey(key))
                     return false;
             }
         }
@@ -880,7 +841,7 @@ public sealed class LayerCompositor : IDisposable
         var stx = FloorDiv(docX, sourceStride);
         var sty = FloorDiv(docY, sourceStride);
         var key = (stx, sty, sourceLod);
-        if (!_compTiles.TryGetValue(key, out var bmp) || _tilesPendingComposite.Contains(key))
+        if (!_compTiles.TryGetValue(key, out var bmp) || _tilesPendingComposite.ContainsKey(key))
         {
             b = g = r = a = 0;
             return false;
@@ -946,40 +907,34 @@ public sealed class LayerCompositor : IDisposable
                 var docX1 = Math.Min(docX0 + docScale, docLeft + docW);
                 var docY1 = Math.Min(docY0 + docScale, docTop + docH);
 
-                var tb = 0;
-                var tg = 0;
-                var tr = 0;
-                var ta = 0;
+                var pb = 0.0;
+                var pg = 0.0;
+                var pr = 0.0;
+                var pa = 0.0;
                 var count = 0;
                 for (var dy = docY0; dy < docY1; dy++)
                 {
                     for (var dx = docX0; dx < docX1; dx++)
                     {
-                        if (!TryReadCachedPixel(dx, dy, sourceLod, out var pb, out var pg, out var pr, out var pa))
+                        if (!TryReadCachedPixel(dx, dy, sourceLod, out var cb, out var cg, out var cr, out var ca))
                             continue;
-                        tb += pb;
-                        tg += pg;
-                        tr += pr;
-                        ta += pa;
+                        AccumulatePremultiplied(cb, cg, cr, ca, ref pb, ref pg, ref pr, ref pa);
                         count++;
                     }
                 }
 
                 var dstPx = dst + oy * dstStride + ox * 4;
-                if (count == 0)
+                if (count == 0 || pa <= 0)
                 {
                     dstPx[0] = dstPx[1] = dstPx[2] = dstPx[3] = 0;
                     continue;
                 }
 
-                dstPx[0] = (byte)(tb / count);
-                dstPx[1] = (byte)(tg / count);
-                dstPx[2] = (byte)(tr / count);
-                dstPx[3] = (byte)(ta / count);
+                WriteUnpremultipliedAverage(pb, pg, pr, pa, count, dstPx);
             }
         }
 
-        _tilesPendingComposite.Remove((tx, ty, targetLod));
+        _tilesPendingComposite.TryRemove((tx, ty, targetLod), out _);
         return true;
     }
 
@@ -1027,7 +982,7 @@ public sealed class LayerCompositor : IDisposable
         if (!ReferenceEquals(t, fresh))
             _tilesPendingDispose.Enqueue(fresh);
         else
-            _tilesPendingComposite.Add(key);
+            _tilesPendingComposite.TryAdd(key, 0);
         return t;
     }
 
@@ -1117,7 +1072,7 @@ public sealed class LayerCompositor : IDisposable
         }
     }
 
-    private static int FindRenderSplit(IReadOnlyList<RenderItem> renderList, DrawingLayer paintLayer)
+    private static int FindRenderSplit(IReadOnlyList<ProjectionSiblingItem> renderList, DrawingLayer paintLayer)
     {
         for (var i = 0; i < renderList.Count; i++)
             if (ReferenceEquals(renderList[i].Layer, paintLayer))
@@ -1126,24 +1081,18 @@ public sealed class LayerCompositor : IDisposable
     }
 
     private unsafe void WarmStrokeBelowForTile(
-        IReadOnlyList<RenderItem> renderList, int split, PixelRegion tileRect, int width, int height)
+        IReadOnlyList<ProjectionSiblingItem> renderList, int split, PixelRegion tileRect, int width, int height)
     {
-        if (_strokeBelowCache == null)
-        {
-            _strokeBelowCache = new GroupProjectionCache(width, height);
-            _strokeBelowCache.Invalidate(null);
-        }
-        else
-            _strokeBelowCache.EnsureSize(width, height);
+        var strokeBelow = Projection.GetOrCreateStrokeBelow(width, height);
 
         // Always warm the full compositor tile. Partial warms (from TakeDirty
         // intersecting the stroke-invalidation bbox) left tile edges empty while
         // CompositeTileStrokeCpu composites the whole WriteableBitmap — checkerboard
         // holes in a stair-step tile pattern during live strokes.
-        _ = _strokeBelowCache.TakeDirty(tileRect);
+        _ = strokeBelow.TakeDirty(tileRect);
         var dirty = tileRect;
 
-        _strokeBelowCache.Buffer.Clear(dirty);
+        strokeBelow.Buffer.Clear(dirty);
         var tempLen = dirty.Width * dirty.Height * 4;
         var temp = ArrayPool<byte>.Shared.Rent(tempLen);
         Array.Clear(temp, 0, tempLen);
@@ -1152,13 +1101,14 @@ public sealed class LayerCompositor : IDisposable
             CompositeRenderListRange(tempPtr, dirty.Width * 4, dirty.Width, dirty.Height,
                 renderList, 0, split, 1.0, dirty, dirty.X, dirty.Y);
         }
-        _strokeBelowCache.Buffer.CopyFromBgra(dirty, temp, dirty.Width * 4);
-        _strokeBelowCache.Buffer.CompressTiles();
+        strokeBelow.Buffer.CopyFromBgra(dirty, temp, dirty.Width * 4);
+        // Compression is for memory-pressure relief, not correctness; skip on
+        // the stroke hot path so warming a tile is just composite + copy.
         ArrayPool<byte>.Shared.Return(temp);
     }
 
     private unsafe void CompositeTileCpu(WriteableBitmap tile, PixelRegion tileRect,
-        IReadOnlyList<RenderItem> renderList, int originX, int originY, int lod, uint paperColor = 0,
+        IReadOnlyList<ProjectionSiblingItem> renderList, int originX, int originY, int lod, uint paperColor = 0,
         int strokeSplit = -1)
     {
         if (lod > 0)
@@ -1167,8 +1117,8 @@ public sealed class LayerCompositor : IDisposable
             return;
         }
 
-        if (strokeSplit >= 0 && _strokeBelowCache != null
-            && (strokeSplit == 0 || _strokeBelowCache.Buffer.HasContentTiles(tileRect)))
+        if (strokeSplit >= 0 && Projection.StrokeBelow != null
+            && (strokeSplit == 0 || Projection.StrokeBelow.Buffer.HasContentTiles(tileRect)))
         {
             CompositeTileStrokeCpu(tile, tileRect, renderList, strokeSplit, originX, originY, paperColor);
             return;
@@ -1184,7 +1134,7 @@ public sealed class LayerCompositor : IDisposable
     }
 
     private unsafe void CompositeTileStrokeCpu(WriteableBitmap tile, PixelRegion tileRect,
-        IReadOnlyList<RenderItem> renderList, int split, int originX, int originY, uint paperColor)
+        IReadOnlyList<ProjectionSiblingItem> renderList, int split, int originX, int originY, uint paperColor)
     {
         var tw = tile.PixelSize.Width;
         var th = tile.PixelSize.Height;
@@ -1192,12 +1142,12 @@ public sealed class LayerCompositor : IDisposable
         var dst = (byte*)frame.Address;
         var dstStride = frame.RowBytes;
         ClearTile(dst, dstStride, tileRect, originX, originY, paperColor);
-        CompositeProjectionBuffer(dst, dstStride, _strokeBelowCache!.Buffer, "Normal", 1.0, tileRect, originX, originY);
+        LayerCompositorPixelOps.CompositeProjectionBuffer(dst, dstStride, Projection.StrokeBelow!.Buffer, "Normal", 1.0, tileRect, originX, originY);
         CompositeRenderListRange(dst, dstStride, tw, th, renderList, split, renderList.Count, 1.0, tileRect, originX, originY);
     }
 
     private unsafe void CompositeTileLodCpu(WriteableBitmap tile, PixelRegion tileRect,
-        IReadOnlyList<RenderItem> renderList, int originX, int originY, int lod, uint paperColor)
+        IReadOnlyList<ProjectionSiblingItem> renderList, int originX, int originY, int lod, uint paperColor)
     {
         // FAST PATH: if every layer is Normal-blend with no fancy color, no
         // clipping group and no nested groups, composite DIRECTLY at the LOD
@@ -1247,10 +1197,12 @@ public sealed class LayerCompositor : IDisposable
                         var p01 = srcRow1 + sx0 * 4;
                         var p11 = srcRow1 + sx1 * 4;
                         var dstPx = dstRow + x * 4;
-                        dstPx[0] = BilinearByte(p00[0], p10[0], p01[0], p11[0], fx, fy);
-                        dstPx[1] = BilinearByte(p00[1], p10[1], p01[1], p11[1], fx, fy);
-                        dstPx[2] = BilinearByte(p00[2], p10[2], p01[2], p11[2], fx, fy);
-                        dstPx[3] = BilinearByte(p00[3], p10[3], p01[3], p11[3], fx, fy);
+                        BilinearPremultipliedBgra(
+                            p00[0], p00[1], p00[2], p00[3],
+                            p10[0], p10[1], p10[2], p10[3],
+                            p01[0], p01[1], p01[2], p01[3],
+                            p11[0], p11[1], p11[2], p11[3],
+                            fx, fy, dstPx);
                     }
                 }
             }
@@ -1261,7 +1213,7 @@ public sealed class LayerCompositor : IDisposable
         }
     }
 
-    private static bool CanLodFastPath(IReadOnlyList<RenderItem> renderList)
+    private static bool CanLodFastPath(IReadOnlyList<ProjectionSiblingItem> renderList)
     {
         for (var i = 0; i < renderList.Count; i++)
         {
@@ -1277,7 +1229,7 @@ public sealed class LayerCompositor : IDisposable
     }
 
     private unsafe void CompositeTileLodFastCpu(WriteableBitmap tile, PixelRegion tileRect,
-        IReadOnlyList<RenderItem> renderList, int originX, int originY, int lod, uint paperColor)
+        IReadOnlyList<ProjectionSiblingItem> renderList, int originX, int originY, int lod, uint paperColor)
     {
         using var frame = tile.Lock();
         var dst = (byte*)frame.Address;
@@ -1374,52 +1326,103 @@ public sealed class LayerCompositor : IDisposable
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static byte BilinearByte(byte p00, byte p10, byte p01, byte p11, float fx, float fy)
+    private static void AccumulatePremultiplied(byte b, byte g, byte r, byte a,
+        ref double pb, ref double pg, ref double pr, ref double pa)
     {
-        var top = p00 + (p10 - p00) * fx;
-        var bottom = p01 + (p11 - p01) * fx;
-        return (byte)Math.Clamp((int)MathF.Round(top + (bottom - top) * fy), 0, 255);
+        var fa = a / 255.0;
+        pb += b * fa;
+        pg += g * fa;
+        pr += r * fa;
+        pa += fa;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void AccumulateWeightedPremultiplied(byte b, byte g, byte r, byte a, double weight,
+        ref double pb, ref double pg, ref double pr, ref double pa)
+    {
+        var fa = a / 255.0;
+        var w = weight * fa;
+        pb += b * w;
+        pg += g * w;
+        pr += r * w;
+        pa += weight * fa;
+    }
+
+    private static unsafe void WriteUnpremultipliedAverage(double pb, double pg, double pr, double pa, int count, byte* dst)
+    {
+        var avgA = pa / count;
+        if (avgA <= 0)
+        {
+            dst[0] = dst[1] = dst[2] = dst[3] = 0;
+            return;
+        }
+
+        var outA = (byte)Math.Clamp((int)Math.Round(avgA * 255), 0, 255);
+        if (outA == 0)
+        {
+            dst[0] = dst[1] = dst[2] = dst[3] = 0;
+            return;
+        }
+
+        var invAvgA = 1.0 / avgA;
+        dst[0] = (byte)Math.Clamp((int)Math.Round((pb / count) * invAvgA), 0, 255);
+        dst[1] = (byte)Math.Clamp((int)Math.Round((pg / count) * invAvgA), 0, 255);
+        dst[2] = (byte)Math.Clamp((int)Math.Round((pr / count) * invAvgA), 0, 255);
+        dst[3] = outA;
+    }
+
+    private static unsafe void BilinearPremultipliedBgra(
+        byte b00, byte g00, byte r00, byte a00,
+        byte b10, byte g10, byte r10, byte a10,
+        byte b01, byte g01, byte r01, byte a01,
+        byte b11, byte g11, byte r11, byte a11,
+        float fx, float fy, byte* dst)
+    {
+        var w00 = (1 - fx) * (1 - fy);
+        var w10 = fx * (1 - fy);
+        var w01 = (1 - fx) * fy;
+        var w11 = fx * fy;
+        double pb = 0, pg = 0, pr = 0, pa = 0;
+        AccumulateWeightedPremultiplied(b00, g00, r00, a00, w00, ref pb, ref pg, ref pr, ref pa);
+        AccumulateWeightedPremultiplied(b10, g10, r10, a10, w10, ref pb, ref pg, ref pr, ref pa);
+        AccumulateWeightedPremultiplied(b01, g01, r01, a01, w01, ref pb, ref pg, ref pr, ref pa);
+        AccumulateWeightedPremultiplied(b11, g11, r11, a11, w11, ref pb, ref pg, ref pr, ref pa);
+
+        if (pa <= 0)
+        {
+            dst[0] = dst[1] = dst[2] = dst[3] = 0;
+            return;
+        }
+
+        var invA = 1.0 / pa;
+        var outA = (byte)Math.Clamp((int)Math.Round(pa * 255), 0, 255);
+        if (outA == 0)
+        {
+            dst[0] = dst[1] = dst[2] = dst[3] = 0;
+            return;
+        }
+
+        dst[0] = (byte)Math.Clamp((int)Math.Round(pb * invA), 0, 255);
+        dst[1] = (byte)Math.Clamp((int)Math.Round(pg * invA), 0, 255);
+        dst[2] = (byte)Math.Clamp((int)Math.Round(pr * invA), 0, 255);
+        dst[3] = outA;
     }
 
     // ── CPU compositing ──────────────────────────────────────────────────────
 
     private unsafe void CompositeRenderList(byte* dst, int dstStride, int width, int height,
-        IReadOnlyList<RenderItem> renderList, double opacityScale, PixelRegion clip, int originX, int originY)
+        IReadOnlyList<ProjectionSiblingItem> renderList, double opacityScale, PixelRegion clip, int originX, int originY)
     {
-        if (opacityScale <= 0) return;
-
-        for (int i = 0; i < renderList.Count; i++)
-        {
-            var item = renderList[i];
-            if (!item.Layer.IsVisible) continue;
-
-            if (item.IsClipped && item.BaseLayerIndex >= 0)
-            {
-                var baseLayer = renderList[item.BaseLayerIndex].Layer;
-                if (!baseLayer.IsVisible) continue;
-                if (item.Layer.IsGroup)
-                    CompositeClippedGroup(dst, dstStride, width, height, item.Layer, baseLayer, opacityScale, clip, originX, originY);
-                else
-                    CompositeClippedLayer(dst, dstStride, width, height, item.Layer, baseLayer, opacityScale, clip, originX, originY);
-            }
-            else if (item.Layer.IsGroup)
-            {
-                CompositeGroup(dst, dstStride, width, height, item.Layer, opacityScale, clip, originX, originY);
-            }
-            else
-            {
-                CompositeLayer(dst, dstStride, width, height, item.Layer, opacityScale, clip, originX, originY);
-            }
-        }
+        Projection.CompositeSiblingStack(dst, dstStride, width, height, renderList, opacityScale, clip, originX, originY);
     }
 
     private unsafe void CompositeRenderListRange(byte* dst, int dstStride, int width, int height,
-        IReadOnlyList<RenderItem> renderList, int startIndex, int endIndex,
+        IReadOnlyList<ProjectionSiblingItem> renderList, int startIndex, int endIndex,
         double opacityScale, PixelRegion clip, int originX, int originY)
     {
         if (opacityScale <= 0 || startIndex >= endIndex) return;
 
-        for (int i = startIndex; i < endIndex; i++)
+        for (var i = startIndex; i < endIndex; i++)
         {
             var item = renderList[i];
             if (!item.Layer.IsVisible) continue;
@@ -1431,16 +1434,12 @@ public sealed class LayerCompositor : IDisposable
                 if (item.Layer.IsGroup)
                     CompositeClippedGroup(dst, dstStride, width, height, item.Layer, baseLayer, opacityScale, clip, originX, originY);
                 else
-                    CompositeClippedLayer(dst, dstStride, width, height, item.Layer, baseLayer, opacityScale, clip, originX, originY);
+                    LayerCompositorPixelOps.CompositeClippedLayer(dst, dstStride, width, height, item.Layer, baseLayer, opacityScale, clip, originX, originY);
             }
             else if (item.Layer.IsGroup)
-            {
-                CompositeGroup(dst, dstStride, width, height, item.Layer, opacityScale, clip, originX, originY);
-            }
+                Projection.CompositeGroupNode(dst, dstStride, width, height, item.Layer, opacityScale, clip, originX, originY);
             else
-            {
-                CompositeLayer(dst, dstStride, width, height, item.Layer, opacityScale, clip, originX, originY);
-            }
+                LayerCompositorPixelOps.CompositeLayer(dst, dstStride, width, height, item.Layer, opacityScale, clip, originX, originY);
         }
     }
 
@@ -1474,27 +1473,9 @@ public sealed class LayerCompositor : IDisposable
         }
     }
 
-    private record RenderItem(DrawingLayer Layer, bool IsClipped, int BaseLayerIndex);
-
     private void InvalidateGroupCaches(PixelRegion? region, IReadOnlyList<DrawingLayer>? layers, int? layerIndex)
     {
-        if (region is null || region.Value.IsEmpty || layers is null || layerIndex is null ||
-            layerIndex.Value < 0 || layerIndex.Value >= layers.Count)
-        {
-            foreach (var cache in _groupCaches.Values)
-                cache.Invalidate(region);
-            return;
-        }
-
-        var layer = layers[layerIndex.Value];
-        if (layer.IsGroup && _groupCaches.TryGetValue(layer, out var ownCache))
-            ownCache.Invalidate(region.Value);
-
-        for (var parent = layer.Parent; parent != null; parent = parent.Parent)
-        {
-            if (_groupCaches.TryGetValue(parent, out var cache))
-                cache.Invalidate(region.Value);
-        }
+        Projection.InvalidateGroupCaches(region, layers, layerIndex);
     }
 
     public unsafe SKBitmap AssembleSkBitmap(int outputWidth, int outputHeight, int lod = -1, uint paperColor = 0)
@@ -1560,6 +1541,7 @@ public sealed class LayerCompositor : IDisposable
     {
         lock (CompositeGate)
         {
+            SetSize(width, height);
             var buf = new byte[width * height * 4];
             if (paperColor != 0)
             {
@@ -1573,10 +1555,17 @@ public sealed class LayerCompositor : IDisposable
                 }
             }
             var clip = new PixelRegion(0, 0, width, height);
+            var compositeLayers = LayerStackComposition.SelectLayersForComposite(layers);
             fixed (byte* dst = buf)
-                CompositeLayerList(dst, width * 4, width, height, layers, 1.0, clip, 0, 0);
+                Projection.CompositeSiblingList(dst, width * 4, width, height, compositeLayers, 1.0, clip, 0, 0);
             return buf;
         }
+    }
+
+    public bool TryReadDisplayPixel(int docX, int docY, out byte b, out byte g, out byte r, out byte a)
+    {
+        lock (CompositeGate)
+            return TryReadCachedPixel(docX, docY, _currentLod, out b, out g, out r, out a);
     }
 
     public unsafe Color? SampleCompositePixel(IReadOnlyList<DrawingLayer> layers, int width, int height, int x, int y, uint paperColor = 0)
@@ -1585,475 +1574,35 @@ public sealed class LayerCompositor : IDisposable
 
         lock (CompositeGate)
         {
-            uint pixel = paperColor;
-            var rootLayers = new List<DrawingLayer>(layers.Count);
-            foreach (var layer in layers)
-                if (layer.Parent == null && !layer.IsPaper)
-                    rootLayers.Add(layer);
+            SetSize(width, height);
+            var compositeLayers = LayerStackComposition.SelectLayersForComposite(layers);
+            var row = new byte[width * 4];
+            if (paperColor != 0)
+            {
+                fixed (byte* rowPtr = row)
+                {
+                    var fill = (uint*)rowPtr;
+                    for (var i = 0; i < width; i++)
+                        fill[i] = paperColor;
+                }
+            }
 
-            var renderList = FlattenForRender(rootLayers);
-            var clip = new PixelRegion(x, y, 1, 1);
-            CompositeRenderList((byte*)&pixel, 4, 1, 1, renderList, 1.0, clip, x, y);
+            var renderList = LayerProjectionPlane.BuildSiblingStack(compositeLayers);
+            var clip = new PixelRegion(0, y, width, 1);
+            fixed (byte* dst = row)
+                Projection.CompositeSiblingStack(dst, width * 4, width, 1, renderList, 1.0, clip, 0, y);
 
-            var b = (byte)(pixel & 0xFF);
-            var g = (byte)((pixel >> 8) & 0xFF);
-            var r = (byte)((pixel >> 16) & 0xFF);
-            var a = (byte)((pixel >> 24) & 0xFF);
+            var offset = x * 4;
+            var b = row[offset];
+            var g = row[offset + 1];
+            var r = row[offset + 2];
+            var a = row[offset + 3];
             return a == 0 ? null : Color.FromArgb(a, r, g, b);
         }
     }
 
-    private unsafe void CompositeLayerList(
-        byte* dst,
-        int dstStride,
-        int width,
-        int height,
-        IReadOnlyList<DrawingLayer> layers,
-        double opacityScale,
-        PixelRegion clip,
-        int originX,
-        int originY)
-    {
-        if (opacityScale <= 0) return;
-
-        var renderList = FlattenForRender(layers);
-        for (int i = 0; i < renderList.Count; i++)
-        {
-            var item = renderList[i];
-            if (!item.Layer.IsVisible) continue;
-
-            if (item.IsClipped && item.BaseLayerIndex >= 0)
-            {
-                var baseLayer = renderList[item.BaseLayerIndex].Layer;
-                if (!baseLayer.IsVisible) continue;
-                if (item.Layer.IsGroup)
-                    CompositeClippedGroup(dst, dstStride, width, height, item.Layer, baseLayer, opacityScale, clip, originX, originY);
-                else
-                    CompositeClippedLayer(dst, dstStride, width, height, item.Layer, baseLayer, opacityScale, clip, originX, originY);
-            }
-            else if (item.Layer.IsGroup)
-            {
-                CompositeGroup(dst, dstStride, width, height, item.Layer, opacityScale, clip, originX, originY);
-            }
-            else
-            {
-                CompositeLayer(dst, dstStride, width, height, item.Layer, opacityScale, clip, originX, originY);
-            }
-        }
-    }
-
-    private static List<RenderItem> FlattenForRender(IReadOnlyList<DrawingLayer> layers)
-    {
-        var result = new List<RenderItem>();
-        int? lastNonClippingIndex = null;
-
-        // Build bottom-to-top render list with clipping info
-        for (int i = 0; i < layers.Count; i++)
-        {
-            var layer = layers[i];
-            if (layer.IsClipping && lastNonClippingIndex.HasValue)
-            {
-                result.Add(new RenderItem(layer, true, lastNonClippingIndex.Value));
-            }
-            else
-            {
-                result.Add(new RenderItem(layer, false, -1));
-                if (!layer.IsClipping)
-                    lastNonClippingIndex = result.Count - 1;
-            }
-        }
-
-        return result;
-    }
-
-    private unsafe void CompositeGroup(
-        byte* dst,
-        int dstStride,
-        int width,
-        int height,
-        DrawingLayer group,
-        double opacityScale,
-        PixelRegion clip,
-        int originX,
-        int originY)
-    {
-        if (group.Children.Count == 0) return;
-
-        var groupOpacity = group.Opacity * opacityScale;
-        if (groupOpacity <= 0) return;
-
-        if (group.BlendMode == "PassThrough")
-        {
-            CompositeLayerList(dst, dstStride, width, height, group.Children, groupOpacity, clip, originX, originY);
-            return;
-        }
-
-        var projection = GetGroupProjection(group, clip);
-        CompositeProjectionBuffer(dst, dstStride, projection, group.BlendMode, groupOpacity, clip, originX, originY);
-    }
-
-    private unsafe TiledPixelBuffer GetGroupProjection(DrawingLayer group, PixelRegion requestedClip)
-    {
-        if (!_groupCaches.TryGetValue(group, out var cache))
-        {
-            cache = new GroupProjectionCache(_width, _height);
-            _groupCaches.Add(group, cache);
-        }
-        else
-        {
-            cache.EnsureSize(_width, _height);
-        }
-
-        if (_groupProjectionReadOnly)
-            return cache.Buffer;
-
-        var dirty = cache.TakeDirty(requestedClip);
-        if (!dirty.IsEmpty)
-        {
-            cache.Buffer.Clear(dirty);
-            var tempLen = dirty.Width * dirty.Height * 4;
-            var temp = ArrayPool<byte>.Shared.Rent(tempLen);
-            Array.Clear(temp, 0, tempLen);
-            fixed (byte* tempPtr = temp)
-            {
-                CompositeLayerList(tempPtr, dirty.Width * 4, dirty.Width, dirty.Height, group.Children, opacityScale: 1.0, dirty, dirty.X, dirty.Y);
-            }
-            cache.Buffer.CopyFromBgra(dirty, temp, dirty.Width * 4);
-            cache.Buffer.CompressTiles();
-            ArrayPool<byte>.Shared.Return(temp);
-        }
-
-        return cache.Buffer;
-    }
-
-    private static unsafe void CompositeProjectionBuffer(
-        byte* dst,
-        int dstStride,
-        TiledPixelBuffer projection,
-        string blendMode,
-        double opacity,
-        PixelRegion clip,
-        int originX,
-        int originY)
-    {
-        if (opacity <= 0 || !projection.HasContentTiles(clip)) return;
-
-        const int ts = TiledPixelBuffer.TileSize;
-        var firstTileX = FloorDiv(clip.X, ts);
-        var firstTileY = FloorDiv(clip.Y, ts);
-        var lastTileX = FloorDiv(clip.Right - 1, ts);
-        var lastTileY = FloorDiv(clip.Bottom - 1, ts);
-
-        if (blendMode == "Normal")
-        {
-            var opacityByte = (uint)Math.Round(opacity * 255);
-            var fullOpacity = opacityByte == 255;
-
-            for (var ty = firstTileY; ty <= lastTileY; ty++)
-            {
-                for (var tx = firstTileX; tx <= lastTileX; tx++)
-                {
-                    var tile = projection.GetTileOrNull(tx, ty);
-                    if (tile == null) continue;
-
-                    var tileLeft = Math.Max(clip.X, tx * ts);
-                    var tileTop = Math.Max(clip.Y, ty * ts);
-                    var tileRight = Math.Min(clip.Right, tx * ts + ts);
-                    var tileBottom = Math.Min(clip.Bottom, ty * ts + ts);
-
-                    for (int docY = tileTop; docY < tileBottom; docY++)
-                    {
-                        var tileLocalY = docY - ty * ts;
-                        var tileLocalX0 = tileLeft - tx * ts;
-                        var tileRowBase = (tileLocalY * ts + tileLocalX0) * 4;
-                        var dstRow = dst + (docY - originY) * dstStride;
-                        var rowWidth = tileRight - tileLeft;
-                        var j = 0;
-
-                        // SIMD pass: handle 4-pixel chunks of trivially opaque
-                        // or transparent runs with a single 128-bit store/skip.
-                        if (fullOpacity && Sse2.IsSupported)
-                        {
-                            fixed (byte* tileFix = tile)
-                            {
-                                for (; j + 3 < rowWidth; j += 4)
-                                {
-                                    var tileOffset = tileRowBase + j * 4;
-                                    var docX = tileLeft + j;
-                                    var dstPtr = dstRow + (docX - originX) * 4;
-
-                                    var srcQuad = Sse2.LoadVector128((uint*)(tileFix + tileOffset));
-                                    var alphas = Sse2.ShiftRightLogical(srcQuad, 24);
-                                    var isOpaque = Sse2.CompareEqual(alphas, Vector128.Create(0xFFu));
-                                    if (Sse2.MoveMask(isOpaque.AsByte()) == 0xFFFF)
-                                    {
-                                        Sse2.Store((uint*)dstPtr, srcQuad);
-                                        continue;
-                                    }
-                                    var isZero = Sse2.CompareEqual(alphas, Vector128<uint>.Zero);
-                                    if (Sse2.MoveMask(isZero.AsByte()) == 0xFFFF) continue;
-                                    // Mixed alphas: bail out to scalar tail for the whole row.
-                                    break;
-                                }
-                            }
-                        }
-
-                        for (int docX = tileLeft + j; docX < tileRight; docX++, j++)
-                        {
-                            var tileOffset = tileRowBase + j * 4;
-                            uint rawA = tile[tileOffset + 3];
-                            if (rawA == 0) continue;
-
-                            uint srcA = fullOpacity ? rawA : (rawA * opacityByte + 127) / 255;
-                            var dstPtr = dstRow + (docX - originX) * 4;
-
-                            if (srcA == 255)
-                            {
-                                dstPtr[0] = tile[tileOffset + 0];
-                                dstPtr[1] = tile[tileOffset + 1];
-                                dstPtr[2] = tile[tileOffset + 2];
-                                dstPtr[3] = 255;
-                                continue;
-                            }
-
-                            uint invSrcA = 255 - srcA;
-                            uint dstA = dstPtr[3];
-                            uint dstCont = (dstA * invSrcA + 127) / 255;
-                            uint outA = srcA + dstCont;
-                            if (outA == 0) continue;
-
-                            uint half = outA >> 1;
-                            dstPtr[0] = (byte)((tile[tileOffset + 0] * srcA + dstPtr[0] * dstCont + half) / outA);
-                            dstPtr[1] = (byte)((tile[tileOffset + 1] * srcA + dstPtr[1] * dstCont + half) / outA);
-                            dstPtr[2] = (byte)((tile[tileOffset + 2] * srcA + dstPtr[2] * dstCont + half) / outA);
-                            dstPtr[3] = (byte)outA;
-                        }
-                    }
-                }
-            }
-            return;
-        }
-
-        for (var ty = firstTileY; ty <= lastTileY; ty++)
-        {
-            for (var tx = firstTileX; tx <= lastTileX; tx++)
-            {
-                var tile = projection.GetTileOrNull(tx, ty);
-                if (tile == null) continue;
-
-                var tileLeft = Math.Max(clip.X, tx * ts);
-                var tileTop = Math.Max(clip.Y, ty * ts);
-                var tileRight = Math.Min(clip.Right, tx * ts + ts);
-                var tileBottom = Math.Min(clip.Bottom, ty * ts + ts);
-
-                for (int docY = tileTop; docY < tileBottom; docY++)
-                {
-                    var tileLocalY = docY - ty * ts;
-                    var tileLocalX0 = tileLeft - tx * ts;
-                    var tileRowBase = (tileLocalY * ts + tileLocalX0) * 4;
-                    var dstRow = dst + (docY - originY) * dstStride;
-
-                    for (int j = 0, docX = tileLeft; docX < tileRight; docX++, j++)
-                    {
-                        var tileOffset = tileRowBase + j * 4;
-                        uint rawA = tile[tileOffset + 3];
-                        if (rawA == 0) continue;
-
-                        var srcA = rawA / 255.0 * opacity;
-                        var dstIdx = (docX - originX) * 4;
-                        var srcB = tile[tileOffset + 0] / 255.0;
-                        var srcG = tile[tileOffset + 1] / 255.0;
-                        var srcR = tile[tileOffset + 2] / 255.0;
-                        var dstB = dstRow[dstIdx + 0] / 255.0;
-                        var dstG = dstRow[dstIdx + 1] / 255.0;
-                        var dstR = dstRow[dstIdx + 2] / 255.0;
-                        var dstA = dstRow[dstIdx + 3] / 255.0;
-
-                        var (blendR, blendG, blendB) = ApplyBlendMode(srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendMode);
-                        BlendPixel(dstRow + dstIdx, srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendR, blendG, blendB);
-                    }
-                }
-            }
-        }
-    }
-
-    private static unsafe void CompositeClippedLayer(
-        byte* dst,
-        int dstStride,
-        int width,
-        int height,
-        DrawingLayer layer,
-        DrawingLayer baseLayer,
-        double opacityScale,
-        PixelRegion clip,
-        int originX,
-        int originY)
-    {
-        var opacity = layer.Opacity * opacityScale;
-        if (opacity <= 0) return;
-
-        var offsetX = layer.OffsetX;
-        var offsetY = layer.OffsetY;
-        var baseOffsetX = baseLayer.OffsetX;
-        var baseOffsetY = baseLayer.OffsetY;
-        var baseW = baseLayer.Width;
-        var baseH = baseLayer.Height;
-
-        var docLeft = Math.Max(Math.Max(clip.X, offsetX + layer.MinX), 0);
-        var docTop = Math.Max(Math.Max(clip.Y, offsetY + layer.MinY), 0);
-        var docRight = Math.Min(Math.Min(clip.Right, offsetX + layer.MaxX), width + originX);
-        var docBottom = Math.Min(Math.Min(clip.Bottom, offsetY + layer.MaxY), height + originY);
-
-        if (docLeft >= docRight || docTop >= docBottom) return;
-
-        var sourceRegion = new PixelRegion(docLeft - offsetX, docTop - offsetY, docRight - docLeft, docBottom - docTop);
-        if (!layer.Pixels.HasContentTiles(sourceRegion)) return;
-
-        layer.Pixels.EnterPixelReadLock();
-        baseLayer.Pixels.EnterPixelReadLock();
-        try
-        {
-
-        var blendMode = layer.BlendMode;
-        var layerColor = layer.LayerColor;
-        var hasLayerColor = layerColor.HasValue;
-        var expressionColor = layer.ExpressionColor;
-        var applyExpr = expressionColor != ExpressionColorMode.Color;
-        byte lcR = 255, lcG = 255, lcB = 255;
-        if (layerColor is { } lc) { lcR = lc.R; lcG = lc.G; lcB = lc.B; }
-        const int ts = TiledPixelBuffer.TileSize;
-
-        var firstTileX = FloorDiv(sourceRegion.X, ts);
-        var firstTileY = FloorDiv(sourceRegion.Y, ts);
-        var lastTileX = FloorDiv(sourceRegion.Right - 1, ts);
-        var lastTileY = FloorDiv(sourceRegion.Bottom - 1, ts);
-
-        for (var ty = firstTileY; ty <= lastTileY; ty++)
-        {
-            for (var tx = firstTileX; tx <= lastTileX; tx++)
-            {
-                var tile = layer.Pixels.GetTileOrNull(tx, ty);
-                if (tile == null) continue;
-
-                var clipLeft = Math.Max(sourceRegion.X, tx * ts);
-                var clipTop = Math.Max(sourceRegion.Y, ty * ts);
-                var clipRight = Math.Min(sourceRegion.Right, tx * ts + ts);
-                var clipBottom = Math.Min(sourceRegion.Bottom, ty * ts + ts);
-
-                var isNormal = blendMode == "Normal";
-                var opacityInt = (uint)Math.Round(opacity * 255);
-
-                for (int srcY = clipTop; srcY < clipBottom; srcY++)
-                {
-                    var tileLocalY = srcY - ty * ts;
-                    var tileLocalX0 = clipLeft - tx * ts;
-                    var tileRowBase = (tileLocalY * ts + tileLocalX0) * 4;
-                    var docY = srcY + offsetY;
-                    var dstRow = dst + (docY - originY) * dstStride;
-                    var baseY = docY - baseOffsetY;
-
-                    if (baseY < 0 || baseY >= baseH) continue;
-
-                    var baseTileY = FloorDiv(baseY, ts);
-                    var baseTileLocalY = baseY - baseTileY * ts;
-
-                    int prevBaseTileX = int.MinValue;
-                    byte[]? baseTile = null;
-
-                    for (int j = 0, srcX = clipLeft; srcX < clipRight; srcX++, j++)
-                    {
-                        var tileOffset = tileRowBase + j * 4;
-                        uint rawA = tile[tileOffset + 3];
-                        if (rawA == 0) continue;
-
-                        var docX = srcX + offsetX;
-                        var baseX = docX - baseOffsetX;
-                        if (baseX < 0 || baseX >= baseW) continue;
-
-                        var baseTileX = FloorDiv(baseX, ts);
-                        if (baseTileX != prevBaseTileX)
-                        {
-                            baseTile = baseLayer.Pixels.GetTileOrNull(baseTileX, baseTileY);
-                            prevBaseTileX = baseTileX;
-                        }
-
-                        uint baseAlphaByte = 0;
-                        if (baseTile != null)
-                        {
-                            var blx = baseX - baseTileX * ts;
-                            baseAlphaByte = baseTile[(baseTileLocalY * ts + blx) * 4 + 3];
-                        }
-                        if (baseAlphaByte == 0) continue;
-
-                        var dstIdx = (docX - originX) * 4;
-
-                        if (isNormal)
-                        {
-                            byte srcB = tile[tileOffset + 0], srcG = tile[tileOffset + 1], srcR = tile[tileOffset + 2];
-                            if (hasLayerColor)
-                                ApplyLayerColor(ref srcB, ref srcG, ref srcR, lcB, lcG, lcR);
-                            if (applyExpr && !ApplyExpressionColorToSource(ref srcB, ref srcG, ref srcR, ref rawA, expressionColor))
-                                continue;
-
-                            uint srcA = (rawA * opacityInt + 127) / 255;
-                            srcA = (srcA * baseAlphaByte + 127) / 255;
-                            if (srcA == 0) continue;
-
-                            var dstPtr = dstRow + dstIdx;
-                            if (srcA == 255)
-                            {
-                                dstPtr[0] = srcB;
-                                dstPtr[1] = srcG;
-                                dstPtr[2] = srcR;
-                                dstPtr[3] = 255;
-                                continue;
-                            }
-
-                            uint invSrcA = 255 - srcA;
-                            uint dstA = dstPtr[3];
-                            uint dstCont = (dstA * invSrcA + 127) / 255;
-                            uint outA = srcA + dstCont;
-                            if (outA == 0) continue;
-
-                            uint half = outA >> 1;
-                            dstPtr[0] = (byte)((srcB * srcA + dstPtr[0] * dstCont + half) / outA);
-                            dstPtr[1] = (byte)((srcG * srcA + dstPtr[1] * dstCont + half) / outA);
-                            dstPtr[2] = (byte)((srcR * srcA + dstPtr[2] * dstCont + half) / outA);
-                            dstPtr[3] = (byte)outA;
-                        }
-                        else
-                        {
-                            byte srcBByte = tile[tileOffset + 0], srcGByte = tile[tileOffset + 1], srcRByte = tile[tileOffset + 2];
-                            if (hasLayerColor)
-                                ApplyLayerColor(ref srcBByte, ref srcGByte, ref srcRByte, lcB, lcG, lcR);
-                            if (applyExpr && !ApplyExpressionColorToSource(ref srcBByte, ref srcGByte, ref srcRByte, ref rawA, expressionColor))
-                                continue;
-
-                            var srcA = rawA / 255.0 * opacity * (baseAlphaByte / 255.0);
-                            if (srcA <= 0) continue;
-
-                            var srcB = srcBByte / 255.0;
-                            var srcG = srcGByte / 255.0;
-                            var srcR = srcRByte / 255.0;
-                            var dstB = dstRow[dstIdx + 0] / 255.0;
-                            var dstG = dstRow[dstIdx + 1] / 255.0;
-                            var dstR = dstRow[dstIdx + 2] / 255.0;
-                            var dstA = dstRow[dstIdx + 3] / 255.0;
-
-                            var (blendR, blendG, blendB) = ApplyBlendMode(srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendMode);
-                            BlendPixel(dstRow + dstIdx, srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendR, blendG, blendB);
-                        }
-                    }
-                }
-            }
-        }
-        }
-        finally
-        {
-            baseLayer.Pixels.ExitPixelReadLock();
-            layer.Pixels.ExitPixelReadLock();
-        }
-    }
+    private static int FloorDiv(int value, int divisor)
+        => LayerCompositorPixelOps.FloorDiv(value, divisor);
 
     private unsafe void CompositeClippedGroup(
         byte* dst,
@@ -2076,890 +1625,38 @@ public sealed class LayerCompositor : IDisposable
         fixed (byte* tempPtr = temp)
         {
             if (group.BlendMode == "PassThrough")
-                CompositeLayerList(tempPtr, clip.Width * 4, clip.Width, clip.Height, group.Children, groupOpacity, clip, clip.X, clip.Y);
+                Projection.CompositeSiblingList(tempPtr, clip.Width * 4, clip.Width, clip.Height, group.Children, groupOpacity, clip, clip.X, clip.Y);
             else
-                CompositeGroup(tempPtr, clip.Width * 4, clip.Width, clip.Height, group, opacityScale, clip, clip.X, clip.Y);
+                Projection.CompositeGroupNode(tempPtr, clip.Width * 4, clip.Width, clip.Height, group, opacityScale, clip, clip.X, clip.Y);
 
-            CompositeClippedBuffer(dst, dstStride, width, height, tempPtr, clip.Width * 4, baseLayer, group.BlendMode, clip, originX, originY);
+            LayerCompositorPixelOps.CompositeClippedBuffer(dst, dstStride, width, height, tempPtr, clip.Width * 4, baseLayer, group.BlendMode, clip, originX, originY);
         }
         ArrayPool<byte>.Shared.Return(temp);
     }
 
-    private static unsafe void CompositeClippedBuffer(
-        byte* dst,
-        int dstStride,
-        int width,
-        int height,
-        byte* src,
-        int srcStride,
-        DrawingLayer baseLayer,
-        string blendMode,
-        PixelRegion clip,
-        int originX,
-        int originY)
+
+    private sealed class MergeHost(LayerCompositor owner) : ILayerMergeHost
     {
-        var baseW = baseLayer.Width;
-        var baseH = baseLayer.Height;
-        var baseOffsetX = baseLayer.OffsetX;
-        var baseOffsetY = baseLayer.OffsetY;
-
-        const int ts = TiledPixelBuffer.TileSize;
-
-        baseLayer.Pixels.EnterPixelReadLock();
-        try
-        {
-        for (int docY = clip.Y; docY < clip.Bottom; docY++)
-        {
-            var baseY = docY - baseOffsetY;
-            if (baseY < 0 || baseY >= baseH) continue;
-
-            var srcRow = src + (docY - clip.Y) * srcStride;
-            var dstRow = dst + (docY - originY) * dstStride;
-
-            var baseTileY = FloorDiv(baseY, ts);
-            var baseTileLocalY = baseY - baseTileY * ts;
-            int prevBaseTileX = int.MinValue;
-            byte[]? baseTile = null;
-
-            for (int docX = clip.X; docX < clip.Right; docX++)
-            {
-                var srcIdx = (docX - clip.X) * 4;
-                var rawA = srcRow[srcIdx + 3];
-                if (rawA == 0) continue;
-
-                var baseX = docX - baseOffsetX;
-                if (baseX < 0 || baseX >= baseW) continue;
-
-                var baseTileX = FloorDiv(baseX, ts);
-                if (baseTileX != prevBaseTileX)
-                {
-                    baseTile = baseLayer.Pixels.GetTileOrNull(baseTileX, baseTileY);
-                    prevBaseTileX = baseTileX;
-                }
-
-                uint baseAlphaByte = 0;
-                if (baseTile != null)
-                {
-                    var blx = baseX - baseTileX * ts;
-                    baseAlphaByte = baseTile[(baseTileLocalY * ts + blx) * 4 + 3];
-                }
-                if (baseAlphaByte == 0) continue;
-
-                var dstIdx = (docX - originX) * 4;
-                var srcA = rawA / 255.0 * (baseAlphaByte / 255.0);
-                if (srcA <= 0) continue;
-
-                var srcB = srcRow[srcIdx + 0] / 255.0;
-                var srcG = srcRow[srcIdx + 1] / 255.0;
-                var srcR = srcRow[srcIdx + 2] / 255.0;
-                var dstB = dstRow[dstIdx + 0] / 255.0;
-                var dstG = dstRow[dstIdx + 1] / 255.0;
-                var dstR = dstRow[dstIdx + 2] / 255.0;
-                var dstA = dstRow[dstIdx + 3] / 255.0;
-
-                var (blendR, blendG, blendB) = ApplyBlendMode(srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendMode);
-                BlendPixel(dstRow + dstIdx, srcR, srcG, srcB, srcA, dstR, dstG, dstB, dstA, blendR, blendG, blendB);
-            }
-        }
-        }
-        finally { baseLayer.Pixels.ExitPixelReadLock(); }
-    }
-
-    // ── Blend LUTs ─────────────────────────────────────────────────────────--
-    private static readonly byte[] LUT_Overlay = BuildLUT((s, d) => Overlay(s, d));
-    private static readonly byte[] LUT_SoftLight = BuildLUT((s, d) => SoftLight(s, d));
-    private static readonly byte[] LUT_HardLight = BuildLUT((s, d) => HardLight(s, d));
-    private static readonly byte[] LUT_ColorDodge = BuildLUT((s, d) => ColorDodge(s, d));
-    private static readonly byte[] LUT_ColorBurn = BuildLUT((s, d) => ColorBurn(s, d));
-    private static readonly byte[] LUT_LinearBurn = BuildLUT((s, d) => Math.Max(0, d + s - 1));
-    private static readonly byte[] LUT_LinearDodge = BuildLUT((s, d) => Math.Min(1, d + s));
-    private static readonly byte[] LUT_VividLight = BuildLUT((s, d) => VividLight(s, d));
-    private static readonly byte[] LUT_LinearLight = BuildLUT((s, d) => LinearLight(s, d));
-    private static readonly byte[] LUT_PinLight = BuildLUT((s, d) => PinLight(s, d));
-    private static readonly byte[] LUT_HardMix = BuildLUT((s, d) => HardMix(s, d));
-    private static readonly byte[] LUT_Subtract = BuildLUT((s, d) => Math.Max(0, d - s));
-    private static readonly byte[] LUT_Divide = BuildLUT((s, d) => s <= 0 ? 1.0 : Math.Min(1.0, d / s));
-
-    private static byte[] BuildLUT(Func<double, double, double> fn)
-    {
-        var lut = new byte[65536];
-        for (int s = 0; s < 256; s++)
-            for (int d = 0; d < 256; d++)
-                lut[(s << 8) | d] = (byte)Math.Clamp(Math.Round(fn(s / 255.0, d / 255.0) * 255), 0, 255);
-        return lut;
-    }
-
-    private static byte[] GetLut(string mode) => mode switch
-    {
-        "Overlay" => LUT_Overlay,
-        "SoftLight" => LUT_SoftLight,
-        "HardLight" => LUT_HardLight,
-        "ColorDodge" => LUT_ColorDodge,
-        "ColorBurn" => LUT_ColorBurn,
-        "LinearBurn" => LUT_LinearBurn,
-        "LinearDodge" => LUT_LinearDodge,
-        "VividLight" => LUT_VividLight,
-        "LinearLight" => LUT_LinearLight,
-        "PinLight" => LUT_PinLight,
-        "HardMix" => LUT_HardMix,
-        "Subtract" => LUT_Subtract,
-        "Divide" => LUT_Divide,
-        _ => null!
-    };
-
-    private static bool HasLut(string mode) => mode switch
-    {
-        "Overlay" or "SoftLight" or "HardLight" or "ColorDodge" or "ColorBurn"
-        or "LinearBurn" or "LinearDodge" or "VividLight" or "LinearLight"
-        or "PinLight" or "HardMix" or "Subtract" or "Divide" => true,
-        _ => false
-    };
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static unsafe void BlendPixelInt(byte* dst,
-        uint srcR, uint srcG, uint srcB, uint srcA,
-        uint dstR, uint dstG, uint dstB, uint dstA)
-    {
-        if (srcA == 0) return;
-        if (dstA == 0)
-        {
-            dst[0] = (byte)((srcB * srcA + 127) / 255);
-            dst[1] = (byte)((srcG * srcA + 127) / 255);
-            dst[2] = (byte)((srcR * srcA + 127) / 255);
-            dst[3] = (byte)srcA;
-            return;
-        }
-        uint outA = srcA + ((dstA * (255 - srcA)) >> 8);
-        if (outA == 0) return;
-        uint half = outA >> 1;
-        uint dstCont = (dstA * (255 - srcA)) >> 8;
-        dst[0] = (byte)((srcB * srcA + dstB * dstCont + half) / outA);
-        dst[1] = (byte)((srcG * srcA + dstG * dstCont + half) / outA);
-        dst[2] = (byte)((srcR * srcA + dstR * dstCont + half) / outA);
-        dst[3] = (byte)outA;
-    }
-
-    private static unsafe void CompositeLayer(byte* dst, int dstStride, int width, int height,
-        DrawingLayer layer, double opacityScale, PixelRegion clip, int originX, int originY)
-    {
-        var opacity = layer.Opacity * opacityScale;
-        if (opacity <= 0) return;
-        var offsetX = layer.OffsetX;
-        var offsetY = layer.OffsetY;
-        var docLeft = Math.Max(Math.Max(clip.X, offsetX + layer.MinX), 0);
-        var docTop = Math.Max(Math.Max(clip.Y, offsetY + layer.MinY), 0);
-        var docRight = Math.Min(Math.Min(clip.Right, offsetX + layer.MaxX), width + originX);
-        var docBottom = Math.Min(Math.Min(clip.Bottom, offsetY + layer.MaxY), height + originY);
-        if (docLeft >= docRight || docTop >= docBottom) return;
-        var sourceRegion = new PixelRegion(docLeft - offsetX, docTop - offsetY, docRight - docLeft, docBottom - docTop);
-        if (!layer.Pixels.HasContentTiles(sourceRegion)) return;
-
-        layer.Pixels.EnterPixelReadLock();
-        try
-        {
-
-        var blendMode = layer.BlendMode;
-        var layerColor = layer.LayerColor;
-        var hasLayerColor = layerColor.HasValue;
-        var expressionColor = layer.ExpressionColor;
-        byte lcR = 255, lcG = 255, lcB = 255;
-        if (layerColor is { } lc) { lcR = lc.R; lcG = lc.G; lcB = lc.B; }
-        const int ts = TiledPixelBuffer.TileSize;
-        var firstTileX = FloorDiv(sourceRegion.X, ts);
-        var firstTileY = FloorDiv(sourceRegion.Y, ts);
-        var lastTileX = FloorDiv(sourceRegion.Right - 1, ts);
-        var lastTileY = FloorDiv(sourceRegion.Bottom - 1, ts);
-        var applyExpr = expressionColor != ExpressionColorMode.Color;
-
-        // Integer fast path for Normal blend
-        if (blendMode == "Normal")
-        {
-            var opacityByte = (uint)Math.Round(opacity * 255);
-            var fullOpacity = opacityByte == 255;
-            for (var ty = firstTileY; ty <= lastTileY; ty++)
-                for (var tx = firstTileX; tx <= lastTileX; tx++)
-                {
-                    var tile = layer.Pixels.GetTileOrNull(tx, ty);
-                    if (tile == null) continue;
-                    var clipLeft = Math.Max(sourceRegion.X, tx * ts);
-                    var clipTop = Math.Max(sourceRegion.Y, ty * ts);
-                    var clipRight = Math.Min(sourceRegion.Right, tx * ts + ts);
-                    var clipBottom = Math.Min(sourceRegion.Bottom, ty * ts + ts);
-                    for (int srcY = clipTop; srcY < clipBottom; srcY++)
-                    {
-                        var tileLocalY = srcY - ty * ts;
-                        var tileLocalX0 = clipLeft - tx * ts;
-                        var tileRowBase = (tileLocalY * ts + tileLocalX0) * 4;
-                        var docY = srcY + offsetY;
-                        var dstRow = dst + (docY - originY) * dstStride;
-                        var rowWidth = clipRight - clipLeft;
-                        var j = 0;
-
-                        if (!hasLayerColor && !applyExpr)
-                        {
-                            // Fast path: no layer color or expression color.
-                            // Process 4 pixels at a time for better instruction-level parallelism.
-                            for (; j + 3 < rowWidth; j += 4)
-                            {
-                                var tileOffset = tileRowBase + j * 4;
-                                var docX = clipLeft + j + offsetX;
-                                var dstPtr = dstRow + (docX - originX) * 4;
-
-                                // SIMD pre-screen: when all 4 source pixels are fully
-                                // opaque AND the layer is at full opacity, we can use
-                                // a single 16-byte SIMD store. When all 4 are fully
-                                // transparent, skip. Falls through otherwise.
-                                if (fullOpacity && Sse2.IsSupported)
-                                {
-                                    bool skipScalar = false;
-                                    fixed (byte* tileFix = tile)
-                                    {
-                                        var srcQuad = Sse2.LoadVector128((uint*)(tileFix + tileOffset));
-                                        var alphas = Sse2.ShiftRightLogical(srcQuad, 24);
-                                        var isOpaque = Sse2.CompareEqual(alphas, Vector128.Create(0xFFu));
-                                        var opaqueMask = Sse2.MoveMask(isOpaque.AsByte());
-                                        if (opaqueMask == 0xFFFF)
-                                        {
-                                            Sse2.Store((uint*)dstPtr, srcQuad);
-                                            skipScalar = true;
-                                        }
-                                        else
-                                        {
-                                            var isZero = Sse2.CompareEqual(alphas, Vector128<uint>.Zero);
-                                            var zeroMask = Sse2.MoveMask(isZero.AsByte());
-                                            if (zeroMask == 0xFFFF) skipScalar = true;
-                                        }
-                                    }
-                                    if (skipScalar) continue;
-                                }
-
-                                // Pixel 0
-                                uint rawA0 = tile[tileOffset + 3];
-                                if (rawA0 != 0)
-                                {
-                                    uint srcA0 = fullOpacity ? rawA0 : (rawA0 * opacityByte + 127) / 255;
-                                    byte sb0 = tile[tileOffset + 0], sg0 = tile[tileOffset + 1], sr0 = tile[tileOffset + 2];
-                                    if (srcA0 == 255)
-                                    {
-                                        dstPtr[0] = sb0; dstPtr[1] = sg0; dstPtr[2] = sr0; dstPtr[3] = 255;
-                                    }
-                                    else
-                                    {
-                                        uint inv0 = 255 - srcA0, dd0 = dstPtr[3];
-                                        uint dc0 = (dd0 * inv0 + 127) / 255;
-                                        uint oa0 = srcA0 + dc0;
-                                        if (oa0 != 0)
-                                        {
-                                            uint h0 = oa0 >> 1;
-                                            dstPtr[0] = (byte)((sb0 * srcA0 + dstPtr[0] * dc0 + h0) / oa0);
-                                            dstPtr[1] = (byte)((sg0 * srcA0 + dstPtr[1] * dc0 + h0) / oa0);
-                                            dstPtr[2] = (byte)((sr0 * srcA0 + dstPtr[2] * dc0 + h0) / oa0);
-                                            dstPtr[3] = (byte)oa0;
-                                        }
-                                    }
-                                }
-
-                                // Pixel 1
-                                uint rawA1 = tile[tileOffset + 7];
-                                if (rawA1 != 0)
-                                {
-                                    uint srcA1 = fullOpacity ? rawA1 : (rawA1 * opacityByte + 127) / 255;
-                                    byte sb1 = tile[tileOffset + 4], sg1 = tile[tileOffset + 5], sr1 = tile[tileOffset + 6];
-                                    if (srcA1 == 255)
-                                    {
-                                        dstPtr[4] = sb1; dstPtr[5] = sg1; dstPtr[6] = sr1; dstPtr[7] = 255;
-                                    }
-                                    else
-                                    {
-                                        uint inv1 = 255 - srcA1, dd1 = dstPtr[7];
-                                        uint dc1 = (dd1 * inv1 + 127) / 255;
-                                        uint oa1 = srcA1 + dc1;
-                                        if (oa1 != 0)
-                                        {
-                                            uint h1 = oa1 >> 1;
-                                            dstPtr[4] = (byte)((sb1 * srcA1 + dstPtr[4] * dc1 + h1) / oa1);
-                                            dstPtr[5] = (byte)((sg1 * srcA1 + dstPtr[5] * dc1 + h1) / oa1);
-                                            dstPtr[6] = (byte)((sr1 * srcA1 + dstPtr[6] * dc1 + h1) / oa1);
-                                            dstPtr[7] = (byte)oa1;
-                                        }
-                                    }
-                                }
-
-                                // Pixel 2
-                                uint rawA2 = tile[tileOffset + 11];
-                                if (rawA2 != 0)
-                                {
-                                    uint srcA2 = fullOpacity ? rawA2 : (rawA2 * opacityByte + 127) / 255;
-                                    byte sb2 = tile[tileOffset + 8], sg2 = tile[tileOffset + 9], sr2 = tile[tileOffset + 10];
-                                    if (srcA2 == 255)
-                                    {
-                                        dstPtr[8] = sb2; dstPtr[9] = sg2; dstPtr[10] = sr2; dstPtr[11] = 255;
-                                    }
-                                    else
-                                    {
-                                        uint inv2 = 255 - srcA2, dd2 = dstPtr[11];
-                                        uint dc2 = (dd2 * inv2 + 127) / 255;
-                                        uint oa2 = srcA2 + dc2;
-                                        if (oa2 != 0)
-                                        {
-                                            uint h2 = oa2 >> 1;
-                                            dstPtr[8] = (byte)((sb2 * srcA2 + dstPtr[8] * dc2 + h2) / oa2);
-                                            dstPtr[9] = (byte)((sg2 * srcA2 + dstPtr[9] * dc2 + h2) / oa2);
-                                            dstPtr[10] = (byte)((sr2 * srcA2 + dstPtr[10] * dc2 + h2) / oa2);
-                                            dstPtr[11] = (byte)oa2;
-                                        }
-                                    }
-                                }
-
-                                // Pixel 3
-                                uint rawA3 = tile[tileOffset + 15];
-                                if (rawA3 != 0)
-                                {
-                                    uint srcA3 = fullOpacity ? rawA3 : (rawA3 * opacityByte + 127) / 255;
-                                    byte sb3 = tile[tileOffset + 12], sg3 = tile[tileOffset + 13], sr3 = tile[tileOffset + 14];
-                                    if (srcA3 == 255)
-                                    {
-                                        dstPtr[12] = sb3; dstPtr[13] = sg3; dstPtr[14] = sr3; dstPtr[15] = 255;
-                                    }
-                                    else
-                                    {
-                                        uint inv3 = 255 - srcA3, dd3 = dstPtr[15];
-                                        uint dc3 = (dd3 * inv3 + 127) / 255;
-                                        uint oa3 = srcA3 + dc3;
-                                        if (oa3 != 0)
-                                        {
-                                            uint h3 = oa3 >> 1;
-                                            dstPtr[12] = (byte)((sb3 * srcA3 + dstPtr[12] * dc3 + h3) / oa3);
-                                            dstPtr[13] = (byte)((sg3 * srcA3 + dstPtr[13] * dc3 + h3) / oa3);
-                                            dstPtr[14] = (byte)((sr3 * srcA3 + dstPtr[14] * dc3 + h3) / oa3);
-                                            dstPtr[15] = (byte)oa3;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Slow path (or tail of fast path): handle layer color / expression color.
-                        for (; j < rowWidth; j++)
-                        {
-                            var tileOffset = tileRowBase + j * 4;
-                            uint rawA = tile[tileOffset + 3];
-                            if (rawA == 0) continue;
-                            var docX = clipLeft + j + offsetX;
-                            var dstPtr = dstRow + (docX - originX) * 4;
-                            byte srcB = tile[tileOffset + 0], srcG = tile[tileOffset + 1], srcR = tile[tileOffset + 2];
-                            if (hasLayerColor)
-                                ApplyLayerColor(ref srcB, ref srcG, ref srcR, lcB, lcG, lcR);
-                            if (applyExpr && !ApplyExpressionColorToSource(ref srcB, ref srcG, ref srcR, ref rawA, expressionColor))
-                                continue;
-                            uint srcA = fullOpacity ? rawA : (rawA * opacityByte + 127) / 255;
-                            if (srcA == 255) { dstPtr[0] = srcB; dstPtr[1] = srcG; dstPtr[2] = srcR; dstPtr[3] = 255; continue; }
-                            uint invSrcA = 255 - srcA, ddA = dstPtr[3];
-                            uint dstCont = (ddA * invSrcA + 127) / 255;
-                            uint outA = srcA + dstCont;
-                            if (outA == 0) continue;
-                            uint halfOutA = outA >> 1;
-                            dstPtr[0] = (byte)((srcB * srcA + dstPtr[0] * dstCont + halfOutA) / outA);
-                            dstPtr[1] = (byte)((srcG * srcA + dstPtr[1] * dstCont + halfOutA) / outA);
-                            dstPtr[2] = (byte)((srcR * srcA + dstPtr[2] * dstCont + halfOutA) / outA);
-                            dstPtr[3] = (byte)outA;
-                        }
-                    }
-                }
-            return;
-        }
-
-        // LUT path for standard per-channel blend modes
-        if (HasLut(blendMode))
-        {
-            var lut = GetLut(blendMode);
-            var opacityByte = (uint)Math.Round(opacity * 255);
-            for (var ty = firstTileY; ty <= lastTileY; ty++)
-                for (var tx = firstTileX; tx <= lastTileX; tx++)
-                {
-                    var tile = layer.Pixels.GetTileOrNull(tx, ty);
-                    if (tile == null) continue;
-                    var clipLeft = Math.Max(sourceRegion.X, tx * ts);
-                    var clipTop = Math.Max(sourceRegion.Y, ty * ts);
-                    var clipRight = Math.Min(sourceRegion.Right, tx * ts + ts);
-                    var clipBottom = Math.Min(sourceRegion.Bottom, ty * ts + ts);
-                    for (int srcY = clipTop; srcY < clipBottom; srcY++)
-                    {
-                        var tileLocalY = srcY - ty * ts;
-                        var tileLocalX0 = clipLeft - tx * ts;
-                        var tileRowBase = (tileLocalY * ts + tileLocalX0) * 4;
-                        var docY = srcY + offsetY;
-                        var dstRow = dst + (docY - originY) * dstStride;
-                        for (int j = 0, srcX = clipLeft; srcX < clipRight; srcX++, j++)
-                        {
-                            var tileOffset = tileRowBase + j * 4;
-                            uint rawA = tile[tileOffset + 3];
-                            if (rawA == 0) continue;
-                            var docX = srcX + offsetX;
-                            var dstPtr = dstRow + (docX - originX) * 4;
-                            byte sb = tile[tileOffset + 0], sg = tile[tileOffset + 1], sr = tile[tileOffset + 2];
-                            // layer color & expression
-                            if (hasLayerColor)
-                                ApplyLayerColor(ref sb, ref sg, ref sr, lcB, lcG, lcR);
-                            if (applyExpr && !ApplyExpressionColorToSource(ref sb, ref sg, ref sr, ref rawA, expressionColor))
-                                continue;
-                            uint srcA = (rawA * opacityByte + 127) / 255;
-                            if (srcA == 0) continue;
-                            uint db = dstPtr[0], dg = dstPtr[1], dr = dstPtr[2], da = dstPtr[3];
-                            BlendPixelInt(dstPtr,
-                                lut[((uint)sr << 8) | dr], lut[((uint)sg << 8) | dg], lut[((uint)sb << 8) | db], srcA,
-                                dr, dg, db, da);
-                        }
-                    }
-                }
-            return;
-        }
-
-        // Double fallback for HSL / luminance-based modes
-        for (var ty = firstTileY; ty <= lastTileY; ty++)
-            for (var tx = firstTileX; tx <= lastTileX; tx++)
-            {
-                var tile = layer.Pixels.GetTileOrNull(tx, ty);
-                if (tile == null) continue;
-                var clipLeft = Math.Max(sourceRegion.X, tx * ts);
-                var clipTop = Math.Max(sourceRegion.Y, ty * ts);
-                var clipRight = Math.Min(sourceRegion.Right, tx * ts + ts);
-                var clipBottom = Math.Min(sourceRegion.Bottom, ty * ts + ts);
-                for (int srcY = clipTop; srcY < clipBottom; srcY++)
-                {
-                    var tileLocalY = srcY - ty * ts;
-                    var tileLocalX0 = clipLeft - tx * ts;
-                    var tileRowBase = (tileLocalY * ts + tileLocalX0) * 4;
-                    var docY = srcY + offsetY;
-                    var dstRow = dst + (docY - originY) * dstStride;
-                    for (int j = 0, srcX = clipLeft; srcX < clipRight; srcX++, j++)
-                    {
-                        var tileOffset = tileRowBase + j * 4;
-                        uint rawA = tile[tileOffset + 3];
-                        if (rawA == 0) continue;
-                        var docX = srcX + offsetX;
-                        var dstIdx = (docX - originX) * 4;
-                        byte tintedB, tintedG, tintedR;
-                        if (hasLayerColor) { tintedB = tile[tileOffset + 0]; tintedG = tile[tileOffset + 1]; tintedR = tile[tileOffset + 2]; ApplyLayerColor(ref tintedB, ref tintedG, ref tintedR, lcB, lcG, lcR); }
-                        else { tintedB = tile[tileOffset + 0]; tintedG = tile[tileOffset + 1]; tintedR = tile[tileOffset + 2]; }
-                        if (applyExpr && !ApplyExpressionColorToSource(ref tintedB, ref tintedG, ref tintedR, ref rawA, expressionColor))
-                            continue;
-                        var srcA = rawA / 255.0 * opacity;
-                        var sB = tintedB / 255.0; var sG = tintedG / 255.0; var sR = tintedR / 255.0;
-                        var dB = dstRow[dstIdx + 0] / 255.0; var dG = dstRow[dstIdx + 1] / 255.0; var dR = dstRow[dstIdx + 2] / 255.0; var dA = dstRow[dstIdx + 3] / 255.0;
-                        var (blendR, blendG, blendB) = ApplyBlendMode(sR, sG, sB, srcA, dR, dG, dB, dA, blendMode);
-                        BlendPixel(dstRow + dstIdx, sR, sG, sB, srcA, dR, dG, dB, dA, blendR, blendG, blendB);
-                    }
-                }
-            }
-
-        }
-        finally { layer.Pixels.ExitPixelReadLock(); }
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void ApplyLayerColor(ref byte b, ref byte g, ref byte r, byte layerB, byte layerG, byte layerR)
-    {
-        var lum = (r * 299 + g * 587 + b * 114) / 1000;
-        var ink = 255 - lum;
-        b = (byte)(lum + (layerB * ink) / 255);
-        g = (byte)(lum + (layerG * ink) / 255);
-        r = (byte)(lum + (layerR * ink) / 255);
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool ApplyExpressionColorToSource(ref byte b, ref byte g, ref byte r, ref uint a, ExpressionColorMode mode)
-    {
-        if (mode == ExpressionColorMode.Color) return a != 0;
-
-        var lum = (r * 299 + g * 587 + b * 114) / 1000;
-        if (mode == ExpressionColorMode.Gray)
-        {
-            b = g = r = (byte)lum;
-            return a != 0;
-        }
-
-        if (a < MonochromeThreshold)
-        {
-            a = 0;
-            return false;
-        }
-
-        a = 255;
-        b = g = r = lum >= MonochromeThreshold ? (byte)255 : (byte)0;
-        return true;
-    }
-
-    private static unsafe void ApplyExpressionColor(
-        byte* dst, int dstStride,
-        int left, int top, int right, int bottom,
-        int originX, int originY,
-        ExpressionColorMode mode)
-    {
-        if (mode == ExpressionColorMode.Color) return;
-
-        for (int y = top; y < bottom; y++)
-        {
-            var row = dst + (y - originY) * dstStride;
-            for (int x = left; x < right; x++)
-            {
-                var p = row + (x - originX) * 4;
-                var b = p[0];
-                var g = p[1];
-                var r = p[2];
-                var a = p[3];
-                if (a == 0) continue;
-
-                byte gray;
-                if (mode == ExpressionColorMode.Gray)
-                {
-                    // Standard luminance
-                    gray = (byte)((r * 299 + g * 587 + b * 114) / 1000);
-                }
-                else // Monochrome
-                {
-                    var lum = (r * 299 + g * 587 + b * 114) / 1000;
-                    if (a < MonochromeThreshold)
-                    {
-                        p[3] = 0;
-                        continue;
-                    }
-                    p[3] = 255;
-                    gray = lum >= MonochromeThreshold ? (byte)255 : (byte)0;
-                }
-
-                p[0] = gray;
-                p[1] = gray;
-                p[2] = gray;
-            }
-        }
-    }
-
-    private static unsafe void BlendPixel(
-        byte* dst,
-        double srcR,
-        double srcG,
-        double srcB,
-        double srcA,
-        double dstR,
-        double dstG,
-        double dstB,
-        double dstA,
-        double blendR,
-        double blendG,
-        double blendB)
-    {
-        if (srcA <= 0) return;
-
-        if (dstA <= 0)
-        {
-            dst[0] = (byte)Math.Clamp(srcB * srcA * 255, 0, 255);
-            dst[1] = (byte)Math.Clamp(srcG * srcA * 255, 0, 255);
-            dst[2] = (byte)Math.Clamp(srcR * srcA * 255, 0, 255);
-            dst[3] = (byte)Math.Clamp(srcA * 255, 0, 255);
-            return;
-        }
-
-        var outAlpha = srcA + dstA * (1.0 - srcA);
-        if (outAlpha <= 0) return;
-
-        dst[0] = (byte)Math.Clamp((blendB * srcA + dstB * dstA * (1.0 - srcA)) / outAlpha * 255, 0, 255);
-        dst[1] = (byte)Math.Clamp((blendG * srcA + dstG * dstA * (1.0 - srcA)) / outAlpha * 255, 0, 255);
-        dst[2] = (byte)Math.Clamp((blendR * srcA + dstR * dstA * (1.0 - srcA)) / outAlpha * 255, 0, 255);
-        dst[3] = (byte)Math.Clamp(outAlpha * 255, 0, 255);
-    }
-
-    private static (double r, double g, double b) ApplyBlendMode(
-        double srcR, double srcG, double srcB, double srcA,
-        double dstR, double dstG, double dstB, double dstA,
-        string blendMode)
-    {
-        return blendMode switch
-        {
-            "Normal" or "PassThrough" => (srcR, srcG, srcB),
-            "Dissolve" => (srcR, srcG, srcB),
-            "Multiply" => (dstR * srcR, dstG * srcG, dstB * srcB),
-            "Screen" => (1.0 - (1.0 - dstR) * (1.0 - srcR),
-                        1.0 - (1.0 - dstG) * (1.0 - srcG),
-                        1.0 - (1.0 - dstB) * (1.0 - srcB)),
-            "Overlay" => (Overlay(dstR, srcR), Overlay(dstG, srcG), Overlay(dstB, srcB)),
-            "SoftLight" => (SoftLight(dstR, srcR), SoftLight(dstG, srcG), SoftLight(dstB, srcB)),
-            "HardLight" => (HardLight(dstR, srcR), HardLight(dstG, srcG), HardLight(dstB, srcB)),
-            "ColorDodge" => (ColorDodge(dstR, srcR), ColorDodge(dstG, srcG), ColorDodge(dstB, srcB)),
-            "ColorBurn" => (ColorBurn(dstR, srcR), ColorBurn(dstG, srcG), ColorBurn(dstB, srcB)),
-            "Darken" => (Math.Min(dstR, srcR), Math.Min(dstG, srcG), Math.Min(dstB, srcB)),
-            "Lighten" => (Math.Max(dstR, srcR), Math.Max(dstG, srcG), Math.Max(dstB, srcB)),
-            "Difference" => (Math.Abs(dstR - srcR), Math.Abs(dstG - srcG), Math.Abs(dstB - srcB)),
-            "Exclusion" => (dstR + srcR - 2.0 * dstR * srcR,
-                           dstG + srcG - 2.0 * dstG * srcG,
-                           dstB + srcB - 2.0 * dstB * srcB),
-            "LinearBurn" => (dstR + srcR - 1.0, dstG + srcG - 1.0, dstB + srcB - 1.0),
-            "LinearDodge" => (dstR + srcR, dstG + srcG, dstB + srcB),
-            "VividLight" => (VividLight(dstR, srcR), VividLight(dstG, srcG), VividLight(dstB, srcB)),
-            "LinearLight" => (LinearLight(dstR, srcR), LinearLight(dstG, srcG), LinearLight(dstB, srcB)),
-            "PinLight" => (PinLight(dstR, srcR), PinLight(dstG, srcG), PinLight(dstB, srcB)),
-            "HardMix" => (HardMix(dstR, srcR), HardMix(dstG, srcG), HardMix(dstB, srcB)),
-            "DarkerColor" => LuminosityBlend(dstR, dstG, dstB, srcR, srcG, srcB, useDarker: true),
-            "LighterColor" => LuminosityBlend(dstR, dstG, dstB, srcR, srcG, srcB, useDarker: false),
-            "Subtract" => (dstR - srcR, dstG - srcG, dstB - srcB),
-            "Divide" => (SafeDivide(dstR, srcR), SafeDivide(dstG, srcG), SafeDivide(dstB, srcB)),
-            "Hue" => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 0),
-            "Saturation" => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 1),
-            "Color" => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 2),
-            "Luminosity" => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 3),
-            _ => (srcR, srcG, srcB)
-        };
-    }
-
-    private static int FloorDiv(int value, int divisor)
-    {
-        var result = value / divisor;
-        if ((value ^ divisor) < 0 && value % divisor != 0) result--;
-        return result;
-    }
-
-    private static double Overlay(double dst, double src)
-    {
-        if (dst < 0.5)
-            return 2.0 * dst * src;
-        else
-            return 1.0 - 2.0 * (1.0 - dst) * (1.0 - src);
-    }
-
-    private static double SoftLight(double dst, double src)
-    {
-        if (src < 0.5)
-            return dst - (1.0 - 2.0 * src) * dst * (1.0 - dst);
-        else
-        {
-            double d = dst < 0.25 ? ((16.0 * dst - 12.0) * dst + 4.0) * dst : Math.Sqrt(dst);
-            return dst + (2.0 * src - 1.0) * (d - dst);
-        }
-    }
-
-    private static double HardLight(double dst, double src)
-    {
-        if (src < 0.5)
-            return 2.0 * dst * src;
-        else
-            return 1.0 - 2.0 * (1.0 - dst) * (1.0 - src);
-    }
-
-    private static double ColorDodge(double dst, double src)
-    {
-        if (dst == 0.0) return 0.0;
-        if (src == 1.0) return 1.0;
-        return Math.Min(1.0, dst / (1.0 - src));
-    }
-
-    private static double ColorBurn(double dst, double src)
-    {
-        if (dst == 1.0) return 1.0;
-        if (src == 0.0) return 0.0;
-        return 1.0 - Math.Min(1.0, (1.0 - dst) / src);
-    }
-
-    private static double LinearLight(double dst, double src)
-    {
-        if (src < 0.5)
-            return dst + 2.0 * src - 1.0;
-        else
-            return dst + 2.0 * (src - 0.5);
-    }
-
-    private static double VividLight(double dst, double src)
-    {
-        if (src < 0.5)
-            return ColorBurn(dst, 2.0 * src);
-        else
-            return ColorDodge(dst, 2.0 * (src - 0.5));
-    }
-
-    private static double PinLight(double dst, double src)
-    {
-        if (src < 0.5)
-            return Math.Min(dst, 2.0 * src);
-        else
-            return Math.Max(dst, 2.0 * (src - 0.5));
-    }
-
-    private static double HardMix(double dst, double src)
-    {
-        return VividLight(dst, src) < 0.5 ? 0.0 : 1.0;
-    }
-
-    private static double SafeDivide(double dst, double src)
-    {
-        if (src == 0.0) return 0.0;
-        return Math.Min(1.0, dst / src);
-    }
-
-    private static (double r, double g, double b) LuminosityBlend(
-        double dstR, double dstG, double dstB,
-        double srcR, double srcG, double srcB,
-        bool useDarker)
-    {
-        var dstLum = RgbToLuma(dstR, dstG, dstB);
-        var srcLum = RgbToLuma(srcR, srcG, srcB);
-        var cmp = useDarker ? srcLum < dstLum : srcLum > dstLum;
-        return cmp ? (srcR, srcG, srcB) : (dstR, dstG, dstB);
-    }
-
-    private static double RgbToLuma(double r, double g, double b)
-    {
-        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    }
-
-    private static (double r, double g, double b) HslBlend(
-        double dstR, double dstG, double dstB,
-        double srcR, double srcG, double srcB,
-        int mode)
-    {
-        var (dstH, dstS, dstL) = RgbToHsl(dstR, dstG, dstB);
-        var (srcH, srcS, srcL) = RgbToHsl(srcR, srcG, srcB);
-
-        double outH, outS, outL;
-
-        switch (mode)
-        {
-            case 0:
-                outH = srcS == 0 ? dstH : srcH;
-                outS = dstS;
-                outL = dstL;
-                break;
-            case 1:
-                outH = dstH;
-                outS = srcS;
-                outL = dstL;
-                break;
-            case 2:
-                outH = srcH;
-                outS = srcS;
-                outL = dstL;
-                break;
-            default:
-                outH = dstH;
-                outS = dstS;
-                outL = srcL;
-                break;
-        }
-
-        return HslToRgb(outH, outS, outL);
-    }
-
-    private static (double h, double s, double l) RgbToHsl(double r, double g, double b)
-    {
-        var max = Math.Max(r, Math.Max(g, b));
-        var min = Math.Min(r, Math.Min(g, b));
-        var l = (max + min) / 2.0;
-
-        if (max == min)
-            return (0, 0, l);
-
-        var d = max - min;
-        var s = l > 0.5 ? d / (2.0 - max - min) : d / (max + min);
-
-        double h;
-        if (max == r)
-            h = (g - b) / d + (g < b ? 6.0 : 0.0);
-        else if (max == g)
-            h = (b - r) / d + 2.0;
-        else
-            h = (r - g) / d + 4.0;
-        h /= 6.0;
-
-        return (h, s, l);
-    }
-
-    private static (double r, double g, double b) HslToRgb(double h, double s, double l)
-    {
-        if (s == 0)
-            return (l, l, l);
-
-        double HueToRgb(double p, double q, double t)
-        {
-            if (t < 0) t += 1;
-            if (t > 1) t -= 1;
-            if (t < 1.0 / 6.0) return p + (q - p) * 6.0 * t;
-            if (t < 1.0 / 2.0) return q;
-            if (t < 2.0 / 3.0) return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
-            return p;
-        }
-
-        var q = l < 0.5 ? l * (1.0 + s) : l + s - l * s;
-        var p = 2.0 * l - q;
-
-        return (
-            HueToRgb(p, q, h + 1.0 / 3.0),
-            HueToRgb(p, q, h),
-            HueToRgb(p, q, h - 1.0 / 3.0)
-        );
-    }
-
-    private sealed class GroupProjectionCache
-    {
-        private bool _fullDirty = true;
-        private PixelRegion? _dirtyRegion;
-
-        public GroupProjectionCache(int width, int height)
-        {
-            Buffer = new TiledPixelBuffer(width, height);
-        }
-
-        public TiledPixelBuffer Buffer { get; private set; }
-
-        public void EnsureSize(int width, int height)
-        {
-            if (Buffer.Width == width && Buffer.Height == height) return;
-
-            Buffer.Dispose();
-            Buffer = new TiledPixelBuffer(width, height);
-            _fullDirty = true;
-            _dirtyRegion = null;
-        }
-
-        public void Invalidate(PixelRegion? region)
-        {
-            if (region is null || region.Value.IsEmpty)
-            {
-                _fullDirty = true;
-                _dirtyRegion = null;
-                return;
-            }
-
-            if (_fullDirty) return;
-            _dirtyRegion = _dirtyRegion is { } existing ? existing.Union(region.Value) : region.Value;
-        }
-
-        public PixelRegion TakeDirty(PixelRegion requestedClip)
-        {
-            var clip = requestedClip.ClipTo(Buffer.Width, Buffer.Height);
-            if (clip.IsEmpty) return PixelRegion.Empty;
-
-            // When fully dirty, return clip for every warm request. Parallel
-            // display upload reads the buffer read-only after sequential warm.
-            if (_fullDirty)
-                return clip;
-
-            if (_dirtyRegion is not { } dirty)
-                return PixelRegion.Empty;
-
-            var dirtyClip = dirty.Intersect(clip);
-            if (dirtyClip.IsEmpty)
-                return PixelRegion.Empty;
-
-            var remaining = dirtyClip.Width == dirty.Width && dirtyClip.Height == dirty.Height &&
-                            dirtyClip.X == dirty.X && dirtyClip.Y == dirty.Y
-                ? PixelRegion.Empty
-                : dirty;
-            _dirtyRegion = remaining.IsEmpty ? null : remaining;
-            return dirtyClip;
-        }
-
-        public void FlushFullDirty()
-        {
-            _fullDirty = false;
-            _dirtyRegion = null;
-        }
+        public unsafe void CompositePaintLayer(
+            byte* dst, int dstStride, int width, int height,
+            DrawingLayer layer, double opacityScale, PixelRegion clip, int originX, int originY)
+            => LayerCompositorPixelOps.CompositeLayer(dst, dstStride, width, height, layer, opacityScale, clip, originX, originY);
+
+        public unsafe void CompositeProjectionBuffer(
+            byte* dst, int dstStride, TiledPixelBuffer projection,
+            string blendMode, double opacity, PixelRegion clip, int originX, int originY)
+            => LayerCompositorPixelOps.CompositeProjectionBuffer(dst, dstStride, projection, blendMode, opacity, clip, originX, originY);
+
+        public unsafe void CompositeClippedPaintLayer(
+            byte* dst, int dstStride, int width, int height,
+            DrawingLayer layer, DrawingLayer baseLayer, double opacityScale,
+            PixelRegion clip, int originX, int originY)
+            => LayerCompositorPixelOps.CompositeClippedLayer(dst, dstStride, width, height, layer, baseLayer, opacityScale, clip, originX, originY);
+
+        public unsafe void CompositeClippedGroupIntoBuffer(
+            byte* dst, int dstStride, int width, int height,
+            DrawingLayer group, DrawingLayer baseLayer, double opacityScale,
+            PixelRegion clip, int originX, int originY)
+            => owner.CompositeClippedGroup(dst, dstStride, width, height, group, baseLayer, opacityScale, clip, originX, originY);
     }
 }

@@ -13,6 +13,16 @@
 
 ## Architecture
 
+### Layer compositing (Krita-aligned)
+
+- **Tree walk only:** `LayerProjectionPlane` composites one **sibling list** at a time (paint layers + groups under the same parent). Document composites use `LayerStackComposition.GetRootLayers()` — never the flat `_layers` list (KRA keeps children in both places).
+- **Groups:** Non–pass-through groups merge children into a `GroupProjectionCache` buffer, then blend onto the parent (`KisGroupLayer::original` + `projectionPlane()->apply`). Pass-through groups recurse with accumulated opacity.
+- **Display vs merge:** `LayerCompositor` owns viewport tiles (`_compTiles`); pixel blend ops in `LayerCompositorPixelOps.cs`; merge orchestration in `LayerProjectionPlane` via `ILayerMergeHost` / `MergeHost`. Stroke-below cache lives on `LayerProjectionPlane.StrokeBelow`.
+- **Dirty rects:** `InvalidateGroupCaches` walks the changed layer’s parent chain (KisMergeWalker-style). Group caches track partial clean/dirty regions.
+- **`tryObligeChild()`:** Nested groups only — reuse child group projection when a single visible group child qualifies (paint-layer oblige disabled until tile-local buffers match document-space projection).
+- **Tests:** Prefer `SampleCompositePixel` / `TiledDisplay_MatchesProjectionMerge_*` (projection merge vs viewport tiles). Do not add `CompositeToBgra` vs tiled parity tests — that conflates two Floss entry points; Krita tests `projection()` vs reference images instead.
+- **Not yet ported from Krita:** full `KisMergeWalker` `needRect`/`changeRect`, clone/mask nodes, paint-layer oblige on tiles.
+
 ### Viewport Coordinate System
 - Canvas frame uses `TransformGroup` with `ScaleTransform` (flip), `ScaleTransform` (zoom), `RotateTransform`, `TranslateTransform` (pan)
 - `RenderTransformOrigin = RelativePoint(0.5, 0.5)` — transforms are centered on the canvas
@@ -64,7 +74,9 @@ Popup window with draggable nodes, connection wires, pan/zoom canvas.
 - `Processes/Output/ZoomOutput.cs` — zoom around cursor start position
 - `Processes/CompositeTool.cs` — tool dispatch (`Preview`/`Execute`)
 - `Tools/Core/ToolController.cs` — active tool management, alternate tool switching
-- `Canvas/LayerCompositor.cs` — tiled compositing, viewport culling
+- `Canvas/LayerCompositor.cs` — display tile cache, LOD, viewport culling
+- `Canvas/LayerProjectionPlane.cs` — Krita-style merge: sibling stacks + group projection caches (`recalculate` children → `apply` group onto parent). Entry: `LayerStackComposition.SelectLayersForComposite()` (roots only, never flat `_layers` children).
+- `Canvas/LayerStackComposition.cs` — root-layer selection for compositing
 
 ## Avalonia Gotchas
 

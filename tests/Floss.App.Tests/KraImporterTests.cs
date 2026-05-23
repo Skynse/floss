@@ -215,6 +215,8 @@ public class KraImporterTests
         return zipStream.ToArray();
     }
 
+    internal static byte[] BuildGroupedKraPublic() => BuildGroupedKra();
+
     private static byte[] BuildGroupedKra()
     {
         using var zipStream = new MemoryStream();

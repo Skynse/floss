@@ -232,41 +232,69 @@ public partial class MainWindow : ICanvasInputHost
         _selectionActionBar.Margin = new Thickness(Math.Round(x), Math.Round(y), 0, 0);
     }
 
-    private void ToggleCanvasOnly()
+    private void CaptureRootColumnWidths()
     {
-        _canvasOnly = !_canvasOnly;
+        if (_rootGrid == null || _canvasOnly)
+            return;
 
-        if (_leftRail != null) _leftRail.IsVisible = !_canvasOnly;
-        if (_leftSplitter != null) _leftSplitter.IsVisible = !_canvasOnly;
-        if (_rightPanel != null) _rightPanel.IsVisible = !_canvasOnly;
-        if (_splitterControl != null) _splitterControl.IsVisible = !_canvasOnly;
+        _rootColumnWidths = [.. _rootGrid.ColumnDefinitions.Select(c => c.Width)];
+    }
 
-        if (_rootGrid != null && _rootColumnWidths != null)
+    private void ApplyCanvasOnlyLayout(bool canvasOnly)
+    {
+        if (_leftRail != null) _leftRail.IsVisible = !canvasOnly;
+        if (_leftSplitter != null) _leftSplitter.IsVisible = !canvasOnly;
+        if (_rightPanel != null) _rightPanel.IsVisible = !canvasOnly;
+        if (_splitterControl != null) _splitterControl.IsVisible = !canvasOnly;
+
+        if (_rootGrid == null || _rootColumnWidths == null)
+            return;
+
+        for (var i = 0; i < _rootGrid.ColumnDefinitions.Count; i++)
         {
-            for (var i = 0; i < _rootGrid.ColumnDefinitions.Count; i++)
+            var col = _rootGrid.ColumnDefinitions[i];
+            if (canvasOnly)
             {
-                var col = _rootGrid.ColumnDefinitions[i];
-                if (_canvasOnly)
-                {
-                    col.Width = i == 2
-                        ? new GridLength(1, GridUnitType.Star)
-                        : new GridLength(0);
-                    col.MinWidth = 0;
-                    col.MaxWidth = double.PositiveInfinity;
-                }
-                else
-                {
-                    col.Width = _rootColumnWidths[i];
-                    col.MinWidth = i == 2 ? 320 : 0;
-                    col.MaxWidth = double.PositiveInfinity;
-                }
+                col.Width = i == 2
+                    ? new GridLength(1, GridUnitType.Star)
+                    : new GridLength(0);
+                col.MinWidth = 0;
+                col.MaxWidth = double.PositiveInfinity;
+            }
+            else
+            {
+                col.Width = _rootColumnWidths[i];
+                col.MinWidth = i == 2 ? 320 : 0;
+                col.MaxWidth = double.PositiveInfinity;
             }
         }
+    }
 
+    private void EnterCanvasOnlyMode()
+    {
+        if (!_canvasOnly)
+            CaptureRootColumnWidths();
+
+        _canvasOnly = true;
+        ApplyCanvasOnlyLayout(true);
+        _workspaceViewport.Focus();
+    }
+
+    private void ExitCanvasOnlyMode()
+    {
+        if (!_canvasOnly)
+            return;
+
+        _canvasOnly = false;
+        ApplyCanvasOnlyLayout(false);
+    }
+
+    private void ToggleCanvasOnly()
+    {
         if (_canvasOnly)
-        {
-            _workspaceViewport.Focus();
-        }
+            ExitCanvasOnlyMode();
+        else
+            EnterCanvasOnlyMode();
     }
 
     private void ToggleRulers()

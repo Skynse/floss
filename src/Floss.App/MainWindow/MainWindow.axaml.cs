@@ -529,6 +529,8 @@ public partial class MainWindow : Window, Tools.IViewportController
     public MainWindow()
     {
         InitializeComponent();
+        TransparencyLevelHint = [WindowTransparencyLevel.None];
+        Background = new SolidColorBrush(Color.Parse(Bg0));
         Icon = new WindowIcon(AssetLoader.Open(new Uri(AppAssets.IconUri)));
         _brushLibrary = new BrushLibrary(AppPaths.BrushesDirectory);
         _showRulers = App.Config.ShowRulers;
@@ -552,6 +554,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         {
             UpdateTabBar();
             SyncCanvasViewport();
+            CaptureRootColumnWidths();
             SetNodeGraphDockVisible(App.Config.ShowNodeGraphDock, reload: false);
         };
     }
@@ -661,7 +664,11 @@ public partial class MainWindow : Window, Tools.IViewportController
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
             Background = new SolidColorBrush(Color.Parse(Bg0))
         };
-        leftSplitter.DragCompleted += (_, _) => PersistWorkspaceLayout();
+        leftSplitter.DragCompleted += (_, _) =>
+        {
+            CaptureRootColumnWidths();
+            PersistWorkspaceLayout();
+        };
         var rightSplitter = new GridSplitter
         {
             Width = 3,
@@ -669,7 +676,11 @@ public partial class MainWindow : Window, Tools.IViewportController
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
             Background = new SolidColorBrush(Color.Parse(Bg0))
         };
-        rightSplitter.DragCompleted += (_, _) => PersistWorkspaceLayout();
+        rightSplitter.DragCompleted += (_, _) =>
+        {
+            CaptureRootColumnWidths();
+            PersistWorkspaceLayout();
+        };
 
         Grid.SetColumn(leftRail, 0);
         Grid.SetColumn(leftSplitter, 1);
@@ -2070,6 +2081,8 @@ public partial class MainWindow : Window, Tools.IViewportController
 
     private void PersistWorkspaceLayout()
     {
+        if (!_canvasOnly)
+            CaptureRootColumnWidths();
         SaveWorkspaceLayoutFromUi();
         App.Config.Save();
     }
@@ -2160,6 +2173,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         RebuildDockers();
         OpenFloatingDockersFromConfig();
         RefreshWorkspaceLoadMenu();
+        CaptureRootColumnWidths();
         PersistWorkspaceLayout();
     }
 
@@ -2293,6 +2307,7 @@ public partial class MainWindow : Window, Tools.IViewportController
             _rootGrid.ColumnDefinitions[4].Width = new GridLength(
                 Math.Clamp(cfg.WorkspaceLayout.RightPanelWidth, 300, 1000),
                 GridUnitType.Pixel);
+            CaptureRootColumnWidths();
         }
         _sizeSlider.Value = Math.Clamp(cfg.LastBrushSize, _sizeSlider.Minimum, _sizeSlider.Maximum);
         _opacitySlider.Value = Math.Clamp(cfg.LastBrushOpacity, _opacitySlider.Minimum, _opacitySlider.Maximum);
