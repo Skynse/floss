@@ -35,6 +35,8 @@ public sealed class NodeGraphEditorPanel : UserControl
 
     public bool IsDocked => _docked;
 
+    internal NodeGraphView GraphView => _view;
+
     public NodeGraphEditorPanel(BrushTipNodeGraph graph, Action<BrushTipNodeGraph> onCommit,
         Action<BrushTipNodeGraph, string>? onSaveAsNew = null,
         IReadOnlyList<BrushTipData>? imageSamplers = null,
@@ -197,13 +199,23 @@ public sealed class NodeGraphEditorPanel : UserControl
         if (!_docked)
             grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
 
+        toolbar.ZIndex = 1;
+
+        var graphHost = new Border
+        {
+            ClipToBounds = true,
+            Child = _view
+        };
+        _view.HorizontalAlignment = HorizontalAlignment.Stretch;
+        _view.VerticalAlignment = VerticalAlignment.Stretch;
+
         grid.Children.Add(toolbar);
         Grid.SetRow(toolbar, 0);
         Grid.SetColumnSpan(toolbar, 2);
 
-        grid.Children.Add(_view);
-        Grid.SetRow(_view, 1);
-        Grid.SetColumn(_view, 0);
+        grid.Children.Add(graphHost);
+        Grid.SetRow(graphHost, 1);
+        Grid.SetColumn(graphHost, 0);
 
         grid.Children.Add(_propertyBorder);
         Grid.SetRow(_propertyBorder, 1);
@@ -217,6 +229,7 @@ public sealed class NodeGraphEditorPanel : UserControl
         }
 
         Content = grid;
+        ClipToBounds = true;
         Background = new SolidColorBrush(Color.Parse(Bg1));
 
         _view.LoadGraph(_graph, new());
@@ -257,7 +270,7 @@ public sealed class NodeGraphEditorPanel : UserControl
             return;
 
         Focus();
-        _view.Focus();
+        _view.Focus(NavigationMethod.Pointer);
     }
 
     private static Button MakeToolbarButton(string label) => new()
@@ -335,6 +348,21 @@ public sealed class NodeGraphEditorPanel : UserControl
     private void ShowPresetMenu(Control placement)
     {
         var menu = OpenMenu();
+
+        foreach (var (label, graph) in new (string Label, BrushTipNodeGraph Graph)[]
+        {
+            ("Circle", BrushTipNodeGraph.SimpleCircle()),
+            ("Rectangle", BrushTipNodeGraph.SimpleRectangle()),
+            ("Rounded Rectangle", BrushTipNodeGraph.SimpleRoundedRectangle()),
+        })
+        {
+            var item = new MenuItem { Header = label, FontSize = 11 };
+            var captured = graph.DeepClone();
+            item.Click += (_, _) => LoadPresetGraph(captured);
+            menu.Items.Add(item);
+        }
+        menu.Items.Add(new Separator());
+
         var presets = new (string Label, BrushTipShape Shape, float DefaultAspect)[]
         {
             ("Round", BrushTipShape.Circle, 1.0f),
@@ -353,18 +381,22 @@ public sealed class NodeGraphEditorPanel : UserControl
             var capturedAspect = aspect;
             item.Click += (_, _) =>
             {
-                _graph = BrushTipNodeGraph.FromProceduralShape(capturedShape, capturedAspect).DeepClone();
-                _graph.BuiltInShape = null;
-                var positions = new Dictionary<string, Avalonia.Point>();
-                _view.LoadGraph(_graph, positions);
-                _view.AutoLayout();
-                _selectedNode = null;
-                RefreshPropertyPanel();
-                DoCommit();
+                LoadPresetGraph(BrushTipNodeGraph.FromProceduralShape(capturedShape, capturedAspect).DeepClone());
             };
             menu.Items.Add(item);
         }
         menu.Open(placement);
+    }
+
+    private void LoadPresetGraph(BrushTipNodeGraph graph)
+    {
+        graph.BuiltInShape = null;
+        _graph = graph;
+        _view.LoadGraph(_graph, new Dictionary<string, Avalonia.Point>());
+        _view.AutoLayout();
+        _selectedNode = null;
+        RefreshPropertyPanel();
+        DoCommit();
     }
 
     private ContextMenu OpenMenu()
@@ -851,6 +883,9 @@ public sealed class NodeGraphEditorPanel : UserControl
             ]),
             new("Fields / Generators",
             [
+                BrushTipNodeKind.Circle,
+                BrushTipNodeKind.Rectangle,
+                BrushTipNodeKind.RoundedRectangle,
                 BrushTipNodeKind.DistanceField,
                 BrushTipNodeKind.BoxDistanceField,
                 BrushTipNodeKind.LinearGradient,
@@ -885,6 +920,9 @@ public sealed class NodeGraphEditorPanel : UserControl
     private static string NodeKindDisplayName(BrushTipNodeKind kind) => kind switch
     {
         BrushTipNodeKind.Coordinates => "UV Map",
+        BrushTipNodeKind.Circle => "Circle",
+        BrushTipNodeKind.Rectangle => "Rectangle",
+        BrushTipNodeKind.RoundedRectangle => "Rounded Rectangle",
         BrushTipNodeKind.DistanceField => "Ellipse Distance",
         BrushTipNodeKind.BoxDistanceField => "Box Distance",
         BrushTipNodeKind.RotateCoordinates => "Rotate Coordinates",

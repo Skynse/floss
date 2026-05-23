@@ -197,6 +197,7 @@ public partial class MainWindow
         // Cancel any in-progress tool operation before leaving
         _canvas?.CancelActiveTool();
         ResetTransientInputState();
+        CancelPendingResizeOverlay();
 
         var currentColor = _canvas?.PaintColor;
 
@@ -206,6 +207,7 @@ public partial class MainWindow
         // Save current viewport state into the departing tab
         if (_activeTab != null)
         {
+            _activeTab.Canvas.RecoverInputState();
             _activeTab.Zoom = _zoom;
             _activeTab.Rotation = _rotation;
             _activeTab.PanX = _canvasPan.X;
@@ -220,7 +222,7 @@ public partial class MainWindow
         _activeTab = tab;
         _canvas = tab.Canvas;
         _currentFilePath = tab.FilePath;
-        _canvas.PaintInputSuspended = false;
+        _canvas.RecoverInputState();
 
         // Swap canvas into the frame
         _canvasFrame.Child = _canvas;
@@ -257,6 +259,7 @@ public partial class MainWindow
 
         // Recreate tool factory so new tools bind to this canvas's document/brush engine
         _toolFactory = new ToolFactory(_canvas.Document, _canvas.BrushEngine);
+        InvalidatePresetToolCache();
         var activeToolPreset = _activeToolGroup?.ActivePreset;
         if (activeToolPreset != null)
         {
@@ -285,6 +288,7 @@ public partial class MainWindow
         SyncCanvasViewport();
         SyncBrushSizeLimits();
         ResetTransientInputState();
+        ActivateCanvasKeyboardRegion();
         _workspaceViewport?.Focus();
     }
 

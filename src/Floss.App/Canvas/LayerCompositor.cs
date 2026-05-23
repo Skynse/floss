@@ -108,6 +108,18 @@ public sealed class LayerCompositor : IDisposable
             _strokeBelowCache = null;
         }
     }
+
+    /// <summary>Force-clear stroke-suspend state after an abandoned or interrupted stroke.</summary>
+    public void ResetStrokeSuspend()
+    {
+        lock (CompositeGate)
+        {
+            _strokeSuspendDepth = 0;
+            _strokePaintLayerIndex = -1;
+            _strokeBelowCache?.Buffer.Dispose();
+            _strokeBelowCache = null;
+        }
+    }
     public int LastDirtyTileCount { get; private set; }
     public int LastMissingTileCount { get; private set; }
     public int LastLod => _currentLod;

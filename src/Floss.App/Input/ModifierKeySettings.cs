@@ -12,6 +12,12 @@ public enum ModifierAction
 {
     None,
     Common,
+    /// <summary>
+    /// Activate the active tool's built-in alternate (e.g. eyedropper on brush).
+    /// Optional <see cref="ModifierKeyAssignment.TemporaryToolPresetId"/> is used as a
+    /// fallback when the current tool has no alternate.
+    /// </summary>
+    AlternateInvocation,
     ChangeToolTemporarily,
     ToolAux,
     ChangeBrushSize,
@@ -72,7 +78,7 @@ public sealed class ModifierKeySettings
             settings.ToolSpecificAssignments[key] =
             [
                 new() { Modifiers = KeyModifiers.Control, Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = ToolGroupConfig.MoveLayerPresetId },
-                new() { Modifiers = KeyModifiers.Alt, Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = ToolGroupConfig.EyedropperPresetId },
+                new() { Modifiers = KeyModifiers.Alt, Action = ModifierAction.AlternateInvocation },
                 new() { Modifiers = KeyModifiers.Control | KeyModifiers.Alt, Action = ModifierAction.ChangeBrushSize },
                 new() { Modifiers = KeyModifiers.Shift, Action = ModifierAction.ToolAux, ToolAuxOper = ToolAuxOperationType.StraightLine },
                 new() { Modifiers = KeyModifiers.Control | KeyModifiers.Shift, Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = ToolGroupConfig.SelectLayerPresetId },

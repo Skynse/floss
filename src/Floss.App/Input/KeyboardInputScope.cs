@@ -15,15 +15,16 @@ public enum KeyboardInputRegion
 }
 
 /// <summary>
-/// Tracks which workspace surface owns keyboard shortcuts. Pointer position on
-/// registered surfaces is authoritative; keyboard focus is only used to detect
-/// text entry and the popup node graph window.
+/// Routes keyboard shortcuts to canvas vs node graph. Pointer position wins over
+/// stale keyboard focus so Space-pan works with the cursor over the graph dock
+/// without stealing canvas shortcuts while the pen is on the canvas.
 /// </summary>
 public sealed class KeyboardInputScope
 {
     private readonly List<(InputElement Root, KeyboardInputRegion Region)> _surfaces = [];
 
     public KeyboardInputRegion ActiveRegion { get; private set; } = KeyboardInputRegion.Canvas;
+    private Visual? _pointerVisual;
 
     public void RegisterSurface(InputElement root, KeyboardInputRegion region)
     {
@@ -37,11 +38,8 @@ public sealed class KeyboardInputScope
     public void Activate(KeyboardInputRegion region)
         => ActiveRegion = region;
 
-    public void ActivateFromVisual(Visual? hit)
-    {
-        if (hit == null) return;
-        ActiveRegion = ResolveRegion(hit);
-    }
+    public void UpdatePointerVisual(Visual? hit)
+        => _pointerVisual = hit;
 
     public KeyboardInputRegion ResolveRegion(Visual? hit)
     {
@@ -49,8 +47,11 @@ public sealed class KeyboardInputScope
         {
             foreach (var (root, region) in _surfaces)
             {
-                if (ReferenceEquals(current, root))
-                    return region;
+                if (!ReferenceEquals(current, root))
+                    continue;
+                if (!root.IsVisible)
+                    continue;
+                return region;
             }
         }
 
@@ -74,12 +75,42 @@ public sealed class KeyboardInputScope
         return false;
     }
 
-    public bool ShouldRouteToCanvas(IInputElement? focused)
-        => ActiveRegion == KeyboardInputRegion.Canvas
-           && !IsTextEntryFocused(focused)
-           && !IsPopupNodeGraphFocused(focused);
-
     public bool ShouldRouteToNodeGraph(IInputElement? focused)
-        => ActiveRegion == KeyboardInputRegion.NodeGraph
-           && !IsTextEntryFocused(focused);
+    {
+        if (IsTextEntryFocused(focused))
+            return false;
+        if (IsPopupNodeGraphFocused(focused))
+            return true;
+
+        return ResolveEffectiveRegion(focused) == KeyboardInputRegion.NodeGraph;
+    }
+
+    public bool ShouldRouteToCanvas(IInputElement? focused)
+    {
+        if (IsTextEntryFocused(focused))
+            return false;
+        if (IsPopupNodeGraphFocused(focused))
+            return false;
+
+        return ResolveEffectiveRegion(focused) == KeyboardInputRegion.Canvas;
+    }
+
+    private KeyboardInputRegion ResolveEffectiveRegion(IInputElement? focused)
+    {
+        if (_pointerVisual != null)
+        {
+            var pointerRegion = ResolveRegion(_pointerVisual);
+            if (pointerRegion is KeyboardInputRegion.Canvas or KeyboardInputRegion.NodeGraph)
+                return pointerRegion;
+        }
+
+        if (focused is Visual focusedVisual)
+        {
+            var focusRegion = ResolveRegion(focusedVisual);
+            if (focusRegion is KeyboardInputRegion.Canvas or KeyboardInputRegion.NodeGraph)
+                return focusRegion;
+        }
+
+        return ActiveRegion;
+    }
 }

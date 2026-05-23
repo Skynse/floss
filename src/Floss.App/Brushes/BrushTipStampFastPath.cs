@@ -26,6 +26,12 @@ public static class BrushTipStampFastPath
         if (TryResolveCircle(graph, output.Inputs[0], brushH, out evaluate))
             return true;
 
+        if (TryResolveRectangle(graph, output.Inputs[0], brushH, out evaluate))
+            return true;
+
+        if (TryResolveRoundedRectangle(graph, output.Inputs[0], brushH, out evaluate))
+            return true;
+
         return false;
     }
 
@@ -41,7 +47,7 @@ public static class BrushTipStampFastPath
             return false;
 
         var field = graph.Nodes.Find(n => n.Id == step.Inputs[0]);
-        if (field == null)
+        if (field == null || field.Inputs.Count > 0)
             return false;
 
         var edge = Math.Clamp(step.Threshold, 0f, 1f);
@@ -114,6 +120,77 @@ public static class BrushTipStampFastPath
             var dx = (x - cx) / rx;
             var dy = (y - cy) / ry;
             var t = MathF.Sqrt(dx * dx + dy * dy);
+            return Falloff(t, hard) * opacity;
+        };
+        return true;
+    }
+
+    private static bool TryResolveRectangle(
+        BrushTipNodeGraph graph,
+        string nodeId,
+        float brushHardness,
+        out AlphaAt evaluate)
+    {
+        evaluate = null!;
+        var node = graph.Nodes.Find(n => n.Id == nodeId);
+        if (node?.Kind != BrushTipNodeKind.Rectangle)
+            return false;
+
+        var halfW = Math.Max(0.001f, node.Width * 0.5f);
+        var halfH = Math.Max(0.001f, node.Height * 0.5f);
+        var hard = Math.Clamp(node.Hardness * brushHardness, 0.001f, 1f);
+        var opacity = Math.Clamp(node.Opacity, 0f, 1f);
+        var cx = node.X;
+        var cy = node.Y;
+        var rot = node.RotationDegrees;
+
+        evaluate = (u, v) =>
+        {
+            var (x, y) = Rotate(u, v, cx, cy, rot);
+            var dx = MathF.Abs(x - cx) / halfW;
+            var dy = MathF.Abs(y - cy) / halfH;
+            var t = MathF.Max(dx, dy);
+            return Falloff(t, hard) * opacity;
+        };
+        return true;
+    }
+
+    private static bool TryResolveRoundedRectangle(
+        BrushTipNodeGraph graph,
+        string nodeId,
+        float brushHardness,
+        out AlphaAt evaluate)
+    {
+        evaluate = null!;
+        var node = graph.Nodes.Find(n => n.Id == nodeId);
+        if (node?.Kind != BrushTipNodeKind.RoundedRectangle)
+            return false;
+
+        var halfW = Math.Max(0.001f, node.Width * 0.5f);
+        var halfH = Math.Max(0.001f, node.Height * 0.5f);
+        var corner = Math.Clamp(node.Radius, 0f, Math.Min(halfW, halfH));
+        var hard = Math.Clamp(node.Hardness * brushHardness, 0.001f, 1f);
+        var opacity = Math.Clamp(node.Opacity, 0f, 1f);
+        var invRange = 1f / Math.Max(0.001f, Math.Min(halfW, halfH));
+        var cx = node.X;
+        var cy = node.Y;
+        var rot = node.RotationDegrees;
+
+        evaluate = (u, v) =>
+        {
+            var (x, y) = Rotate(u, v, cx, cy, rot);
+            var ax = MathF.Abs(x - cx);
+            var ay = MathF.Abs(y - cy);
+            float t;
+            if (ax <= halfW - corner || ay <= halfH - corner)
+                t = MathF.Max(ax / halfW, ay / halfH);
+            else
+            {
+                var cdx = MathF.Max(ax - (halfW - corner), 0f);
+                var cdy = MathF.Max(ay - (halfH - corner), 0f);
+                var cornerDist = MathF.Sqrt(cdx * cdx + cdy * cdy);
+                t = Math.Clamp((cornerDist - corner) * invRange + 1f, 0f, 1f);
+            }
             return Falloff(t, hard) * opacity;
         };
         return true;

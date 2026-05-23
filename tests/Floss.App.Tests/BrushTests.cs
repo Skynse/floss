@@ -1295,7 +1295,7 @@ public class BrushTests
         var procedural = new ProceduralBrushTip(BrushTipShape.Flat, 1.0f);
         var fromGraph = new NodeBrushTip(procedural.Graph);
 
-        TestAssertions.Equal(BrushTipNodeKind.BoxDistanceField, procedural.Graph.Nodes.Single(n => n.Id == "flat-field").Kind);
+        TestAssertions.Equal(BrushTipNodeKind.Rectangle, procedural.Graph.Nodes.Single(n => n.Id == "flat").Kind);
         TestAssertions.SequenceEqual(AlphaBytes(procedural.GenerateMask(80, 0.82f)), AlphaBytes(fromGraph.GenerateMask(80, 0.82f)));
     }
 

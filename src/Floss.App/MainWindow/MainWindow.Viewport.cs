@@ -30,15 +30,22 @@ public partial class MainWindow : ICanvasInputHost
     private void WireKeyboardRegionTracking()
     {
         KeyboardSurface.Wire(_workspaceViewport, _keyboardInputScope, KeyboardInputRegion.Canvas);
-        if (_nodeGraphEditor != null)
-            WireNodeGraphKeyboardSurface();
+        WireNodeGraphKeyboardSurface();
+
+        void TrackPointer(object? _, PointerEventArgs e)
+            => _keyboardInputScope.UpdatePointerVisual(e.Source as Visual);
+
+        AddHandler(PointerMovedEvent, TrackPointer, RoutingStrategies.Tunnel | RoutingStrategies.Bubble);
+        AddHandler(PointerPressedEvent, TrackPointer, RoutingStrategies.Tunnel | RoutingStrategies.Bubble);
     }
 
     private void WireNodeGraphKeyboardSurface()
     {
         if (_nodeGraphEditor == null)
             return;
+
         KeyboardSurface.Wire(_nodeGraphEditor, _keyboardInputScope, KeyboardInputRegion.NodeGraph);
+        KeyboardSurface.Wire(_nodeGraphEditor.GraphView, _keyboardInputScope, KeyboardInputRegion.NodeGraph);
     }
 
     // ── Viewport ──────────────────────────────────────────────────────────────
@@ -77,12 +84,12 @@ public partial class MainWindow : ICanvasInputHost
     private void Workspace_OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         ActivateCanvasKeyboardRegion();
+        _workspaceViewport.Focus();
         _inputRouter.PointerPressed(e);
     }
 
     private void Workspace_OnPointerMoved(object? sender, PointerEventArgs e)
     {
-        ActivateCanvasKeyboardRegion();
         _inputRouter.PointerMoved(e);
     }
 
@@ -379,6 +386,9 @@ public partial class MainWindow : ICanvasInputHost
 
     bool ICanvasInputHost.IsAlternateActive => _canvas.IsAlternateActive;
 
+    bool ICanvasInputHost.HasActiveToolAlternate =>
+        _canvas.ActiveTool is CompositeTool { Alternate: not null };
+
     void ICanvasInputHost.SetCanvasModifiers(KeyModifiers mods)
         => _canvas.SetCurrentModifiers(mods);
 
@@ -561,10 +571,13 @@ public partial class MainWindow : ICanvasInputHost
 
     private void ResetTransientInputState()
     {
+        if (_temporaryPresetActive)
+            PopTemporaryPreset();
         _inputRouter.ResetAllState();
-        _canvas.SetToolAuxMode(Input.ToolAuxOperationType.None);
+        _canvas.RecoverInputState();
         if (_workspaceViewport != null)
             this.Cursor = null;
+        ActivateCanvasKeyboardRegion();
     }
 
     // ── Brush size ────────────────────────────────────────────────────────────

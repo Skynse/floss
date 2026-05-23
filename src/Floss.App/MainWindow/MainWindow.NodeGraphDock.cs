@@ -25,7 +25,7 @@ public partial class MainWindow
             return;
 
         _nodeGraphEditor = new NodeGraphEditorPanel(
-            BrushTipNodeGraph.FromProceduralShape(BrushTipShape.Circle, 1f),
+            BrushTipNodeGraph.SimpleCircle(),
             CommitNodeGraphFromDock,
             SaveNodeGraphAsNewBrushPreset,
             docked: true,

@@ -390,7 +390,7 @@ public sealed class ModifierKeySettingsWindow : Window
     private Border BuildRow(Avalonia.Input.Key? key, KeyModifiers mods, ModifierKeyAssignment? current, string? comboKey)
     {
         var actions = _toolSpecificMode
-            ? new[] { ModifierAction.None, ModifierAction.Common, ModifierAction.ChangeToolTemporarily, ModifierAction.ToolAux, ModifierAction.ChangeBrushSize }
+            ? new[] { ModifierAction.None, ModifierAction.Common, ModifierAction.AlternateInvocation, ModifierAction.ChangeToolTemporarily, ModifierAction.ToolAux, ModifierAction.ChangeBrushSize }
             : new[] { ModifierAction.None, ModifierAction.ChangeToolTemporarily, ModifierAction.ToolAux, ModifierAction.ChangeBrushSize };
 
         var actionDropdown = new ComboBox
@@ -432,7 +432,7 @@ public sealed class ModifierKeySettingsWindow : Window
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(3),
-            IsVisible = current?.Action == ModifierAction.ChangeToolTemporarily
+            IsVisible = current?.Action is ModifierAction.ChangeToolTemporarily or ModifierAction.AlternateInvocation
         };
 
         settingsBtn.Click += (_, _) =>
@@ -455,7 +455,7 @@ public sealed class ModifierKeySettingsWindow : Window
         {
             if (actionDropdown.SelectedItem is not ComboBoxItem { Tag: ModifierAction action }) return;
             SetAction(key, mods, action, comboKey);
-            settingsBtn.IsVisible = action == ModifierAction.ChangeToolTemporarily;
+            settingsBtn.IsVisible = action is ModifierAction.ChangeToolTemporarily or ModifierAction.AlternateInvocation;
             descLabel.Text = DescriptionFor(GetAssignment(key, mods, comboKey));
             _settings.Save();
         };
@@ -553,6 +553,9 @@ public sealed class ModifierKeySettingsWindow : Window
         if (a == null || a.Action == ModifierAction.None || a.Action == ModifierAction.Common) return "";
         return a.Action switch
         {
+            ModifierAction.AlternateInvocation => a.TemporaryToolPresetId != null
+                ? $"Fallback: {FindPresetName(a.TemporaryToolPresetId)}"
+                : "Eyedropper",
             ModifierAction.ChangeToolTemporarily when a.TemporaryToolPresetId != null => FindPresetName(a.TemporaryToolPresetId),
             ModifierAction.ToolAux => a.ToolAuxOper switch
             {
@@ -578,6 +581,7 @@ public sealed class ModifierKeySettingsWindow : Window
     {
         ModifierAction.None => "None",
         ModifierAction.Common => "General",
+        ModifierAction.AlternateInvocation => "Alternate invocation",
         ModifierAction.ChangeToolTemporarily => "Change tool temporarily",
         ModifierAction.ToolAux => "Tool aux. operation",
         ModifierAction.ChangeBrushSize => "Change brush size",

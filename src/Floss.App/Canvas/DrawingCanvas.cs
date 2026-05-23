@@ -421,6 +421,42 @@ public sealed class DrawingCanvas : Control, IDisposable
         InvalidateVisual();
     }
 
+    /// <summary>
+    /// Clears per-canvas input/render state that can get stuck on one document tab
+    /// while other tabs (fresh canvases) keep working.
+    /// </summary>
+    public void RecoverInputState()
+    {
+        UnlockCursorPreview();
+        PaintInputSuspended = false;
+        SetAlternateActive(false);
+        SetToolAuxMode(ToolAuxOperationType.None);
+
+        if (_toolController.ActiveTool is TransformTool transform && transform.HasPendingOperation)
+            transform.Cancel(_ctx);
+
+        _toolController.Cancel();
+        CancelDirectDrawOutput(_brushTool);
+        CancelDirectDrawOutput(_eraserTool);
+        if (_toolController.ActiveTool is CompositeTool active
+            && !ReferenceEquals(active, _brushTool)
+            && !ReferenceEquals(active, _eraserTool))
+        {
+            CancelDirectDrawOutput(active);
+        }
+
+        BrushEngine.EndStroke();
+        _compositor.ResetStrokeSuspend();
+        InvalidateCompositor();
+        InvalidateVisual();
+    }
+
+    private static void CancelDirectDrawOutput(ITool tool)
+    {
+        if (tool is CompositeTool ct && ct.Output is DirectDrawOutput output)
+            output.Cancel();
+    }
+
     public void CancelActiveTool()
     {
         if (_toolController.ActiveTool is TransformTool)
@@ -944,8 +980,15 @@ public sealed class DrawingCanvas : Control, IDisposable
     }
 
     private bool IsStrokeOutputPending()
-        => (_brushTool.Output as DirectDrawOutput)?.HasPendingWork == true
-        || (_eraserTool.Output as DirectDrawOutput)?.HasPendingWork == true;
+        => DirectDrawHasPendingWork(_brushTool)
+           || DirectDrawHasPendingWork(_eraserTool)
+           || (_toolController.ActiveTool is CompositeTool active
+               && !ReferenceEquals(active, _brushTool)
+               && !ReferenceEquals(active, _eraserTool)
+               && DirectDrawHasPendingWork(active));
+
+    private static bool DirectDrawHasPendingWork(ITool tool)
+        => tool is CompositeTool ct && ct.Output is DirectDrawOutput dd && dd.HasPendingWork;
 
     private void EnsureStrokeOutputIdle()
     {
@@ -953,6 +996,13 @@ public sealed class DrawingCanvas : Control, IDisposable
             brushDraw.WaitUntilIdle();
         if (_eraserTool.Output is DirectDrawOutput eraserDraw)
             eraserDraw.WaitUntilIdle();
+        if (_toolController.ActiveTool is CompositeTool active
+            && active.Output is DirectDrawOutput activeDraw
+            && !ReferenceEquals(active, _brushTool)
+            && !ReferenceEquals(active, _eraserTool))
+        {
+            activeDraw.WaitUntilIdle();
+        }
     }
     public void AddLayer() => _document.AddLayer();
     public void AddGroupLayer() => _document.AddGroupLayer();

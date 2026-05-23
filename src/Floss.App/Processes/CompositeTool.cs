@@ -24,13 +24,11 @@ public sealed class CompositeTool : ITool
 
     public void Deactivate(ToolContext ctx)
     {
-        if (Input.IsActive)
-        {
+        if (HasPendingOperation)
             Cancel(ctx);
-            ctx.InvalidateRender();
-        }
         else
             Input.Cancel();
+        ctx.InvalidateRender();
     }
 
     public void PointerDown(ToolContext ctx, CanvasInputSample s)

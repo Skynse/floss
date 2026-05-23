@@ -131,6 +131,7 @@ public sealed class NodeGraphView : Control
     public NodeGraphView()
     {
         Focusable = true;
+        ClipToBounds = true;
         DetachedFromVisualTree += (_, _) => ReleaseTransientCaches();
     }
 
@@ -1273,7 +1274,7 @@ public sealed class NodeGraphView : Control
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         if (_graph == null || _positions == null) return;
-        Focus();
+        Focus(NavigationMethod.Pointer);
 
         var point = e.GetCurrentPoint(this);
         var screenPos = point.Position;

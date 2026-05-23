@@ -236,6 +236,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private ToolGroup? _activeToolGroup;
     private ToolPreset? _savedPresetTemp;
     private bool _temporaryPresetActive;
+    private readonly Dictionary<string, ITool> _presetToolCache = new(StringComparer.Ordinal);
     private ToolGroup? _recordingToolGroup;
     private Button? _recordingToolGroupButton;
 
@@ -360,7 +361,11 @@ public partial class MainWindow : Window, Tools.IViewportController
         AddShortcut(s.ToggleRulers, () => ToggleRulers());
 
         // Special keys (not in ShortcutsConfig but handled same way)
-        AddShortcut(new Input.KeyBinding(Key.Escape), () => _canvas.CancelActiveTool(), CanExecuteCanvasShortcut);
+        AddShortcut(new Input.KeyBinding(Key.Escape), () =>
+        {
+            _canvas.CancelActiveTool();
+            ResetTransientInputState();
+        }, CanExecuteCanvasShortcut);
         AddShortcut(new Input.KeyBinding(Key.Back), DeleteSelectionAction, CanExecuteCanvasDocumentShortcut);
         AddShortcut(new Input.KeyBinding(Key.Return), () => _canvas.CommitActiveTool(),
             () => CanExecuteCanvasDocumentShortcut() &&
@@ -536,6 +541,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     {
         _canvas = new DrawingCanvas();
         _toolFactory = new ToolFactory(_canvas.Document, _canvas.BrushEngine);
+        InvalidatePresetToolCache();
 
         var tg = new TransformGroup();
         _canvasFlip = new ScaleTransform(1, 1);
@@ -2602,12 +2608,20 @@ public partial class MainWindow : Window, Tools.IViewportController
             }), null);
     }
 
+    internal void InvalidatePresetToolCache() => _presetToolCache.Clear();
+
     internal ITool ToolForPreset(ToolPreset preset)
     {
         // Always use new process-based architecture.
         if (preset.InputProcess == default || preset.OutputProcess == default)
             preset.MigrateFromLegacy();
-        return _toolFactory!.CreateTool(preset);
+
+        if (_presetToolCache.TryGetValue(preset.Id, out var cached))
+            return cached;
+
+        var tool = _toolFactory!.CreateTool(preset);
+        _presetToolCache[preset.Id] = tool;
+        return tool;
     }
 
     private static void SetRailActive(Button button, bool active)

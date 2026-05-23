@@ -1,4 +1,5 @@
 using Avalonia;
+using System.Reflection;
 
 namespace Floss.App.Tests;
 
@@ -18,6 +19,7 @@ public class CanvasInputRouterTests
         public (int Input, int Output) ToolTypes { get; set; }
         public bool TemporaryPresetActive { get; set; }
         public bool HasViewportNavOverlay { get; set; }
+        public bool HasActiveToolAlternate { get; set; } = true;
 
         public List<string> Operations { get; } = [];
 
@@ -49,7 +51,12 @@ public class CanvasInputRouterTests
         bool ICanvasInputHost.HasViewportNavOverlay => HasViewportNavOverlay;
 
         void ICanvasInputHost.SetAlternateActive(bool active)
-            => Operations.Add($"SetAlternate:{active}");
+        {
+            IsAlternateActive = active;
+            Operations.Add($"SetAlternate:{active}");
+        }
+
+        bool ICanvasInputHost.HasActiveToolAlternate => HasActiveToolAlternate;
 
         void ICanvasInputHost.SetCanvasModifiers(KeyModifiers mods) { }
         void ICanvasInputHost.SetToolAuxMode(ToolAuxOperationType mode)
@@ -194,17 +201,69 @@ public class CanvasInputRouterTests
         // Clear operations — now only check what happens with modifier
         host.Operations.Clear();
 
-        // Press Alt — activates Eyedropper temporary tool
+        // Press Alt — activates brush alternate (eyedropper), not a full tool swap
         router.HandleKeyDown(Key.LeftAlt, KeyModifiers.Alt);
-        TestAssertions.True(host.Operations.Any(o => o.StartsWith("PushPreset")), "Alt should push temp eyedropper preset");
+        TestAssertions.True(host.Operations.Any(o => o == "SetAlternate:True"), "Alt should activate tool alternate on brush tools");
+        TestAssertions.False(host.Operations.Any(o => o.StartsWith("PushPreset")), "Brush Alt must not push a temporary preset");
         TestAssertions.False(host.Operations.Any(o => o == "CancelTool"), "Alt press must not cancel completed stroke");
 
         host.Operations.Clear();
 
-        // Release Alt — pops temp preset, restores brush
+        // Release Alt — deactivates alternate
         router.HandleKeyUp(Key.LeftAlt, KeyModifiers.None);
-        TestAssertions.True(host.Operations.Any(o => o.StartsWith("PopPreset")), "Alt release should pop temp preset");
+        TestAssertions.True(host.Operations.Any(o => o == "SetAlternate:False"), "Alt release should deactivate alternate");
+        TestAssertions.False(host.Operations.Any(o => o.StartsWith("PopPreset")), "Brush Alt must not pop a temporary preset");
         TestAssertions.False(host.Operations.Any(o => o == "CancelTool"), "Alt release must not cancel completed stroke");
+    }
+
+    [Fact]
+    public void AlternateInvocationFallsBackToTemporaryPresetWhenNoAlternate()
+    {
+        var settings = ModifierKeySettings.CreateDefaults();
+        settings.ToolSpecificAssignments["1:1"] =
+        [
+            new ModifierKeyAssignment
+            {
+                Modifiers = KeyModifiers.Alt,
+                Action = ModifierAction.AlternateInvocation,
+                TemporaryToolPresetId = ToolGroupConfig.EyedropperPresetId
+            }
+        ];
+        typeof(App).GetProperty(nameof(App.ModifierKeys))!.SetValue(null, settings);
+
+        var host = new MockHost
+        {
+            ToolTypes = ((int)InputProcessType.Pen, (int)OutputProcessType.DirectDraw),
+            HasActiveToolAlternate = false
+        };
+        var router = new CanvasInputRouter(host);
+
+        router.HandleKeyDown(Key.LeftAlt, KeyModifiers.Alt);
+
+        TestAssertions.True(host.Operations.Any(o => o.StartsWith("PushPreset:")), "Alt should fall back to temporary preset when tool has no alternate");
+        TestAssertions.False(host.Operations.Any(o => o == "SetAlternate:True"), "No alternate activation without a built-in alternate");
+    }
+
+    [Fact]
+    public void CtrlSpaceActivatesZoomNotEyedropperAlternate()
+    {
+        var host = new MockHost
+        {
+            ToolTypes = ((int)InputProcessType.Pen, (int)OutputProcessType.DirectDraw),
+            HasActiveToolAlternate = true
+        };
+        typeof(App).GetProperty(nameof(App.ModifierKeys))!.SetValue(null, ModifierKeySettings.CreateDefaults());
+        var router = new CanvasInputRouter(host);
+
+        router.HandleKeyDown(Key.LeftCtrl, KeyModifiers.Control);
+        router.HandleKeyDown(Key.Space, KeyModifiers.Control);
+
+        TestAssertions.True(
+            host.Operations.Any(o => o == $"PushPreset:{ToolGroupConfig.ViewZoomInPresetId}"),
+            "Ctrl+Space should push zoom-in, not eyedropper");
+        TestAssertions.False(
+            host.Operations.Any(o => o == "SetAlternate:True"),
+            "Ctrl+Space must not activate eyedropper alternate");
     }
 
     [Fact]
@@ -266,6 +325,44 @@ public class CanvasInputRouterTests
 
         TestAssertions.True(resolved != null, "Stale tool-specific None should not shadow a real general Ctrl+Shift assignment.");
         TestAssertions.Equal("custom-select-layer", resolved!.TemporaryToolPresetId);
+    }
+
+    [Fact]
+    public void NormalPointerReleaseDoesNotDoubleCommitViaCaptureLost()
+    {
+        var host = new MockHost();
+        var router = new CanvasInputRouter(host);
+
+        router.HandlePointerPress(
+            action: CanvasAction.PrimaryTool,
+            isPrimaryDown: true,
+            pointerId: 1,
+            viewportPos: new Point(100, 100),
+            eventArgs: null,
+            ctrlHeld: false,
+            shiftHeld: false);
+
+        router.HandlePointerRelease(null!);
+        host.Operations.Clear();
+
+        // ReleasePointerCapture during ExitRunning fires this on the workspace.
+        router.HandleCaptureLost();
+
+        TestAssertions.False(host.Operations.Contains("CommitTool"),
+            "Normal pen-up must not commit again via capture-lost.");
+    }
+
+    [Fact]
+    public void ResetAllState_UnlocksCursorPreview()
+    {
+        var host = new MockHost();
+        var router = new CanvasInputRouter(host);
+        host.Operations.Clear();
+
+        router.ResetAllState();
+
+        TestAssertions.True(host.Operations.Contains("UnlockCursor"),
+            "ResetAllState should always unlock a stuck cursor preview.");
     }
 
     [Fact]

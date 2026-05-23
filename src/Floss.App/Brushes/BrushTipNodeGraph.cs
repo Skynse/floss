@@ -195,6 +195,74 @@ public sealed class BrushTipNodeGraph
         static string F(float value) => value.ToString("R", CultureInfo.InvariantCulture);
     }
 
+    private static BrushTipNodeGraph PrimitiveCircle(string id, float radius, float hardness, float width = 1f, float height = 1f)
+        => new()
+        {
+            OutputNodeId = "output",
+            Nodes =
+            [
+                new BrushTipNode
+                {
+                    Id = id,
+                    Kind = BrushTipNodeKind.Circle,
+                    Radius = radius,
+                    Hardness = hardness,
+                    Width = width,
+                    Height = height,
+                    Opacity = 1f
+                },
+                new BrushTipNode { Id = "output", Kind = BrushTipNodeKind.Output, Inputs = [id] }
+            ]
+        };
+
+    private static BrushTipNodeGraph PrimitiveRectangle(string id, float width, float height, float hardness)
+        => new()
+        {
+            OutputNodeId = "output",
+            Nodes =
+            [
+                new BrushTipNode
+                {
+                    Id = id,
+                    Kind = BrushTipNodeKind.Rectangle,
+                    Width = width,
+                    Height = height,
+                    Hardness = hardness,
+                    Opacity = 1f
+                },
+                new BrushTipNode { Id = "output", Kind = BrushTipNodeKind.Output, Inputs = [id] }
+            ]
+        };
+
+    private static BrushTipNodeGraph PrimitiveRoundedRectangle(string id, float width, float height, float cornerRadius, float hardness)
+        => new()
+        {
+            OutputNodeId = "output",
+            Nodes =
+            [
+                new BrushTipNode
+                {
+                    Id = id,
+                    Kind = BrushTipNodeKind.RoundedRectangle,
+                    Width = width,
+                    Height = height,
+                    Radius = cornerRadius,
+                    Hardness = hardness,
+                    Opacity = 1f
+                },
+                new BrushTipNode { Id = "output", Kind = BrushTipNodeKind.Output, Inputs = [id] }
+            ]
+        };
+
+    public static BrushTipNodeGraph SimpleCircle(float radius = 0.49f, float hardness = 0.72f)
+        => PrimitiveCircle("circle", radius, hardness);
+
+    public static BrushTipNodeGraph SimpleRectangle(float width = 1f, float height = 1f, float hardness = 0.85f)
+        => PrimitiveRectangle("rect", width, height, hardness);
+
+    public static BrushTipNodeGraph SimpleRoundedRectangle(float width = 1f, float height = 1f, float cornerRadius = 0.12f, float hardness = 0.85f)
+        => PrimitiveRoundedRectangle("round-rect", width, height, cornerRadius, hardness);
+
     public static BrushTipNodeGraph BristleRound()
         => new()
         {
@@ -239,14 +307,14 @@ public sealed class BrushTipNodeGraph
         var (width, height) = AspectSize(shape == BrushTipShape.Flat ? 4.5f : aspectRatio);
         var graph = shape switch
         {
-            BrushTipShape.SoftRound => DistanceShape("soft-round", box: false, width, height, threshold: 0.32f, softness: 0.25f),
-            BrushTipShape.Ellipse => DistanceShape("ellipse", box: false, width, height, threshold: 0.49f, softness: 0.025f),
-            BrushTipShape.Flat => DistanceShape("flat", box: true, width: 0.94f, height: 0.22f, threshold: 0.5f, softness: 0.035f),
-            BrushTipShape.Rectangle => DistanceShape("rect", box: true, width, height, threshold: 0.5f, softness: 0.015f),
+            BrushTipShape.SoftRound => PrimitiveCircle("soft-round", radius: 0.49f, hardness: 0.32f, width, height),
+            BrushTipShape.Ellipse => PrimitiveCircle("ellipse", radius: 0.49f, hardness: 0.72f, width, height),
+            BrushTipShape.Flat => PrimitiveRectangle("flat", width: 0.94f, height: 0.22f, hardness: 0.85f),
+            BrushTipShape.Rectangle => PrimitiveRectangle("rect", width, height, hardness: 0.85f),
             BrushTipShape.Chalk => MaskedNoise("chalk", density: 0.92f, scale: 2.6f, threshold: 0.08f, seed: 31),
             BrushTipShape.Bristle => BristleRound(),
             BrushTipShape.Scatter => MaskedNoise("scatter", density: 0.38f, scale: 1.35f, threshold: 0.12f, seed: 77),
-            _ => DistanceShape("round", box: false, width: 1f, height: 1f, threshold: 0.49f, softness: 0.025f)
+            _ => PrimitiveCircle("round", radius: 0.49f, hardness: 0.72f)
         };
         graph.BuiltInShape = shape;
         graph.BuiltInAspectRatio = aspectRatio;
@@ -257,32 +325,6 @@ public sealed class BrushTipNodeGraph
             aspect = Math.Clamp(aspect, 0.05f, 20f);
             return aspect >= 1f ? (1f, 1f / aspect) : (aspect, 1f);
         }
-
-        static BrushTipNodeGraph DistanceShape(string prefix, bool box, float width, float height, float threshold, float softness)
-            => new()
-            {
-                OutputNodeId = "output",
-                Nodes =
-                [
-                    new BrushTipNode
-                    {
-                        Id = $"{prefix}-field",
-                        Kind = box ? BrushTipNodeKind.BoxDistanceField : BrushTipNodeKind.DistanceField,
-                        Width = width,
-                        Height = height
-                    },
-                    new BrushTipNode
-                    {
-                        Id = $"{prefix}-edge",
-                        Kind = BrushTipNodeKind.SmoothStep,
-                        Inputs = [$"{prefix}-field"],
-                        Threshold = threshold,
-                        Hardness = softness,
-                        Opacity = 1f
-                    },
-                    new BrushTipNode { Id = "output", Kind = BrushTipNodeKind.Output, Inputs = [$"{prefix}-edge"] }
-                ]
-            };
 
         static BrushTipNodeGraph MaskedNoise(string prefix, float density, float scale, float threshold, int seed)
             => new()
@@ -494,9 +536,15 @@ public sealed class NodeBrushTip : IBrushTip, IDisposable
 
 public static class BrushTipNodeGraphEvaluator
 {
+    public static bool CanEvaluateViaStamp(BrushTipNodeGraph graph, IReadOnlyList<BrushTipData>? materialTips = null)
+        => !GraphUsesColor(graph, materialTips) && !graph.ContainsImageSampler(materialTips);
+
     public static unsafe SKBitmap Evaluate(BrushTipNodeGraph graph, int size, float brushHardness, IReadOnlyList<BrushTipData>? materialTips = null)
     {
         size = Math.Max(1, size);
+        if (CanEvaluateViaStamp(graph, materialTips))
+            return EvaluateViaStamp(graph, size, brushHardness, materialTips);
+
         var nodes = graph.Nodes.ToDictionary(n => n.Id, StringComparer.Ordinal);
         var cache = new Dictionary<string, NodeSample>(StringComparer.Ordinal);
         var outputId = nodes.ContainsKey(graph.OutputNodeId) ? graph.OutputNodeId : graph.Nodes.FirstOrDefault()?.Id;
@@ -1015,6 +1063,47 @@ public static class BrushTipNodeGraphEvaluator
 
     private static SKBitmap NewAlpha8(int size)
         => new(new SKImageInfo(size, size, SKColorType.Alpha8, SKAlphaType.Unpremul));
+
+    private static unsafe SKBitmap EvaluateViaStamp(
+        BrushTipNodeGraph graph,
+        int size,
+        float brushHardness,
+        IReadOnlyList<BrushTipData>? materialTips)
+    {
+        var bitmap = NewAlpha8(size);
+        var ptr = (byte*)bitmap.GetPixels().ToPointer();
+        if (ptr == null)
+            return bitmap;
+
+        var inv = 1f / size;
+        if (BrushTipStampFastPath.TryCreate(graph, brushHardness, out var fastAlpha))
+        {
+            for (var y = 0; y < size; y++)
+            {
+                var row = ptr + y * bitmap.RowBytes;
+                var v = (y + 0.5f) * inv;
+                for (var x = 0; x < size; x++)
+                {
+                    var u = (x + 0.5f) * inv;
+                    row[x] = (byte)(Math.Clamp(fastAlpha(u, v), 0f, 1f) * 255f + 0.5f);
+                }
+            }
+            return bitmap;
+        }
+
+        using var ctx = new BrushTipStampContext(graph, brushHardness, materialTips);
+        for (var y = 0; y < size; y++)
+        {
+            var row = ptr + y * bitmap.RowBytes;
+            var v = (y + 0.5f) * inv;
+            for (var x = 0; x < size; x++)
+            {
+                var u = (x + 0.5f) * inv;
+                row[x] = (byte)(Math.Clamp(ctx.EvaluateAlpha(u, v), 0f, 1f) * 255f + 0.5f);
+            }
+        }
+        return bitmap;
+    }
 
     public static bool GraphUsesColor(BrushTipNodeGraph graph, IReadOnlyList<BrushTipData>? materialTips = null)
     {

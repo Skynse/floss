@@ -26,8 +26,22 @@ public partial class MainWindow
     private int _resizeOldW, _resizeOldH;
     private TaskCompletionSource<bool>? _resizeTcs;
 
+    private void CancelPendingResizeOverlay()
+    {
+        if (_resizeOverlay is not { IsVisible: true })
+            return;
+
+        _resizeOverlay.IsVisible = false;
+        _resizeFloatingPanel!.IsVisible = false;
+        _resizeTcs?.TrySetResult(false);
+        _resizeTcs = null;
+        _canvas.PaintInputSuspended = false;
+    }
+
     internal async Task ShowResizeCanvasDialog()
     {
+        CancelPendingResizeOverlay();
+
         _resizeOldW = _canvas.Document.Width;
         _resizeOldH = _canvas.Document.Height;
 
@@ -67,8 +81,8 @@ public partial class MainWindow
         _resizeOverlay = new CanvasResizeOverlay(_canvas) { IsVisible = false };
         _workspaceViewport.Children.Add(_resizeOverlay);
 
-        _resizeWidthBox = new NumericUpDown { Value = 1, Minimum = 1, Maximum = 32000, Increment = 1, Width = 110, FontSize = 11 };
-        _resizeHeightBox = new NumericUpDown { Value = 1, Minimum = 1, Maximum = 32000, Increment = 1, Width = 110, FontSize = 11 };
+        _resizeWidthBox = MkResizeNumericBox();
+        _resizeHeightBox = MkResizeNumericBox();
         _resizeWidthBox.ValueChanged += (_, _) => OnResizeInputChanged();
         _resizeHeightBox.ValueChanged += (_, _) => OnResizeInputChanged();
 
@@ -132,7 +146,7 @@ public partial class MainWindow
 
         var inputGrid = new Grid { RowSpacing = 5, ColumnSpacing = 6, Margin = new Thickness(0, 0, 0, 8) };
         inputGrid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
-        inputGrid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        inputGrid.ColumnDefinitions.Add(new ColumnDefinition(132, GridUnitType.Pixel));
         inputGrid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         inputGrid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         var wLbl = FieldLabel("Width");
@@ -264,5 +278,18 @@ public partial class MainWindow
         FontSize = 11,
         VerticalAlignment = VerticalAlignment.Center,
         Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+    };
+
+    private static NumericUpDown MkResizeNumericBox() => new()
+    {
+        Value = 1,
+        Minimum = 1,
+        Maximum = 32000,
+        Increment = 1,
+        MinWidth = 132,
+        MinHeight = 28,
+        FontSize = 11,
+        FormatString = "0",
+        HorizontalAlignment = HorizontalAlignment.Stretch,
     };
 }

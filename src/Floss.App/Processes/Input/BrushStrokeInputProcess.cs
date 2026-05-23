@@ -113,11 +113,14 @@ public sealed class BrushStrokeInputProcess : IInputProcess
     {
         if (!_active && _smoothed.Count > 0)
         {
-            return new StrokeInput
+            var result = new StrokeInput
             {
                 RawSamples = new List<CanvasInputSample>(_raw),
                 SmoothedSamples = new List<CanvasInputSample>(_smoothed)
             };
+            _raw.Clear();
+            _smoothed.Clear();
+            return result;
         }
         return null;
     }

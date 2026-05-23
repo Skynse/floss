@@ -43,6 +43,7 @@ public interface ICanvasInputHost
     bool HasViewportNavOverlay { get; }
     void SetAlternateActive(bool active);
     bool IsAlternateActive { get; }
+    bool HasActiveToolAlternate { get; }
 
     // ── Canvas modifier state ──
     void SetCanvasModifiers(KeyModifiers mods);
@@ -351,11 +352,12 @@ public sealed class CanvasInputRouter
     {
         if (_host.IsResizeDragging) _host.EndResizeDrag();
 
-        // Krita-style forced end: finish the running transaction instead of
-        // destructively cancelling it. DirectDrawOutput.Cancel restores
-        // pre-stroke tiles, so capture loss during modifier/tool switching must
-        // commit the live stroke before any tool switch can deactivate it.
-        if (!IsViewportTool() && _runningAction != CanvasAction.LayerPick && _runningAction != CanvasAction.BrushSize)
+        // Only commit on unexpected capture loss mid-stroke. Normal pointer-up
+        // already dispatched Up + Execute before ExitRunning releases capture.
+        if (_state == RouterState.Running
+            && !IsViewportTool()
+            && _runningAction != CanvasAction.LayerPick
+            && _runningAction != CanvasAction.BrushSize)
             _host.CommitActiveTool();
 
         PopTemporaryPresetIfNeeded();
@@ -373,6 +375,7 @@ public sealed class CanvasInputRouter
         _canvasButtonPresetActive = false;
         _host.ReleasePointerCapture();
         _host.PaintInputSuspended = false;
+        _host.UnlockCursorPreview();
         _host.ResetCursor();
 
         ReevaluateModifierState();
@@ -445,6 +448,7 @@ public sealed class CanvasInputRouter
         _activePointerId = -1;
         _canvasButtonPresetActive = false;
         _host.PaintInputSuspended = false;
+        _host.UnlockCursorPreview();
         _host.ResetCursor();
         _host.ReleasePointerCapture();
     }
@@ -592,11 +596,11 @@ public sealed class CanvasInputRouter
             case ModifierAction.ToolAux:
                 _host.SetToolAuxMode(ToolAuxOperationType.None);
                 break;
+            case ModifierAction.AlternateInvocation:
             case ModifierAction.ChangeToolTemporarily:
                 if (_state != RouterState.Running && _modifierTemporaryPresetActive)
                     _host.PopTemporaryPreset();
-                if (_modifierAlternateActive)
-                    _host.SetAlternateActive(false);
+                DeactivateAlternateIfNeeded();
                 break;
         }
         _activeModifierAction = ModifierAction.None;
@@ -658,11 +662,17 @@ public sealed class CanvasInputRouter
             case ModifierAction.ToolAux:
                 _host.SetToolAuxMode(ToolAuxOperationType.None);
                 break;
+            case ModifierAction.AlternateInvocation:
+                DeactivateAlternateIfNeeded();
+                if (_modifierTemporaryPresetActive)
+                    _host.PopTemporaryPreset();
+                _modifierTemporaryPresetActive = false;
+                _modifierAlternateActive = false;
+                break;
             case ModifierAction.ChangeToolTemporarily:
                 if (_modifierTemporaryPresetActive)
                     _host.PopTemporaryPreset();
-                if (_modifierAlternateActive)
-                    _host.SetAlternateActive(false);
+                DeactivateAlternateIfNeeded();
                 _modifierTemporaryPresetActive = false;
                 _modifierAlternateActive = false;
                 break;
@@ -685,16 +695,37 @@ public sealed class CanvasInputRouter
             case ModifierAction.ToolAux:
                 _host.SetToolAuxMode(assignment.ToolAuxOper);
                 break;
+            case ModifierAction.AlternateInvocation:
+                ApplyAlternateInvocation(assignment);
+                break;
             case ModifierAction.ChangeToolTemporarily:
                 if (!string.IsNullOrEmpty(assignment.TemporaryToolPresetId))
                     _modifierTemporaryPresetActive = _host.PushTemporaryPreset(assignment.TemporaryToolPresetId);
-                else
-                {
-                    _host.SetAlternateActive(true);
-                    _modifierAlternateActive = true;
-                }
                 break;
         }
+    }
+
+    private void ApplyAlternateInvocation(ModifierKeyAssignment assignment)
+    {
+        if (_host.HasActiveToolAlternate)
+        {
+            _host.SetAlternateActive(true);
+            _modifierAlternateActive = true;
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(assignment.TemporaryToolPresetId))
+            _modifierTemporaryPresetActive = _host.PushTemporaryPreset(assignment.TemporaryToolPresetId);
+    }
+
+    private void DeactivateAlternateIfNeeded()
+    {
+        if (!_modifierAlternateActive)
+            return;
+
+        if (_host.ActiveTool?.HasPendingOperation == true)
+            _host.CommitActiveTool();
+        _host.SetAlternateActive(false);
     }
 
     private void UpdateReadyAction()
@@ -715,10 +746,19 @@ public sealed class CanvasInputRouter
 
         return _activeModifierAction switch
         {
+            ModifierAction.AlternateInvocation => ResolveAlternateReadyAction(),
             ModifierAction.ChangeToolTemporarily => ResolveToolActionFromPreset(),
             ModifierAction.ChangeBrushSize => CanvasAction.BrushSize,
             _ => CanvasAction.None,
         };
+    }
+
+    private CanvasAction ResolveAlternateReadyAction()
+    {
+        if (_host.HasActiveToolAlternate)
+            return CanvasAction.Eyedropper;
+
+        return ResolveToolActionFromPreset();
     }
 
     private CanvasAction ResolveToolActionFromPreset()
