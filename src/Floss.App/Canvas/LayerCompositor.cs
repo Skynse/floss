@@ -412,8 +412,9 @@ public sealed class LayerCompositor : IDisposable
                 {
                     if (!_fullDirty)
                         _dirtyRegion = _dirtyRegion is { } existing ? existing.Union(tileRegion) : tileRegion;
-                    // Only mark the active display LOD dirty — other LODs refresh
-                    // on zoom change (lodChanged + missing-tile bootstrap).
+                    // Drop stale fallback LODs only — keep the active LOD bitmap
+                    // visible until Composite overwrites it (avoids white flash).
+                    DropCachedTilesOverlapping(tileRegion, exceptLod: _currentLod);
                     QueueDirtyTilesForRegionAtLod(tileRegion, _currentLod);
                 }
 
@@ -469,6 +470,19 @@ public sealed class LayerCompositor : IDisposable
 
         if (lodChanged)
         {
+            if (viewportClip is { IsEmpty: false } vp)
+            {
+                // Remove wrong-LOD fallbacks; refresh active LOD only where edits
+                // landed while another LOD was displayed.
+                DropCachedTilesOverlapping(vp, exceptLod: lod);
+                var dirtyInView = (_dirtyRegion ?? PixelRegion.Empty).ClipTo(width, height).Intersect(vp);
+                if (!dirtyInView.IsEmpty)
+                {
+                    DropCachedTilesOverlapping(dirtyInView, onlyLod: lod);
+                    QueueDirtyTilesForRegionAtLod(dirtyInView, lod);
+                }
+            }
+
             // Re-key pending dirty tiles to the new LOD instead of discarding them.
             if (_pendingDirtyTiles.Count > 0)
             {
@@ -1014,7 +1028,7 @@ public sealed class LayerCompositor : IDisposable
         }
     }
 
-    private void DropCachedTilesOverlapping(PixelRegion region)
+    private void DropCachedTilesOverlapping(PixelRegion region, int? onlyLod = null, int? exceptLod = null)
     {
         if (region.IsEmpty || _compTiles.IsEmpty) return;
         var clipped = region.ClipTo(_width, _height);
@@ -1023,6 +1037,9 @@ public sealed class LayerCompositor : IDisposable
         var toDrop = new List<(int X, int Y, int Lod)>();
         foreach (var key in _compTiles.Keys)
         {
+            if (onlyLod.HasValue && key.Lod != onlyLod.Value) continue;
+            if (exceptLod.HasValue && key.Lod == exceptLod.Value) continue;
+
             var stride = CmpTileSize * (1 << key.Lod);
             var tileRegion = new PixelRegion(key.X * stride, key.Y * stride, stride, stride).ClipTo(_width, _height);
             if (!tileRegion.Intersect(clipped).IsEmpty)
