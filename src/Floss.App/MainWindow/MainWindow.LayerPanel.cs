@@ -860,7 +860,11 @@ public partial class MainWindow
                 return;
             }
 
-        SelectLayerWithModifiers(index, e.KeyModifiers);
+        // When pressing on a layer that's already part of the multi-selection,
+        // don't call SelectLayerWithModifiers — it would clear the set (no modifier
+        // held during a drag gesture) and reduce the drag to a single layer.
+        if (!_selectedLayerIndices.Contains(index))
+            SelectLayerWithModifiers(index, e.KeyModifiers);
 
         if (e.ClickCount > 1) return;
         _layerDragSourceIndex = index;
@@ -1026,7 +1030,14 @@ public partial class MainWindow
 
         // Move all selected layers to the target position.
         // We re-resolve layer indices after each move since the flat list shifts.
-        var layersToMove = sourceIndices.Select(si => _canvas.Layers[si]).ToList();
+        // For "Above" drops iterate descending so each layer lands just above the
+        // target in index order, preserving the original relative ordering.
+        // For "Below"/"Into" ascending order is correct.
+        var layersToMove = sourceIndices
+            .Select(si => _canvas.Layers[si])
+            .ToList();
+        if (placement == LayerDropPlacement.Above)
+            layersToMove.Reverse();
         var targetLayer = _canvas.Layers[targetIndex];
         foreach (var layer in layersToMove)
         {

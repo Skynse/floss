@@ -106,11 +106,12 @@ public sealed class CompositeTool : ITool
         if (Input.GetResult() is { } result)
         {
             Output.Execute(ctx, result);
-            if (Output is DirectDrawOutput directDraw)
-                directDraw.FlushPending();
         }
         else if (Input.IsActive)
             Input.Cancel();
+
+        if (Output is DirectDrawOutput directDraw && directDraw.HasPendingWork)
+            directDraw.FlushPending();
 
         ClearSelectionGesture(ctx);
         InvalidateUi(ctx);

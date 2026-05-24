@@ -498,22 +498,22 @@ public sealed class DrawingDocument : IDisposable
         if (PaperLayer != null) return;
 
         BeginDocumentMutation();
+
+        // PaperColor is zeroed out when a paper layer is deleted. Reset to white
+        // so the re-added layer is visible and IsPaperBackgroundVisible returns true.
+        if (PaperColor.A == 0)
+            PaperColor = new Avalonia.Media.Color(255, 255, 255, 255);
+
         var bg = new DrawingLayer("Paper", Width, Height);
         bg.IsLocked = true;
         bg.IsPaper = true;
         bg.FillSolid(bg.Pixels.Bounds, PaperColor);
 
-        if (_layers.Count > 0)
-        {
-            var bottom = _layers[^1];
-            InsertLayerNear(bg, bottom, LayerDropPlacement.Below);
-        }
-        else
-        {
-            _layers.Add(bg);
-        }
+        var roots = RootLayers();
+        roots.Add(bg);
+        RebuildFlatLayerOrder(roots);
+
         PaperLayer = bg;
-        RebuildFlatLayerOrder();
         NotifyLayersChanged();
     }
 

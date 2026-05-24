@@ -16,22 +16,17 @@ public readonly record struct RenderTelemetrySnapshot(
     int Lod,
     int PendingProjectionUpdates);
 
-public sealed class TelemetryScope : IDisposable
+public readonly struct TelemetryScope : IDisposable
 {
-    private readonly string _name;
     private readonly long _started;
 
-    internal TelemetryScope(string name)
+    internal TelemetryScope(long started)
     {
-        _name = name;
-        _started = Stopwatch.GetTimestamp();
+        _started = started;
     }
 
     public void Dispose()
-        => RenderTelemetry.Record(_name, ElapsedMs(_started));
-
-    private static double ElapsedMs(long started)
-        => (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
+        => RenderTelemetry.RecordBrushMs(RenderTelemetry.ElapsedMs(_started));
 }
 
 public static class RenderTelemetry
@@ -46,7 +41,16 @@ public static class RenderTelemetry
         get { lock (Lock) return _snapshot; }
     }
 
-    public static TelemetryScope Scope(string name) => new(name);
+    public static TelemetryScope ScopeNow() => new(Stopwatch.GetTimestamp());
+
+    internal static double ElapsedMs(long started)
+        => (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
+
+    internal static void RecordBrushMs(double elapsedMs)
+    {
+        lock (Lock) _snapshot = _snapshot with { BrushMs = elapsedMs };
+        MaybeLog();
+    }
 
     public static void RecordBrush(double elapsedMs, string path, int stamps, int cachedDabs)
     {
@@ -75,19 +79,6 @@ public static class RenderTelemetry
                 Lod = lod,
                 PendingProjectionUpdates = pendingProjectionUpdates
             };
-        }
-        MaybeLog();
-    }
-
-    internal static void Record(string name, double elapsedMs)
-    {
-        if (name == "Brush")
-        {
-            lock (Lock) _snapshot = _snapshot with { BrushMs = elapsedMs };
-        }
-        else if (name == "Composite")
-        {
-            lock (Lock) _snapshot = _snapshot with { CompositeMs = elapsedMs };
         }
         MaybeLog();
     }

@@ -11,6 +11,7 @@ using Avalonia.Input.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Rendering.SceneGraph;
 using Avalonia.Threading;
 using Floss.App.Brushes;
@@ -72,21 +73,57 @@ public sealed class DrawingCanvas : Control, IDisposable
     private static readonly IBrush CursorOuterBrush = new SolidColorBrush(Color.FromArgb(160, 0, 0, 0));
     private static readonly IBrush CursorInnerBrush = new SolidColorBrush(Colors.White);
 
-    private static readonly IBrush CanvasCheckerBrush = new DrawingBrush
+    private static readonly WriteableBitmap _checkerboardBitmap;
+
+    private double _checkerBrushZoom = double.NaN;
+    private ImageBrush? _checkerBrush;
+
+    static DrawingCanvas()
     {
-        TileMode = TileMode.Tile,
-        DestinationRect = new RelativeRect(0, 0, 16, 16, RelativeUnit.Absolute),
-        Drawing = new DrawingGroup
+        const int tileSize = 64;
+        _checkerboardBitmap = new WriteableBitmap(
+            new PixelSize(tileSize, tileSize),
+            new Vector(96, 96),
+            PixelFormat.Bgra8888,
+            AlphaFormat.Unpremul);
+
+        using var fb = _checkerboardBitmap.Lock();
+        var info = new SKImageInfo(tileSize, tileSize, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+        using var surface = SKSurface.Create(info, fb.Address, fb.RowBytes);
+        var canvas = surface.Canvas;
+
+        var dark = new SKColor(0x55, 0x55, 0x55);
+        var light = new SKColor(0xAA, 0xAA, 0xAA);
+        var h = tileSize / 2;
+        using var darkPaint = new SKPaint { Color = dark, IsAntialias = false };
+        using var lightPaint = new SKPaint { Color = light, IsAntialias = false };
+
+        canvas.DrawRect(0, 0, h, h, darkPaint);
+        canvas.DrawRect(h, h, h, h, darkPaint);
+        canvas.DrawRect(h, 0, h, h, lightPaint);
+        canvas.DrawRect(0, h, h, h, lightPaint);
+
+        surface.Flush();
+    }
+
+    private ImageBrush GetCheckerBrush(double zoom)
+    {
+        if (_checkerBrush != null && Math.Abs(_checkerBrushZoom - zoom) < 1e-9)
+            return _checkerBrush;
+
+        // Keep checker squares at ~8 screen pixels by scaling the tile size
+        // inversely with zoom. Without this, tiles are 8*zoom px — tiny at low
+        // zoom (aliasing) and huge at high zoom.
+        var tilePx = Math.Max(1.0, 16.0 / zoom);
+        _checkerBrush = new ImageBrush(_checkerboardBitmap)
         {
-            Children =
-            {
-                new GeometryDrawing { Brush = new SolidColorBrush(Color.Parse("#555555")), Geometry = new RectangleGeometry(new Rect(0, 0, 8, 8)) },
-                new GeometryDrawing { Brush = new SolidColorBrush(Color.Parse("#555555")), Geometry = new RectangleGeometry(new Rect(8, 8, 8, 8)) },
-                new GeometryDrawing { Brush = new SolidColorBrush(Color.Parse("#aaaaaa")), Geometry = new RectangleGeometry(new Rect(8, 0, 8, 8)) },
-                new GeometryDrawing { Brush = new SolidColorBrush(Color.Parse("#aaaaaa")), Geometry = new RectangleGeometry(new Rect(0, 8, 8, 8)) },
-            }
-        }
-    };
+            TileMode = TileMode.Tile,
+            DestinationRect = new RelativeRect(0, 0, tilePx, tilePx, RelativeUnit.Absolute),
+            SourceRect = new RelativeRect(0, 0, 1, 1, RelativeUnit.Relative)
+        };
+        _checkerBrushZoom = zoom;
+        return _checkerBrush;
+    }
 
     public BrushEngine BrushEngine { get; }
 
@@ -1225,7 +1262,13 @@ public sealed class DrawingCanvas : Control, IDisposable
             if (hasSolidPaper)
                 context.FillRectangle(new SolidColorBrush(_document.PaperColor), canvasBounds);
             else
-                context.FillRectangle(CanvasCheckerBrush, canvasBounds);
+            {
+                using (context.PushRenderOptions(new RenderOptions
+                {
+                    BitmapInterpolationMode = BitmapInterpolationMode.None
+                }))
+                    context.FillRectangle(GetCheckerBrush(CanvasZoom), canvasBounds);
+            }
         }
         if (HasAnyLayerContent(_document.Layers))
         {

@@ -25,6 +25,7 @@ public sealed class DirectDrawOutput : IOutputProcess
     private readonly BrushEngine _brushEngine;
     private readonly BrushPreparationScheduler _preparationScheduler = new();
     private readonly Queue<StrokeTransaction> _pendingTransactions = new();
+    private readonly Action _processQueuedAction;
 
     public bool Antialiasing { get; set; } = true;
 
@@ -36,6 +37,7 @@ public sealed class DirectDrawOutput : IOutputProcess
     public DirectDrawOutput(BrushEngine brushEngine, DrawingDocument _)
     {
         _brushEngine = brushEngine;
+        _processQueuedAction = () => ProcessQueuedSegments(force: false);
     }
 
     public void Preview(ToolContext ctx, IProcessedInput input)
@@ -98,6 +100,15 @@ public sealed class DirectDrawOutput : IOutputProcess
             _pendingTransactions.Enqueue(tx);
         _accepting = tx;
 
+        // Cache Blend-smudge pickup delegates once per stroke to avoid
+        // two heap-allocated closure objects per ProcessSegmentBatch.
+        if (ctx.Brush.ColorMix && ctx.Brush.SmudgeMode == SmudgeMode.Blend)
+        {
+            tx.PickupSampler = (x, y, out b, out g, out r, out a) =>
+                ReadBeforeStrokePixelFrom(tx.BeforeTiles, tx.Layer, x, y, out b, out g, out r, out a);
+            tx.PickupTiles = (tileX, tileY) => ReadBeforeStrokeTileFrom(tx.BeforeTiles, tx.Layer, tileX, tileY);
+        }
+
         // Krita-style stroke suspend: hint a generous initial bounding box
         // around the first stamp. The compositor will only process invalidations
         // inside this region (extended per-stamp below) until the stroke ends —
@@ -144,7 +155,7 @@ public sealed class DirectDrawOutput : IOutputProcess
             return;
 
         _processingScheduled = true;
-        Dispatcher.UIThread.Post(() => ProcessQueuedSegments(force: false), DispatcherPriority.Normal);
+        Dispatcher.UIThread.Post(_processQueuedAction, DispatcherPriority.Normal);
     }
 
     private async void ProcessQueuedSegments(bool force)
@@ -323,7 +334,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         // entire rasterize blocks DrawingCanvas.Render on the UI thread at
         // RenderLock.Read — the app freezes with no crash log. Tile mutations
         // are already serialized via TiledPixelBuffer's pixel read/write locks.
-        using var telemetry = RenderTelemetry.Scope("Brush");
+        using var telemetry = RenderTelemetry.ScopeNow();
 
         var region = EstimateSegmentBatchRegion(tx, samples, startSegmentIndex, segmentCount);
         if (!region.IsEmpty)
@@ -340,17 +351,8 @@ public sealed class DirectDrawOutput : IOutputProcess
         }
 
         var started = Stopwatch.GetTimestamp();
-        BrushEngine.PixelSampler? pickupSampler = null;
-        BrushEngine.TileReader? pickupTiles = null;
-        // Blend blurs pre-stroke pixels in-place and must not feed back from the
-        // live stroke. Smear / Running Color read the live layer so pigment
-        // chains stamp-to-stamp within the stroke.
-        if (tx.Brush.ColorMix && tx.Brush.SmudgeMode == SmudgeMode.Blend)
-        {
-            pickupSampler = (x, y, out b, out g, out r, out a) =>
-                ReadBeforeStrokePixelFrom(tx.BeforeTiles, tx.Layer, x, y, out b, out g, out r, out a);
-            pickupTiles = (tileX, tileY) => ReadBeforeStrokeTileFrom(tx.BeforeTiles, tx.Layer, tileX, tileY);
-        }
+        var pickupSampler = tx.PickupSampler;
+        var pickupTiles = tx.PickupTiles;
 
         var dirty = _brushEngine.RasterizeSegments(tx.Layer, tx.Brush, samples, startSegmentIndex, segmentCount,
             pickupSampler, pickupTiles);
@@ -588,10 +590,8 @@ public sealed class DirectDrawOutput : IOutputProcess
             var tilePixY = ty * ts;
             for (int tx = firstTileX; tx <= lastTileX; tx++)
             {
-                if (!beforeTiles.ContainsKey((tx, ty)))
+                if (!beforeTiles.TryGetValue((tx, ty), out var beforeTile))
                     continue;
-
-                beforeTiles.TryGetValue((tx, ty), out var beforeTile);
 
                 int pxMin = Math.Max(dirty.X, tx * ts);
                 int pxMax = Math.Min(dirty.Right, tx * ts + ts);
@@ -651,8 +651,8 @@ public sealed class DirectDrawOutput : IOutputProcess
         public int LayerIndex { get; }
         public BrushPreset Brush { get; }
         public CanvasInputSample FirstSample { get; }
-        public Dictionary<(int, int), byte[]?> BeforeTiles { get; } = new();
-        public List<CanvasInputSample> QueuedSamples { get; } = [];
+        public Dictionary<(int, int), byte[]?> BeforeTiles { get; } = new(capacity: 64);
+        public List<CanvasInputSample> QueuedSamples { get; } = new(capacity: 1024);
         public int LastQueuedInputIndex { get; set; } = -1;
         public int NextSegmentIndex { get; set; } = 1;
         public bool StrokeStarted { get; set; }
@@ -662,6 +662,10 @@ public sealed class DirectDrawOutput : IOutputProcess
         public long LastPreviewNotifyMs { get; set; }
         public double AverageSegmentMs { get; private set; }
         public int RemainingSegments => Math.Max(0, QueuedSamples.Count - NextSegmentIndex);
+
+        // Cached per-transaction to avoid delegate allocations per segment batch.
+        public BrushEngine.PixelSampler? PickupSampler { get; set; }
+        public BrushEngine.TileReader? PickupTiles { get; set; }
 
         public int SuggestedSegmentCount(double targetMs, int initial, int max)
         {
