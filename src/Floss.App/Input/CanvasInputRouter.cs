@@ -53,6 +53,8 @@ public interface ICanvasInputHost
     void CancelActiveTool();
     void CommitActiveTool();
     ITool? ActiveTool { get; }
+    bool IsTransformActive { get; }
+    void EndTransformDragIfActive();
 
     // ── Layer pick ──
     bool IsLayerPickDrag { get; }
@@ -358,7 +360,12 @@ public sealed class CanvasInputRouter
             && !IsViewportTool()
             && _runningAction != CanvasAction.LayerPick
             && _runningAction != CanvasAction.BrushSize)
-            _host.CommitActiveTool();
+        {
+            if (_host.IsTransformActive)
+                _host.EndTransformDragIfActive();
+            else
+                _host.CommitActiveTool();
+        }
 
         PopTemporaryPresetIfNeeded();
 

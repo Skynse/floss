@@ -274,7 +274,7 @@ public partial class MainWindow
             });
     }
 
-    private static ToolPropertyDescriptor EnumProp<T>(string id, string label, bool visible, Func<T> get, Action<T> set)
+    private ToolPropertyDescriptor EnumProp<T>(string id, string label, bool visible, Func<T> get, Action<T> set)
         where T : struct, Enum
     {
         ComboBox? combo = null;
@@ -291,7 +291,9 @@ public partial class MainWindow
                 };
                 combo.SelectionChanged += (_, _) =>
                 {
-                    if (combo.SelectedItem is T value) set(value);
+                    if (_syncingToolPropertyPanel) return;
+                    if (combo.SelectedItem is T value)
+                        set(value);
                 };
                 return LabeledControl(label, combo);
             },

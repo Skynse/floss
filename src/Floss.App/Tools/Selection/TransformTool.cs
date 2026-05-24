@@ -135,6 +135,8 @@ public sealed class TransformTool : ITool
     public void FlipHorizontal() => _operation?.FlipHorizontal();
 
     public void FlipVertical() => _operation?.FlipVertical();
+
+    public void EndDrag(ToolContext ctx) => _operation?.EndDrag();
 }
 
 internal sealed class SelectionTransformOperation : IToolOperationOverlay
@@ -467,6 +469,11 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
             or TransformDragPart.BottomLeft or TransformDragPart.BottomRight;
 
     public void PointerUp(CanvasInputSample sample)
+    {
+        EndDrag();
+    }
+
+    public void EndDrag()
     {
         _isDragging = false;
     }

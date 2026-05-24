@@ -70,7 +70,8 @@ public partial class MainWindow
             MinHeight = 22,
             Padding = new Thickness(6, 2),
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Center
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            Focusable = false
         };
         btn.Click += (_, _) => action();
         return btn;
@@ -81,6 +82,8 @@ public partial class MainWindow
         if (_syncingToolPropertyPanel) return;
         var cur = _canvas.TransformEdit;
         if (cur == null) return;
-        _canvas.UpdateTransformEdit(mutate(cur));
+        var next = mutate(cur);
+        if (next == cur) return;
+        _canvas.UpdateTransformEdit(next);
     }
 }

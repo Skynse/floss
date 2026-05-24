@@ -235,6 +235,8 @@ public sealed class DrawingCanvas : Control, IDisposable
 
     public void FlipTransformVertical() => _transformTool.FlipVertical();
 
+    public void EndTransformDragIfActive() => _transformTool.EndDrag(_ctx);
+
     internal void InvalidateSelectionOutline() => SelectionOutlineChanged?.Invoke(this, EventArgs.Empty);
 
     public int ActiveSampleCount => _toolController.ActiveTool.HasPendingOperation ? 1 : 0;
@@ -505,9 +507,9 @@ public sealed class DrawingCanvas : Control, IDisposable
         SetToolAuxMode(ToolAuxOperationType.None);
 
         if (_toolController.ActiveTool is TransformTool transform && transform.HasPendingOperation)
-            transform.Cancel(_ctx);
-
-        _toolController.Cancel();
+            transform.EndDrag(_ctx);
+        else
+            _toolController.Cancel();
         CancelDirectDrawOutput(_brushTool);
         CancelDirectDrawOutput(_eraserTool);
         if (_toolController.ActiveTool is CompositeTool active
@@ -1882,6 +1884,12 @@ public sealed class DrawingCanvas : Control, IDisposable
         if (_isLayerPickDrag) { _isLayerPickDrag = false; InvalidateVisual(); }
         if (_activePointerId < 0) return;
         _activePointerId = -1;
+        if (_toolController.ActiveTool is TransformTool tt && tt.HasPendingOperation)
+        {
+            tt.EndDrag(_ctx);
+            return;
+        }
+
         _toolController.Cancel();
     }
 

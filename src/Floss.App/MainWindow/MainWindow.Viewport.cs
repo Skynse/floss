@@ -431,6 +431,11 @@ public partial class MainWindow : ICanvasInputHost
     void ICanvasInputHost.CommitActiveTool()
         => _canvas.CommitActiveTool();
 
+    bool ICanvasInputHost.IsTransformActive => _canvas.IsTransformActive;
+
+    void ICanvasInputHost.EndTransformDragIfActive()
+        => _canvas.EndTransformDragIfActive();
+
     ITool? ICanvasInputHost.ActiveTool => _canvas.ActiveTool;
 
     (int, int) ICanvasInputHost.GetActiveToolTypes()
@@ -601,6 +606,9 @@ public partial class MainWindow : ICanvasInputHost
 
     private void ResetTransientInputState()
     {
+        if (_canvas.IsTransformActive)
+            return;
+
         if (_temporaryPresetActive)
             PopTemporaryPreset();
         _inputRouter.ResetAllState();
