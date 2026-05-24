@@ -1186,6 +1186,74 @@ public sealed class LayerCompositor : IDisposable
         // instead of compositing at full res then bilinear-downsampling.
         // Groups recurse into children; non-Normal layers fall back to
         // full-res composit + nearest-neighbor downsample per layer.
+        // Clipped layers require the base-layer mask, which the LOD path
+        // doesn't yet support — fall back to full-res composite for any
+        // render list containing clipped items.
+        var hasClipped = false;
+        for (var i = 0; i < renderList.Count; i++)
+        {
+            if (renderList[i].IsClipped) { hasClipped = true; break; }
+        }
+
+        if (hasClipped)
+        {
+            // Full-res composite + bilinear downsample (original slow path).
+            var fullBytes = tileRect.Width * tileRect.Height * 4;
+            var temp = ArrayPool<byte>.Shared.Rent(fullBytes);
+            try
+            {
+                fixed (byte* tp = temp)
+                {
+                    var count = tileRect.Width * tileRect.Height;
+                    var clear = (uint*)tp;
+                    for (var c = 0; c < count; c++) clear[c] = paperColor;
+
+                    CompositeRenderList(tp, tileRect.Width * 4, tileRect.Width, tileRect.Height,
+                        renderList, 1.0, tileRect, originX, originY);
+
+                    using (var f = tile.Lock())
+                    {
+                        var fd = (byte*)f.Address;
+                        var fds = f.RowBytes;
+                        var scale = 1 << lod;
+                        for (var y = 0; y < tile.PixelSize.Height; y++)
+                        {
+                            var sy = Math.Min(tileRect.Height - 1.0f, (y + 0.5f) * scale - 0.5f);
+                            var sy0 = Math.Clamp((int)MathF.Floor(sy), 0, tileRect.Height - 1);
+                            var sy1 = Math.Min(tileRect.Height - 1, sy0 + 1);
+                            var fy = sy - sy0;
+                            var srcRow0 = tp + sy0 * tileRect.Width * 4;
+                            var srcRow1 = tp + sy1 * tileRect.Width * 4;
+                            var dstRow = fd + y * fds;
+                            for (var x = 0; x < tile.PixelSize.Width; x++)
+                            {
+                                var sx = Math.Min(tileRect.Width - 1.0f, (x + 0.5f) * scale - 0.5f);
+                                var sx0 = Math.Clamp((int)MathF.Floor(sx), 0, tileRect.Width - 1);
+                                var sx1 = Math.Min(tileRect.Width - 1, sx0 + 1);
+                                var fx = sx - sx0;
+                                var p00 = srcRow0 + sx0 * 4;
+                                var p10 = srcRow0 + sx1 * 4;
+                                var p01 = srcRow1 + sx0 * 4;
+                                var p11 = srcRow1 + sx1 * 4;
+                                var dstPx = dstRow + x * 4;
+                                BilinearPremultipliedBgra(
+                                    p00[0], p00[1], p00[2], p00[3],
+                                    p10[0], p10[1], p10[2], p10[3],
+                                    p01[0], p01[1], p01[2], p01[3],
+                                    p11[0], p11[1], p11[2], p11[3],
+                                    fx, fy, dstPx);
+                            }
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(temp);
+            }
+            return;
+        }
+
         using var frame = tile.Lock();
         var dst = (byte*)frame.Address;
         var dstStride = frame.RowBytes;
