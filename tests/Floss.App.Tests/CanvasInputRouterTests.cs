@@ -68,6 +68,10 @@ public class CanvasInputRouterTests
         void ICanvasInputHost.CommitActiveTool()
             => Operations.Add("CommitTool");
 
+        bool ICanvasInputHost.IsTransformActive => false;
+
+        void ICanvasInputHost.EndTransformDragIfActive() { }
+
         void ICanvasInputHost.StartLayerPickDrag(Point pos)
             => Operations.Add("StartLayerPick");
 

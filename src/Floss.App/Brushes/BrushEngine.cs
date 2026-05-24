@@ -34,7 +34,7 @@ public readonly record struct BrushRenderStats(
 
 public sealed class BrushEngine : IDisposable
 {
-    private const int MaxPrecomputedGrainPixels = 256 * 256;
+    private const int MaxPrecomputedGrainPixels = 1024 * 1024;
     private const int MaxColorMixScratchPixels = 2048 * 2048;
 
     private const int InitialStampCapacity = 256;
@@ -1424,7 +1424,7 @@ public sealed class BrushEngine : IDisposable
         float baseAlpha = baseColor.Alpha;
         var blendMode = brush.BlendMode;
         float brushGrain = (float)brush.Grain;
-        byte* texPx = null;
+        byte* texPx = null!;
         int texW = 0, texH = 0, texStride = 0;
         SKBitmap? texBmp = brushGrain > 0f && brush.Texture != null ? GetOrLoadTexture(brush.Texture) : null;
         if (texBmp != null)
@@ -1494,7 +1494,18 @@ public sealed class BrushEngine : IDisposable
             // Procedural-only params
             float hardness = stamp.Hardness;
             float hardnessRange = 1f - hardness;
+            float h2 = hardness * hardness;
             bool hardEdge = !isImageTip && hardness >= 0.999f;
+
+            // Composite strategy — hoist outside pixel loops
+            bool isSrcOver = blendMode == SKBlendMode.SrcOver;
+            bool alphaLocked = layer.IsAlphaLocked;
+
+            // Grain strategy — precompute base value and nullity
+            float grainBase = 1f - brushGrain;
+            bool hasGrainTable = grainTable != null;
+            bool hasProceduralGrain = !hasGrainTable && brushGrain > 0f;
+            bool hasTexGrain = hasProceduralGrain && texPx != null;
 
             // Image tip: get the cached Alpha8 mask and pin its pixels
             SKBitmap? maskBmp = null;
@@ -1590,7 +1601,7 @@ public sealed class BrushEngine : IDisposable
                             }
                             else
                             {
-                                // Analytical radial alpha for procedural circle/round/ellipse
+                                // Analytical radial alpha — squared comparison avoids Sqrt for core pixels
                                 float ndx = fdx / rx;
                                 float ndy = fdy / ry;
                                 float t2 = ndx * ndx + ndy * ndy;
@@ -1600,39 +1611,28 @@ public sealed class BrushEngine : IDisposable
                                 {
                                     alpha = 1f;
                                 }
+                                else if (t2 <= h2)
+                                {
+                                    alpha = 1f;
+                                }
                                 else
                                 {
                                     float t = MathF.Sqrt(t2);
-                                    if (t <= hardness)
-                                    {
-                                        alpha = 1f;
-                                    }
-                                    else
-                                    {
-                                        float fade = hardnessRange > 0.001f ? (t - hardness) / hardnessRange : 1f;
-                                        alpha = isSoft
-                                            ? 1f - fade * fade * (3f - 2f * fade)
-                                            : (MathF.Cos(fade * MathF.PI) + 1f) * 0.5f;
-                                    }
+                                    float fade = hardnessRange > 0.001f ? (t - hardness) / hardnessRange : 1f;
+                                    alpha = isSoft
+                                        ? 1f - fade * fade * (3f - 2f * fade)
+                                        : (MathF.Cos(fade * MathF.PI) + 1f) * 0.5f;
                                 }
                             }
 
-                            if (grainTable != null)
-                            {
+                            if (hasGrainTable)
                                 alpha *= grainTable[(py - dirty.Y) * dirty.Width + (px - dirty.X)];
-                            }
-                            else if (brushGrain > 0f)
+                            else if (hasProceduralGrain)
                             {
-                                float noise;
                                 if (texPx != null)
-                                {
-                                    int gtx = px % texW; if (gtx < 0) gtx += texW;
-                                    int gty = py % texH; if (gty < 0) gty += texH;
-                                    noise = texPx[gty * texStride + gtx] / 255.0f;
-                                }
+                                    alpha *= grainBase + (texPx[((py % texH + texH) % texH) * texStride + ((px % texW + texW) % texW)] / 255.0f) * brushGrain;
                                 else
-                                    noise = GrainNoise(px, py);
-                                alpha *= 1f - brushGrain + noise * brushGrain;
+                                    alpha *= grainBase + GrainNoise(px, py) * brushGrain;
                             }
 
                             int stampA = (int)(alpha * stampOpacity255 + 0.5f);
@@ -1641,9 +1641,19 @@ public sealed class BrushEngine : IDisposable
 
                             int lx = px - tilePixX;
                             int offset = rowBase + lx * 4;
-                            WriteCompositeStamp(tile, offset,
-                                (byte)brushB, (byte)brushG, (byte)brushR, (byte)stampA,
-                                layer.IsAlphaLocked, blendMode);
+                            if (isSrcOver)
+                            {
+                                byte ttda = tile[offset + 3];
+                                if (ttda == 0) { tile[offset] = (byte)brushB; tile[offset + 1] = (byte)brushG; tile[offset + 2] = (byte)brushR; tile[offset + 3] = (byte)stampA; }
+                                else if (alphaLocked) { int inv = 255 - stampA; tile[offset] = (byte)((brushB * stampA + tile[offset] * inv + 127) / 255); tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * inv + 127) / 255); tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * inv + 127) / 255); }
+                                else { int invSrcA = 255 - stampA; int outA = stampA + (ttda * invSrcA + 127) / 255; if (outA > 0) { int invDiv = ttda * invSrcA; tile[offset] = (byte)((brushB * stampA + tile[offset] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 3] = (byte)outA; } }
+                            }
+                            else
+                            {
+                                WriteCompositeStamp(tile, offset,
+                                    (byte)brushB, (byte)brushG, (byte)brushR, (byte)stampA,
+                                    alphaLocked, blendMode);
+                            }
                         }
                     }
                 }
@@ -1684,7 +1694,7 @@ public sealed class BrushEngine : IDisposable
             return false;
 
         const int tsz = TiledPixelBuffer.TileSize;
-        var buckets = new Dictionary<(int X, int Y), List<PlacedDab>>();
+        var buckets = new Dictionary<int, List<PlacedDab>>();
 
         stroke.EnterDabCacheUse();
         try
@@ -1737,7 +1747,7 @@ public sealed class BrushEngine : IDisposable
                         if (right <= tileLeft || bottom <= tileTop || left >= tileLeft + tsz || top >= tileTop + tsz)
                             continue;
 
-                        var key = (tx, ty);
+                        int key = (tx & 0xFFFF) | ((ty & 0xFFFF) << 16);
                         if (!buckets.TryGetValue(key, out var list))
                         {
                             list = new List<PlacedDab>(8);
@@ -1755,8 +1765,10 @@ public sealed class BrushEngine : IDisposable
             layer.Pixels.EnterPixelWriteLock();
             try
             {
-                foreach (var ((tx, ty), dabs) in buckets)
+                foreach (var (key, dabs) in buckets)
                 {
+                    int tx = (short)key;
+                    int ty = (short)(key >> 16);
                     var tile = layer.Pixels.GetOrCreateRawTile(tx, ty);
                     var tilePixX = tx * tsz;
                     var tilePixY = ty * tsz;
@@ -1798,7 +1810,7 @@ public sealed class BrushEngine : IDisposable
             return false;
 
         const int tsz = TiledPixelBuffer.TileSize;
-        var buckets = new Dictionary<(int X, int Y), List<PlacedColorDab>>();
+        var buckets = new Dictionary<int, List<PlacedColorDab>>();
 
         stroke.EnterColorDabCacheUse();
         try
@@ -1837,7 +1849,7 @@ public sealed class BrushEngine : IDisposable
                         if (right <= tileLeft || bottom <= tileTop || left >= tileLeft + tsz || top >= tileTop + tsz)
                             continue;
 
-                        var key = (tx, ty);
+                        int key = (tx & 0xFFFF) | ((ty & 0xFFFF) << 16);
                         if (!buckets.TryGetValue(key, out var list))
                         {
                             list = new List<PlacedColorDab>(8);
@@ -1855,8 +1867,10 @@ public sealed class BrushEngine : IDisposable
             layer.Pixels.EnterPixelWriteLock();
             try
             {
-                foreach (var ((tx, ty), dabs) in buckets)
+                foreach (var (key, dabs) in buckets)
                 {
+                    int tx = (short)key;
+                    int ty = (short)(key >> 16);
                     var tile = layer.Pixels.GetOrCreateRawTile(tx, ty);
                     var tilePixX = tx * tsz;
                     var tilePixY = ty * tsz;
@@ -1911,6 +1925,12 @@ public sealed class BrushEngine : IDisposable
         var srcStride = placed.Dab.Bitmap.RowBytes;
         var useFastPath = !placed.Dab.IsScaled && grainTable == null && brushGrain <= 0f;
 
+        bool isSrcOver = blendMode == SKBlendMode.SrcOver;
+        float grainBase = 1f - brushGrain;
+        bool hasGrainTable = grainTable != null;
+        bool hasProceduralGrain = !hasGrainTable && brushGrain > 0f;
+        bool hasTexGrain = hasProceduralGrain && texPx != null;
+
         for (int py = pxMinY; py < pxMaxY; py++)
         {
             var localY = py - placed.Top;
@@ -1936,24 +1956,18 @@ public sealed class BrushEngine : IDisposable
                 if (srcA == 0) continue;
 
                 float alpha = srcA / 255f;
-                if (grainTable != null)
+                if (hasGrainTable)
                 {
                     int gy = py - dirty.Y, gx = px - dirty.X;
                     if (gy >= 0 && gy < dirty.Height && gx >= 0 && gx < dirty.Width)
                         alpha *= grainTable[gy * dirty.Width + gx];
                 }
-                else if (brushGrain > 0f)
+                else if (hasProceduralGrain)
                 {
-                    float noise;
-                    if (texPx != null)
-                    {
-                        int gtx = px % texW; if (gtx < 0) gtx += texW;
-                        int gty = py % texH; if (gty < 0) gty += texH;
-                        noise = texPx[gty * texStride + gtx] / 255.0f;
-                    }
+                    if (hasTexGrain)
+                        alpha *= grainBase + (texPx[((py % texH + texH) % texH) * texStride + ((px % texW + texW) % texW)] / 255.0f) * brushGrain;
                     else
-                        noise = GrainNoise(px, py);
-                    alpha *= 1f - brushGrain + noise * brushGrain;
+                        alpha *= grainBase + GrainNoise(px, py) * brushGrain;
                 }
 
                 int stampA = (int)(alpha * opacity * 255f + 0.5f);
@@ -1962,7 +1976,17 @@ public sealed class BrushEngine : IDisposable
 
                 var lx = px - tilePixX;
                 var offset = rowBase + lx * 4;
-                WriteCompositeStamp(tile, offset, srcB, srcG, srcR, (byte)stampA, alphaLocked, blendMode);
+                if (isSrcOver)
+                {
+                    byte ttda = tile[offset + 3];
+                    if (ttda == 0) { tile[offset] = srcB; tile[offset + 1] = srcG; tile[offset + 2] = srcR; tile[offset + 3] = (byte)stampA; }
+                    else if (alphaLocked) { int inv = 255 - stampA; tile[offset] = (byte)((srcB * stampA + tile[offset] * inv + 127) / 255); tile[offset + 1] = (byte)((srcG * stampA + tile[offset + 1] * inv + 127) / 255); tile[offset + 2] = (byte)((srcR * stampA + tile[offset + 2] * inv + 127) / 255); }
+                    else { int invSrcA = 255 - stampA; int outA = stampA + (ttda * invSrcA + 127) / 255; if (outA > 0) { int invDiv = ttda * invSrcA; tile[offset] = (byte)((srcB * stampA + tile[offset] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 1] = (byte)((srcG * stampA + tile[offset + 1] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 2] = (byte)((srcR * stampA + tile[offset + 2] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 3] = (byte)outA; } }
+                }
+                else
+                {
+                    WriteCompositeStamp(tile, offset, srcB, srcG, srcR, (byte)stampA, alphaLocked, blendMode);
+                }
             }
         }
     }
@@ -2077,6 +2101,13 @@ public sealed class BrushEngine : IDisposable
         var maskStride = placed.Dab.Mask.RowBytes;
         var useFastPath = !placed.Dab.IsScaled && grainTable == null && brushGrain <= 0f;
 
+        bool isSrcOver = blendMode == SKBlendMode.SrcOver;
+        float grainBase = 1f - brushGrain;
+        bool hasGrainTable = grainTable != null;
+        bool hasProceduralGrain = !hasGrainTable && brushGrain > 0f;
+        bool hasTexGrain = hasProceduralGrain && texPx != null;
+        int brushB = placed.ColorB, brushG = placed.ColorG, brushR = placed.ColorR;
+
         for (int py = pxMinY; py < pxMaxY; py++)
         {
             var localY = py - placed.Top;
@@ -2092,24 +2123,18 @@ public sealed class BrushEngine : IDisposable
                 if (maskA == 0) continue;
 
                 float alpha = maskA / 255f;
-                if (grainTable != null)
+                if (hasGrainTable)
                 {
                     int gy = py - dirty.Y, gx = px - dirty.X;
                     if (gy >= 0 && gy < dirty.Height && gx >= 0 && gx < dirty.Width)
                         alpha *= grainTable[gy * dirty.Width + gx];
                 }
-                else if (brushGrain > 0f)
+                else if (hasProceduralGrain)
                 {
-                    float noise;
-                    if (texPx != null)
-                    {
-                        int gtx = px % texW; if (gtx < 0) gtx += texW;
-                        int gty = py % texH; if (gty < 0) gty += texH;
-                        noise = texPx[gty * texStride + gtx] / 255.0f;
-                    }
+                    if (hasTexGrain)
+                        alpha *= grainBase + (texPx[((py % texH + texH) % texH) * texStride + ((px % texW + texW) % texW)] / 255.0f) * brushGrain;
                     else
-                        noise = GrainNoise(px, py);
-                    alpha *= 1f - brushGrain + noise * brushGrain;
+                        alpha *= grainBase + GrainNoise(px, py) * brushGrain;
                 }
 
                 int stampA = (int)(alpha * stampOpacity255 + 0.5f);
@@ -2118,9 +2143,19 @@ public sealed class BrushEngine : IDisposable
 
                 var lx = px - tilePixX;
                 var offset = rowBase + lx * 4;
-                WriteCompositeStamp(tile, offset,
-                    (byte)placed.ColorB, (byte)placed.ColorG, (byte)placed.ColorR, (byte)stampA,
-                    alphaLocked, blendMode);
+                if (isSrcOver)
+                {
+                    byte ttda = tile[offset + 3];
+                    if (ttda == 0) { tile[offset] = (byte)brushB; tile[offset + 1] = (byte)brushG; tile[offset + 2] = (byte)brushR; tile[offset + 3] = (byte)stampA; }
+                    else if (alphaLocked) { int inv = 255 - stampA; tile[offset] = (byte)((brushB * stampA + tile[offset] * inv + 127) / 255); tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * inv + 127) / 255); tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * inv + 127) / 255); }
+                    else { int invSrcA = 255 - stampA; int outA = stampA + (ttda * invSrcA + 127) / 255; if (outA > 0) { int invDiv = ttda * invSrcA; tile[offset] = (byte)((brushB * stampA + tile[offset] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 3] = (byte)outA; } }
+                }
+                else
+                {
+                    WriteCompositeStamp(tile, offset,
+                        (byte)brushB, (byte)brushG, (byte)brushR, (byte)stampA,
+                        alphaLocked, blendMode);
+                }
             }
         }
     }
@@ -2717,7 +2752,7 @@ public sealed class BrushEngine : IDisposable
             return SpatialSmearResult.Failed;
 
         const int tsz = TiledPixelBuffer.TileSize;
-        var srcSnapshots = new Dictionary<(int X, int Y), byte[]?>(32);
+        var srcSnapshots = new Dictionary<int, byte[]?>(32);
         var srcMinX = pxMinX + offsetX;
         var srcMinY = pxMinY + offsetY;
         var srcMaxX = pxMaxX + offsetX;
@@ -2732,7 +2767,7 @@ public sealed class BrushEngine : IDisposable
         {
             for (var tx = srcFirstTx; tx <= srcLastTx; tx++)
             {
-                var key = (tx, ty);
+                int key = (tx & 0xFFFF) | ((ty & 0xFFFF) << 16);
                 if (srcSnapshots.ContainsKey(key)) continue;
                 var raw = layer.Pixels.GetTileOrNull(tx, ty);
                 if (raw == null)
@@ -2797,7 +2832,8 @@ public sealed class BrushEngine : IDisposable
                             {
                                 var srcTx = FloorDiv(srcX, tsz);
                                 var srcTy = FloorDiv(srcY, tsz);
-                                srcSnapshots.TryGetValue((srcTx, srcTy), out var srcTile);
+                                int srcKey = (srcTx & 0xFFFF) | ((srcTy & 0xFFFF) << 16);
+                                srcSnapshots.TryGetValue(srcKey, out var srcTile);
                                 ReadPixelFromTile(srcTile, srcTx * tsz, srcTy * tsz, srcX, srcY, out sb, out sg, out sr, out sa);
                             }
 
@@ -3858,18 +3894,6 @@ public sealed class BrushEngine : IDisposable
         }
 
         private static SKColor ToSkColor(Color c) => new(c.R, c.G, c.B, c.A);
-
-        private static float Hash01(int x, int y)
-        {
-            unchecked
-            {
-                uint h = (uint)(x * 1619 + y * 31337);
-                h ^= h >> 17; h *= 0xbf324c81u;
-                h ^= h >> 13; h *= 0x9b2e1515u;
-                h ^= h >> 16;
-                return (h & 0xFFFF) / 65535.0f;
-            }
-        }
 
         public sealed class CachedDab(SKBitmap mask, int offsetX, int offsetY, int logicalWidth, int logicalHeight)
         {
