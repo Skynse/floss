@@ -231,6 +231,7 @@ public sealed class SelectionMask
         else
         {
             _geoType = SelectionGeometry.Mask;
+            _geoRect = new SKRectI(x1, y1, x2, y2);
             _geoPoly.Clear();
         }
         _cachedMaskGeo = null;
@@ -267,7 +268,9 @@ public sealed class SelectionMask
         else
         {
             _geoType = SelectionGeometry.Mask;
-            _geoPoly.Clear();
+            // Keep the polygon so DrawOutlinePass can render it instead of
+            // falling back to BuildMaskOutline → DrawBoundsRect (rectangle).
+            _geoPoly = new List<SKPoint>(points);
         }
         _cachedMaskGeo = null;
     }
@@ -373,7 +376,10 @@ public sealed class SelectionMask
             return;
         }
 
-        if (_geoType == SelectionGeometry.Polygon && _geoPoly.Count >= 2)
+        // Polygon outline (Replace or non-Replace — always prefer the drawn
+        // shape over pixel-edge tracing to avoid the MaxOutlineSegments
+        // fallback-to-rectangle path).
+        if (_geoPoly.Count >= 2)
         {
             dc.DrawGeometry(null, pen, BuildPolygonGeometry());
             return;
@@ -381,6 +387,14 @@ public sealed class SelectionMask
 
         if (_geoType == SelectionGeometry.Mask)
         {
+            // Use stored rect geometry when available (non-Replace rect ops).
+            if (_geoRect.Width > 0 && _geoRect.Height > 0)
+            {
+                var r = new Avalonia.Rect(_geoRect.Left, _geoRect.Top, _geoRect.Width, _geoRect.Height);
+                dc.DrawRectangle(null, pen, r);
+                return;
+            }
+
             if (_simplifyOutline || _selectedCount > SimplifyOutlineSelectedPixels)
             {
                 if (_maskBounds is { } b)

@@ -117,6 +117,7 @@ public sealed class BrushEngine : IDisposable
     private readonly List<SKColor> _stampColors = new(InitialStampCapacity);
     private ActiveStroke? _activeStroke;
     private SKBitmap? _scratch;
+    private SKBitmap? _lodScratch;
     private byte[]? _sampleBuffer;
     private PixelRegion _sampleBufferRegion;
     private int _sampleBufferStride;
@@ -127,6 +128,11 @@ public sealed class BrushEngine : IDisposable
     private int _lastTileBucketCount;
 
     public BrushRenderStats LastStats { get; private set; } = BrushRenderStats.Empty;
+
+    /// <summary>Current viewport zoom. When &lt; 1.0, stamp rendering uses
+    /// a downscaled LOD buffer then upscales to full-res tiles (Krita's
+    /// KisLodTransform approach — same visual size, fewer pixels).</summary>
+    public double CanvasZoom { get; set; } = 1.0;
 
     public delegate void PixelSampler(int x, int y, out byte b, out byte g, out byte r, out byte a);
 
@@ -627,6 +633,8 @@ public sealed class BrushEngine : IDisposable
             EndStrokeCore();
             _scratch?.Dispose();
             _scratch = null;
+            _lodScratch?.Dispose();
+            _lodScratch = null;
             _scratchCompositePaint.Dispose();
             foreach (var bmp in _textureCache.Values)
                 bmp?.Dispose();
@@ -1044,23 +1052,77 @@ public sealed class BrushEngine : IDisposable
             _scratch = new SKBitmap(new SKImageInfo(needW, needH, SKColorType.Bgra8888, SKAlphaType.Unpremul));
         }
 
-        // Clear then render stamps into the scratch with Lighten blend so that
-        // overlapping stamps within this segment take the max alpha per pixel
-        // rather than compounding via SrcOver.
-        using (var sc = new SKCanvas(_scratch))
-        {
-            sc.Save();
-            sc.ClipRect(SKRect.Create(0, 0, w, h));
-            sc.Clear(SKColors.Transparent);
-            sc.Restore();
+        // Krita-style LOD rendering: at zoom < 1.0, render stamps into a
+        // downscaled buffer then upscale to full-res tiles. Reduces pixel
+        // work by lodScale² while preserving visual brush size.
+        var lodScale = CanvasZoom < 1.0 ? (float)CanvasZoom : 1f;
 
-            sc.Save();
-            sc.Translate(-dirty.X, -dirty.Y);
-            sc.ClipRect(SKRect.Create(dirty.X, dirty.Y, w, h));
-            stroke.Paint.BlendMode = SKBlendMode.Lighten;
-            RenderPreparedStamps(stroke, sc);
-            stroke.Paint.BlendMode = SKBlendMode.SrcOver;
-            sc.Restore();
+        if (lodScale < 1f)
+        {
+            var lodW = Math.Max(1, (int)Math.Ceiling(needW * lodScale));
+            var lodH = Math.Max(1, (int)Math.Ceiling(needH * lodScale));
+
+            if (_lodScratch == null || _lodScratch.Width < lodW || _lodScratch.Height < lodH)
+            {
+                var oldLw = _lodScratch?.Width ?? 0;
+                var oldLh = _lodScratch?.Height ?? 0;
+                _lodScratch?.Dispose();
+                _lodScratch = new SKBitmap(new SKImageInfo(
+                    Math.Max(lodW, oldLw),
+                    Math.Max(lodH, oldLh),
+                    SKColorType.Bgra8888, SKAlphaType.Unpremul));
+            }
+
+            // Step 1: render stamps at reduced resolution into LOD scratch.
+            using (var lc = new SKCanvas(_lodScratch))
+            {
+                lc.Save();
+                lc.ClipRect(SKRect.Create(0, 0, lodW, lodH));
+                lc.Clear(SKColors.Transparent);
+                lc.Restore();
+
+                lc.Save();
+                float invLod = 1f / lodScale;
+                lc.Scale(invLod, invLod);
+                lc.Translate(-dirty.X, -dirty.Y);
+                lc.ClipRect(SKRect.Create(dirty.X, dirty.Y, w, h));
+                stroke.Paint.BlendMode = SKBlendMode.Lighten;
+                RenderPreparedStamps(stroke, lc);
+                stroke.Paint.BlendMode = SKBlendMode.SrcOver;
+                lc.Restore();
+            }
+
+            // Step 2: upscale LOD result into full-res scratch.
+            using (var sc = new SKCanvas(_scratch))
+            {
+                sc.Save();
+                sc.ClipRect(SKRect.Create(0, 0, w, h));
+                sc.Clear(SKColors.Transparent);
+                sc.Restore();
+
+                sc.DrawBitmap(_lodScratch,
+                    new SKRect(0, 0, lodW, lodH),
+                    new SKRect(0, 0, w, h));
+            }
+        }
+        else
+        {
+            // Original full-res path (zoom >= 1.0).
+            using (var sc = new SKCanvas(_scratch))
+            {
+                sc.Save();
+                sc.ClipRect(SKRect.Create(0, 0, w, h));
+                sc.Clear(SKColors.Transparent);
+                sc.Restore();
+
+                sc.Save();
+                sc.Translate(-dirty.X, -dirty.Y);
+                sc.ClipRect(SKRect.Create(dirty.X, dirty.Y, w, h));
+                stroke.Paint.BlendMode = SKBlendMode.Lighten;
+                RenderPreparedStamps(stroke, sc);
+                stroke.Paint.BlendMode = SKBlendMode.SrcOver;
+                sc.Restore();
+            }
         }
 
         // Apply grain to the scratch in canvas space before compositing.

@@ -358,9 +358,6 @@ internal sealed class LayerProjectionPlane : IDisposable
 
     private unsafe TiledPixelBuffer GetGroupProjection(DrawingLayer group, PixelRegion requestedClip)
     {
-        // GetOrAdd's factory can run concurrently — TiledPixelBuffer registers
-        // with TileSwapManager in its ctor, so we don't want phantom buffers
-        // leaking. Use a small create-lock around the miss case.
         if (!_groupCaches.TryGetValue(group, out var cache))
         {
             lock (_groupCacheCreateLock)
@@ -369,44 +366,30 @@ internal sealed class LayerProjectionPlane : IDisposable
             }
         }
 
-        // Serialise per-cache state (TakeDirty/NoteRegionComposited) plus the
-        // dirty-region composite below. Different groups can still composite
-        // in parallel; only multiple workers targeting the same group serialise.
         lock (cache.SyncRoot)
         {
             cache.EnsureSize(_width, _height);
 
-            var dirty = cache.TakeDirty(requestedClip);
-            if (dirty.IsEmpty && !cache.Buffer.HasContentTiles(requestedClip))
-            {
-                cache.Invalidate(requestedClip);
-                dirty = cache.TakeDirty(requestedClip);
-            }
+            var clip = requestedClip.ClipTo(_width, _height);
+            if (clip.IsEmpty) return cache.Buffer;
 
-            if (!dirty.IsEmpty)
+            if (!cache.Buffer.HasContentTiles(clip))
             {
-                cache.Buffer.Clear(dirty);
-                var tempLen = dirty.Width * dirty.Height * 4;
+                cache.Buffer.Clear(clip);
+                var tempLen = clip.Width * clip.Height * 4;
                 var temp = ArrayPool<byte>.Shared.Rent(tempLen);
                 try
                 {
                     Array.Clear(temp, 0, tempLen);
 
-                    // Build the sibling stack ONCE — the row-by-row variant
-                    // allocated a fresh List<ProjectionSiblingItem> per row,
-                    // which was tens of thousands of allocations per group
-                    // composite on a large viewport.
                     var stack = BuildSiblingStack(group.Children);
                     fixed (byte* tempPtr = temp)
                     {
-                        CompositeSiblingStack(tempPtr, dirty.Width * 4, dirty.Width, dirty.Height,
-                            stack, 1.0, dirty, dirty.X, dirty.Y);
+                        CompositeSiblingStack(tempPtr, clip.Width * 4, clip.Width, clip.Height,
+                            stack, 1.0, clip, clip.X, clip.Y);
                     }
 
-                    cache.Buffer.CopyFromBgra(dirty, temp, dirty.Width * 4);
-                    // Always mark the dirty rect composited — even when every
-                    // pixel is transparent, the cache was cleared and merged.
-                    cache.NoteRegionComposited(dirty);
+                    cache.Buffer.CopyFromBgra(clip, temp, clip.Width * 4);
                 }
                 finally
                 {
@@ -420,10 +403,6 @@ internal sealed class LayerProjectionPlane : IDisposable
 
     internal sealed class GroupProjectionCache
     {
-        private bool _fullDirty = true;
-        private PixelRegion? _dirtyRegion;
-        private PixelRegion? _cleanRegion;
-
         /// <summary>
         /// Lock object exposed to <see cref="LayerProjectionPlane.GetGroupProjection"/>
         /// so parallel tile-composite workers serialise on this single cache
@@ -444,83 +423,23 @@ internal sealed class LayerProjectionPlane : IDisposable
 
             Buffer.Dispose();
             Buffer = new TiledPixelBuffer(width, height);
-            _fullDirty = true;
-            _dirtyRegion = null;
-            _cleanRegion = null;
         }
 
+        /// <summary>
+        /// Krita-aligned: clear the group projection buffer for the given region
+        /// (KisGroupLayer::original()->clear(rect)). Next time GetGroupProjection
+        /// needs this region, it will re-merge children because the buffer is empty.
+        /// </summary>
         public void Invalidate(PixelRegion? region)
         {
             if (region is null || region.Value.IsEmpty)
             {
-                _fullDirty = true;
-                _dirtyRegion = null;
-                _cleanRegion = null;
+                Buffer.Clear();
                 return;
             }
 
-            if (_fullDirty) return;
-            _cleanRegion = null;
-            _dirtyRegion = _dirtyRegion is { } existing ? existing.Union(region.Value) : region.Value;
+            Buffer.Clear(region.Value);
         }
-
-        public void NoteRegionComposited(PixelRegion filled)
-        {
-            if (filled.IsEmpty) return;
-            if (_fullDirty)
-            {
-                _fullDirty = false;
-                _cleanRegion = filled;
-                _dirtyRegion = null;
-                return;
-            }
-
-            _cleanRegion = _cleanRegion is { } existing ? existing.Union(filled) : filled;
-        }
-
-        public PixelRegion TakeDirty(PixelRegion requestedClip)
-        {
-            var clip = requestedClip.ClipTo(Buffer.Width, Buffer.Height);
-            if (clip.IsEmpty) return PixelRegion.Empty;
-
-            if (_fullDirty)
-                return clip;
-
-            // Pending dirty always wins over a previously composited clean region.
-            // Checking clean first caused rectangular holes when painting inside
-            // folders: the parent group cache was marked clean for a compositor
-            // tile while _dirtyRegion still covered the live stroke bbox.
-            if (_dirtyRegion is { } dirty)
-            {
-                var dirtyClip = dirty.Intersect(clip);
-                if (!dirtyClip.IsEmpty)
-                {
-                    if (dirtyClip.X == dirty.X && dirtyClip.Y == dirty.Y &&
-                        dirtyClip.Width == dirty.Width && dirtyClip.Height == dirty.Height)
-                        _dirtyRegion = null;
-                    return dirtyClip;
-                }
-            }
-
-            if (_cleanRegion is { } clean && IsRegionCovered(clip, clean))
-                return PixelRegion.Empty;
-
-            if (_dirtyRegion is null)
-                return clip;
-
-            return PixelRegion.Empty;
-        }
-
-        public void FlushFullDirty()
-        {
-            _fullDirty = false;
-            _dirtyRegion = null;
-            _cleanRegion = null;
-        }
-
-        private static bool IsRegionCovered(PixelRegion clip, PixelRegion clean)
-            => clip.X >= clean.X && clip.Y >= clean.Y
-               && clip.Right <= clean.Right && clip.Bottom <= clean.Bottom;
     }
 }
 

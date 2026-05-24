@@ -354,6 +354,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         var pickupSampler = tx.PickupSampler;
         var pickupTiles = tx.PickupTiles;
 
+        _brushEngine.CanvasZoom = tx.Ctx.Viewport?.Zoom ?? 1.0;
         var dirty = _brushEngine.RasterizeSegments(tx.Layer, tx.Brush, samples, startSegmentIndex, segmentCount,
             pickupSampler, pickupTiles);
         RenderTelemetry.RecordBrush(ElapsedMs(started), _brushEngine.LastStats.Path, _brushEngine.LastStats.StampCount, _brushEngine.LastStats.CachedDabCount);
