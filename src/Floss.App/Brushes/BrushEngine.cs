@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
 using Avalonia.Media;
 using Floss.App.Document;
 using Floss.App.Input;
@@ -1135,24 +1136,50 @@ public sealed class BrushEngine : IDisposable
 
             var ptr = (byte*)_scratch.GetPixels().ToPointer();
             int stride = _scratch.RowBytes;
-            for (int sy = 0; sy < h; sy++)
+            if ((long)w * h >= 16 * 1024 && Environment.ProcessorCount > 1)
             {
-                int cy = dirty.Y + sy;
-                byte* row = ptr + sy * stride;
-                for (int sx = 0; sx < w; sx++)
+                Parallel.For(0, h, sy =>
                 {
-                    byte a = row[sx * 4 + 3];
-                    if (a == 0) continue;
+                    int cy = dirty.Y + sy;
+                    byte* row = ptr + sy * stride;
                     float noise;
-                    if (texPx != null)
+                    for (int sx = 0; sx < w; sx++)
                     {
-                        int tx = (dirty.X + sx) % texW; if (tx < 0) tx += texW;
-                        int ty = cy % texH; if (ty < 0) ty += texH;
-                        noise = texPx[ty * texStride + tx] / 255.0f;
+                        byte a = row[sx * 4 + 3];
+                        if (a == 0) continue;
+                        if (texPx != null)
+                        {
+                            int tx = (dirty.X + sx) % texW; if (tx < 0) tx += texW;
+                            int ty = cy % texH; if (ty < 0) ty += texH;
+                            noise = texPx[ty * texStride + tx] / 255.0f;
+                        }
+                        else
+                            noise = GrainNoise(dirty.X + sx, cy);
+                        row[sx * 4 + 3] = (byte)(a * (1f - grain + noise * grain) + 0.5f);
                     }
-                    else
-                        noise = GrainNoise(dirty.X + sx, cy);
-                    row[sx * 4 + 3] = (byte)(a * (1f - grain + noise * grain) + 0.5f);
+                });
+            }
+            else
+            {
+                for (int sy = 0; sy < h; sy++)
+                {
+                    int cy = dirty.Y + sy;
+                    byte* row = ptr + sy * stride;
+                    float noise;
+                    for (int sx = 0; sx < w; sx++)
+                    {
+                        byte a = row[sx * 4 + 3];
+                        if (a == 0) continue;
+                        if (texPx != null)
+                        {
+                            int tx = (dirty.X + sx) % texW; if (tx < 0) tx += texW;
+                            int ty = cy % texH; if (ty < 0) ty += texH;
+                            noise = texPx[ty * texStride + tx] / 255.0f;
+                        }
+                        else
+                            noise = GrainNoise(dirty.X + sx, cy);
+                        row[sx * 4 + 3] = (byte)(a * (1f - grain + noise * grain) + 0.5f);
+                    }
                 }
             }
         }
@@ -3268,41 +3295,83 @@ public sealed class BrushEngine : IDisposable
         var lastTileX = FloorDiv(region.Right - 1, ts);
         var lastTileY = FloorDiv(region.Bottom - 1, ts);
 
-        for (var ty = firstTileY; ty <= lastTileY; ty++)
+        var tileCount = (lastTileY - firstTileY + 1) * (lastTileX - firstTileX + 1);
+        if (tileCount >= 16 && Environment.ProcessorCount > 1)
         {
-            var tilePixY = ty * ts;
-            var pyMin = Math.Max(region.Y, tilePixY);
-            var pyMax = Math.Min(region.Bottom, tilePixY + ts);
-            if (pyMin >= pyMax) continue;
-
-            for (var tx = firstTileX; tx <= lastTileX; tx++)
+            Parallel.For(firstTileY, lastTileY + 1, ty =>
             {
-                var tilePixX = tx * ts;
-                var pxMin = Math.Max(region.X, tilePixX);
-                var pxMax = Math.Min(region.Right, tilePixX + ts);
-                if (pxMin >= pxMax) continue;
+                var tilePixY = ty * ts;
+                var pyMin = Math.Max(region.Y, tilePixY);
+                var pyMax = Math.Min(region.Bottom, tilePixY + ts);
+                if (pyMin >= pyMax) return;
 
-                var byteCount = (pxMax - pxMin) * 4;
-                var tile = tileReader(tx, ty);
-
-                if (tile == null)
+                for (var tx = firstTileX; tx <= lastTileX; tx++)
                 {
-                    // Tile was transparent at capture time — zero-fill the buffer slice.
-                    for (var py = pyMin; py < pyMax; py++)
+                    var tilePixX = tx * ts;
+                    var pxMin = Math.Max(region.X, tilePixX);
+                    var pxMax = Math.Min(region.Right, tilePixX + ts);
+                    if (pxMin >= pxMax) continue;
+                    var byteCount = (pxMax - pxMin) * 4;
+                    var tile = tileReader(tx, ty);
+
+                    if (tile == null)
                     {
-                        var bufOffset = (py - region.Y) * stride + (pxMin - region.X) * 4;
-                        Array.Clear(buffer, bufOffset, byteCount);
+                        for (var py = pyMin; py < pyMax; py++)
+                        {
+                            var bufOffset = (py - region.Y) * stride + (pxMin - region.X) * 4;
+                            Array.Clear(buffer, bufOffset, byteCount);
+                        }
+                    }
+                    else
+                    {
+                        for (var py = pyMin; py < pyMax; py++)
+                        {
+                            var tileLocalY = py - tilePixY;
+                            var tileLocalX = pxMin - tilePixX;
+                            var srcOffset = tileLocalY * tileRowBytes + tileLocalX * 4;
+                            var bufOffset = (py - region.Y) * stride + (pxMin - region.X) * 4;
+                            Buffer.BlockCopy(tile, srcOffset, buffer, bufOffset, byteCount);
+                        }
                     }
                 }
-                else
+            });
+        }
+        else
+        {
+            for (var ty = firstTileY; ty <= lastTileY; ty++)
+            {
+                var tilePixY = ty * ts;
+                var pyMin = Math.Max(region.Y, tilePixY);
+                var pyMax = Math.Min(region.Bottom, tilePixY + ts);
+                if (pyMin >= pyMax) continue;
+
+                for (var tx = firstTileX; tx <= lastTileX; tx++)
                 {
-                    for (var py = pyMin; py < pyMax; py++)
+                    var tilePixX = tx * ts;
+                    var pxMin = Math.Max(region.X, tilePixX);
+                    var pxMax = Math.Min(region.Right, tilePixX + ts);
+                    if (pxMin >= pxMax) continue;
+                    var byteCount = (pxMax - pxMin) * 4;
+                    var tile = tileReader(tx, ty);
+
+                    if (tile == null)
                     {
-                        var tileLocalY = py - tilePixY;
-                        var tileLocalX = pxMin - tilePixX;
-                        var srcOffset = tileLocalY * tileRowBytes + tileLocalX * 4;
-                        var bufOffset = (py - region.Y) * stride + (pxMin - region.X) * 4;
-                        Buffer.BlockCopy(tile, srcOffset, buffer, bufOffset, byteCount);
+                        for (var py = pyMin; py < pyMax; py++)
+                        {
+                            var bufOffset = (py - region.Y) * stride + (pxMin - region.X) * 4;
+                            Array.Clear(buffer, bufOffset, byteCount);
+                        }
+                    }
+                    else
+                    {
+                        for (var py = pyMin; py < pyMax; py++)
+                        {
+                            var tileLocalY = py - tilePixY;
+                            var tileLocalX = pxMin - tilePixX;
+                            var srcOffset = tileLocalY * tileRowBytes + tileLocalX * 4;
+                            var bufOffset = (py - region.Y) * stride + (pxMin - region.X) * 4;
+                            Buffer.BlockCopy(tile, srcOffset, buffer, bufOffset, byteCount);
+                        }
                     }
                 }
             }
@@ -3484,7 +3553,8 @@ public sealed class BrushEngine : IDisposable
         var table = new float[w * h];
         if (texPx != null)
         {
-            for (int y = 0; y < h; y++)
+            Parallel.For(0, h, y =>
+            {
                 for (int x = 0; x < w; x++)
                 {
                     int px = region.X + x, py = region.Y + y;
@@ -3493,15 +3563,18 @@ public sealed class BrushEngine : IDisposable
                     float noise = texPx[gty * texStride + gtx] / 255.0f;
                     table[y * w + x] = 1f - brushGrain + noise * brushGrain;
                 }
+            });
         }
         else
         {
-            for (int y = 0; y < h; y++)
+            Parallel.For(0, h, y =>
+            {
                 for (int x = 0; x < w; x++)
                 {
                     float noise = GrainNoise(region.X + x, region.Y + y);
                     table[y * w + x] = 1f - brushGrain + noise * brushGrain;
                 }
+            });
         }
         return table;
     }

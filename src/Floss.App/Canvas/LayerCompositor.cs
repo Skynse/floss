@@ -244,6 +244,8 @@ public sealed class LayerCompositor : IDisposable
         }
     }
 
+    private static readonly HashSet<(int X, int Y, int Lod)> _snapshotLookup = new(768);
+
     private bool HasFinerLodFallback(
         KeyValuePair<(int X, int Y, int Lod), WriteableBitmap>[] snapshot,
         int tx, int ty,
@@ -254,6 +256,10 @@ public sealed class LayerCompositor : IDisposable
         var tileTop = ty * stride;
         var tileRight = Math.Min(tileLeft + stride, _width);
         var tileBottom = Math.Min(tileTop + stride, _height);
+
+        _snapshotLookup.Clear();
+        for (var i = 0; i < snapshot.Length; i++)
+            _snapshotLookup.Add(snapshot[i].Key);
 
         // Require a full cover of finer-LOD tiles — a single overlapping tile
         // is not enough and produced patchwork holes during LOD transitions.
@@ -269,7 +275,7 @@ public sealed class LayerCompositor : IDisposable
             {
                 for (var ftx = firstTX; ftx <= lastTX; ftx++)
                 {
-                    if (!SnapshotHasReadyTile(snapshot, ftx, fty, finerLod))
+                    if (!_snapshotLookup.Contains((ftx, fty, finerLod)))
                     {
                         complete = false;
                         break;
