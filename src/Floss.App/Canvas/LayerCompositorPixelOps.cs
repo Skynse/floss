@@ -932,84 +932,65 @@ internal static class LayerCompositorPixelOps
         double srcR, double srcG, double srcB,
         int mode)
     {
-        var (dstH, dstS, dstL) = RgbToHsl(dstR, dstG, dstB);
-        var (srcH, srcS, srcL) = RgbToHsl(srcR, srcG, srcB);
-
-        double outH, outS, outL;
-
         switch (mode)
         {
-            case 0:
-                outH = srcS == 0 ? dstH : srcH;
-                outS = dstS;
-                outL = dstL;
-                break;
-            case 1:
-                outH = dstH;
-                outS = srcS;
-                outL = dstL;
-                break;
-            case 2:
-                outH = srcH;
-                outS = srcS;
-                outL = dstL;
-                break;
-            default:
-                outH = dstH;
-                outS = dstS;
-                outL = srcL;
-                break;
+            case 0: // Hue: src hue, dst saturation+luminosity
+                { var (r, g, b) = SvgSetSat(srcR, srcG, srcB, SvgSat(dstR, dstG, dstB)); return SvgSetLum(r, g, b, SvgLum(dstR, dstG, dstB)); }
+            case 1: // Saturation: src saturation, dst hue+luminosity
+                { var (r, g, b) = SvgSetSat(dstR, dstG, dstB, SvgSat(srcR, srcG, srcB)); return SvgSetLum(r, g, b, SvgLum(dstR, dstG, dstB)); }
+            case 2: // Color: src hue+saturation, dst luminosity
+                return SvgSetLum(srcR, srcG, srcB, SvgLum(dstR, dstG, dstB));
+            default: // Luminosity: src luminosity, dst hue+saturation
+                return SvgSetLum(dstR, dstG, dstB, SvgLum(srcR, srcG, srcB));
         }
-
-        return HslToRgb(outH, outS, outL);
     }
 
-    internal static (double h, double s, double l) RgbToHsl(double r, double g, double b)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static double SvgLum(double r, double g, double b)
+        => 0.3 * r + 0.59 * g + 0.11 * b;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static double SvgSat(double r, double g, double b)
+        => Math.Max(r, Math.Max(g, b)) - Math.Min(r, Math.Min(g, b));
+
+    private static (double r, double g, double b) SvgSetSat(double r, double g, double b, double sat)
     {
-        var max = Math.Max(r, Math.Max(g, b));
-        var min = Math.Min(r, Math.Min(g, b));
-        var l = (max + min) / 2.0;
-
-        if (max == min)
-            return (0, 0, l);
-
-        var d = max - min;
-        var s = l > 0.5 ? d / (2.0 - max - min) : d / (max + min);
-
-        double h;
-        if (max == r)
-            h = (g - b) / d + (g < b ? 6.0 : 0.0);
-        else if (max == g)
-            h = (b - r) / d + 2.0;
-        else
-            h = (r - g) / d + 4.0;
-        h /= 6.0;
-
-        return (h, s, l);
-    }
-
-    internal static (double r, double g, double b) HslToRgb(double h, double s, double l)
-    {
-        if (s == 0)
-            return (l, l, l);
-
-        double HueToRgb(double p, double q, double t)
+        double min, mid, max;
+        int minCh, midCh, maxCh;
+        if (r <= g)
         {
-            if (t < 0) t += 1;
-            if (t > 1) t -= 1;
-            if (t < 1.0 / 6.0) return p + (q - p) * 6.0 * t;
-            if (t < 1.0 / 2.0) return q;
-            if (t < 2.0 / 3.0) return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
-            return p;
+            if (r <= b) { min = r; minCh = 0; if (g <= b) { mid = g; midCh = 1; max = b; maxCh = 2; } else { mid = b; midCh = 2; max = g; maxCh = 1; } }
+            else { min = b; minCh = 2; mid = r; midCh = 0; max = g; maxCh = 1; }
+        }
+        else
+        {
+            if (g <= b) { min = g; minCh = 1; if (r <= b) { mid = r; midCh = 0; max = b; maxCh = 2; } else { mid = b; midCh = 2; max = r; maxCh = 0; } }
+            else { min = b; minCh = 2; mid = g; midCh = 1; max = r; maxCh = 0; }
         }
 
-        var q = l < 0.5 ? l * (1.0 + s) : l + s - l * s;
-        var p = 2.0 * l - q;
+        double nMid, nMax;
+        if (max > min) { nMid = ((mid - min) * sat) / (max - min); nMax = sat; }
+        else { nMid = 0; nMax = 0; }
 
-        return (
-            HueToRgb(p, q, h + 1.0 / 3.0),
-            HueToRgb(p, q, h),
-            HueToRgb(p, q, h - 1.0 / 3.0)
-        );
+        double nr = r, ng = g, nb = b;
+        void Set(int ch, double v) { if (ch == 0) nr = v; else if (ch == 1) ng = v; else nb = v; }
+        Set(minCh, 0); Set(midCh, nMid); Set(maxCh, nMax);
+        return (nr, ng, nb);
+    }
+
+    private static (double r, double g, double b) SvgClipColor(double r, double g, double b)
+    {
+        double lum = SvgLum(r, g, b);
+        double n = Math.Min(r, Math.Min(g, b));
+        double x = Math.Max(r, Math.Max(g, b));
+        if (n < 0) { r = lum + ((r - lum) * lum) / (lum - n); g = lum + ((g - lum) * lum) / (lum - n); b = lum + ((b - lum) * lum) / (lum - n); }
+        if (x > 1) { r = lum + ((r - lum) * (1 - lum)) / (x - lum); g = lum + ((g - lum) * (1 - lum)) / (x - lum); b = lum + ((b - lum) * (1 - lum)) / (x - lum); }
+        return (r, g, b);
+    }
+
+    private static (double r, double g, double b) SvgSetLum(double r, double g, double b, double lum)
+    {
+        double d = lum - SvgLum(r, g, b);
+        return SvgClipColor(r + d, g + d, b + d);
     }
 }

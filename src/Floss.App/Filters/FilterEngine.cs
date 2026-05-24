@@ -1,5 +1,7 @@
 using System;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using SkiaSharp;
 using Floss.App.Document;
 using Floss.App.Tools;
@@ -21,92 +23,70 @@ public static class FilterEngine
         var orig = layer.CapturePixels();
         var result = new byte[orig.Length];
 
-        // 1. Pre-calculate values to avoid doing it inside the loop
-        float cx = w / 2f;
-        float cy = h / 2f;
-        float maxDist = (float)Math.Sqrt(cx * cx + cy * cy);
-
-        float latShiftX = 0f;
-        float latShiftY = 0f;
-
-        if (!is_radial)
+        if (is_radial)
         {
-            // Convert angle from degrees to radians for Math.Sin/Cos
-            float rad = angle * (float)(Math.PI / 180.0);
-            latShiftX = (float)Math.Cos(rad) * intensity;
-            latShiftY = (float)Math.Sin(rad) * intensity;
-        }
-
-        for (var y = 0; y < h; y++)
-        {
-            for (var x = 0; x < w; x++)
+            float cx = w / 2f;
+            float cy = h / 2f;
+            float scale = intensity / MathF.Sqrt(cx * cx + cy * cy);
+            Parallel.For(0, h, y =>
             {
-                var i = (y * w + x) * 4;
-
-                if (sel != null && sel.HasSelection && !sel.IsSelected(x, y))
+                for (var x = 0; x < w; x++)
                 {
-                    result[i] = orig[i];         // B
-                    result[i + 1] = orig[i + 1]; // G
-                    result[i + 2] = orig[i + 2]; // R
-                    result[i + 3] = orig[i + 3]; // A
-                    continue;
-                }
-
-                float shiftXRed, shiftYRed, shiftXBlue, shiftYBlue;
-
-                if (is_radial)
-                {
-                    // Calculate distance from center
-                    float dx = x - cx;
-                    float dy = y - cy;
-                    float dist = (float)Math.Sqrt(dx * dx + dy * dy);
-
-                    if (dist == 0)
+                    var i = (y * w + x) * 4;
+                    if (sel != null && sel.HasSelection && !sel.IsSelected(x, y))
                     {
-                        shiftXRed = shiftYRed = shiftXBlue = shiftYBlue = 0;
+                        result[i] = orig[i];
+                        result[i + 1] = orig[i + 1];
+                        result[i + 2] = orig[i + 2];
+                        result[i + 3] = orig[i + 3];
+                        continue;
                     }
-                    else
-                    {
-                        // Scale intensity based on distance from center
-                        float currentIntensity = intensity * (dist / maxDist);
 
-                        // Normalize the direction vector
-                        float ux = dx / dist;
-                        float uy = dy / dist;
+                    var shiftX = (x - cx) * scale;
+                    var shiftY = (y - cy) * scale;
 
-                        shiftXRed = ux * currentIntensity;
-                        shiftYRed = uy * currentIntensity;
+                    int rx = Math.Clamp((int)(x + shiftX), 0, w - 1);
+                    int ry = Math.Clamp((int)(y + shiftY), 0, h - 1);
+                    int bx = Math.Clamp((int)(x - shiftX), 0, w - 1);
+                    int by = Math.Clamp((int)(y - shiftY), 0, h - 1);
 
-                        // Blue shifts in the exact opposite direction
-                        shiftXBlue = -shiftXRed;
-                        shiftYBlue = -shiftYRed;
-                    }
+                    result[i] = orig[((by * w + bx) * 4)];
+                    result[i + 1] = orig[i + 1];
+                    result[i + 2] = orig[((ry * w + rx) * 4) + 2];
+                    result[i + 3] = orig[i + 3];
                 }
-                else
+            });
+        }
+        else
+        {
+            float rad = angle * MathF.PI / 180f;
+            var latShiftX = MathF.Cos(rad) * intensity;
+            var latShiftY = MathF.Sin(rad) * intensity;
+            Parallel.For(0, h, y =>
+            {
+                for (var x = 0; x < w; x++)
                 {
-                    // Lateral shift uses the pre-calculated angle components
-                    shiftXRed = latShiftX;
-                    shiftYRed = latShiftY;
-                    shiftXBlue = -latShiftX;
-                    shiftYBlue = -latShiftY;
+                    var i = (y * w + x) * 4;
+                    if (sel != null && sel.HasSelection && !sel.IsSelected(x, y))
+                    {
+                        result[i] = orig[i];
+                        result[i + 1] = orig[i + 1];
+                        result[i + 2] = orig[i + 2];
+                        result[i + 3] = orig[i + 3];
+                        continue;
+                    }
+
+                    int rx = Math.Clamp((int)(x + latShiftX), 0, w - 1);
+                    int ry = Math.Clamp((int)(y + latShiftY), 0, h - 1);
+                    int bx = Math.Clamp((int)(x - latShiftX), 0, w - 1);
+                    int by = Math.Clamp((int)(y - latShiftY), 0, h - 1);
+
+                    result[i] = orig[((by * w + bx) * 4)];
+                    result[i + 1] = orig[i + 1];
+                    result[i + 2] = orig[((ry * w + rx) * 4) + 2];
+                    result[i + 3] = orig[i + 3];
                 }
-
-                // 2. Apply offsets and clamp to image boundaries
-                int rx = Math.Clamp((int)(x + shiftXRed), 0, w - 1);
-                int ry = Math.Clamp((int)(y + shiftYRed), 0, h - 1);
-
-                int bx = Math.Clamp((int)(x + shiftXBlue), 0, w - 1);
-                int by = Math.Clamp((int)(y + shiftYBlue), 0, h - 1);
-
-                int iRed = (ry * w + rx) * 4;
-                int iBlue = (by * w + bx) * 4;
-
-                // 3. Construct the new pixel (BGRA format)
-                result[i] = orig[iBlue];           // B from shifted coordinate
-                result[i + 1] = orig[i + 1];       // G from current coordinate (anchored)
-                result[i + 2] = orig[iRed + 2];    // R from shifted coordinate
-                result[i + 3] = orig[i + 3];       // A from current coordinate
-            }
+            });
         }
 
         WriteBytes(layer, result, w, h);
@@ -127,7 +107,7 @@ public static class FilterEngine
         var blurred = new byte[w * h * 4];
         Marshal.Copy(blurredBmp.GetPixels(), blurred, 0, blurred.Length);
 
-        for (var y = 0; y < h; y++)
+        Parallel.For(0, h, y =>
         {
             for (var x = 0; x < w; x++)
             {
@@ -139,7 +119,7 @@ public static class FilterEngine
                     orig[i + c] = (byte)Math.Clamp(v, 0, 255);
                 }
             }
-        }
+        });
 
         WriteBytes(layer, orig, w, h);
     }
@@ -149,30 +129,39 @@ public static class FilterEngine
         var w = layer.Width;
         var h = layer.Height;
         var pixels = layer.CapturePixels();
-        var rng = new Random();
         var strength = (int)(amount * 255);
+        var seed = Environment.TickCount;
 
-        for (var y = 0; y < h; y++)
+        if (monochromatic)
         {
-            for (var x = 0; x < w; x++)
+            Parallel.For(0, h, y =>
             {
-                var i = (y * w + x) * 4;
-                if (pixels[i + 3] == 0) continue;
-                if (sel != null && sel.HasSelection && !sel.IsSelected(x, y)) continue;
-                if (monochromatic)
+                for (var x = 0; x < w; x++)
                 {
-                    var n = rng.Next(-strength, strength + 1);
+                    var i = (y * w + x) * 4;
+                    if (pixels[i + 3] == 0) continue;
+                    if (sel != null && sel.HasSelection && !sel.IsSelected(x, y)) continue;
+                    var n = (int)((FastHashNoise01(x, y, seed) * 2f - 1f) * strength);
                     pixels[i + 0] = (byte)Math.Clamp(pixels[i + 0] + n, 0, 255);
                     pixels[i + 1] = (byte)Math.Clamp(pixels[i + 1] + n, 0, 255);
                     pixels[i + 2] = (byte)Math.Clamp(pixels[i + 2] + n, 0, 255);
                 }
-                else
+            });
+        }
+        else
+        {
+            Parallel.For(0, h, y =>
+            {
+                for (var x = 0; x < w; x++)
                 {
-                    pixels[i + 0] = (byte)Math.Clamp(pixels[i + 0] + rng.Next(-strength, strength + 1), 0, 255);
-                    pixels[i + 1] = (byte)Math.Clamp(pixels[i + 1] + rng.Next(-strength, strength + 1), 0, 255);
-                    pixels[i + 2] = (byte)Math.Clamp(pixels[i + 2] + rng.Next(-strength, strength + 1), 0, 255);
+                    var i = (y * w + x) * 4;
+                    if (pixels[i + 3] == 0) continue;
+                    if (sel != null && sel.HasSelection && !sel.IsSelected(x, y)) continue;
+                    pixels[i + 0] = (byte)Math.Clamp(pixels[i + 0] + (int)((FastHashNoise01(x, y, seed | 0) * 2f - 1f) * strength), 0, 255);
+                    pixels[i + 1] = (byte)Math.Clamp(pixels[i + 1] + (int)((FastHashNoise01(x, y, seed | 1) * 2f - 1f) * strength), 0, 255);
+                    pixels[i + 2] = (byte)Math.Clamp(pixels[i + 2] + (int)((FastHashNoise01(x, y, seed | 2) * 2f - 1f) * strength), 0, 255);
                 }
-            }
+            });
         }
 
         WriteBytes(layer, pixels, w, h);
@@ -369,7 +358,7 @@ public static class FilterEngine
         var glow = new byte[pixels.Length];
         Marshal.Copy(glowBmp.GetPixels(), glow, 0, glow.Length);
 
-        for (var y = 0; y < h; y++)
+        Parallel.For(0, h, y =>
         {
             for (var x = 0; x < w; x++)
             {
@@ -380,7 +369,7 @@ public static class FilterEngine
                 pixels[i + 1] = ClampByte(pixels[i + 1] + glow[i + 1] * intensity);
                 pixels[i + 2] = ClampByte(pixels[i + 2] + glow[i + 2] * intensity);
             }
-        }
+        });
 
         WriteBytes(layer, pixels, w, h);
     }
@@ -397,31 +386,144 @@ public static class FilterEngine
         var dy = MathF.Sin(rad);
         var half = length * 0.5f;
 
-        for (var y = 0; y < h; y++)
+        if (MathF.Abs(dy) < 0.005f)
         {
-            for (var x = 0; x < w; x++)
+            var lx = (int)MathF.Round(dx);
+            if (lx == 0) lx = 1;
+            var hx = half;
+            if (sel == null || !sel.HasSelection)
             {
-                if (sel != null && sel.HasSelection && !sel.IsSelected(x, y)) continue;
-                long sumB = 0, sumG = 0, sumR = 0, sumA = 0;
-                var count = 0;
-                for (var step = 0; step < length; step++)
+                var count = length;
+                Parallel.For(0, h, y =>
                 {
-                    var sample = step - half;
-                    var sx = Math.Clamp((int)MathF.Round(x + dx * sample), 0, w - 1);
-                    var sy = Math.Clamp((int)MathF.Round(y + dy * sample), 0, h - 1);
-                    var si = (sy * w + sx) * 4;
-                    sumB += source[si + 0];
-                    sumG += source[si + 1];
-                    sumR += source[si + 2];
-                    sumA += source[si + 3];
-                    count++;
-                }
-                var i = (y * w + x) * 4;
-                result[i + 0] = (byte)(sumB / count);
-                result[i + 1] = (byte)(sumG / count);
-                result[i + 2] = (byte)(sumR / count);
-                result[i + 3] = (byte)(sumA / count);
+                    long sumB = 0, sumG = 0, sumR = 0, sumA = 0;
+                    for (int k = 0; k < length; k++)
+                    {
+                        var sx = Math.Clamp((int)(k - hx) * Math.Sign(lx), 0, w - 1);
+                        var si = (y * w + sx) * 4;
+                        sumB += source[si + 0]; sumG += source[si + 1]; sumR += source[si + 2]; sumA += source[si + 3];
+                    }
+                    var d0 = (y * w) * 4;
+                    result[d0 + 0] = (byte)(sumB / count); result[d0 + 1] = (byte)(sumG / count);
+                    result[d0 + 2] = (byte)(sumR / count); result[d0 + 3] = (byte)(sumA / count);
+
+                    for (var x = 1; x < w; x++)
+                    {
+                        var remX = Math.Clamp(x - 1 - (int)hx * Math.Sign(lx), 0, w - 1);
+                        var addX = Math.Clamp(x + (int)hx * Math.Sign(lx), 0, w - 1);
+                        var ri = (y * w + remX) * 4;
+                        var ai = (y * w + addX) * 4;
+                        sumB += source[ai + 0] - source[ri + 0];
+                        sumG += source[ai + 1] - source[ri + 1];
+                        sumR += source[ai + 2] - source[ri + 2];
+                        sumA += source[ai + 3] - source[ri + 3];
+                        var di = (y * w + x) * 4;
+                        result[di + 0] = (byte)(sumB / count); result[di + 1] = (byte)(sumG / count);
+                        result[di + 2] = (byte)(sumR / count); result[di + 3] = (byte)(sumA / count);
+                    }
+                });
             }
+            else
+            {
+                for (var y = 0; y < h; y++)
+                    for (var x = 0; x < w; x++)
+                    {
+                        if (!sel.IsSelected(x, y)) continue;
+                        long sumB = 0, sumG = 0, sumR = 0, sumA = 0;
+                        for (var step = 0; step < length; step++)
+                        {
+                            var sx = Math.Clamp((int)MathF.Round(x + dx * (step - half)), 0, w - 1);
+                            var si = (y * w + sx) * 4;
+                            sumB += source[si + 0]; sumG += source[si + 1];
+                            sumR += source[si + 2]; sumA += source[si + 3];
+                        }
+                        var i = (y * w + x) * 4;
+                        result[i + 0] = (byte)(sumB / length); result[i + 1] = (byte)(sumG / length);
+                        result[i + 2] = (byte)(sumR / length); result[i + 3] = (byte)(sumA / length);
+                    }
+            }
+        }
+        else if (MathF.Abs(dx) < 0.005f)
+        {
+            var hy = half;
+            if (sel == null || !sel.HasSelection)
+            {
+                var count = length;
+                for (var x = 0; x < w; x++)
+                {
+                    long sumB = 0, sumG = 0, sumR = 0, sumA = 0;
+                    for (int k = 0; k < length; k++)
+                    {
+                        var sy = Math.Clamp((int)(k - hy) * Math.Sign(dy), 0, h - 1);
+                        var si = (sy * w + x) * 4;
+                        sumB += source[si + 0]; sumG += source[si + 1]; sumR += source[si + 2]; sumA += source[si + 3];
+                    }
+                    var d0 = x * 4;
+                    result[d0 + 0] = (byte)(sumB / count); result[d0 + 1] = (byte)(sumG / count);
+                    result[d0 + 2] = (byte)(sumR / count); result[d0 + 3] = (byte)(sumA / count);
+
+                    for (var y = 1; y < h; y++)
+                    {
+                        var remY = Math.Clamp(y - 1 - (int)hy * Math.Sign(dy), 0, h - 1);
+                        var addY = Math.Clamp(y + (int)hy * Math.Sign(dy), 0, h - 1);
+                        var ri = (remY * w + x) * 4;
+                        var ai = (addY * w + x) * 4;
+                        sumB += source[ai + 0] - source[ri + 0];
+                        sumG += source[ai + 1] - source[ri + 1];
+                        sumR += source[ai + 2] - source[ri + 2];
+                        sumA += source[ai + 3] - source[ri + 3];
+                        var di = (y * w + x) * 4;
+                        result[di + 0] = (byte)(sumB / count); result[di + 1] = (byte)(sumG / count);
+                        result[di + 2] = (byte)(sumR / count); result[di + 3] = (byte)(sumA / count);
+                    }
+                }
+            }
+            else
+            {
+                for (var y = 0; y < h; y++)
+                    for (var x = 0; x < w; x++)
+                    {
+                        if (!sel.IsSelected(x, y)) continue;
+                        long sumB = 0, sumG = 0, sumR = 0, sumA = 0;
+                        for (var step = 0; step < length; step++)
+                        {
+                            var sy = Math.Clamp((int)MathF.Round(y + dy * (step - half)), 0, h - 1);
+                            var si = (sy * w + x) * 4;
+                            sumB += source[si + 0]; sumG += source[si + 1];
+                            sumR += source[si + 2]; sumA += source[si + 3];
+                        }
+                        var i = (y * w + x) * 4;
+                        result[i + 0] = (byte)(sumB / length); result[i + 1] = (byte)(sumG / length);
+                        result[i + 2] = (byte)(sumR / length); result[i + 3] = (byte)(sumA / length);
+                    }
+            }
+        }
+        else
+        {
+            var stride = Math.Max(1, length / 12);
+            var steps = length / stride;
+            Parallel.For(0, h, y =>
+            {
+                for (var x = 0; x < w; x++)
+                {
+                    if (sel != null && sel.HasSelection && !sel.IsSelected(x, y)) continue;
+                    long sumB = 0, sumG = 0, sumR = 0, sumA = 0;
+                    var count = 0;
+                    for (var step = 0; step < length; step += stride)
+                    {
+                        var sample = step - half;
+                        var sx = Math.Clamp((int)MathF.Round(x + dx * sample), 0, w - 1);
+                        var sy = Math.Clamp((int)MathF.Round(y + dy * sample), 0, h - 1);
+                        var si = (sy * w + sx) * 4;
+                        sumB += source[si + 0]; sumG += source[si + 1];
+                        sumR += source[si + 2]; sumA += source[si + 3];
+                        count++;
+                    }
+                    var i = (y * w + x) * 4;
+                    result[i + 0] = (byte)(sumB / count); result[i + 1] = (byte)(sumG / count);
+                    result[i + 2] = (byte)(sumR / count); result[i + 3] = (byte)(sumA / count);
+                }
+            });
         }
 
         WriteBytes(layer, result, w, h);
@@ -448,7 +550,7 @@ public static class FilterEngine
         var h = layer.Height;
         var pixels = layer.CapturePixels();
 
-        for (var y = 0; y < h; y++)
+        Parallel.For(0, h, y =>
         {
             for (var x = 0; x < w; x++)
             {
@@ -462,7 +564,7 @@ public static class FilterEngine
                 pixels[i + 1] = lutG[g];
                 pixels[i + 2] = lutR[r];
             }
-        }
+        });
 
         WriteBytes(layer, pixels, w, h);
     }
@@ -481,7 +583,7 @@ public static class FilterEngine
         var h = layer.Height;
         var pixels = layer.CapturePixels();
 
-        for (var y = 0; y < h; y++)
+        Parallel.For(0, h, y =>
         {
             for (var x = 0; x < w; x++)
             {
@@ -493,7 +595,7 @@ public static class FilterEngine
                 pixels[i + 1] = g;
                 pixels[i + 2] = r;
             }
-        }
+        });
 
         WriteBytes(layer, pixels, w, h);
     }
@@ -505,41 +607,116 @@ public static class FilterEngine
         var source = layer.CapturePixels();
         var result = (byte[])source.Clone();
 
-        for (var y = 0; y < h; y++)
+        // Detect separable kernel: row vector [kr0,kr1,kr2] × col vector [kc0,kc1,kc2]
+        bool separable = false;
+        float kr0 = 0, kr1 = 0, kr2 = 0, kc0 = 0, kc1 = 0, kc2 = 0;
+        if (MathF.Abs(kernel[4]) > 0.0001f)
         {
-            for (var x = 0; x < w; x++)
+            float k00 = kernel[0], k01 = kernel[1], k02 = kernel[2];
+            float k10 = kernel[3], k11 = kernel[4], k12 = kernel[5];
+            float k20 = kernel[6], k21 = kernel[7], k22 = kernel[8];
+            kc0 = MathF.Sqrt(k00 > 0 ? k00 : -k00) * MathF.Sign(k00);
+            kc1 = MathF.Sqrt(k11 > 0 ? k11 : -k11) * MathF.Sign(k11);
+            kc2 = MathF.Sqrt(k22 > 0 ? k22 : -k22) * MathF.Sign(k22);
+            kr0 = k00 / (kc0 == 0 ? 1 : kc0);
+            kr1 = k11 / (kc1 == 0 ? 1 : kc1);
+            kr2 = k22 / (kc2 == 0 ? 1 : kc2);
+            float eps = 0.001f;
+            separable = MathF.Abs(kr0 * kc0 - k00) < eps && MathF.Abs(kr0 * kc1 - k01) < eps && MathF.Abs(kr0 * kc2 - k02) < eps
+                     && MathF.Abs(kr1 * kc0 - k10) < eps && MathF.Abs(kr1 * kc1 - k11) < eps && MathF.Abs(kr1 * kc2 - k12) < eps
+                     && MathF.Abs(kr2 * kc0 - k20) < eps && MathF.Abs(kr2 * kc1 - k21) < eps && MathF.Abs(kr2 * kc2 - k22) < eps;
+        }
+
+        if (separable)
+        {
+            // Two-pass separable convolution: horizontal then vertical
+            var temp = new float[w * h * 3];
+            Parallel.For(0, h, y =>
             {
-                if (sel != null && sel.HasSelection && !sel.IsSelected(x, y)) continue;
-                float b = bias, g = bias, r = bias;
-                var k = 0;
-                for (var oy = -1; oy <= 1; oy++)
+                for (var x = 0; x < w; x++)
                 {
-                    var sy = Math.Clamp(y + oy, 0, h - 1);
-                    for (var ox = -1; ox <= 1; ox++, k++)
+                    if (sel != null && sel.HasSelection && !sel.IsSelected(x, y)) continue;
+                    float b = 0, g = 0, r = 0;
+                    for (var ox = -1; ox <= 1; ox++)
                     {
                         var sx = Math.Clamp(x + ox, 0, w - 1);
-                        var si = (sy * w + sx) * 4;
-                        b += source[si + 0] * kernel[k];
-                        g += source[si + 1] * kernel[k];
-                        r += source[si + 2] * kernel[k];
+                        var si = (y * w + sx) * 4;
+                        var kw = ox == -1 ? kr0 : ox == 0 ? kr1 : kr2;
+                        b += source[si + 0] * kw;
+                        g += source[si + 1] * kw;
+                        r += source[si + 2] * kw;
+                    }
+                    var ti = (y * w + x) * 3;
+                    temp[ti] = b; temp[ti + 1] = g; temp[ti + 2] = r;
+                }
+            });
+
+            Parallel.For(0, h, y =>
+            {
+                for (var x = 0; x < w; x++)
+                {
+                    if (sel != null && sel.HasSelection && !sel.IsSelected(x, y)) continue;
+                    float b = bias, g = bias, r = bias;
+                    for (var oy = -1; oy <= 1; oy++)
+                    {
+                        var sy = Math.Clamp(y + oy, 0, h - 1);
+                        var ti = (sy * w + x) * 3;
+                        var kw = oy == -1 ? kc0 : oy == 0 ? kc1 : kc2;
+                        b += temp[ti] * kw;
+                        g += temp[ti + 1] * kw;
+                        r += temp[ti + 2] * kw;
+                    }
+                    var i = (y * w + x) * 4;
+                    if (grayscale)
+                    {
+                        var v = ClampByte(0.2126f * r + 0.7152f * g + 0.0722f * b);
+                        result[i + 0] = v; result[i + 1] = v; result[i + 2] = v;
+                    }
+                    else
+                    {
+                        result[i + 0] = ClampByte(b);
+                        result[i + 1] = ClampByte(g);
+                        result[i + 2] = ClampByte(r);
                     }
                 }
+            });
+        }
+        else
+        {
+            Parallel.For(0, h, y =>
+            {
+                for (var x = 0; x < w; x++)
+                {
+                    if (sel != null && sel.HasSelection && !sel.IsSelected(x, y)) continue;
+                    float b = bias, g = bias, r = bias;
+                    var k = 0;
+                    for (var oy = -1; oy <= 1; oy++)
+                    {
+                        var sy = Math.Clamp(y + oy, 0, h - 1);
+                        for (var ox = -1; ox <= 1; ox++, k++)
+                        {
+                            var sx = Math.Clamp(x + ox, 0, w - 1);
+                            var si = (sy * w + sx) * 4;
+                            b += source[si + 0] * kernel[k];
+                            g += source[si + 1] * kernel[k];
+                            r += source[si + 2] * kernel[k];
+                        }
+                    }
 
-                var i = (y * w + x) * 4;
-                if (grayscale)
-                {
-                    var v = ClampByte(0.2126f * r + 0.7152f * g + 0.0722f * b);
-                    result[i + 0] = v;
-                    result[i + 1] = v;
-                    result[i + 2] = v;
+                    var i = (y * w + x) * 4;
+                    if (grayscale)
+                    {
+                        var v = ClampByte(0.2126f * r + 0.7152f * g + 0.0722f * b);
+                        result[i + 0] = v; result[i + 1] = v; result[i + 2] = v;
+                    }
+                    else
+                    {
+                        result[i + 0] = ClampByte(b);
+                        result[i + 1] = ClampByte(g);
+                        result[i + 2] = ClampByte(r);
+                    }
                 }
-                else
-                {
-                    result[i + 0] = ClampByte(b);
-                    result[i + 1] = ClampByte(g);
-                    result[i + 2] = ClampByte(r);
-                }
-            }
+            });
         }
 
         WriteBytes(layer, result, w, h);
@@ -589,6 +766,19 @@ public static class FilterEngine
 
     private static byte LerpByte(byte from, byte to, float amount)
         => ClampByte(from + (to - from) * Math.Clamp(amount, 0f, 1f));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static float FastHashNoise01(int x, int y, int seed)
+    {
+        unchecked
+        {
+            uint h = (uint)(x * 1619 + y * 31337 + seed * 8191);
+            h ^= h >> 17; h *= 0xbf324c81u;
+            h ^= h >> 13; h *= 0x9b2e1515u;
+            h ^= h >> 16;
+            return (h & 0xFFFF) / 65535.0f;
+        }
+    }
 
     private static float SmoothStep(float edge0, float edge1, float x)
     {

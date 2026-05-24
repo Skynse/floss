@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using Avalonia.Media;
 using Floss.App.Document;
 using Floss.App.Input;
@@ -39,6 +40,78 @@ public sealed class BrushEngine : IDisposable
     private const int InitialStampCapacity = 256;
     private const float MinStretchCarry = 0.02f;
     private const float MaxStretchCarry = 0.88f;
+
+    // Precomputed LUTs for sRGB gamma decode/encode and cube root to avoid
+    // MathF.Pow in the hot RgbToLCh/LChToRgb color mixing path.
+    private const int CsLutSize = 4096;
+    private static readonly float[] s_srgbToLinearLut = CreateSrgbToLinearLut(CsLutSize);
+    private static readonly float[] s_linearToSrgbLut = CreateLinearToSrgbLut(CsLutSize);
+    private static readonly float[] s_cubeRootLut = CreateCubeRootLut(CsLutSize);
+    private static readonly float[] s_cubeLut = CreateCubeLut(CsLutSize);
+
+    private static float[] CreateSrgbToLinearLut(int size)
+    {
+        var lut = new float[size];
+        float inv = 1f / (size - 1);
+        for (int i = 0; i < size; i++)
+        {
+            float x = i * inv;
+            lut[i] = x > 0.04045f ? MathF.Pow((x + 0.055f) / 1.055f, 2.4f) : x / 12.92f;
+        }
+        return lut;
+    }
+
+    private static float[] CreateLinearToSrgbLut(int size)
+    {
+        var lut = new float[size];
+        float inv = 1f / (size - 1);
+        for (int i = 0; i < size; i++)
+        {
+            float x = i * inv;
+            lut[i] = x > 0.0031308f ? 1.055f * MathF.Pow(x, 1f / 2.4f) - 0.055f : 12.92f * x;
+        }
+        return lut;
+    }
+
+    private static float[] CreateCubeRootLut(int size)
+    {
+        var lut = new float[size];
+        float inv = 1f / (size - 1);
+        for (int i = 0; i < size; i++)
+        {
+            float x = i * inv;
+            lut[i] = x > 0.008856f ? MathF.Pow(x, 1f / 3f) : 7.787f * x + 16f / 116f;
+        }
+        return lut;
+    }
+
+    private static float[] CreateCubeLut(int size)
+    {
+        var lut = new float[size];
+        float inv = 1f / (size - 1);
+        for (int i = 0; i < size; i++)
+        {
+            float x = i * inv;
+            lut[i] = x * x * x;
+        }
+        return lut;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static float SrgbToLinear(float x)
+        => x < 0f ? 0f : x >= 1f ? 1f : s_srgbToLinearLut[(int)(x * (CsLutSize - 1) + 0.5f)];
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static float LinearToSrgb(float x)
+        => x < 0f ? 0f : x >= 1f ? 1f : s_linearToSrgbLut[(int)(x * (CsLutSize - 1) + 0.5f)];
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static float FAST_Cbrt(float x)
+        => x < 0f ? 0f : x >= 1f ? 1f : s_cubeRootLut[(int)(x * (CsLutSize - 1) + 0.5f)];
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static float FAST_Cube(float x)
+        => x < 0f ? 0f : x >= 1f ? 1f : s_cubeLut[(int)(x * (CsLutSize - 1) + 0.5f)];
     private readonly object _gate = new();
     private readonly List<StampSample> _stamps = new(InitialStampCapacity);
     private readonly List<SKColor> _stampColors = new(InitialStampCapacity);
@@ -3173,29 +3246,26 @@ public sealed class BrushEngine : IDisposable
     // Simplified RGB <-> LCh conversion for perceptual mixing
     private static Vector3 RgbToLCh(float r, float g, float b)
     {
-        // RGB to XYZ (sRGB, D65)
         float xr = r / 255f;
         float xg = g / 255f;
         float xb = b / 255f;
 
-        float R = xr > 0.04045f ? MathF.Pow((xr + 0.055f) / 1.055f, 2.4f) : xr / 12.92f;
-        float G = xg > 0.04045f ? MathF.Pow((xg + 0.055f) / 1.055f, 2.4f) : xg / 12.92f;
-        float B = xb > 0.04045f ? MathF.Pow((xb + 0.055f) / 1.055f, 2.4f) : xb / 12.92f;
+        float R = SrgbToLinear(xr);
+        float G = SrgbToLinear(xg);
+        float B = SrgbToLinear(xb);
 
         float X = R * 0.4124564f + G * 0.3575761f + B * 0.1804375f;
         float Y = R * 0.2126729f + G * 0.7151522f + B * 0.0721750f;
         float Z = R * 0.0193339f + G * 0.1191920f + B * 0.9503041f;
 
-        // XYZ to LAB
-        float fx = X > 0.008856f ? MathF.Pow(X, 1f / 3f) : (7.787f * X + 16f / 116f);
-        float fy = Y > 0.008856f ? MathF.Pow(Y, 1f / 3f) : (7.787f * Y + 16f / 116f);
-        float fz = Z > 0.008856f ? MathF.Pow(Z, 1f / 3f) : (7.787f * Z + 16f / 116f);
+        float fx = FAST_Cbrt(X);
+        float fy = FAST_Cbrt(Y);
+        float fz = FAST_Cbrt(Z);
 
         float L = 116f * fy - 16f;
         float A = 500f * (fx - fy);
         float B_ = 200f * (fy - fz);
 
-        // LAB to LCh
         float C = MathF.Sqrt(A * A + B_ * B_);
         float H = MathF.Atan2(B_, A);
 
@@ -3208,27 +3278,24 @@ public sealed class BrushEngine : IDisposable
         float C = lch.Y;
         float H = lch.Z;
 
-        // LCh to LAB
         float A = C * MathF.Cos(H);
         float B_ = C * MathF.Sin(H);
 
-        // LAB to XYZ
         float fy = (L + 16f) / 116f;
         float fx = A / 500f + fy;
         float fz = fy - B_ / 200f;
 
-        float X = (fx > 0.206897f) ? fx * fx * fx : (fx - 16f / 116f) / 7.787f;
-        float Y = (fy > 0.206897f) ? fy * fy * fy : (fy - 16f / 116f) / 7.787f;
-        float Z = (fz > 0.206897f) ? fz * fz * fz : (fz - 16f / 116f) / 7.787f;
+        float X = FAST_Cube(fx);
+        float Y = FAST_Cube(fy);
+        float Z = FAST_Cube(fz);
 
-        // XYZ to RGB
-        float R = X * 3.2404542f + Y * -1.5371385f + Z * -0.4985314f;
-        float G = X * -0.9692660f + Y * 1.8760108f + Z * 0.0415560f;
-        float B = X * 0.0556434f + Y * -0.2040259f + Z * 1.0572252f;
+        float R_ = X * 3.2404542f + Y * -1.5371385f + Z * -0.4985314f;
+        float G_ = X * -0.9692660f + Y * 1.8760108f + Z * 0.0415560f;
+        float B__ = X * 0.0556434f + Y * -0.2040259f + Z * 1.0572252f;
 
-        float r = R > 0.0031308f ? (1.055f * MathF.Pow(R, 1f / 2.4f) - 0.055f) : (12.92f * R);
-        float g = G > 0.0031308f ? (1.055f * MathF.Pow(G, 1f / 2.4f) - 0.055f) : (12.92f * G);
-        float b = B > 0.0031308f ? (1.055f * MathF.Pow(B, 1f / 2.4f) - 0.055f) : (12.92f * B);
+        float r = LinearToSrgb(R_);
+        float g = LinearToSrgb(G_);
+        float b = LinearToSrgb(B__);
 
         return (r * 255f, g * 255f, b * 255f);
     }
