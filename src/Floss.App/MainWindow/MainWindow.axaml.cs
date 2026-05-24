@@ -2010,6 +2010,10 @@ public partial class MainWindow : Window, Tools.IViewportController
             _dockerDropIndicator = null;
         }
 
+        _dockerRows.Clear();
+        _dockerSections.Clear();
+        _dockerSectionColumns.Clear();
+
         // Rebuild left column
         if (_leftRail != null)
         {

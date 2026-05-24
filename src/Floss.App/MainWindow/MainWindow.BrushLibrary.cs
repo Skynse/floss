@@ -42,6 +42,8 @@ public partial class MainWindow : Window
             Orientation = Avalonia.Layout.Orientation.Horizontal,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch
         };
+        // Docker rebuild creates a new panel; drop cached rows still parented to the old tree.
+        _brushPresetRowCache.Clear();
         _presetPanel = new StackPanel { Spacing = 1, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
 
         _strokePreview = new BrushStrokePreview { Height = 48 };
@@ -287,6 +289,8 @@ public partial class MainWindow : Window
         }
 
         host.Row.BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke));
+        if (host.Row.Parent is Panel staleParent && !ReferenceEquals(staleParent, _presetPanel))
+            staleParent.Children.Remove(host.Row);
         return host.Row;
     }
 

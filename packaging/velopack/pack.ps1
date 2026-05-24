@@ -36,6 +36,7 @@ Write-Host "    channel : $Channel"
 Write-Host "    output  : $Output"
 
 if (Test-Path $Publish) { Remove-Item -Recurse -Force $Publish }
+if (Test-Path $Output) { Remove-Item -Recurse -Force $Output }
 New-Item -ItemType Directory -Force -Path (Split-Path $Output) | Out-Null
 
 Write-Host "==> dotnet publish"

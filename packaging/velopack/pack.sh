@@ -4,6 +4,7 @@
 # Usage:
 #   ./packaging/velopack/pack.sh linux-x64
 #   ./packaging/velopack/pack.sh win-x64     # pack on Windows (or CI win job)
+#   ./packaging/velopack/pack.sh osx-arm64   # pack on macOS (or CI mac job)
 #
 # Requires: .NET SDK, dotnet tool restore (vpk).
 set -euo pipefail
@@ -37,7 +38,7 @@ echo "    rid     : $RID"
 echo "    channel : $CHANNEL"
 echo "    output  : $OUTPUT"
 
-rm -rf "$PUBLISH"
+rm -rf "$PUBLISH" "$OUTPUT"
 mkdir -p "$(dirname "$OUTPUT")"
 
 echo "==> dotnet publish"
@@ -68,6 +69,7 @@ echo "Done. Ship these to flosspaint.com (ignore .nupkg / releases.*.json):"
 case "$RID" in
   linux-x64) echo "  $OUTPUT/FlossPaint-${CHANNEL}.AppImage" ;;
   win-*)     echo "  $OUTPUT/*Setup.exe and *Portable.zip" ;;
+  osx-*)     echo "  $OUTPUT/*.dmg (and *.pkg if produced)" ;;
 esac
 echo ""
 ls -la "$OUTPUT"
