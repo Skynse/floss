@@ -17,6 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Remove="**\*.onnx" />
     <AvaloniaResource Include="../../packaging/icon.png" Link="Assets/icon.png" />
   </ItemGroup>
 

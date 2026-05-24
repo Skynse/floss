@@ -35,7 +35,6 @@ public static class BaseColorMaskEngine
     private static string? _lastError;
 
     private const int IsnetInputSize = 1024;
-    private const string ModelFileName = "isnetis.onnx";
     private const string ModelDownloadUrl = "https://cdn.flosspaint.com/isnetis.onnx";
 
     private static string ModelCachePath => AppPaths.AnimeSegModelPath;
@@ -67,14 +66,6 @@ public static class BaseColorMaskEngine
     {
         if (File.Exists(ModelCachePath))
             return ModelCachePath;
-
-        var shipped = Path.Combine(AppContext.BaseDirectory, ModelFileName);
-        if (File.Exists(shipped))
-        {
-            Directory.CreateDirectory(AppPaths.ModelsDirectory);
-            File.Copy(shipped, ModelCachePath, overwrite: true);
-            return ModelCachePath;
-        }
 
         try
         {
@@ -127,11 +118,7 @@ public static class BaseColorMaskEngine
         {
             if (_isnetSession != null) return _isnetSession;
 
-            string? path = null;
-            if (File.Exists(ModelCachePath))
-                path = ModelCachePath;
-            else if (File.Exists(Path.Combine(AppContext.BaseDirectory, ModelFileName)))
-                path = Path.Combine(AppContext.BaseDirectory, ModelFileName);
+            string? path = File.Exists(ModelCachePath) ? ModelCachePath : null;
 
             if (path == null)
                 return null;
