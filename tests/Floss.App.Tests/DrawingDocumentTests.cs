@@ -328,5 +328,39 @@ public class DrawingDocumentTests
         TestAssertions.True(output.ExcludeLockedLayers);
         TestAssertions.True(output.ExcludeReferenceLayers);
     }
+
+    [Fact]
+    public void DeleteLayers_CanRemovePaperLayerWhenOtherLayersExist()
+    {
+        var document = new DrawingDocument(4, 4);
+        document.AddLayer();
+        document.AddLayer();
+        document.AddBackgroundLayer();
+
+        var paperIndex = document.Layers.ToList().FindIndex(l => l.IsPaper);
+        TestAssertions.True(paperIndex >= 0);
+        TestAssertions.True(document.CanDeleteLayers([paperIndex]));
+
+        document.DeleteLayers([paperIndex]);
+
+        Assert.Null(document.PaperLayer);
+        TestAssertions.Equal(2, document.Layers.Count);
+        TestAssertions.False(document.Layers.Any(l => l.IsPaper));
+    }
+
+    [Fact]
+    public void DeleteLayers_RemovesMultipleSelectedLayers()
+    {
+        var document = new DrawingDocument(4, 4);
+        document.AddLayer();
+        document.AddLayer();
+        document.AddLayer();
+
+        TestAssertions.True(document.CanDeleteLayers([0, 2]));
+        document.DeleteLayers([0, 2]);
+
+        TestAssertions.Equal(1, document.Layers.Count);
+        TestAssertions.Equal("Layer 2", document.ActiveLayer!.Name);
+    }
 }
 

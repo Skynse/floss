@@ -23,6 +23,16 @@ public sealed class SelectionMask
 
     private byte[]? _mask;       // null = nothing restricted (all pixels writable)
     private int _docW, _docH;
+    private SKRectI? _maskBounds;
+    private int _selectedCount;
+    private bool _simplifyOutline;
+
+    // Reused flood-fill visitation stamp (avoids clearing docW×docH per click).
+    private int[] _visitStamp = [];
+    private int _visitEpoch = 1;
+
+    private const int SimplifyOutlineSelectedPixels = 400_000;
+    private const int MaxOutlineSegments = 12_000;
 
     // The geometry used to make the last selection (for rendering the outline).
     private SKRectI _geoRect;
@@ -54,12 +64,15 @@ public sealed class SelectionMask
             ? type
             : SelectionGeometry.None;
         _cachedMaskGeo = null;
+        _simplifyOutline = false;
+        RecomputeMaskMetadata();
     }
 
     public void Resize(int w, int h)
     {
         if (_docW == w && _docH == h) return;
         _docW = w; _docH = h;
+        _visitStamp = [];
         Clear();
     }
 
@@ -69,6 +82,9 @@ public sealed class SelectionMask
         _geoType = SelectionGeometry.None;
         _geoPoly.Clear();
         _cachedMaskGeo = null;
+        _maskBounds = null;
+        _selectedCount = 0;
+        _simplifyOutline = false;
     }
 
     public bool IsSelected(int x, int y)
@@ -81,17 +97,7 @@ public sealed class SelectionMask
     public SKRectI? GetMaskBounds()
     {
         if (_mask == null) return null;
-        int minX = _docW, minY = _docH, maxX = -1, maxY = -1;
-        for (int y = 0; y < _docH; y++)
-            for (int x = 0; x < _docW; x++)
-                if (_mask[y * _docW + x] > 0)
-                {
-                    if (x < minX) minX = x;
-                    if (y < minY) minY = y;
-                    if (x > maxX) maxX = x;
-                    if (y > maxY) maxY = y;
-                }
-        return maxX >= minX ? new SKRectI(minX, minY, maxX + 1, maxY + 1) : null;
+        return _maskBounds;
     }
 
     public void Invert()
@@ -192,30 +198,20 @@ public sealed class SelectionMask
         int tolInt = (int)(tolerance * 255 * 4);
 
         var next = CreateBaseMask(op);
-        var visited = new bool[_docW * _docH];
-        var queue = new Queue<int>(_docW * _docH / 4);
-        visited[startIdx] = true;
-        queue.Enqueue(startIdx);
+        BeginVisitPass();
 
-        while (queue.Count > 0)
+        bool Similar(int idx)
         {
-            int idx = queue.Dequeue();
             int pOff = idx * 4;
-            if (Math.Abs(refBuf[pOff] - refB) + Math.Abs(refBuf[pOff + 1] - refG)
-                + Math.Abs(refBuf[pOff + 2] - refR) + Math.Abs(refBuf[pOff + 3] - refA) > tolInt) continue;
-
-            Apply(next, idx % _docW, idx / _docW, op, true);
-
-            int docX = idx % _docW, docY = idx / _docW;
-            if (docX + 1 < _docW) { int ni = idx + 1; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
-            if (docX - 1 >= 0)    { int ni = idx - 1; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
-            if (docY + 1 < _docH) { int ni = idx + _docW; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
-            if (docY - 1 >= 0)    { int ni = idx - _docW; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
+            return Math.Abs(refBuf[pOff] - refB) + Math.Abs(refBuf[pOff + 1] - refG)
+                + Math.Abs(refBuf[pOff + 2] - refR) + Math.Abs(refBuf[pOff + 3] - refA) <= tolInt;
         }
 
+        FloodFillMask(next, startDocX, startDocY, op, (docX, docY) => Similar(docY * _docW + docX));
         CommitMask(next);
         _geoType = SelectionGeometry.Mask;
         _cachedMaskGeo = null;
+        _simplifyOutline = false;
         _geoPoly.Clear();
     }
 
@@ -230,9 +226,6 @@ public sealed class SelectionMask
     {
         EnsureMaskExists();
 
-        // BFS in document space — flat bool[] visited is orders of magnitude faster than
-        // HashSet<(int,int)> and also provides the bounds check that prevents infinite
-        // expansion into out-of-bounds tiles (which all return alpha=0 and match transparent fills).
         int startDocX = srcX + offsetX;
         int startDocY = srcY + offsetY;
         if ((uint)startDocX >= (uint)_docW || (uint)startDocY >= (uint)_docH)
@@ -242,52 +235,35 @@ public sealed class SelectionMask
         int tolInt = (int)(tolerance * 255 * 4);
 
         var next = CreateBaseMask(op);
-        var visited = new bool[_docW * _docH];
-        var queue = new Queue<int>(_docW * _docH / 4);
+        BeginVisitPass();
 
-        int startIdx = startDocY * _docW + startDocX;
-        visited[startIdx] = true;
-        queue.Enqueue(startIdx);
-
-        while (queue.Count > 0)
+        bool Similar(int docX, int docY)
         {
-            int idx = queue.Dequeue();
-            int docY = idx / _docW;
-            int docX = idx % _docW;
-
             pixels.GetPixel(docX - offsetX, docY - offsetY, out byte b, out byte g, out byte r, out byte a);
-            if (Math.Abs(b - refB) + Math.Abs(g - refG) + Math.Abs(r - refR) + Math.Abs(a - refA) > tolInt) continue;
-
-            Apply(next, docX, docY, op, true);
-
-            if (docX + 1 < _docW) { int ni = idx + 1; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
-            if (docX - 1 >= 0) { int ni = idx - 1; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
-            if (docY + 1 < _docH) { int ni = idx + _docW; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
-            if (docY - 1 >= 0) { int ni = idx - _docW; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
+            return Math.Abs(b - refB) + Math.Abs(g - refG) + Math.Abs(r - refR) + Math.Abs(a - refA) <= tolInt;
         }
 
+        FloodFillMask(next, startDocX, startDocY, op, Similar);
         CommitMask(next);
         _geoType = SelectionGeometry.Mask;
         _cachedMaskGeo = null;
+        _simplifyOutline = false;
         _geoPoly.Clear();
     }
 
-    // Render the committed selection outline as marching-ants double-dash.
+    // Static selection outline — dashed marching ants were redrawn on every compositor
+    // tick and are expensive on large magic-wand masks.
     public void RenderOverlay(DrawingContext dc, double zoom)
     {
         if (!HasSelection || _geoType == SelectionGeometry.None) return;
 
-        var t = Math.Max(0.5, 1.0 / zoom);
-        var dash1 = new DashStyle([4, 4], 0);
-        var dash2 = new DashStyle([4, 4], 4);
-        var penW = new Pen(Avalonia.Media.Brushes.White, t, dash1);
-        var penK = new Pen(Avalonia.Media.Brushes.Black, t, dash2);
+        var t = Math.Max(1.0, 1.0 / zoom);
+        var pen = new Pen(new SolidColorBrush(Color.FromArgb(230, 0, 140, 255)), t);
 
         if (_geoType == SelectionGeometry.Rect)
         {
             var r = new Avalonia.Rect(_geoRect.Left, _geoRect.Top, _geoRect.Width, _geoRect.Height);
-            dc.DrawRectangle(null, penW, r);
-            dc.DrawRectangle(null, penK, r);
+            dc.DrawRectangle(null, pen, r);
         }
         else if (_geoType == SelectionGeometry.Polygon && _geoPoly.Count >= 2)
         {
@@ -299,113 +275,120 @@ public sealed class SelectionMask
                     c.LineTo(new Avalonia.Point(_geoPoly[i].X, _geoPoly[i].Y));
                 c.EndFigure(true);
             }
-            dc.DrawGeometry(null, penW, geo);
-            dc.DrawGeometry(null, penK, geo);
+            dc.DrawGeometry(null, pen, geo);
         }
         else if (_geoType == SelectionGeometry.Mask)
         {
+            if (_simplifyOutline || _selectedCount > SimplifyOutlineSelectedPixels)
+            {
+                if (_maskBounds is { } b)
+                    DrawBoundsRect(dc, pen, b);
+                return;
+            }
+
             var geo = _cachedMaskGeo ??= BuildMaskOutline();
             if (geo != null)
-            {
-                dc.DrawGeometry(null, penW, geo);
-                dc.DrawGeometry(null, penK, geo);
-            }
+                dc.DrawGeometry(null, pen, geo);
+            else if (_maskBounds is { } b)
+                DrawBoundsRect(dc, pen, b);
         }
     }
 
-    // Build a StreamGeometry tracing every boundary edge between selected and unselected pixels.
-    // Edges are 1-pixel-wide segments; horizontal edges run along top/bottom of a row,
-    // vertical edges along left/right of a column. Consecutive collinear edges are merged.
+    private static void DrawBoundsRect(DrawingContext dc, Pen pen, SKRectI b)
+    {
+        var r = new Avalonia.Rect(b.Left, b.Top, b.Width, b.Height);
+        dc.DrawRectangle(null, pen, r);
+    }
+
     private StreamGeometry? BuildMaskOutline()
     {
-        if (_mask == null) return null;
-        var bounds = GetMaskBounds();
-        if (bounds == null) return null;
-        var b = bounds.Value;
-
-        // Collect all boundary segments as axis-aligned lines, then merge collinear runs.
-        // Key: (isHorizontal, fixedCoord, minVar, maxVar)
-        // For horizontal edges: fixedCoord = y row edge (pixel y or y+1), x range [x, x+1]
-        // For vertical edges:   fixedCoord = x col edge (pixel x or x+1), y range [y, y+1]
+        if (_mask == null || _maskBounds is not { } b) return null;
 
         bool Selected(int x, int y) =>
             (uint)x < (uint)_docW && (uint)y < (uint)_docH && _mask[y * _docW + x] > 0;
 
-        // Horizontal edge segments grouped by y-edge position, then by x
-        var hEdges = new Dictionary<int, List<int>>(); // y-edge → list of x starts
-        // Vertical edge segments grouped by x-edge position, then by y
-        var vEdges = new Dictionary<int, List<int>>(); // x-edge → list of y starts
+        var geo = new StreamGeometry();
+        using var ctx = geo.Open();
+        int segments = 0;
+
+        bool EmitHorizontal(int y, int x0, int x1)
+        {
+            if (++segments > MaxOutlineSegments)
+            {
+                _simplifyOutline = true;
+                return false;
+            }
+
+            ctx.BeginFigure(new Avalonia.Point(x0, y), false);
+            ctx.LineTo(new Avalonia.Point(x1, y));
+            ctx.EndFigure(false);
+            return true;
+        }
+
+        bool EmitVertical(int x, int y0, int y1)
+        {
+            if (++segments > MaxOutlineSegments)
+            {
+                _simplifyOutline = true;
+                return false;
+            }
+
+            ctx.BeginFigure(new Avalonia.Point(x, y0), false);
+            ctx.LineTo(new Avalonia.Point(x, y1));
+            ctx.EndFigure(false);
+            return true;
+        }
 
         for (int y = b.Top; y < b.Bottom; y++)
         {
-            for (int x = b.Left; x < b.Right; x++)
+            int x = b.Left;
+            while (x < b.Right)
             {
-                if (!Selected(x, y)) continue;
-
-                // Top edge: between (x,y-1) and (x,y)
-                if (!Selected(x, y - 1))
-                {
-                    if (!hEdges.TryGetValue(y, out var list)) hEdges[y] = list = [];
-                    list.Add(x);
-                }
-                // Bottom edge: between (x,y) and (x,y+1)
-                if (!Selected(x, y + 1))
-                {
-                    if (!hEdges.TryGetValue(y + 1, out var list)) hEdges[y + 1] = list = [];
-                    list.Add(x);
-                }
-                // Left edge: between (x-1,y) and (x,y)
-                if (!Selected(x - 1, y))
-                {
-                    if (!vEdges.TryGetValue(x, out var list)) vEdges[x] = list = [];
-                    list.Add(y);
-                }
-                // Right edge: between (x,y) and (x+1,y)
-                if (!Selected(x + 1, y))
-                {
-                    if (!vEdges.TryGetValue(x + 1, out var list)) vEdges[x + 1] = list = [];
-                    list.Add(y);
-                }
+                while (x < b.Right && !(Selected(x, y) && !Selected(x, y - 1))) x++;
+                if (x >= b.Right) break;
+                int x0 = x;
+                while (x < b.Right && Selected(x, y) && !Selected(x, y - 1)) x++;
+                if (!EmitHorizontal(y, x0, x)) return null;
             }
         }
 
-        var geo = new StreamGeometry();
-        using var ctx = geo.Open();
-
-        // Merge horizontal runs and emit
-        foreach (var (fy, xs) in hEdges)
+        for (int y = b.Top; y < b.Bottom; y++)
         {
-            xs.Sort();
-            int start = xs[0], prev = xs[0];
-            for (int i = 1; i < xs.Count; i++)
+            int x = b.Left;
+            while (x < b.Right)
             {
-                if (xs[i] == prev + 1) { prev = xs[i]; continue; }
-                ctx.BeginFigure(new Avalonia.Point(start, fy), false);
-                ctx.LineTo(new Avalonia.Point(prev + 1, fy));
-                ctx.EndFigure(false);
-                start = xs[i]; prev = xs[i];
+                while (x < b.Right && !(Selected(x, y) && !Selected(x, y + 1))) x++;
+                if (x >= b.Right) break;
+                int x0 = x;
+                while (x < b.Right && Selected(x, y) && !Selected(x, y + 1)) x++;
+                if (!EmitHorizontal(y + 1, x0, x)) return null;
             }
-            ctx.BeginFigure(new Avalonia.Point(start, fy), false);
-            ctx.LineTo(new Avalonia.Point(prev + 1, fy));
-            ctx.EndFigure(false);
         }
 
-        // Merge vertical runs and emit
-        foreach (var (fx, ys) in vEdges)
+        for (int x = b.Left; x < b.Right; x++)
         {
-            ys.Sort();
-            int start = ys[0], prev = ys[0];
-            for (int i = 1; i < ys.Count; i++)
+            int y = b.Top;
+            while (y < b.Bottom)
             {
-                if (ys[i] == prev + 1) { prev = ys[i]; continue; }
-                ctx.BeginFigure(new Avalonia.Point(fx, start), false);
-                ctx.LineTo(new Avalonia.Point(fx, prev + 1));
-                ctx.EndFigure(false);
-                start = ys[i]; prev = ys[i];
+                while (y < b.Bottom && !(Selected(x, y) && !Selected(x - 1, y))) y++;
+                if (y >= b.Bottom) break;
+                int y0 = y;
+                while (y < b.Bottom && Selected(x, y) && !Selected(x - 1, y)) y++;
+                if (!EmitVertical(x, y0, y)) return null;
             }
-            ctx.BeginFigure(new Avalonia.Point(fx, start), false);
-            ctx.LineTo(new Avalonia.Point(fx, prev + 1));
-            ctx.EndFigure(false);
+        }
+
+        for (int x = b.Left; x < b.Right; x++)
+        {
+            int y = b.Top;
+            while (y < b.Bottom)
+            {
+                while (y < b.Bottom && !(Selected(x, y) && !Selected(x + 1, y))) y++;
+                if (y >= b.Bottom) break;
+                int y0 = y;
+                while (y < b.Bottom && Selected(x, y) && !Selected(x + 1, y)) y++;
+                if (!EmitVertical(x + 1, y0, y)) return null;
+            }
         }
 
         return geo;
@@ -433,10 +416,123 @@ public sealed class SelectionMask
         {
             if (mask[i] == 0) continue;
             _mask = mask;
+            RecomputeMaskMetadata();
             return;
         }
 
         Clear();
+    }
+
+    private void RecomputeMaskMetadata()
+    {
+        _cachedMaskGeo = null;
+        _simplifyOutline = false;
+        if (_mask == null)
+        {
+            _maskBounds = null;
+            _selectedCount = 0;
+            return;
+        }
+
+        int minX = _docW, minY = _docH, maxX = -1, maxY = -1;
+        int count = 0;
+        for (int y = 0; y < _docH; y++)
+        {
+            int row = y * _docW;
+            for (int x = 0; x < _docW; x++)
+            {
+                if (_mask[row + x] == 0) continue;
+                count++;
+                if (x < minX) minX = x;
+                if (y < minY) minY = y;
+                if (x > maxX) maxX = x;
+                if (y > maxY) maxY = y;
+            }
+        }
+
+        _selectedCount = count;
+        _maskBounds = count > 0 ? new SKRectI(minX, minY, maxX + 1, maxY + 1) : null;
+    }
+
+    private void BeginVisitPass()
+    {
+        int n = _docW * _docH;
+        if (_visitStamp.Length < n)
+            _visitStamp = new int[n];
+        if (++_visitEpoch == int.MaxValue)
+        {
+            Array.Clear(_visitStamp);
+            _visitEpoch = 1;
+        }
+    }
+
+    private void PushNewSpans(Stack<(int x, int y)> stack, int left, int right, int y, Func<int, int, bool> similar)
+    {
+        bool inSpan = false;
+        for (int x = left; x <= right; x++)
+        {
+            int idx = y * _docW + x;
+            if (similar(x, y) && _visitStamp[idx] != _visitEpoch)
+            {
+                if (!inSpan)
+                {
+                    stack.Push((x, y));
+                    inSpan = true;
+                }
+            }
+            else
+            {
+                inSpan = false;
+            }
+        }
+    }
+
+    private void FloodFillMask(byte[] mask, int startX, int startY, SelectOp op, Func<int, int, bool> similar)
+    {
+        if (!similar(startX, startY)) return;
+
+        var stack = new Stack<(int x, int y)>(256);
+        stack.Push((startX, startY));
+
+        while (stack.Count > 0)
+        {
+            var (seedX, seedY) = stack.Pop();
+            if ((uint)seedY >= (uint)_docH) continue;
+
+            int seedIdx = seedY * _docW + seedX;
+            if (_visitStamp[seedIdx] == _visitEpoch || !similar(seedX, seedY))
+                continue;
+
+            int left = seedX;
+            while (left > 0)
+            {
+                int li = seedY * _docW + left - 1;
+                if (_visitStamp[li] == _visitEpoch || !similar(left - 1, seedY))
+                    break;
+                left--;
+            }
+
+            int right = seedX;
+            while (right + 1 < _docW)
+            {
+                int ri = seedY * _docW + right + 1;
+                if (_visitStamp[ri] == _visitEpoch || !similar(right + 1, seedY))
+                    break;
+                right++;
+            }
+
+            for (int x = left; x <= right; x++)
+            {
+                int idx = seedY * _docW + x;
+                _visitStamp[idx] = _visitEpoch;
+                Apply(mask, x, seedY, op, true);
+            }
+
+            if (seedY > 0)
+                PushNewSpans(stack, left, right, seedY - 1, similar);
+            if (seedY + 1 < _docH)
+                PushNewSpans(stack, left, right, seedY + 1, similar);
+        }
     }
 
     private bool TryGetSolidRectBounds(out SKRectI rect)

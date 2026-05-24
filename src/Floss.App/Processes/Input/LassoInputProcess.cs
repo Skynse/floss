@@ -42,7 +42,13 @@ public sealed class LassoInputProcess : IInputProcess
         if (!_active) return;
         _raw.Add(s);
         _smoothed.Add(ApplyStabilization(s));
-        _active = false;
+        Finish();
+    }
+
+    public void Commit()
+    {
+        if (!_active) return;
+        Finish();
     }
 
     public void Cancel()
@@ -50,6 +56,16 @@ public sealed class LassoInputProcess : IInputProcess
         _active = false;
         _raw.Clear();
         _smoothed.Clear();
+    }
+
+    private void Finish()
+    {
+        _active = false;
+        if (_smoothed.Count < 3)
+        {
+            _raw.Clear();
+            _smoothed.Clear();
+        }
     }
 
     public IProcessedInput? GetResult()

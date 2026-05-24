@@ -37,13 +37,21 @@ public sealed class RectInputProcess : IInputProcess
     {
         if (!_active) return;
         _current = s;
-        _active = false;
+        Finish();
+    }
+
+    public void Commit()
+    {
+        if (!_active) return;
+        Finish();
     }
 
     public void Cancel()
     {
         _active = false;
     }
+
+    private void Finish() => _active = false;
 
     public bool ConsumesModifier(KeyModifiers mods) => mods.HasFlag(KeyModifiers.Shift);
 

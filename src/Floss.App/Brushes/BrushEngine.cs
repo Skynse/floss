@@ -393,7 +393,7 @@ public sealed class BrushEngine : IDisposable
         var primaryTip = stroke.TipFor(0);
         bool usesProceduralStamp = UsesProceduralStampEvaluation(brush, primaryTip, _stampColors.Count);
 
-        bool blendModeCanRasterize = brush.BlendMode == SKBlendMode.SrcOver || brush.BlendMode == SKBlendMode.DstOut;
+        bool blendModeCanRasterize = SupportsCpuRasterBlendMode(brush.BlendMode);
 
         if (blendModeCanRasterize && !isMultiTipSingle && !usesProceduralStamp)
         {
@@ -412,7 +412,7 @@ public sealed class BrushEngine : IDisposable
 
             var grainTable = PrecomputeGrain(dirty, texPx, texW, texH, texStride, brushGrain);
             if (stroke.HasAnyColorTip && _stampColors.Count == 0 &&
-                TryRasterizeCachedColorDabsTileMajor(layer, stroke, brush, brush.BlendMode == SKBlendMode.DstOut,
+                TryRasterizeCachedColorDabsTileMajor(layer, stroke, brush, brush.BlendMode,
                     brushGrain, texPx, texW, texH, texStride, dirty, grainTable))
             {
                 _lastRasterPath = "CachedColorTileMajor";
@@ -421,7 +421,7 @@ public sealed class BrushEngine : IDisposable
             }
 
             if (!stroke.HasAnyColorTip &&
-                TryRasterizeCachedDabsTileMajor(layer, stroke, brush, brush.BlendMode == SKBlendMode.DstOut,
+                TryRasterizeCachedDabsTileMajor(layer, stroke, brush, brush.BlendMode,
                     baseColor.Blue, baseColor.Green, baseColor.Red, baseColor.Alpha,
                     brushGrain, texPx, texW, texH, texStride, dirty, grainTable))
             {
@@ -452,7 +452,7 @@ public sealed class BrushEngine : IDisposable
         else
         {
             _lastRasterPath = "SkiaFallback";
-            layer.Pixels.RenderWithSkia(dirty, canvas => RenderPreparedStamps(stroke, canvas));
+            RenderWithSkiaOnLayer(layer, dirty, canvas => RenderPreparedStamps(stroke, canvas));
         }
     }
 
@@ -497,7 +497,7 @@ public sealed class BrushEngine : IDisposable
 
                     try
                     {
-                        layer.Pixels.RenderWithSkia(dirty, canvas => RenderPreparedStamps(stroke, canvas));
+                        RenderWithSkiaOnLayer(layer, dirty, canvas => RenderPreparedStamps(stroke, canvas));
                     }
                     catch (Exception ex)
                     {
@@ -516,7 +516,7 @@ public sealed class BrushEngine : IDisposable
 
             try
             {
-                layer.Pixels.RenderWithSkia(dabDirty, canvas => RenderPreparedStamps(stroke, canvas));
+                RenderWithSkiaOnLayer(layer, dabDirty, canvas => RenderPreparedStamps(stroke, canvas));
             }
             catch (Exception ex)
             {
@@ -1025,7 +1025,7 @@ public sealed class BrushEngine : IDisposable
         // Composite the scratch result onto layer tiles directly — avoids
         // RenderWithSkia's per-tile Skia canvas setup overhead.
         var scratchPtr = (byte*)_scratch.GetPixels().ToPointer();
-        CompositeScratchBgraOntoLayer(layer.Pixels, dirty, scratchPtr, _scratch.RowBytes);
+        CompositeScratchBgraOntoLayer(layer.Pixels, dirty, scratchPtr, _scratch.RowBytes, layer.IsAlphaLocked, SKBlendMode.SrcOver);
     }
 
     private unsafe void RenderColorMixStampsViaScratch(DrawingLayer layer, ActiveStroke stroke, BrushPreset brush, PixelRegion dirty)
@@ -1038,7 +1038,7 @@ public sealed class BrushEngine : IDisposable
         if ((long)w * h > MaxColorMixScratchPixels)
         {
             _lastRasterPath = "SkiaFallback";
-            layer.Pixels.RenderWithSkia(dirty, canvas => RenderPreparedStamps(stroke, canvas));
+            RenderWithSkiaOnLayer(layer, dirty, canvas => RenderPreparedStamps(stroke, canvas));
             return;
         }
 
@@ -1064,7 +1064,7 @@ public sealed class BrushEngine : IDisposable
             if (_scratch == null || _scratch.IsEmpty)
             {
                 _lastRasterPath = "SkiaFallback";
-                layer.Pixels.RenderWithSkia(dirty, canvas => RenderPreparedStamps(stroke, canvas));
+                RenderWithSkiaOnLayer(layer, dirty, canvas => RenderPreparedStamps(stroke, canvas));
                 return;
             }
 
@@ -1072,7 +1072,7 @@ public sealed class BrushEngine : IDisposable
             if (pixels == IntPtr.Zero)
             {
                 _lastRasterPath = "SkiaFallback";
-                layer.Pixels.RenderWithSkia(dirty, canvas => RenderPreparedStamps(stroke, canvas));
+                RenderWithSkiaOnLayer(layer, dirty, canvas => RenderPreparedStamps(stroke, canvas));
                 return;
             }
 
@@ -1271,20 +1271,20 @@ public sealed class BrushEngine : IDisposable
             if (needsSkiaFallback)
             {
                 _lastRasterPath = "SkiaFallback";
-                layer.Pixels.RenderWithSkia(dirty, canvas => RenderPreparedStamps(stroke, canvas));
+                RenderWithSkiaOnLayer(layer, dirty, canvas => RenderPreparedStamps(stroke, canvas));
                 return;
             }
 
             if (!renderedAny)
                 return;
 
-            CompositeScratchBgraOntoLayer(layer.Pixels, dirty, ptr, stride);
+            CompositeScratchBgraOntoLayer(layer.Pixels, dirty, ptr, stride, layer.IsAlphaLocked, SKBlendMode.SrcOver);
         }
         catch (Exception ex)
         {
             CrashLog.Write(ex, "BrushEngine.RenderColorMixStampsViaScratch", flushToDisk: true);
             _lastRasterPath = "SkiaFallback";
-            layer.Pixels.RenderWithSkia(dirty, canvas => RenderPreparedStamps(stroke, canvas));
+            RenderWithSkiaOnLayer(layer, dirty, canvas => RenderPreparedStamps(stroke, canvas));
         }
     }
 
@@ -1349,7 +1349,7 @@ public sealed class BrushEngine : IDisposable
         var baseColor = stroke.BaseColor;
         int brushB = baseColor.Blue, brushG = baseColor.Green, brushR = baseColor.Red;
         float baseAlpha = baseColor.Alpha;
-        bool isDstOut = brush.BlendMode == SKBlendMode.DstOut;
+        var blendMode = brush.BlendMode;
         float brushGrain = (float)brush.Grain;
         byte* texPx = null;
         int texW = 0, texH = 0, texStride = 0;
@@ -1415,7 +1415,7 @@ public sealed class BrushEngine : IDisposable
                 sinA = MathF.Sin(rad);
             }
 
-            float stampOpacity255 = isDstOut ? stamp.Opacity * 255f : stamp.Opacity * baseAlpha;
+            float stampOpacity255 = StampOpacity255(blendMode, stamp.Opacity, baseAlpha);
             if (stampOpacity255 <= 0) continue;
 
             // Procedural-only params
@@ -1568,23 +1568,9 @@ public sealed class BrushEngine : IDisposable
 
                             int lx = px - tilePixX;
                             int offset = rowBase + lx * 4;
-
-                            if (isDstOut)
-                            {
-                                int dstA = tile[offset + 3];
-                                if (dstA == 0) continue;
-                                tile[offset + 3] = (byte)(dstA * (255 - stampA) / 255);
-                            }
-                            else
-                            {
-                                int dstA = tile[offset + 3];
-                                int dstW = dstA * (255 - stampA) / 255;
-                                int outA = stampA + dstW;
-                                tile[offset + 0] = (byte)((brushB * stampA + tile[offset + 0] * dstW) / outA);
-                                tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * dstW) / outA);
-                                tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * dstW) / outA);
-                                tile[offset + 3] = (byte)outA;
-                            }
+                            WriteCompositeStamp(tile, offset,
+                                (byte)brushB, (byte)brushG, (byte)brushR, (byte)stampA,
+                                layer.IsAlphaLocked, blendMode);
                         }
                     }
                 }
@@ -1608,7 +1594,7 @@ public sealed class BrushEngine : IDisposable
         DrawingLayer layer,
         ActiveStroke stroke,
         BrushPreset brush,
-        bool isDstOut,
+        SKBlendMode blendMode,
         int brushB,
         int brushG,
         int brushR,
@@ -1639,7 +1625,7 @@ public sealed class BrushEngine : IDisposable
                 var colorG = brushG;
                 var colorR = brushR;
                 var colorA = baseAlpha;
-                if (!isDstOut && _stampColors.Count > i)
+                if (!UsesMaskOpacity(blendMode) && _stampColors.Count > i)
                 {
                     var color = _stampColors[i];
                     if (color.Alpha == 0) continue;
@@ -1706,8 +1692,9 @@ public sealed class BrushEngine : IDisposable
                     {
                         ApplyCachedDabToTile(
                             tile, tilePixX, tilePixY, dirty, grainTable,
-                            placed, isDstOut,
-                            brushGrain, texPx, texW, texH, texStride);
+                            placed, blendMode,
+                            brushGrain, texPx, texW, texH, texStride,
+                            layer.IsAlphaLocked);
                     }
                 }
             }
@@ -1725,7 +1712,7 @@ public sealed class BrushEngine : IDisposable
         DrawingLayer layer,
         ActiveStroke stroke,
         BrushPreset brush,
-        bool isDstOut,
+        SKBlendMode blendMode,
         float brushGrain,
         byte* texPx,
         int texW,
@@ -1805,8 +1792,9 @@ public sealed class BrushEngine : IDisposable
                     {
                         ApplyCachedColorDabToTile(
                             tile, tilePixX, tilePixY, dirty, grainTable,
-                            placed, isDstOut,
-                            brushGrain, texPx, texW, texH, texStride);
+                            placed, blendMode,
+                            brushGrain, texPx, texW, texH, texStride,
+                            layer.IsAlphaLocked);
                     }
                 }
             }
@@ -1827,12 +1815,13 @@ public sealed class BrushEngine : IDisposable
         PixelRegion dirty,
         float[]? grainTable,
         PlacedColorDab placed,
-        bool isDstOut,
+        SKBlendMode blendMode,
         float brushGrain,
         byte* texPx,
         int texW,
         int texH,
-        int texStride)
+        int texStride,
+        bool alphaLocked)
     {
         var stamp = placed.Stamp;
         var opacity = stamp.Opacity;
@@ -1900,23 +1889,7 @@ public sealed class BrushEngine : IDisposable
 
                 var lx = px - tilePixX;
                 var offset = rowBase + lx * 4;
-
-                if (isDstOut)
-                {
-                    int dstA = tile[offset + 3];
-                    if (dstA == 0) continue;
-                    tile[offset + 3] = (byte)(dstA * (255 - stampA) / 255);
-                }
-                else
-                {
-                    int dstA = tile[offset + 3];
-                    int dstW = dstA * (255 - stampA) / 255;
-                    int outA = stampA + dstW;
-                    tile[offset + 0] = (byte)((srcB * stampA + tile[offset + 0] * dstW) / outA);
-                    tile[offset + 1] = (byte)((srcG * stampA + tile[offset + 1] * dstW) / outA);
-                    tile[offset + 2] = (byte)((srcR * stampA + tile[offset + 2] * dstW) / outA);
-                    tile[offset + 3] = (byte)outA;
-                }
+                WriteCompositeStamp(tile, offset, srcB, srcG, srcR, (byte)stampA, alphaLocked, blendMode);
             }
         }
     }
@@ -2008,15 +1981,16 @@ public sealed class BrushEngine : IDisposable
         PixelRegion dirty,
         float[]? grainTable,
         PlacedDab placed,
-        bool isDstOut,
+        SKBlendMode blendMode,
         float brushGrain,
         byte* texPx,
         int texW,
         int texH,
-        int texStride)
+        int texStride,
+        bool alphaLocked)
     {
         var stamp = placed.Stamp;
-        float stampOpacity255 = isDstOut ? stamp.Opacity * 255f : stamp.Opacity * placed.ColorA;
+        float stampOpacity255 = StampOpacity255(blendMode, stamp.Opacity, placed.ColorA);
         if (stampOpacity255 <= 0) return;
 
         const int tsz = TiledPixelBuffer.TileSize;
@@ -2071,23 +2045,9 @@ public sealed class BrushEngine : IDisposable
 
                 var lx = px - tilePixX;
                 var offset = rowBase + lx * 4;
-
-                if (isDstOut)
-                {
-                    int dstA = tile[offset + 3];
-                    if (dstA == 0) continue;
-                    tile[offset + 3] = (byte)(dstA * (255 - stampA) / 255);
-                }
-                else
-                {
-                    int dstA = tile[offset + 3];
-                    int dstW = dstA * (255 - stampA) / 255;
-                    int outA = stampA + dstW;
-                    tile[offset + 0] = (byte)((placed.ColorB * stampA + tile[offset + 0] * dstW) / outA);
-                    tile[offset + 1] = (byte)((placed.ColorG * stampA + tile[offset + 1] * dstW) / outA);
-                    tile[offset + 2] = (byte)((placed.ColorR * stampA + tile[offset + 2] * dstW) / outA);
-                    tile[offset + 3] = (byte)outA;
-                }
+                WriteCompositeStamp(tile, offset,
+                    (byte)placed.ColorB, (byte)placed.ColorG, (byte)placed.ColorR, (byte)stampA,
+                    alphaLocked, blendMode);
             }
         }
     }
@@ -2097,7 +2057,7 @@ public sealed class BrushEngine : IDisposable
         ActiveStroke stroke,
         BrushPreset brush,
         StampSample stamp,
-        bool isDstOut,
+        SKBlendMode blendMode,
         int brushB,
         int brushG,
         int brushR,
@@ -2114,7 +2074,7 @@ public sealed class BrushEngine : IDisposable
             return false;
         _lastCachedDabCount++;
 
-        float stampOpacity255 = isDstOut ? stamp.Opacity * 255f : stamp.Opacity * baseAlpha;
+        float stampOpacity255 = StampOpacity255(blendMode, stamp.Opacity, baseAlpha);
         if (stampOpacity255 <= 0) return true;
 
         var left = (int)MathF.Round(stamp.X) + dab.OffsetX;
@@ -2192,23 +2152,9 @@ public sealed class BrushEngine : IDisposable
 
                         int lx = px - tilePixX;
                         int offset = rowBase + lx * 4;
-
-                        if (isDstOut)
-                        {
-                            int dstA = tile[offset + 3];
-                            if (dstA == 0) continue;
-                            tile[offset + 3] = (byte)(dstA * (255 - stampA) / 255);
-                        }
-                        else
-                        {
-                            int dstA = tile[offset + 3];
-                            int dstW = dstA * (255 - stampA) / 255;
-                            int outA = stampA + dstW;
-                            tile[offset + 0] = (byte)((brushB * stampA + tile[offset + 0] * dstW) / outA);
-                            tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * dstW) / outA);
-                            tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * dstW) / outA);
-                            tile[offset + 3] = (byte)outA;
-                        }
+                        WriteCompositeStamp(tile, offset,
+                            (byte)brushB, (byte)brushG, (byte)brushR, (byte)stampA,
+                            layer.IsAlphaLocked, blendMode);
                     }
                 }
             }
@@ -2797,7 +2743,8 @@ public sealed class BrushEngine : IDisposable
                                 if (smearA > 0)
                                 {
                                     if (smearA > 255) smearA = 255;
-                                    CompositeSrcOver(ref b, ref g, ref r, ref a, sb, sg, sr, (byte)smearA);
+                                    AlphaLockPixelOps.CompositeBrushPixel(ref b, ref g, ref r, ref a,
+                                        sb, sg, sr, (byte)smearA, layer.IsAlphaLocked, SKBlendMode.SrcOver);
                                     changed = true;
                                 }
                             }
@@ -2808,8 +2755,9 @@ public sealed class BrushEngine : IDisposable
                                 if (paintA > 0)
                                 {
                                     if (paintA > 255) paintA = 255;
-                                    CompositeSrcOver(ref b, ref g, ref r, ref a,
-                                        baseColor.Blue, baseColor.Green, baseColor.Red, (byte)paintA);
+                                    AlphaLockPixelOps.CompositeBrushPixel(ref b, ref g, ref r, ref a,
+                                        baseColor.Blue, baseColor.Green, baseColor.Red, (byte)paintA,
+                                        layer.IsAlphaLocked, SKBlendMode.SrcOver);
                                     changed = true;
                                 }
                             }
@@ -2861,7 +2809,7 @@ public sealed class BrushEngine : IDisposable
     }
 
     private static unsafe void CompositeScratchBgraOntoLayer(
-        TiledPixelBuffer pixels, PixelRegion dirty, byte* scratch, int scratchStride)
+        TiledPixelBuffer pixels, PixelRegion dirty, byte* scratch, int scratchStride, bool alphaLocked, SKBlendMode blendMode)
     {
         if (dirty.IsEmpty) return;
 
@@ -2899,23 +2847,11 @@ public sealed class BrushEngine : IDisposable
                             if (srcA == 0) continue;
 
                             var dstOffset = rowBase + (px - tilePixX) * 4;
-                            var dstA = tile[dstOffset + 3];
-                            if (dstA == 0)
-                            {
-                                tile[dstOffset + 0] = scratchRow[scratchOffset + 0];
-                                tile[dstOffset + 1] = scratchRow[scratchOffset + 1];
-                                tile[dstOffset + 2] = scratchRow[scratchOffset + 2];
-                                tile[dstOffset + 3] = (byte)srcA;
-                                continue;
-                            }
-
-                            var invSrcA = 255 - srcA;
-                            var outA = srcA + (dstA * invSrcA + 127) / 255;
-                            if (outA <= 0) continue;
-                            tile[dstOffset + 0] = (byte)((scratchRow[scratchOffset + 0] * srcA + tile[dstOffset + 0] * dstA * invSrcA / 255) / outA);
-                            tile[dstOffset + 1] = (byte)((scratchRow[scratchOffset + 1] * srcA + tile[dstOffset + 1] * dstA * invSrcA / 255) / outA);
-                            tile[dstOffset + 2] = (byte)((scratchRow[scratchOffset + 2] * srcA + tile[dstOffset + 2] * dstA * invSrcA / 255) / outA);
-                            tile[dstOffset + 3] = (byte)outA;
+                            WriteCompositeStamp(tile, dstOffset,
+                                scratchRow[scratchOffset + 0],
+                                scratchRow[scratchOffset + 1],
+                                scratchRow[scratchOffset + 2],
+                                srcA, alphaLocked, blendMode);
                         }
                     }
                 }
@@ -2927,26 +2863,51 @@ public sealed class BrushEngine : IDisposable
         }
     }
 
-    private static void CompositeSrcOver(ref byte b, ref byte g, ref byte r, ref byte a,
-        byte sb, byte sg, byte sr, byte sa)
+    private static void WriteCompositeStamp(
+        byte[] tile, int offset,
+        byte srcB, byte srcG, byte srcR, byte stampA,
+        bool alphaLocked, SKBlendMode blendMode)
     {
-        if (sa == 0) return;
-        if (a == 0)
+        byte db = tile[offset], dg = tile[offset + 1], dr = tile[offset + 2], da = tile[offset + 3];
+        AlphaLockPixelOps.CompositeBrushPixel(ref db, ref dg, ref dr, ref da, srcB, srcG, srcR, stampA, alphaLocked, blendMode);
+        tile[offset] = db;
+        tile[offset + 1] = dg;
+        tile[offset + 2] = dr;
+        tile[offset + 3] = da;
+    }
+
+    private static bool SupportsCpuRasterBlendMode(SKBlendMode mode) =>
+        mode is SKBlendMode.SrcOver or SKBlendMode.DstOut or SKBlendMode.Clear
+            or SKBlendMode.Multiply or SKBlendMode.Screen or SKBlendMode.Overlay
+            or SKBlendMode.Darken or SKBlendMode.Lighten or SKBlendMode.ColorDodge
+            or SKBlendMode.ColorBurn or SKBlendMode.HardLight or SKBlendMode.SoftLight
+            or SKBlendMode.Difference or SKBlendMode.Exclusion;
+
+    private static bool UsesMaskOpacity(SKBlendMode mode)
+        => mode is SKBlendMode.DstOut or SKBlendMode.Clear;
+
+    private static float StampOpacity255(SKBlendMode mode, float stampOpacity, float colorAlpha)
+        => UsesMaskOpacity(mode) ? stampOpacity * 255f : stampOpacity * colorAlpha;
+
+    private static void RenderWithSkiaOnLayer(DrawingLayer layer, PixelRegion dirty, Action<SKCanvas> render)
+    {
+        if (!layer.IsAlphaLocked)
         {
-            b = sb;
-            g = sg;
-            r = sr;
-            a = sa;
+            layer.Pixels.RenderWithSkia(dirty, render);
             return;
         }
 
-        var invSa = 255 - sa;
-        var outA = sa + (a * invSa + 127) / 255;
-        if (outA <= 0) return;
-        b = (byte)((sb * sa + b * a * invSa / 255) / outA);
-        g = (byte)((sg * sa + g * a * invSa / 255) / outA);
-        r = (byte)((sr * sa + r * a * invSa / 255) / outA);
-        a = (byte)outA;
+        var before = layer.Pixels.CaptureTiles(dirty);
+        layer.Pixels.RenderWithSkia(dirty, render);
+        layer.Pixels.EnterPixelWriteLock();
+        try
+        {
+            AlphaLockPixelOps.RestoreLockedTransparentPixels(layer.Pixels, dirty, before);
+        }
+        finally
+        {
+            layer.Pixels.ExitPixelWriteLock();
+        }
     }
 
     private SKColor SamplePigmentUnderDab(
@@ -3920,7 +3881,7 @@ public sealed class BrushEngine : IDisposable
     {
         if (stampColorCount != 0) return false;
         if (brush.ColorMix) return false;
-        if (brush.BlendMode != SKBlendMode.SrcOver && brush.BlendMode != SKBlendMode.DstOut) return false;
+        if (!SupportsCpuRasterBlendMode(brush.BlendMode)) return false;
         if (brush.Shape != null) return false;
         if (HasMultiTipSelection(brush)) return false;
         if (primaryTip.HasColor) return false;

@@ -43,6 +43,12 @@ public static class AppPaths
     public static string DocumentTemplatesPath { get; } =
         Path.Combine(AppDirectory, "document-templates.json");
 
+    public static string ModelsDirectory { get; } =
+        Path.Combine(AppDirectory, "models");
+
+    public static string AnimeSegModelPath { get; } =
+        Path.Combine(ModelsDirectory, "isnetis.onnx");
+
     public static void EnsureDirectories()
     {
         Directory.CreateDirectory(AppDirectory);
@@ -50,5 +56,6 @@ public static class AppPaths
         Directory.CreateDirectory(BrushTipsDirectory);
         Directory.CreateDirectory(DocumentsDirectory);
         Directory.CreateDirectory(TimelapsesDirectory);
+        Directory.CreateDirectory(ModelsDirectory);
     }
 }

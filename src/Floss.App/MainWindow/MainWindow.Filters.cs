@@ -376,28 +376,23 @@ public partial class MainWindow
 
     internal async Task RunBaseColorMaskGenerator()
     {
-        var slider = new Slider { Minimum = 2, Maximum = 20, Value = 5, Width = 240, Margin = new Thickness(0, 4, 0, 0) };
-        var valueLabel = FilterValueLabel("5");
-        slider.PropertyChanged += (_, e) =>
-        {
-            if (e.Property.Name == nameof(Slider.Value))
-                valueLabel.Text = $"{(int)slider.Value}";
-        };
-
         var content = new StackPanel { Spacing = 4 };
         content.Children.Add(new TextBlock
         {
-            Text = "Min distance from lines",
-            FontSize = 11,
-            Foreground = new SolidColorBrush(Color.Parse(TextSecondary))
-        });
-        content.Children.Add(FilterRow(FilterLabel("Distance"), slider, valueLabel));
-        content.Children.Add(new TextBlock
-        {
-            Text = "Lower (3-5) = more small regions  |  Higher (10-15) = fewer larger regions",
+            Text = "Uses SkyTNT anime-segmentation (isnet_is) to detect character silhouettes\nand create a base-color mask layer below your sketch.\n\nThe model (~168 MB) downloads once and runs locally.",
             FontSize = 10,
             Foreground = new SolidColorBrush(Color.Parse("#7080a0")),
+            TextWrapping = TextWrapping.Wrap
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = BaseColorMaskEngine.ModelFileExists
+                ? $"Model: {BaseColorMaskEngine.ModelPath}"
+                : $"Model will download to:\n{BaseColorMaskEngine.ModelPath}",
+            FontSize = 9,
+            Foreground = new SolidColorBrush(Color.Parse("#607090")),
             TextWrapping = TextWrapping.Wrap,
+            FontFamily = MonospaceFont,
             Margin = new Thickness(0, 4, 0, 0)
         });
 
@@ -446,7 +441,7 @@ public partial class MainWindow
             CanResize = false,
             Background = new SolidColorBrush(Color.Parse(Bg1)),
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            MinWidth = 360
+            MinWidth = 400
         };
 
         var buttons = ((StackPanel)((StackPanel)dialog.Content).Children[^1]);
@@ -460,10 +455,23 @@ public partial class MainWindow
         await dialog.ShowDialog(this);
         if (!await tcs.Task) return;
 
-        var minDist = (int)slider.Value;
+        BaseColorMaskEngine.GrantConsent();
 
-        using var busy = BeginBusy("Generating base color masks…");
-        var masks = await System.Threading.Tasks.Task.Run(() =>
+        using (var modelBusy = BeginBusy(BaseColorMaskEngine.ModelFileExists
+            ? "Loading anime-segmentation model…"
+            : "Downloading anime-segmentation model…"))
+        {
+            if (!await BaseColorMaskEngine.EnsureModelReadyAsync())
+            {
+                await ShowMessage("Anime Segmentation Unavailable",
+                    BaseColorMaskEngine.LastError
+                    ?? "Could not download or load isnetis.onnx.");
+                return;
+            }
+        }
+
+        using var busy = BeginBusy("Generating character mask…");
+        var generation = await System.Threading.Tasks.Task.Run(() =>
         {
             var bitmap = DocumentRasterizer.RenderFlattenedBitmap(_canvas.Document);
             var w = bitmap.Width;
@@ -471,13 +479,22 @@ public partial class MainWindow
             var raw = new byte[w * h * 4];
             Marshal.Copy(bitmap.GetPixels(), raw, 0, raw.Length);
             bitmap.Dispose();
-            return BaseColorMaskEngine.GenerateMasks(raw, w, h, minDist);
+            return BaseColorMaskEngine.GenerateMasks(raw, w, h);
         });
 
-        if (masks.Count == 0)
+        var masks = generation.Masks;
+
+        if (generation.AnimeSeg != AnimeSegStatus.Applied || masks.Count == 0)
         {
-            await ShowMessage("No Masks Generated",
-                "No fill regions were found.\nTry a smaller min_distance value (3-5).");
+            var message = generation.AnimeSeg switch
+            {
+                AnimeSegStatus.ModelMissing => "Anime model file was not found.",
+                AnimeSegStatus.ModelLoadFailed => BaseColorMaskEngine.LastError ?? "Anime model failed to load.",
+                AnimeSegStatus.InferenceFailed => BaseColorMaskEngine.LastError ?? "Anime inference failed.",
+                AnimeSegStatus.NoForegroundDetected => "No character silhouettes were detected in this image.",
+                _ => "Mask generation failed."
+            };
+            await ShowMessage("No Masks Generated", message);
             return;
         }
 

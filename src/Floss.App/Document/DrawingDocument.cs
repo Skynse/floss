@@ -97,7 +97,33 @@ public sealed class DrawingDocument : IDisposable
     public int CommittedStrokeCount { get; private set; }
     public bool CanUndo => _undo.Count > 0;
     public bool CanRedo => _redo.Count > 0;
-    public bool CanDeleteLayer => ActiveLayer is { } al && _layers.Count > 1 && (!al.IsLocked || al.IsPaper) && !al.IsGroup;
+    public bool CanDeleteLayer => CanDeleteLayers([ActiveLayerIndex]);
+
+    public bool CanDeleteLayers(IReadOnlyList<int> indices)
+    {
+        if (_layers.Count <= 1 || indices.Count == 0)
+            return false;
+
+        var toRemove = CollectDeletableLayers(indices);
+        return toRemove.Count > 0 && _layers.Count - toRemove.Count >= 1;
+    }
+
+    private static bool IsLayerDeletable(DrawingLayer layer) =>
+        !layer.IsGroup && (!layer.IsLocked || layer.IsPaper);
+
+    private HashSet<DrawingLayer> CollectDeletableLayers(IReadOnlyList<int> indices)
+    {
+        var toRemove = new HashSet<DrawingLayer>();
+        foreach (var i in indices)
+        {
+            if (i < 0 || i >= _layers.Count) continue;
+            var layer = _layers[i];
+            if (!IsLayerDeletable(layer)) continue;
+            foreach (var l in EnumerateLayerTree(layer))
+                toRemove.Add(l);
+        }
+        return toRemove;
+    }
     public bool CanPaintActiveLayer => ActiveLayer is { IsLocked: false, IsVisible: true, IsGroup: false };
     public bool CanModifyActiveLayer => ActiveLayer is { IsLocked: false, IsGroup: false };
     public bool IsDirty => _currentStateId != _savedStateId;
@@ -540,37 +566,46 @@ public sealed class DrawingDocument : IDisposable
         NotifyLayersChanged();
     }
 
-    public void DeleteActiveLayer()
+    public void DeleteActiveLayer() => DeleteLayers([ActiveLayerIndex]);
+
+    public void DeleteLayers(IReadOnlyList<int> indices)
     {
-        if (_layers.Count <= 1 || !CanModifyActiveLayer) return;
-        var removed = _layers[ActiveLayerIndex];
-        var wasPaper = removed.IsPaper;
-        var parent = removed.Parent;
-        var siblings = parent?.Children ?? RootLayers();
-        var siblingIndex = siblings.IndexOf(removed);
+        var toRemove = CollectDeletableLayers(indices);
+        if (toRemove.Count == 0 || _layers.Count - toRemove.Count < 1)
+            return;
+
+        var removedPaper = toRemove.Any(l => l.IsPaper);
+        var activeWasRemoved = ActiveLayerIndex >= 0 && ActiveLayerIndex < _layers.Count
+            && toRemove.Contains(_layers[ActiveLayerIndex]);
+        var fallbackIndex = ActiveLayerIndex;
 
         BeginDocumentMutation();
-        DetachLayer(removed);
-        foreach (var layer in EnumerateLayerTree(removed).ToArray())
+        foreach (var layer in toRemove.OrderByDescending(l => _layers.IndexOf(l)).ToList())
         {
+            DetachLayer(layer);
             _layers.Remove(layer);
             LayerRemoved?.Invoke(this, layer);
             layer.Dispose();
         }
 
-        if (wasPaper)
+        if (removedPaper)
         {
             PaperLayer = null;
             PaperColor = new Avalonia.Media.Color(0, 0, 0, 0);
         }
 
         RebuildFlatLayerOrder();
-        ActiveLayerIndex = _layers.Count > 0 ? Math.Clamp(ActiveLayerIndex, 0, _layers.Count - 1) : -1;
-        if (_layers.Count > 0)
+        if (_layers.Count == 0)
         {
-            var nextSiblings = parent is { } p && _layers.Contains(p) ? p.Children : RootLayers();
-            var fallback = nextSiblings.Count > 0 ? nextSiblings[Math.Clamp(siblingIndex, 0, nextSiblings.Count - 1)] : _layers[^1];
-            ActiveLayerIndex = _layers.IndexOf(fallback);
+            ActiveLayerIndex = -1;
+        }
+        else if (activeWasRemoved)
+        {
+            ActiveLayerIndex = Math.Clamp(fallbackIndex, 0, _layers.Count - 1);
+        }
+        else
+        {
+            ActiveLayerIndex = Math.Clamp(ActiveLayerIndex, 0, _layers.Count - 1);
         }
 
         NotifyLayersChanged();

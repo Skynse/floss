@@ -225,12 +225,25 @@ public partial class MainWindow
         _canvas.RecoverInputState();
 
         // Swap canvas into the frame
-        _canvasFrame.Child = _canvas;
+        if (_canvasHost != null)
+        {
+            for (int i = _canvasHost.Children.Count - 1; i >= 0; i--)
+            {
+                if (_canvasHost.Children[i] is DrawingCanvas)
+                    _canvasHost.Children.RemoveAt(i);
+            }
+            _canvasHost.Children.Insert(0, _canvas);
+        }
+        else
+        {
+            _canvasFrame!.Child = _canvas;
+        }
 
         // Update overlays
         if (_checkerboardOverlay != null) _checkerboardOverlay.Canvas = _canvas;
         if (_rulerOverlay is RulerOverlay ro) ro.Canvas = _canvas;
         if (_resizeOverlay != null) _resizeOverlay.Canvas = _canvas;
+        if (_selectionOutlineOverlay != null) _selectionOutlineOverlay.Canvas = _canvas;
 
         // Restore viewport state
         _zoom = tab.Zoom;

@@ -313,6 +313,7 @@ public partial class MainWindow : ICanvasInputHost
         _canvas.CanvasRotation = _rotation;
         _canvas.FlipX = (int)_canvasFlip.ScaleX;
         _canvas.FlipY = (int)_canvasFlip.ScaleY;
+        _selectionOutlineOverlay?.InvalidateVisual();
     }
 
     private void InvalidateViewport()
@@ -322,6 +323,7 @@ public partial class MainWindow : ICanvasInputHost
         _rulerOverlay?.InvalidateVisual();
         _checkerboardOverlay?.InvalidateVisual();
         _resizeOverlay?.InvalidateVisual();
+        _selectionOutlineOverlay?.InvalidateVisual();
     }
 
     private void ClampCanvasPan()

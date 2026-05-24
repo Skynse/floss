@@ -582,75 +582,57 @@ public sealed class DirectDrawOutput : IOutputProcess
         int lastTileX = FloorDiv(dirty.Right - 1, ts);
         int lastTileY = FloorDiv(dirty.Bottom - 1, ts);
 
-        layer.Pixels.EnterPixelWriteLock();
-        try
+        // Caller (ProcessSegmentBatch) already holds the pixel write lock.
+        for (int ty = firstTileY; ty <= lastTileY; ty++)
         {
-            for (int ty = firstTileY; ty <= lastTileY; ty++)
+            var tilePixY = ty * ts;
+            for (int tx = firstTileX; tx <= lastTileX; tx++)
             {
-                var tilePixY = ty * ts;
-                for (int tx = firstTileX; tx <= lastTileX; tx++)
+                if (!beforeTiles.ContainsKey((tx, ty)))
+                    continue;
+
+                beforeTiles.TryGetValue((tx, ty), out var beforeTile);
+
+                int pxMin = Math.Max(dirty.X, tx * ts);
+                int pxMax = Math.Min(dirty.Right, tx * ts + ts);
+                int pyMin = Math.Max(dirty.Y, ty * ts);
+                int pyMax = Math.Min(dirty.Bottom, ty * ts + ts);
+                if (pxMin >= pxMax || pyMin >= pyMax) continue;
+
+                byte[]? liveTile = null;
+                for (int py = pyMin; py < pyMax; py++)
                 {
-                    beforeTiles.TryGetValue((tx, ty), out var beforeTile);
-                    if (alphaLocked && beforeTile != null && IsTileAllZero(beforeTile))
-                        continue;
-
-                    int pxMin = Math.Max(dirty.X, tx * ts);
-                    int pxMax = Math.Min(dirty.Right, tx * ts + ts);
-                    int pyMin = Math.Max(dirty.Y, ty * ts);
-                    int pyMax = Math.Min(dirty.Bottom, ty * ts + ts);
-                    if (pxMin >= pxMax || pyMin >= pyMax) continue;
-
-                    byte[]? liveTile = null;
-                    for (int py = pyMin; py < pyMax; py++)
+                    int ly = py - tilePixY;
+                    int rowBase = ly * ts * 4;
+                    for (int px = pxMin; px < pxMax; px++)
                     {
-                        int ly = py - tilePixY;
-                        int rowBase = ly * ts * 4;
-                        for (int px = pxMin; px < pxMax; px++)
+                        bool inSelection = !hasSelection || selection.IsSelected(px + layer.OffsetX, py + layer.OffsetY);
+                        int lx = px - tx * ts;
+                        int offset = rowBase + lx * 4;
+                        bool hadAlpha = !alphaLocked || (beforeTile != null && beforeTile[offset + 3] > 0);
+
+                        if (inSelection && hadAlpha) continue;
+
+                        if (beforeTile != null)
                         {
-                            bool inSelection = !hasSelection || selection.IsSelected(px + layer.OffsetX, py + layer.OffsetY);
-                            int lx = px - tx * ts;
-                            int offset = rowBase + lx * 4;
-                            bool hadAlpha = !alphaLocked || (beforeTile != null && beforeTile[offset + 3] > 0);
-
-                            if (inSelection && hadAlpha) continue;
-
-                            if (beforeTile != null)
-                            {
-                                liveTile ??= layer.Pixels.GetOrCreateRawTile(tx, ty);
-                                liveTile[offset] = beforeTile[offset];
-                                liveTile[offset + 1] = beforeTile[offset + 1];
-                                liveTile[offset + 2] = beforeTile[offset + 2];
-                                liveTile[offset + 3] = beforeTile[offset + 3];
-                            }
-                            else
-                            {
-                                liveTile ??= layer.Pixels.GetOrCreateRawTile(tx, ty);
-                                liveTile[offset] = 0;
-                                liveTile[offset + 1] = 0;
-                                liveTile[offset + 2] = 0;
-                                liveTile[offset + 3] = 0;
-                            }
+                            liveTile ??= layer.Pixels.GetOrCreateRawTile(tx, ty);
+                            liveTile[offset] = beforeTile[offset];
+                            liveTile[offset + 1] = beforeTile[offset + 1];
+                            liveTile[offset + 2] = beforeTile[offset + 2];
+                            liveTile[offset + 3] = beforeTile[offset + 3];
+                        }
+                        else
+                        {
+                            liveTile ??= layer.Pixels.GetOrCreateRawTile(tx, ty);
+                            liveTile[offset] = 0;
+                            liveTile[offset + 1] = 0;
+                            liveTile[offset + 2] = 0;
+                            liveTile[offset + 3] = 0;
                         }
                     }
                 }
             }
         }
-        finally
-        {
-            layer.Pixels.ExitPixelWriteLock();
-        }
-    }
-
-    private static unsafe bool IsTileAllZero(byte[] tile)
-    {
-        fixed (byte* p = tile)
-        {
-            var len = tile.Length / 4;
-            var w = (uint*)p;
-            for (var i = 0; i < len; i++)
-                if (w[i] != 0) return false;
-        }
-        return true;
     }
 
     private sealed class StrokeTransaction

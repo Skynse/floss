@@ -75,37 +75,15 @@ public sealed class ClosedAreaFillOutput : IOutputProcess
                         var skColor = bitmap.GetPixel(docX - x1, docY - y1);
                         if (skColor.Alpha == 0) continue;
 
-                        if (layer.IsAlphaLocked)
+                        if (AlphaLockPixelOps.TryWriteColor(layer.Pixels, lx, ly,
+                                skColor.Blue, skColor.Green, skColor.Red, skColor.Alpha, layer.IsAlphaLocked))
                         {
-                            layer.Pixels.GetPixel(lx, ly, out _, out _, out _, out byte ea);
-                            if (ea == 0) continue;
+                            changed = true;
+                            minX = Math.Min(minX, docX);
+                            minY = Math.Min(minY, docY);
+                            maxX = Math.Max(maxX, docX);
+                            maxY = Math.Max(maxY, docY);
                         }
-
-                        if (skColor.Alpha == 255)
-                        {
-                            layer.Pixels.SetPixel(lx, ly, color.B, color.G, color.R, color.A);
-                        }
-                        else
-                        {
-                            layer.Pixels.GetPixel(lx, ly, out byte b, out byte g, out byte r, out byte a);
-                            float srcA = skColor.Alpha / 255f;
-                            float dstA = a / 255f;
-                            float outA = srcA + dstA * (1 - srcA);
-                            if (outA > 0)
-                            {
-                                byte outR = (byte)((skColor.Red * srcA + r * dstA * (1 - srcA)) / outA);
-                                byte outG = (byte)((skColor.Green * srcA + g * dstA * (1 - srcA)) / outA);
-                                byte outB = (byte)((skColor.Blue * srcA + b * dstA * (1 - srcA)) / outA);
-                                byte outAByte = (byte)(outA * 255);
-                                layer.Pixels.SetPixel(lx, ly, outB, outG, outR, outAByte);
-                            }
-                        }
-
-                        changed = true;
-                        minX = Math.Min(minX, docX);
-                        minY = Math.Min(minY, docY);
-                        maxX = Math.Max(maxX, docX);
-                        maxY = Math.Max(maxY, docY);
                     }
                 }
             }
@@ -125,18 +103,15 @@ public sealed class ClosedAreaFillOutput : IOutputProcess
                     int lx = docX - layer.OffsetX;
                     int ly = docY - layer.OffsetY;
 
-                    if (layer.IsAlphaLocked)
+                    if (AlphaLockPixelOps.TryWriteColor(layer.Pixels, lx, ly,
+                            color.B, color.G, color.R, color.A, layer.IsAlphaLocked))
                     {
-                        layer.Pixels.GetPixel(lx, ly, out _, out _, out _, out byte ea);
-                        if (ea == 0) continue;
+                        changed = true;
+                        minX = Math.Min(minX, docX);
+                        minY = Math.Min(minY, docY);
+                        maxX = Math.Max(maxX, docX);
+                        maxY = Math.Max(maxY, docY);
                     }
-
-                    layer.Pixels.SetPixel(lx, ly, color.B, color.G, color.R, color.A);
-                    changed = true;
-                    minX = Math.Min(minX, docX);
-                    minY = Math.Min(minY, docY);
-                    maxX = Math.Max(maxX, docX);
-                    maxY = Math.Max(maxY, docY);
                 }
             }
         }

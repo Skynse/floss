@@ -218,7 +218,7 @@ public partial class MainWindow
         addBtn.Click += (_, _) => _canvas.AddLayer();
         folderBtn.Click += (_, _) => _canvas.AddGroupLayer();
         dupBtn.Click += (_, _) => _canvas.DuplicateLayer();
-        _deleteLayerButton.Click += (_, _) => _canvas.DeleteLayer();
+        _deleteLayerButton.Click += (_, _) => DeleteSelectedLayers();
         _moveLayerUpButton.Click += (_, _) => _canvas.MoveActiveLayer(1);
         _moveLayerDownButton.Click += (_, _) => _canvas.MoveActiveLayer(-1);
 
@@ -302,6 +302,29 @@ public partial class MainWindow
         _selectedLayerIndices.RemoveWhere(i => i < 0 || i >= max);
         if (max > 0 && _selectedLayerIndices.Count == 0)
             _selectedLayerIndices.Add(_canvas.ActiveLayerIndex);
+    }
+
+    private IReadOnlyList<int> LayerDeleteTargetIndices()
+    {
+        if (_selectedLayerIndices.Count > 0)
+            return _selectedLayerIndices.ToList();
+        return _canvas.ActiveLayerIndex >= 0 ? [_canvas.ActiveLayerIndex] : Array.Empty<int>();
+    }
+
+    private bool CanDeleteSelectedLayers() =>
+        _canvas.CanDeleteLayer(LayerDeleteTargetIndices());
+
+    private void DeleteSelectedLayers()
+    {
+        var indices = LayerDeleteTargetIndices();
+        if (!_canvas.CanDeleteLayer(indices))
+            return;
+
+        _canvas.DeleteLayer(indices);
+        _selectedLayerIndices.Clear();
+        if (_canvas.ActiveLayerIndex >= 0)
+            _selectedLayerIndices.Add(_canvas.ActiveLayerIndex);
+        BuildLayerList();
     }
 
     /// <summary>
@@ -614,6 +637,9 @@ public partial class MainWindow
 
         var hasSelection = _selectedLayerIndices.Count >= 1;
 
+        var deleteItem = Item("_Delete", DeleteSelectedLayers, new KeyGesture(Key.Delete, KeyModifiers.Control));
+        deleteItem.IsEnabled = CanDeleteSelectedLayers();
+
         var items = new List<MenuItem>
         {
             Item("_New Layer Above", () => _canvas.AddLayer(), new KeyGesture(Key.N, KeyModifiers.Control | KeyModifiers.Shift)),
@@ -621,7 +647,7 @@ public partial class MainWindow
             Item("_Duplicate", () => _canvas.DuplicateLayer(), new KeyGesture(Key.J, KeyModifiers.Control)),
             Item("_Copy", () => _canvas.CopyLayer(index)),
             pasteItem,
-            Item("_Delete", () => _canvas.DeleteLayer(), new KeyGesture(Key.Delete, KeyModifiers.Control)),
+            deleteItem,
             new() { Header = "-" },
             Item(layer.IsVisible ? "Hide Layer" : "Show Layer", () => _canvas.ToggleLayerVisibility(index)),
             MakeLockItem(layer, index),

@@ -57,6 +57,7 @@ public sealed class ToolContext
     public Color PaintColor { get; set; } = Color.Parse("#111111");
     public SelectionMask Selection => Document.Selection;
     public Action InvalidateRender { get; init; } = () => { };
+    public Action InvalidateSelectionOverlay { get; init; } = () => { };
     public Action SelectionChanged { get; init; } = () => { };
     public Action<SelectionMask.Snapshot> CommitSelectionMutation { get; init; } = _ => { };
     public Action<Color> OnColorSampled { get; init; } = _ => { };

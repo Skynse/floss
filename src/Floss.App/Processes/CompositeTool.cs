@@ -28,7 +28,7 @@ public sealed class CompositeTool : ITool
             Cancel(ctx);
         else
             Input.Cancel();
-        ctx.InvalidateRender();
+        InvalidateUi(ctx);
     }
 
     public void PointerDown(ToolContext ctx, CanvasInputSample s)
@@ -40,12 +40,16 @@ public sealed class CompositeTool : ITool
         if (Input.GetImmediateResult() is { } immediate)
         {
             Output.Execute(ctx, immediate);
-            ctx.InvalidateRender();
+            InvalidateUi(ctx);
         }
         if (Input.IsActive && Input.GetPreview() is { } preview)
         {
             Output.Preview(ctx, preview);
-            ctx.InvalidateRender();
+            InvalidateUi(ctx);
+        }
+        else if (Output is SelectionAreaOutput)
+        {
+            ctx.InvalidateSelectionOverlay();
         }
     }
 
@@ -67,7 +71,7 @@ public sealed class CompositeTool : ITool
         {
             Output.Execute(ctx, result);
         }
-        ctx.InvalidateRender();
+        InvalidateUi(ctx);
     }
 
     public void Cancel(ToolContext ctx)
@@ -95,7 +99,6 @@ public sealed class CompositeTool : ITool
 
     public void Commit(ToolContext ctx)
     {
-        // For modal tools (polyline, etc.), mark as explicitly committed.
         Input.Commit();
         if (Input.GetResult() is { } result)
         {
@@ -103,5 +106,16 @@ public sealed class CompositeTool : ITool
             if (Output is DirectDrawOutput directDraw)
                 directDraw.FlushPending();
         }
+        else if (Input.IsActive)
+            Input.Cancel();
+
+        InvalidateUi(ctx);
+    }
+
+    private void InvalidateUi(ToolContext ctx)
+    {
+        ctx.InvalidateRender();
+        if (Output is SelectionAreaOutput)
+            ctx.InvalidateSelectionOverlay();
     }
 }

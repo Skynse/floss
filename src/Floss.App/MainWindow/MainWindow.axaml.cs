@@ -353,7 +353,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         // Layers
         AddShortcut(s.LayerNew, () => _canvas.AddLayer(), CanExecuteCanvasDocumentShortcut);
         AddShortcut(s.LayerDuplicate, () => _canvas.DuplicateLayer(), CanExecuteCanvasDocumentShortcut);
-        AddShortcut(s.LayerDelete, () => _canvas.DeleteLayer(), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.LayerDelete, DeleteSelectedLayers, CanExecuteCanvasDocumentShortcut);
         AddShortcut(s.LayerMoveUp, () => _canvas.MoveActiveLayer(1), CanExecuteCanvasDocumentShortcut);
         AddShortcut(s.LayerMoveDown, () => _canvas.MoveActiveLayer(-1), CanExecuteCanvasDocumentShortcut);
         AddShortcut(s.LayerGroup, LayerGroupAction, CanExecuteCanvasDocumentShortcut);
@@ -518,6 +518,8 @@ public partial class MainWindow : Window, Tools.IViewportController
     private Control? _footer;
     private Control? _rulerOverlay;
     private CheckerboardOverlay? _checkerboardOverlay;
+    private SelectionOutlineOverlay? _selectionOutlineOverlay;
+    private Grid? _canvasHost;
     private bool _canvasOnly;
     private bool _showRulers;
 
@@ -580,10 +582,14 @@ public partial class MainWindow : Window, Tools.IViewportController
         {
             RenderTransform = tg,
             RenderTransformOrigin = new RelativePoint(0.5, 0.5, RelativeUnit.Relative),
-            Child = _canvas,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
+        _canvasHost = new Grid();
+        _canvasHost.Children.Add(_canvas);
+        _selectionOutlineOverlay = new SelectionOutlineOverlay(_canvas);
+        _canvasHost.Children.Add(_selectionOutlineOverlay);
+        _canvasFrame.Child = _canvasHost;
         //_canvasFrame.PointerEntered += (_, _) => _canvasFrame.Cursor = new Cursor(StandardCursorType.None);
         _canvasFrame.PointerExited += (_, _) => _canvasFrame.Cursor = null;
 
@@ -917,7 +923,7 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         _addLayerMenuItem = MenuAction("_Add Layer", new KeyGesture(Key.N, KeyModifiers.Control | KeyModifiers.Shift), () => _canvas.AddLayer());
         _duplicateLayerMenuItem = MenuAction("_Duplicate Layer", new KeyGesture(Key.J, KeyModifiers.Control), () => _canvas.DuplicateLayer());
-        _deleteLayerMenuItem = MenuAction("_Delete Layer", new KeyGesture(Key.Delete, KeyModifiers.Control), () => _canvas.DeleteLayer());
+        _deleteLayerMenuItem = MenuAction("_Delete Layer", new KeyGesture(Key.Delete, KeyModifiers.Control), DeleteSelectedLayers);
         _moveUpMenuItem = MenuAction("Move Layer _Up", () => _canvas.MoveActiveLayer(1));
         _moveDownMenuItem = MenuAction("Move Layer _Down", () => _canvas.MoveActiveLayer(-1));
         _addBackgroundMenuItem = MenuAction("Add _Background", AddBackgroundLayer);
@@ -2691,7 +2697,7 @@ public partial class MainWindow : Window, Tools.IViewportController
             $"{layer.BlendMode}";
         if (_undoButton != null) _undoButton.IsEnabled = _canvas.CanUndo;
         if (_redoButton != null) _redoButton.IsEnabled = _canvas.CanRedo;
-        _deleteLayerButton.IsEnabled = _canvas.CanDeleteLayer;
+        _deleteLayerButton.IsEnabled = CanDeleteSelectedLayers();
         _moveLayerUpButton.IsEnabled = activeIdx < layers.Count - 1;
         _moveLayerDownButton.IsEnabled = activeIdx > 0;
 
@@ -2707,7 +2713,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     {
         var activeIdx = hasDocument && layers.Count > 0 ? _canvas.ActiveLayerIndex : -1;
         var canModifyActive = hasDocument && _canvas.Document.CanModifyActiveLayer;
-        var canDeleteLayer = hasDocument && _canvas.CanDeleteLayer;
+        var canDeleteLayer = hasDocument && CanDeleteSelectedLayers();
 
         if (_saveMenuItem != null) _saveMenuItem.IsEnabled = hasDocument;
         if (_saveAsMenuItem != null) _saveAsMenuItem.IsEnabled = hasDocument;

@@ -118,14 +118,9 @@ public sealed class StrokeOutput : IOutputProcess
                 var skColor = bitmap.GetPixel(lx, ly);
                 if (skColor.Alpha == 0) continue;
 
-                if (layer.IsAlphaLocked)
-                {
-                    layer.Pixels.GetPixel(lx, ly, out _, out _, out _, out byte ea);
-                    if (ea == 0) continue;
-                }
-
-                layer.Pixels.SetPixel(lx, ly, skColor.Blue, skColor.Green, skColor.Red, skColor.Alpha);
-                changed = true;
+                if (AlphaLockPixelOps.TryWriteColor(layer.Pixels, lx, ly,
+                        skColor.Blue, skColor.Green, skColor.Red, skColor.Alpha, layer.IsAlphaLocked))
+                    changed = true;
             }
         }
 

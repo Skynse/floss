@@ -95,19 +95,15 @@ public sealed class FloodFillOutput : IOutputProcess
 
             if (!ColorMatch(pixelColor, targetColor, toleranceSq)) continue;
 
-            // Alpha-lock: skip transparent pixels on active layer even in reference mode.
-            if (layer.IsAlphaLocked)
+            var lx = x - layer.OffsetX;
+            var ly = y - layer.OffsetY;
+            if (AlphaLockPixelOps.TryWriteColor(layer.Pixels, lx, ly,
+                    fillColor.B, fillColor.G, fillColor.R, fillColor.A, layer.IsAlphaLocked))
             {
-                layer.Pixels.GetPixel(x - layer.OffsetX, y - layer.OffsetY,
-                    out _, out _, out _, out byte activeA);
-                if (activeA == 0) continue;
+                changed = true;
+                minX = Math.Min(minX, x); minY = Math.Min(minY, y);
+                maxX = Math.Max(maxX, x); maxY = Math.Max(maxY, y);
             }
-
-            layer.Pixels.SetPixel(x - layer.OffsetX, y - layer.OffsetY,
-                fillColor.B, fillColor.G, fillColor.R, fillColor.A);
-            changed = true;
-            minX = Math.Min(minX, x); minY = Math.Min(minY, y);
-            maxX = Math.Max(maxX, x); maxY = Math.Max(maxY, y);
 
             if (x + 1 < docW) { int ni = idx + 1; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }
             if (x - 1 >= 0) { int ni = idx - 1; if (!visited[ni]) { visited[ni] = true; queue.Enqueue(ni); } }

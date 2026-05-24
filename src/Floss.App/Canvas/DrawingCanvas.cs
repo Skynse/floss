@@ -106,6 +106,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             Brush = _brush,
             PaintColor = _paintColor,
             InvalidateRender = InvalidateVisual,
+            InvalidateSelectionOverlay = InvalidateSelectionOutline,
             OnColorSampled = c =>
             {
                 _paintColor = c;
@@ -220,12 +221,26 @@ public sealed class DrawingCanvas : Control, IDisposable
     public event EventHandler<Color>? ColorSampled;
     public event EventHandler? DirtyStateChanged;
     public event EventHandler? SelectionChanged;
+    public event EventHandler? SelectionOutlineChanged;
+
+    internal void InvalidateSelectionOutline() => SelectionOutlineChanged?.Invoke(this, EventArgs.Empty);
 
     public int ActiveSampleCount => _toolController.ActiveTool.HasPendingOperation ? 1 : 0;
     public int CommittedStrokeCount => _document.CommittedStrokeCount;
     public bool CanUndo => !IsStrokeOutputPending() && _document.CanUndo;
     public bool CanRedo => !IsStrokeOutputPending() && _document.CanRedo;
-    public bool CanDeleteLayer => _document.CanDeleteLayer;
+    public bool CanDeleteLayer(IReadOnlyList<int>? indices = null) =>
+        indices is { Count: > 0 }
+            ? _document.CanDeleteLayers(indices)
+            : _document.CanDeleteLayer;
+
+    public void DeleteLayer(IReadOnlyList<int>? indices = null)
+    {
+        if (indices is { Count: > 0 })
+            _document.DeleteLayers(indices);
+        else
+            _document.DeleteActiveLayer();
+    }
     public BrushPreset Brush => _brush;
     public Color PaintColor => _paintColor;
     public bool EraserEnabled => _brush.BlendMode == SkiaSharp.SKBlendMode.DstOut;
@@ -349,6 +364,7 @@ public sealed class DrawingCanvas : Control, IDisposable
     public void SetActiveTool(ITool tool, ToolPreset? preset = null)
     {
         _toolController.SetActiveTool(tool, preset);
+        InvalidateSelectionOutline();
         InvalidateVisual();
     }
 
@@ -650,13 +666,8 @@ public sealed class DrawingCanvas : Control, IDisposable
             {
                 if (!_ctx.Selection.IsSelected(docX, docY)) continue;
                 int layX = docX - layer.OffsetX;
-                if (layer.IsAlphaLocked)
-                {
-                    layer.Pixels.GetPixel(layX, layY, out _, out _, out _, out var a);
-                    if (a == 0) continue;
-                }
-                layer.Pixels.SetPixel(layX, layY, c.B, c.G, c.R, c.A);
-                changed = true;
+                if (AlphaLockPixelOps.TryWriteColor(layer.Pixels, layX, layY, c.B, c.G, c.R, c.A, layer.IsAlphaLocked))
+                    changed = true;
             }
         }
 
@@ -993,7 +1004,7 @@ public sealed class DrawingCanvas : Control, IDisposable
     private void NotifySelectionChanged()
     {
         SelectionChanged?.Invoke(this, EventArgs.Empty);
-        InvalidateVisual();
+        InvalidateSelectionOutline();
     }
 
     public void Clear(bool pushHistory = true)
@@ -1031,6 +1042,11 @@ public sealed class DrawingCanvas : Control, IDisposable
                && !ReferenceEquals(active, _eraserTool)
                && DirectDrawHasPendingWork(active));
 
+    internal bool IsActiveSelectionGesture()
+        => _toolController.ActiveTool is CompositeTool ct
+           && ct.Output is SelectionAreaOutput
+           && ct.Input.IsActive;
+
     private static bool DirectDrawHasPendingWork(ITool tool)
         => tool is CompositeTool ct && ct.Output is DirectDrawOutput dd && dd.HasPendingWork;
 
@@ -1053,11 +1069,6 @@ public sealed class DrawingCanvas : Control, IDisposable
     public void AddBackgroundLayer() => _document.AddBackgroundLayer();
     public void GroupSelectedLayers(IReadOnlyList<int> indices) => _document.GroupSelectedLayers(indices);
     public void DuplicateLayer() => _document.DuplicateActiveLayer();
-    public void DeleteLayer()
-    {
-        if (!_document.CanModifyActiveLayer) return;
-        _document.DeleteActiveLayer();
-    }
     public void SelectLayer(int index) => _document.SelectLayer(index);
     public void ToggleLayerVisibility(int index) => _document.ToggleLayerVisibility(index);
     public void ToggleLayerLock(int index) => _document.ToggleLayerLock(index);
@@ -1259,8 +1270,6 @@ public sealed class DrawingCanvas : Control, IDisposable
         }
 
         _toolController.RenderOverlay(context, CanvasZoom);
-        if (_toolController.ActiveTool is not Floss.App.Tools.TransformTool)
-            _ctx.Selection.RenderOverlay(context, CanvasZoom);
 
         if (_isLayerPickDrag)
         {
