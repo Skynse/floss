@@ -28,6 +28,24 @@ public enum TransformCompletionKind
     Delete
 }
 
+public enum TransformMode
+{
+    ScaleRotate,
+    Scale,
+    Rotate,
+    FreeTransform,
+    Distort,
+    Skew,
+    Perspective
+}
+
+public sealed record TransformEditSnapshot(
+    TransformMode Mode,
+    double ScaleWPercent,
+    double ScaleHPercent,
+    double Angle,
+    bool KeepAspectRatio);
+
 internal enum TransformDragPart
 {
     None,
@@ -107,6 +125,16 @@ public sealed class TransformTool : ITool
     }
 
     public StandardCursorType? CursorFor(Point canvasPos, double zoom) => _operation?.CursorFor(canvasPos, zoom);
+
+    public TransformEditSnapshot? EditSnapshot => _operation?.Snapshot;
+
+    public void ApplyEdit(TransformEditSnapshot edit) => _operation?.ApplyEdit(edit);
+
+    public void ResetEdit() => _operation?.ResetToBase();
+
+    public void FlipHorizontal() => _operation?.FlipHorizontal();
+
+    public void FlipVertical() => _operation?.FlipVertical();
 }
 
 internal sealed class SelectionTransformOperation : IToolOperationOverlay
@@ -130,12 +158,32 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
     private WriteableBitmap? _overlayBitmap;
     private Rect _rect;
     private Rect _startRect;
+    private readonly Rect _baseRect;
     private double _angle;
     private double _startAngle;
     private Point _dragStart;
     private TransformDragPart _dragPart;
     private bool _isDragging;
     private double _lastZoom = 1.0;
+    private bool _flipX;
+    private bool _flipY;
+
+    public TransformMode Mode { get; set; } = TransformMode.ScaleRotate;
+    public bool KeepAspectRatio { get; set; } = true;
+
+    public TransformEditSnapshot Snapshot
+    {
+        get
+        {
+            var r = NormalizedRect(_rect);
+            return new TransformEditSnapshot(
+                Mode,
+                _baseRect.Width > 0.001 ? r.Width / _baseRect.Width * 100 : 100,
+                _baseRect.Height > 0.001 ? r.Height / _baseRect.Height * 100 : 100,
+                _angle,
+                KeepAspectRatio);
+        }
+    }
 
     public OverlayAction RequestedAction { get; private set; }
 
@@ -158,6 +206,7 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         _sourceH = sourceH;
         _combinedPixels = combinedPixels;
         _rect = new Rect(sourceX, sourceY, sourceW, sourceH);
+        _baseRect = _rect;
     }
 
     public static SelectionTransformOperation? TryCreate(
@@ -336,29 +385,86 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         var dx = pt.X - _dragStart.X;
         var dy = pt.Y - _dragStart.Y;
         var rect = _startRect;
+        var ctrl = _context.CurrentModifiers.HasFlag(KeyModifiers.Control);
+        var uniform = KeepAspectRatio && !ctrl && Mode is TransformMode.ScaleRotate or TransformMode.Scale;
 
         switch (_dragPart)
         {
             case TransformDragPart.Move:
-                _rect = new Rect(rect.X + dx, rect.Y + dy, rect.Width, rect.Height);
+                if (Mode != TransformMode.Rotate)
+                    _rect = new Rect(rect.X + dx, rect.Y + dy, rect.Width, rect.Height);
                 break;
 
             case TransformDragPart.Rotate:
+                if (Mode is TransformMode.ScaleRotate or TransformMode.Rotate or TransformMode.FreeTransform)
                 {
                     var c = CenterOf(rect);
                     var startAngle = Math.Atan2(_dragStart.Y - c.Y, _dragStart.X - c.X) * 180 / Math.PI;
                     var currentAngle = Math.Atan2(pt.Y - c.Y, pt.X - c.X) * 180 / Math.PI;
                     _angle = _startAngle + (currentAngle - startAngle);
-                    break;
                 }
+                break;
 
             default:
-                _rect = ResizeRect(rect, _dragPart, dx, dy);
+                if (Mode == TransformMode.Rotate)
+                    break;
+                _rect = uniform && IsCornerHandle(_dragPart)
+                    ? UniformScaleRect(rect, _dragPart, dx, dy)
+                    : ResizeRect(rect, _dragPart, dx, dy, uniform);
                 break;
         }
 
         _context.InvalidateRender();
+        _context.TransformEditChanged?.Invoke();
     }
+
+    public void ApplyEdit(TransformEditSnapshot edit)
+    {
+        Mode = edit.Mode;
+        KeepAspectRatio = edit.KeepAspectRatio;
+        _angle = edit.Angle;
+
+        var center = CenterOf(_baseRect);
+        var w = Math.Max(8, _baseRect.Width * edit.ScaleWPercent / 100.0);
+        var h = Math.Max(8, _baseRect.Height * edit.ScaleHPercent / 100.0);
+        if (KeepAspectRatio && Mode is TransformMode.ScaleRotate or TransformMode.Scale)
+        {
+            var uniform = Math.Max(w / _baseRect.Width, h / _baseRect.Height);
+            w = _baseRect.Width * uniform;
+            h = _baseRect.Height * uniform;
+        }
+
+        _rect = new Rect(center.X - w * 0.5, center.Y - h * 0.5, w, h);
+        _context.InvalidateRender();
+        _context.TransformEditChanged?.Invoke();
+    }
+
+    public void ResetToBase()
+    {
+        _rect = _baseRect;
+        _angle = 0;
+        _flipX = _flipY = false;
+        _context.InvalidateRender();
+        _context.TransformEditChanged?.Invoke();
+    }
+
+    public void FlipHorizontal()
+    {
+        _flipX = !_flipX;
+        _context.InvalidateRender();
+        _context.TransformEditChanged?.Invoke();
+    }
+
+    public void FlipVertical()
+    {
+        _flipY = !_flipY;
+        _context.InvalidateRender();
+        _context.TransformEditChanged?.Invoke();
+    }
+
+    private static bool IsCornerHandle(TransformDragPart part)
+        => part is TransformDragPart.TopLeft or TransformDragPart.TopRight
+            or TransformDragPart.BottomLeft or TransformDragPart.BottomRight;
 
     public void PointerUp(CanvasInputSample sample)
     {
@@ -476,7 +582,20 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
 
         using (dc.PushTransform(matrix))
         {
-            dc.DrawImage(_overlayBitmap, rect);
+            if (_flipX || _flipY)
+            {
+                using (dc.PushTransform(
+                           Matrix.CreateTranslation(-center.X, -center.Y)
+                           * Matrix.CreateScale(_flipX ? -1 : 1, _flipY ? -1 : 1)
+                           * Matrix.CreateTranslation(center.X, center.Y)))
+                {
+                    dc.DrawImage(_overlayBitmap, rect);
+                }
+            }
+            else
+            {
+                dc.DrawImage(_overlayBitmap, rect);
+            }
 
             var t = Math.Max(0.75, 1.0 / zoom);
             var borderPen = new Pen(new SolidColorBrush(Color.FromRgb(90, 150, 255)), t);
@@ -532,6 +651,8 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
                 using var paint = new SKPaint { IsAntialias = true, BlendMode = SKBlendMode.SrcOver };
                 canvas.Translate((float)center.X, (float)center.Y);
                 canvas.RotateDegrees((float)_angle);
+                if (_flipX || _flipY)
+                    canvas.Scale(_flipX ? -1 : 1, _flipY ? -1 : 1);
                 canvas.Translate(-(float)center.X, -(float)center.Y);
                 canvas.DrawBitmap(srcBitmap,
                     new SKRect((float)r.X, (float)r.Y, (float)r.Right, (float)r.Bottom),
@@ -657,7 +778,7 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         return TransformDragPart.Rotate;
     }
 
-    private static Rect ResizeRect(Rect rect, TransformDragPart part, double dx, double dy)
+    private static Rect ResizeRect(Rect rect, TransformDragPart part, double dx, double dy, bool uniformSides)
     {
         var left = rect.Left;
         var top = rect.Top;
@@ -673,9 +794,71 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         if (part is TransformDragPart.BottomLeft or TransformDragPart.Bottom or TransformDragPart.BottomRight)
             bottom += dy;
 
+        if (uniformSides && !IsCornerHandle(part))
+        {
+            var dw = right - left;
+            var dh = bottom - top;
+            var scale = part is TransformDragPart.Left or TransformDragPart.Right
+                ? dw / rect.Width
+                : dh / rect.Height;
+            scale = Math.Max(scale, 8 / Math.Max(rect.Width, rect.Height));
+            var c = CenterOf(rect);
+            dw = rect.Width * scale;
+            dh = rect.Height * scale;
+            left = c.X - dw * 0.5;
+            top = c.Y - dh * 0.5;
+            right = left + dw;
+            bottom = top + dh;
+        }
+
         if (right - left < 8 || bottom - top < 8) return rect;
         return new Rect(left, top, right - left, bottom - top);
     }
+
+    private static Rect UniformScaleRect(Rect rect, TransformDragPart part, double dx, double dy)
+    {
+        var anchor = AnchorPoint(part, rect);
+        var dragged = CornerPoint(part, rect);
+        dragged = new Point(dragged.X + dx, dragged.Y + dy);
+
+        var newW = Math.Abs(dragged.X - anchor.X);
+        var newH = Math.Abs(dragged.Y - anchor.Y);
+        var scale = Math.Max(newW / Math.Max(rect.Width, 1), newH / Math.Max(rect.Height, 1));
+        if (scale < 0.01) return rect;
+
+        var w = Math.Max(8, rect.Width * scale);
+        var h = Math.Max(8, rect.Height * scale);
+
+        var x = dragged.X < anchor.X ? anchor.X - w : anchor.X;
+        var y = dragged.Y < anchor.Y ? anchor.Y - h : anchor.Y;
+        return new Rect(x, y, w, h);
+    }
+
+    private static Point AnchorPoint(TransformDragPart part, Rect rect) => part switch
+    {
+        TransformDragPart.TopLeft => rect.BottomRight,
+        TransformDragPart.TopRight => rect.BottomLeft,
+        TransformDragPart.BottomLeft => rect.TopRight,
+        TransformDragPart.BottomRight => rect.TopLeft,
+        TransformDragPart.Top => new Point(rect.X + rect.Width * 0.5, rect.Bottom),
+        TransformDragPart.Bottom => new Point(rect.X + rect.Width * 0.5, rect.Top),
+        TransformDragPart.Left => new Point(rect.Right, rect.Y + rect.Height * 0.5),
+        TransformDragPart.Right => new Point(rect.Left, rect.Y + rect.Height * 0.5),
+        _ => CenterOf(rect)
+    };
+
+    private static Point CornerPoint(TransformDragPart part, Rect rect) => part switch
+    {
+        TransformDragPart.TopLeft => rect.TopLeft,
+        TransformDragPart.TopRight => rect.TopRight,
+        TransformDragPart.BottomLeft => rect.BottomLeft,
+        TransformDragPart.BottomRight => rect.BottomRight,
+        TransformDragPart.Top => new Point(rect.X + rect.Width * 0.5, rect.Top),
+        TransformDragPart.Bottom => new Point(rect.X + rect.Width * 0.5, rect.Bottom),
+        TransformDragPart.Left => new Point(rect.Left, rect.Y + rect.Height * 0.5),
+        TransformDragPart.Right => new Point(rect.Right, rect.Y + rect.Height * 0.5),
+        _ => CenterOf(rect)
+    };
 
     private static Rect NormalizedRect(Rect r)
         => new(Math.Min(r.X, r.Right), Math.Min(r.Y, r.Bottom),

@@ -346,33 +346,40 @@ public sealed class SelectionMask
         _geoPoly.Clear();
     }
 
-    // Static selection outline — dashed marching ants were redrawn on every compositor
-    // tick and are expensive on large magic-wand masks.
     public void RenderOverlay(DrawingContext dc, double zoom)
+        => RenderMarchingAnts(dc, zoom, 0);
+
+    public void RenderMarchingAnts(DrawingContext dc, double zoom, float phase)
     {
         if (!HasSelection || _geoType == SelectionGeometry.None) return;
 
-        var t = Math.Max(1.0, 1.0 / zoom);
-        var pen = new Pen(new SolidColorBrush(Color.FromArgb(230, 0, 140, 255)), t);
+        var t = Math.Max(0.5, 1.0 / zoom);
+        var dash = Math.Max(2.0, 4.0 / zoom);
+        var cycle = dash * 2;
+        var offset = phase % (float)cycle;
+
+        DrawOutlinePass(dc, t, dash, offset, Avalonia.Media.Brushes.White);
+        DrawOutlinePass(dc, t, dash, offset + dash, Avalonia.Media.Brushes.Black);
+    }
+
+    private void DrawOutlinePass(DrawingContext dc, double thickness, double dash, double offset, IBrush brush)
+    {
+        var pen = new Pen(brush, thickness, new DashStyle([dash, dash], offset));
 
         if (_geoType == SelectionGeometry.Rect)
         {
             var r = new Avalonia.Rect(_geoRect.Left, _geoRect.Top, _geoRect.Width, _geoRect.Height);
             dc.DrawRectangle(null, pen, r);
+            return;
         }
-        else if (_geoType == SelectionGeometry.Polygon && _geoPoly.Count >= 2)
+
+        if (_geoType == SelectionGeometry.Polygon && _geoPoly.Count >= 2)
         {
-            var geo = new StreamGeometry();
-            using (var c = geo.Open())
-            {
-                c.BeginFigure(new Avalonia.Point(_geoPoly[0].X, _geoPoly[0].Y), true);
-                for (int i = 1; i < _geoPoly.Count; i++)
-                    c.LineTo(new Avalonia.Point(_geoPoly[i].X, _geoPoly[i].Y));
-                c.EndFigure(true);
-            }
-            dc.DrawGeometry(null, pen, geo);
+            dc.DrawGeometry(null, pen, BuildPolygonGeometry());
+            return;
         }
-        else if (_geoType == SelectionGeometry.Mask)
+
+        if (_geoType == SelectionGeometry.Mask)
         {
             if (_simplifyOutline || _selectedCount > SimplifyOutlineSelectedPixels)
             {
@@ -387,6 +394,19 @@ public sealed class SelectionMask
             else if (_maskBounds is { } b)
                 DrawBoundsRect(dc, pen, b);
         }
+    }
+
+    private StreamGeometry BuildPolygonGeometry()
+    {
+        var geo = new StreamGeometry();
+        using (var c = geo.Open())
+        {
+            c.BeginFigure(new Avalonia.Point(_geoPoly[0].X, _geoPoly[0].Y), true);
+            for (int i = 1; i < _geoPoly.Count; i++)
+                c.LineTo(new Avalonia.Point(_geoPoly[i].X, _geoPoly[i].Y));
+            c.EndFigure(true);
+        }
+        return geo;
     }
 
     private static void DrawBoundsRect(DrawingContext dc, Pen pen, SKRectI b)

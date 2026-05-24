@@ -107,6 +107,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             PaintColor = _paintColor,
             InvalidateRender = InvalidateVisual,
             InvalidateSelectionOverlay = InvalidateSelectionOutline,
+            TransformEditChanged = () => TransformEditChanged?.Invoke(this, EventArgs.Empty),
             OnColorSampled = c =>
             {
                 _paintColor = c;
@@ -221,6 +222,18 @@ public sealed class DrawingCanvas : Control, IDisposable
     public event EventHandler? DirtyStateChanged;
     public event EventHandler? SelectionChanged;
     public event EventHandler? SelectionOutlineChanged;
+    public event EventHandler? TransformEditChanged;
+
+    public TransformEditSnapshot? TransformEdit =>
+        _toolController.ActiveTool is TransformTool tt ? tt.EditSnapshot : null;
+
+    public void UpdateTransformEdit(TransformEditSnapshot edit) => _transformTool.ApplyEdit(edit);
+
+    public void ResetTransformEdit() => _transformTool.ResetEdit();
+
+    public void FlipTransformHorizontal() => _transformTool.FlipHorizontal();
+
+    public void FlipTransformVertical() => _transformTool.FlipVertical();
 
     internal void InvalidateSelectionOutline() => SelectionOutlineChanged?.Invoke(this, EventArgs.Empty);
 
@@ -546,6 +559,7 @@ public sealed class DrawingCanvas : Control, IDisposable
         if (_transformTool.BeginTransform(_ctx, layerIndices))
         {
             NotifySelectionChanged();
+            TransformEditChanged?.Invoke(this, EventArgs.Empty);
             return true;
         }
 
@@ -565,6 +579,7 @@ public sealed class DrawingCanvas : Control, IDisposable
         if (previous != null)
             SetActiveTool(previous);
         _document.NotifySelectionChanged();
+        TransformEditChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public void DeleteSelectionTransform()
@@ -1452,9 +1467,10 @@ public sealed class DrawingCanvas : Control, IDisposable
         var r = ActiveToolCursorSize() * 0.5;
         if (r < 0.5) return;
         var tip = _brush.Tip;
+        var useTipMask = _ctx.ActivePreset?.InputProcess == InputProcessType.Brush;
 
         SKBitmap? tipBitmap = null;
-        if (tip is ImageBrushTip or NodeBrushTip { IsDirectImageSampler: true })
+        if (useTipMask)
             tipBitmap = GetOrBuildCursorOutline(tip);
 
         var angle = ComputeLiveCursorAngle();

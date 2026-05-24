@@ -58,6 +58,7 @@ public sealed class ToolContext
     public SelectionMask Selection => Document.Selection;
     public Action InvalidateRender { get; init; } = () => { };
     public Action InvalidateSelectionOverlay { get; init; } = () => { };
+    public Action? TransformEditChanged { get; init; }
     public Action SelectionChanged { get; init; } = () => { };
     public Action<SelectionMask.Snapshot> CommitSelectionMutation { get; init; } = _ => { };
     public Action<Color> OnColorSampled { get; init; } = _ => { };

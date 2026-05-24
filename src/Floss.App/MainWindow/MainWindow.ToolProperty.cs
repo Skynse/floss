@@ -388,6 +388,42 @@ public partial class MainWindow
     {
         if (_toolPropertyPanel == null || _toolPropertyTitle == null) return;
 
+        if (_canvas.IsTransformActive)
+        {
+            _toolPropertyTitle.Text = "Transform";
+            var transformProps = CurrentTransformProperties();
+            var transformKey = "transform|" + string.Join("|", transformProps.Select(p => p.Id));
+            bool transformNeedsRebuild = transformKey != _lastToolPropertyKey;
+            _lastToolPropertyKey = transformKey;
+
+            if (transformNeedsRebuild)
+            {
+                _builtToolPropertyDescriptors = transformProps.ToList();
+                _toolPropertyPanel.Children.Clear();
+                _toolPropertyPanel.Children.Add(BuildTransformActionBar());
+                foreach (var prop in transformProps)
+                {
+                    var row = new DockPanel { LastChildFill = true };
+                    row.Children.Add(prop.BuildControl());
+                    _toolPropertyPanel.Children.Add(row);
+                }
+            }
+            else
+            {
+                _syncingToolPropertyPanel = true;
+                try
+                {
+                    foreach (var prop in _builtToolPropertyDescriptors ?? transformProps)
+                        prop.RefreshValue?.Invoke();
+                }
+                finally
+                {
+                    _syncingToolPropertyPanel = false;
+                }
+            }
+            return;
+        }
+
         _toolPropertyTitle.Text = ToolDisplayName(_canvas.ActiveTool);
 
         var props = CurrentToolProperties().Where(p => IsToolPropertyVisible(p)).ToList();

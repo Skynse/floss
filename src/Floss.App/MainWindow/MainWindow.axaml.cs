@@ -423,6 +423,7 @@ public partial class MainWindow : Window, Tools.IViewportController
             _canvas.BeginSelectionTransform(
                 _selectedLayerIndices.Count > 1 ? _selectedLayerIndices.ToList() : null);
         }
+        RefreshToolProperties();
     }
 
     private void LayerGroupAction()

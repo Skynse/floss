@@ -16,7 +16,6 @@ internal sealed class SelectionOutlineOverlay : Control
     private DrawingCanvas? _canvas;
     private readonly DispatcherTimer _animTimer;
     private float _phase;
-    private bool _useCpuFallback;
 
     internal DrawingCanvas? Canvas
     {
@@ -37,7 +36,6 @@ internal sealed class SelectionOutlineOverlay : Control
                 _canvas.SelectionOutlineChanged += OnCanvasSelectionOutlineChanged;
             }
 
-            _useCpuFallback = false;
             UpdateAnimationState();
             InvalidateVisual();
         }
@@ -45,20 +43,20 @@ internal sealed class SelectionOutlineOverlay : Control
 
     public SelectionOutlineOverlay(DrawingCanvas canvas)
     {
+        IsHitTestVisible = false;
         _animTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(100), DispatcherPriority.Render, OnAnimationTick);
         Canvas = canvas;
     }
 
     private void OnCanvasSelectionOutlineChanged(object? sender, EventArgs e)
     {
-        _useCpuFallback = false;
         UpdateAnimationState();
         InvalidateVisual();
     }
 
     private void UpdateAnimationState()
     {
-        if (_canvas?.Selection.HasSelection == true && !_useCpuFallback)
+        if (_canvas?.Selection.HasSelection == true)
             _animTimer.Start();
         else
             _animTimer.Stop();
@@ -89,14 +87,6 @@ internal sealed class SelectionOutlineOverlay : Control
         if (canvas.ShouldHideCommittedSelectionDuringGesture())
             return;
 
-        if (!_useCpuFallback
-            && SelectionMarchingAntsRenderer.TryDraw(context, canvas.Selection, canvas.CanvasZoom, _phase))
-        {
-            return;
-        }
-
-        _useCpuFallback = true;
-        _animTimer.Stop();
-        canvas.Selection.RenderOverlay(context, canvas.CanvasZoom);
+        SelectionMarchingAntsRenderer.Draw(context, canvas.Selection, canvas.CanvasZoom, _phase);
     }
 }
