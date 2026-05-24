@@ -7,7 +7,7 @@ using SkiaSharp;
 
 namespace Floss.App.Tools;
 
-public enum SelectOp { Replace, Add, Subtract }
+public enum SelectOp { Replace, Add, Subtract, Intersect }
 
 // Global selection state — null mask means "everything selected".
 // Stored in ToolContext and inspected by brush, fill, gradient, etc.
@@ -44,6 +44,83 @@ public sealed class SelectionMask
 
     public bool HasSelection => _mask != null;
 
+    internal string OutlineGeometryKindForTests => _geoType.ToString();
+
+    internal bool TryGetAlphaTexture(out SKImage? image, out SKRectI bounds, out int texScale)
+    {
+        image = null;
+        bounds = default;
+        texScale = 1;
+        if (_mask == null || _maskBounds is not { } b || b.Width <= 0 || b.Height <= 0)
+            return false;
+
+        if (_alphaTexture != null && _alphaTextureBounds == b)
+        {
+            image = _alphaTexture;
+            bounds = b;
+            texScale = _alphaTextureScale;
+            return true;
+        }
+
+        ReleaseAlphaTexture();
+        if (!TryBuildAlphaTexture(b, out _alphaTexture, out texScale))
+            return false;
+
+        _alphaTextureBounds = b;
+        _alphaTextureScale = texScale;
+        image = _alphaTexture;
+        bounds = b;
+        return true;
+    }
+
+    private SKImage? _alphaTexture;
+    private SKRectI _alphaTextureBounds;
+    private int _alphaTextureScale = 1;
+
+    private const int MaxAlphaTexturePixels = 8_000_000;
+
+    private void ReleaseAlphaTexture()
+    {
+        _alphaTexture?.Dispose();
+        _alphaTexture = null;
+        _alphaTextureBounds = default;
+        _alphaTextureScale = 1;
+    }
+
+    private bool TryBuildAlphaTexture(SKRectI bounds, out SKImage? image, out int texScale)
+    {
+        image = null;
+        texScale = 1;
+        if (_mask == null)
+            return false;
+
+        int srcW = bounds.Width;
+        int srcH = bounds.Height;
+        while ((long)(srcW / texScale) * (srcH / texScale) > MaxAlphaTexturePixels)
+            texScale *= 2;
+
+        int dstW = Math.Max(1, (srcW + texScale - 1) / texScale);
+        int dstH = Math.Max(1, (srcH + texScale - 1) / texScale);
+
+        using var bmp = new SKBitmap(dstW, dstH, SKColorType.Alpha8, SKAlphaType.Opaque);
+        var span = bmp.GetPixelSpan();
+        for (int y = 0; y < dstH; y++)
+        {
+            int srcY = bounds.Top + y * texScale;
+            for (int x = 0; x < dstW; x++)
+            {
+                int srcX = bounds.Left + x * texScale;
+                int idx = srcY * _docW + srcX;
+                span[y * dstW + x] = _mask[idx] > 0 ? (byte)255 : (byte)0;
+            }
+        }
+
+        image = SKImage.FromBitmap(bmp);
+        return image != null;
+    }
+
+    private void InvalidateAlphaTexture() => ReleaseAlphaTexture();
+
     public Snapshot CaptureSnapshot()
         => new(
             _docW,
@@ -65,6 +142,7 @@ public sealed class SelectionMask
             : SelectionGeometry.None;
         _cachedMaskGeo = null;
         _simplifyOutline = false;
+        InvalidateAlphaTexture();
         RecomputeMaskMetadata();
     }
 
@@ -85,6 +163,7 @@ public sealed class SelectionMask
         _maskBounds = null;
         _selectedCount = 0;
         _simplifyOutline = false;
+        InvalidateAlphaTexture();
     }
 
     public bool IsSelected(int x, int y)
@@ -141,13 +220,19 @@ public sealed class SelectionMask
         int x2 = Math.Clamp(Math.Max(x, x + w), 0, _docW);
         int y2 = Math.Clamp(Math.Max(y, y + h), 0, _docH);
 
-        for (int py = y1; py < y2; py++)
-            for (int px = x1; px < x2; px++)
-                Apply(next, px, py, op, true);
+        ApplyRectOp(next, x1, y1, x2, y2, op);
 
         CommitMask(next);
-        _geoType = SelectionGeometry.Rect;
-        _geoRect = new SKRectI(x1, y1, x2, y2);
+        if (op == SelectOp.Replace && TryGetSolidRectBounds(out var solid))
+        {
+            _geoType = SelectionGeometry.Rect;
+            _geoRect = solid;
+        }
+        else
+        {
+            _geoType = SelectionGeometry.Mask;
+            _geoPoly.Clear();
+        }
         _cachedMaskGeo = null;
     }
 
@@ -171,13 +256,19 @@ public sealed class SelectionMask
         int y2 = Math.Clamp((int)Math.Ceiling(bounds.Bottom), 0, _docH - 1);
 
         var next = CreateBaseMask(op);
-        for (int py = y1; py <= y2; py++)
-            for (int px = x1; px <= x2; px++)
-                Apply(next, px, py, op, region.Contains(px, py));
+        ApplyRegionOp(next, x1, y1, x2, y2, op, region.Contains);
 
         CommitMask(next);
-        _geoType = SelectionGeometry.Polygon;
-        _geoPoly = new List<SKPoint>(points);
+        if (op == SelectOp.Replace)
+        {
+            _geoType = SelectionGeometry.Polygon;
+            _geoPoly = new List<SKPoint>(points);
+        }
+        else
+        {
+            _geoType = SelectionGeometry.Mask;
+            _geoPoly.Clear();
+        }
         _cachedMaskGeo = null;
     }
 
@@ -208,6 +299,8 @@ public sealed class SelectionMask
         }
 
         FloodFillMask(next, startDocX, startDocY, op, (docX, docY) => Similar(docY * _docW + docX));
+        if (op == SelectOp.Intersect)
+            ClearUnvisitedIntersect(next);
         CommitMask(next);
         _geoType = SelectionGeometry.Mask;
         _cachedMaskGeo = null;
@@ -244,6 +337,8 @@ public sealed class SelectionMask
         }
 
         FloodFillMask(next, startDocX, startDocY, op, Similar);
+        if (op == SelectOp.Intersect)
+            ClearUnvisitedIntersect(next);
         CommitMask(next);
         _geoType = SelectionGeometry.Mask;
         _cachedMaskGeo = null;
@@ -427,6 +522,7 @@ public sealed class SelectionMask
     {
         _cachedMaskGeo = null;
         _simplifyOutline = false;
+        InvalidateAlphaTexture();
         if (_mask == null)
         {
             _maskBounds = null;
@@ -556,6 +652,73 @@ public sealed class SelectionMask
         return true;
     }
 
+    private void ApplyRectOp(byte[] next, int x1, int y1, int x2, int y2, SelectOp op)
+    {
+        var shape = new SKRectI(x1, y1, x2, y2);
+        if (op == SelectOp.Intersect && _mask != null)
+        {
+            var iter = IterationBoundsForIntersect(shape);
+            for (int py = iter.Top; py < iter.Bottom; py++)
+                for (int px = iter.Left; px < iter.Right; px++)
+                {
+                    bool inside = px >= x1 && px < x2 && py >= y1 && py < y2;
+                    Apply(next, px, py, op, inside);
+                }
+            return;
+        }
+
+        for (int py = y1; py < y2; py++)
+            for (int px = x1; px < x2; px++)
+                Apply(next, px, py, op, true);
+    }
+
+    private void ApplyRegionOp(byte[] next, int x1, int y1, int x2, int y2, SelectOp op,
+        Func<int, int, bool> insideAt)
+    {
+        var shape = new SKRectI(x1, y1, x2 + 1, y2 + 1);
+        if (op == SelectOp.Intersect && _mask != null)
+        {
+            var iter = IterationBoundsForIntersect(shape);
+            for (int py = iter.Top; py < iter.Bottom; py++)
+                for (int px = iter.Left; px < iter.Right; px++)
+                    Apply(next, px, py, op, insideAt(px, py));
+            return;
+        }
+
+        for (int py = y1; py <= y2; py++)
+            for (int px = x1; px <= x2; px++)
+                Apply(next, px, py, op, insideAt(px, py));
+    }
+
+    private SKRectI IterationBoundsForIntersect(SKRectI shapeBounds)
+    {
+        if (_maskBounds is not { } existing)
+            return shapeBounds;
+
+        return new SKRectI(
+            Math.Clamp(Math.Min(existing.Left, shapeBounds.Left), 0, _docW),
+            Math.Clamp(Math.Min(existing.Top, shapeBounds.Top), 0, _docH),
+            Math.Clamp(Math.Max(existing.Right, shapeBounds.Right), 0, _docW),
+            Math.Clamp(Math.Max(existing.Bottom, shapeBounds.Bottom), 0, _docH));
+    }
+
+    private void ClearUnvisitedIntersect(byte[] next)
+    {
+        if (_mask == null || _maskBounds is not { } existing) return;
+
+        var iter = IterationBoundsForIntersect(new SKRectI(0, 0, _docW, _docH));
+        for (int py = iter.Top; py < iter.Bottom; py++)
+        {
+            int row = py * _docW;
+            for (int px = iter.Left; px < iter.Right; px++)
+            {
+                int idx = row + px;
+                if (_visitStamp[idx] == _visitEpoch) continue;
+                Apply(next, px, py, SelectOp.Intersect, false);
+            }
+        }
+    }
+
     private void Apply(byte[] mask, int x, int y, SelectOp op, bool inside)
     {
         int idx = y * _docW + x;
@@ -564,6 +727,7 @@ public sealed class SelectionMask
         {
             SelectOp.Add => cur || inside,
             SelectOp.Subtract => cur && !inside,
+            SelectOp.Intersect => cur && inside,
             _ => inside,
         }) ? (byte)255 : (byte)0;
     }

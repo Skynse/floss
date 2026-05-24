@@ -162,9 +162,14 @@ public partial class MainWindow
             case OutputProcessType.SelectionArea:
                 props.AddRange([
                     EnumProp("select.mode", "Selection Mode", true,
-                        () => preset.SelectMode, v => preset.SelectMode = v),
+                        () => preset.SelectMode, v => UpdateActiveToolPreset(p =>
+                        {
+                            p.SelectMode = v;
+                            p.SyncSelectInputFromMode();
+                            InvalidatePresetToolCache(p.Id);
+                        })),
                     EnumProp("select.op", "Operation", true,
-                        () => preset.SelectOp, v => preset.SelectOp = v)
+                        () => preset.SelectOp, v => UpdateActiveToolPreset(p => p.SelectOp = v))
                 ]);
                 break;
 
@@ -185,9 +190,9 @@ public partial class MainWindow
             case OutputProcessType.MagicWand:
                 props.AddRange([
                     SliderProp("wand.tolerance", "Tolerance", true,
-                        () => preset.Tolerance, v => preset.Tolerance = v, 0, 1, "%"),
+                        () => preset.Tolerance, v => UpdateActiveToolPreset(p => p.Tolerance = v), 0, 1, "%"),
                     EnumProp("wand.op", "Operation", true,
-                        () => preset.SelectOp, v => preset.SelectOp = v),
+                        () => preset.SelectOp, v => UpdateActiveToolPreset(p => p.SelectOp = v)),
                     BoolProp("wand.contiguous", "Contiguous", false,
                         () => preset.ContiguousFill, v => preset.ContiguousFill = v)
                 ]);

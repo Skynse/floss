@@ -389,6 +389,18 @@ public sealed class ToolPreset
 
     // Select
     public SelectMode SelectMode { get; set; } = SelectMode.Rect;
+
+    public void SyncSelectInputFromMode()
+    {
+        if (OutputProcess != OutputProcessType.SelectionArea) return;
+        InputProcess = SelectMode switch
+        {
+            SelectMode.Rect => InputProcessType.Rect,
+            SelectMode.Lasso => InputProcessType.Lasso,
+            SelectMode.PolylineLasso => InputProcessType.Polyline,
+            _ => InputProcessType.Rect
+        };
+    }
     public SelectOp SelectOp { get; set; } = SelectOp.Replace;
 
     // MagicWand / Fill

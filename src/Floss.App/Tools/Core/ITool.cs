@@ -65,6 +65,8 @@ public sealed class ToolContext
     public ToolPreset? ActivePreset { get; set; }
     public KeyModifiers CurrentModifiers { get; set; }
     public ToolAuxOperationType ToolAuxMode { get; set; }
+    /// <summary>Locked at selection pointer-down so add/subtract survives the drag.</summary>
+    public SelectOp? ActiveSelectionOp { get; set; }
     public IViewportController? Viewport { get; set; }
     public Size ViewportSize { get; set; }
     public DrawingLayer? ActiveLayer =>

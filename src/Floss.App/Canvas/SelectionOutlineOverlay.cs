@@ -2,6 +2,7 @@ using System;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Avalonia.Threading;
 using Floss.App.Tools;
 
 namespace Floss.App.Canvas;
@@ -13,6 +14,9 @@ namespace Floss.App.Canvas;
 internal sealed class SelectionOutlineOverlay : Control
 {
     private DrawingCanvas? _canvas;
+    private readonly DispatcherTimer _animTimer;
+    private float _phase;
+    private bool _useCpuFallback;
 
     internal DrawingCanvas? Canvas
     {
@@ -33,13 +37,44 @@ internal sealed class SelectionOutlineOverlay : Control
                 _canvas.SelectionOutlineChanged += OnCanvasSelectionOutlineChanged;
             }
 
+            _useCpuFallback = false;
+            UpdateAnimationState();
             InvalidateVisual();
         }
     }
 
-    public SelectionOutlineOverlay(DrawingCanvas canvas) => Canvas = canvas;
+    public SelectionOutlineOverlay(DrawingCanvas canvas)
+    {
+        _animTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(100), DispatcherPriority.Render, OnAnimationTick);
+        Canvas = canvas;
+    }
 
-    private void OnCanvasSelectionOutlineChanged(object? sender, EventArgs e) => InvalidateVisual();
+    private void OnCanvasSelectionOutlineChanged(object? sender, EventArgs e)
+    {
+        _useCpuFallback = false;
+        UpdateAnimationState();
+        InvalidateVisual();
+    }
+
+    private void UpdateAnimationState()
+    {
+        if (_canvas?.Selection.HasSelection == true && !_useCpuFallback)
+            _animTimer.Start();
+        else
+            _animTimer.Stop();
+    }
+
+    private void OnAnimationTick(object? sender, EventArgs e)
+    {
+        if (_canvas?.Selection.HasSelection != true)
+        {
+            _animTimer.Stop();
+            return;
+        }
+
+        _phase += SelectionMarchingAntsRenderer.AntPhaseStepPx;
+        InvalidateVisual();
+    }
 
     public override void Render(DrawingContext context)
     {
@@ -51,9 +86,17 @@ internal sealed class SelectionOutlineOverlay : Control
         if (canvas.ActiveTool is TransformTool)
             return;
 
-        if (canvas.IsActiveSelectionGesture())
+        if (canvas.ShouldHideCommittedSelectionDuringGesture())
             return;
 
+        if (!_useCpuFallback
+            && SelectionMarchingAntsRenderer.TryDraw(context, canvas.Selection, canvas.CanvasZoom, _phase))
+        {
+            return;
+        }
+
+        _useCpuFallback = true;
+        _animTimer.Stop();
         canvas.Selection.RenderOverlay(context, canvas.CanvasZoom);
     }
 }

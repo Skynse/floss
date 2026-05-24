@@ -20,6 +20,7 @@ using Floss.App.Input;
 using Floss.App.Kra;
 using Floss.App.Psd;
 using Floss.App.Processes;
+using Floss.App.Processes.Input;
 using Floss.App.Timelapse;
 using Floss.App.Tools;
 using Floss.App.Windows;
@@ -289,6 +290,13 @@ public partial class MainWindow : Window, Tools.IViewportController
         return !_keyboardInputScope.ShouldRouteToNodeGraph(focused);
     }
 
+    /// <summary>
+    /// Selection shortcuts should work from side panels and the canvas workspace,
+    /// not only when keyboard focus is on the canvas.
+    /// </summary>
+    private bool CanExecuteSelectionShortcut()
+        => _canvas.HasDocument && CanExecuteDocumentViewShortcut();
+
     private void RegisterShortcuts()
     {
         var s = App.Shortcuts;
@@ -331,9 +339,9 @@ public partial class MainWindow : Window, Tools.IViewportController
         AddShortcut(s.RotateCanvas180, () => _canvas.RotateCanvas180(), CanExecuteCanvasDocumentShortcut);
 
         // Selection
-        AddShortcut(s.SelectAll, () => _canvas.SelectAll(), CanExecuteCanvasDocumentShortcut);
-        AddShortcut(s.Deselect, () => _canvas.Deselect(), CanExecuteCanvasDocumentShortcut);
-        AddShortcut(s.InvertSelect, () => _canvas.InvertSelection(), CanExecuteCanvasDocumentShortcut);
+        AddShortcut(s.SelectAll, () => _canvas.SelectAll(), CanExecuteSelectionShortcut);
+        AddShortcut(s.Deselect, () => _canvas.Deselect(), CanExecuteSelectionShortcut);
+        AddShortcut(s.InvertSelect, () => _canvas.InvertSelection(), CanExecuteSelectionShortcut);
         AddShortcut(s.Transform, TransformAction, CanExecuteCanvasDocumentShortcut);
 
         // Brush - size
@@ -377,9 +385,14 @@ public partial class MainWindow : Window, Tools.IViewportController
         // Special keys (not in ShortcutsConfig but handled same way)
         AddShortcut(new Input.KeyBinding(Key.Escape), () =>
         {
-            _canvas.CancelActiveTool();
+            if (_canvas.ActiveTool.HasPendingOperation)
+                _canvas.CancelActiveTool();
+            else if (_canvas.HasSelection)
+                _canvas.Deselect();
+            else
+                _canvas.CancelActiveTool();
             ResetTransientInputState();
-        }, CanExecuteCanvasShortcut);
+        }, CanExecuteSelectionShortcut);
         AddShortcut(new Input.KeyBinding(Key.Back), DeleteSelectionAction, CanExecuteCanvasDocumentShortcut);
         AddShortcut(new Input.KeyBinding(Key.Return), () => _canvas.CommitActiveTool(),
             () => CanExecuteCanvasDocumentShortcut() &&
@@ -2655,7 +2668,13 @@ public partial class MainWindow : Window, Tools.IViewportController
             }), null);
     }
 
-    internal void InvalidatePresetToolCache() => _presetToolCache.Clear();
+    internal void InvalidatePresetToolCache(string? presetId = null)
+    {
+        if (presetId == null)
+            _presetToolCache.Clear();
+        else
+            _presetToolCache.Remove(presetId);
+    }
 
     internal ITool ToolForPreset(ToolPreset preset)
     {
@@ -2664,12 +2683,35 @@ public partial class MainWindow : Window, Tools.IViewportController
             preset.MigrateFromLegacy();
 
         if (_presetToolCache.TryGetValue(preset.Id, out var cached))
-            return cached;
+        {
+            if (cached is CompositeTool ct && CachedInputMatchesPreset(ct.Input, preset))
+            {
+                ToolPresetSync.Apply(ct, preset);
+                return cached;
+            }
+
+            _presetToolCache.Remove(preset.Id);
+        }
 
         var tool = _toolFactory!.CreateTool(preset);
         _presetToolCache[preset.Id] = tool;
         return tool;
     }
+
+    private static bool CachedInputMatchesPreset(IInputProcess input, ToolPreset preset)
+        => preset.InputProcess switch
+        {
+            InputProcessType.Lasso => input is LassoInputProcess,
+            InputProcessType.Polyline => input is PolylineInputProcess,
+            InputProcessType.Rect => input is RectInputProcess,
+            InputProcessType.Click => input is ClickInputProcess,
+            InputProcessType.Liquify => input is LiquifyInputProcess,
+            InputProcessType.Drag or InputProcessType.MoveLayer or InputProcessType.Hand
+                or InputProcessType.Rotate or InputProcessType.Zoom => input is DragInputProcess,
+            InputProcessType.Pen or InputProcessType.Brush or InputProcessType.Eraser
+                or InputProcessType.Smudge => input is BrushStrokeInputProcess,
+            _ => true
+        };
 
     private static void SetRailActive(Button button, bool active)
     {

@@ -47,7 +47,14 @@ public sealed class ToolController
 
     public void SetActiveTool(ITool tool, ToolPreset? preset = null)
     {
-        if (ActiveTool == tool) return;
+        if (preset != null && tool is CompositeTool ct)
+            ToolPresetSync.Apply(ct, preset);
+
+        if (ReferenceEquals(ActiveTool, tool))
+        {
+            _context.ActivePreset = preset;
+            return;
+        }
 
         PopViewportNavOverlay();
         ActiveTool.Deactivate(_context);

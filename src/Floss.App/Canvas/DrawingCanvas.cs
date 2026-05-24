@@ -169,8 +169,7 @@ public sealed class DrawingCanvas : Control, IDisposable
     {
         if (!HasAnyLayerContent(_document.Layers)) return;
 
-        var paper = _document.PaperLayer;
-        var paperUint = paper is { IsVisible: true } ? ColorToBgraUint(_document.PaperColor) : 0u;
+        var paperUint = _document.IsPaperBackgroundVisible ? ColorToBgraUint(_document.PaperColor) : 0u;
         var viewport = ComputeVisibleViewport();
         var zoom = CanvasZoom > 0 ? CanvasZoom : 1.0;
 
@@ -1047,6 +1046,18 @@ public sealed class DrawingCanvas : Control, IDisposable
            && ct.Output is SelectionAreaOutput
            && ct.Input.IsActive;
 
+    internal bool ShouldHideCommittedSelectionDuringGesture()
+        => IsActiveSelectionGesture() && GetEffectiveSelectionOp() == SelectOp.Replace;
+
+    internal SelectOp GetEffectiveSelectionOp()
+    {
+        if (_ctx.ActiveSelectionOp is { } locked)
+            return locked;
+        if (_toolController.ActiveTool is CompositeTool ct && ct.Output is SelectionAreaOutput sao)
+            return SelectOpHelper.ResolveForSelection(sao.Operation, _ctx);
+        return SelectOp.Replace;
+    }
+
     private static bool DirectDrawHasPendingWork(ITool tool)
         => tool is CompositeTool ct && ct.Output is DirectDrawOutput dd && dd.HasPendingWork;
 
@@ -1193,7 +1204,7 @@ public sealed class DrawingCanvas : Control, IDisposable
         _compositor.DrainDisposalQueue();
         {
             var paper = _document.PaperLayer;
-            bool hasSolidPaper = paper is { IsVisible: true } && _document.PaperColor.A == 255;
+            bool hasSolidPaper = _document.IsPaperBackgroundVisible && _document.PaperColor.A == 255;
             if (hasSolidPaper)
                 context.FillRectangle(new SolidColorBrush(_document.PaperColor), canvasBounds);
             else
@@ -1201,8 +1212,7 @@ public sealed class DrawingCanvas : Control, IDisposable
         }
         if (HasAnyLayerContent(_document.Layers))
         {
-            var paper = _document.PaperLayer;
-            uint paperUint = paper is { IsVisible: true } ? ColorToBgraUint(_document.PaperColor) : 0u;
+            uint paperUint = _document.IsPaperBackgroundVisible ? ColorToBgraUint(_document.PaperColor) : 0u;
 
             // Composite runs on a background thread. UI thread draws the cached
             // tiles (kept visible until recomposited — no tile drops on partial
@@ -1259,9 +1269,9 @@ public sealed class DrawingCanvas : Control, IDisposable
         }
         else
         {
-            // Empty document — draw paper color so the canvas isn't transparent
+            // Empty document — draw paper color only when the paper layer is visible
             var c = _document.PaperColor;
-            if (c.A > 0)
+            if (_document.IsPaperBackgroundVisible)
             {
                 var target = new Rect(Bounds.Size);
                 using (context.PushClip(new RoundedRect(target)))
@@ -1906,8 +1916,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             return SampleSingleLayer(layer, x, y, applyOpacity: false);
         }
 
-        var paper = _document.PaperLayer;
-        var paperUint = paper is { IsVisible: true } ? ColorToBgraUint(_document.PaperColor) : 0u;
+        var paperUint = _document.IsPaperBackgroundVisible ? ColorToBgraUint(_document.PaperColor) : 0u;
         return _compositor.SampleCompositePixel(_document.Layers, _document.Width, _document.Height, x, y, paperUint);
     }
 

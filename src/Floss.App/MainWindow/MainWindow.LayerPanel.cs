@@ -377,7 +377,6 @@ public partial class MainWindow
     private void RefreshLayerToggleButtons(DrawingLayer layer)
     {
         if (_lockLayerBtn == null) return;
-        _lockLayerBtn.IsEnabled = !layer.IsPaper;
         SetToggleActive(_lockLayerBtn, layer.IsLocked);
         SetToggleActive(_alphaLockLayerBtn, layer.IsAlphaLocked);
         SetToggleActive(_clipLayerBtn, layer.IsClipping);
@@ -626,11 +625,7 @@ public partial class MainWindow
         }
 
         MenuItem MakeLockItem(DrawingLayer l, int idx)
-        {
-            var lockItem = Item(l.IsLocked ? "Unlock Layer" : "Lock Layer", () => _canvas.ToggleLayerLock(idx));
-            lockItem.IsEnabled = !l.IsPaper;
-            return lockItem;
-        }
+            => Item(l.IsLocked ? "Unlock Layer" : "Lock Layer", () => _canvas.ToggleLayerLock(idx));
 
         var pasteItem = Item("_Paste", () => _canvas.PasteLayer(index));
         pasteItem.IsEnabled = _canvas.CanPasteLayer;

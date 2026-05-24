@@ -86,6 +86,10 @@ public sealed class DrawingDocument : IDisposable
     }
     public DrawingLayer? PaperLayer { get; internal set; }
 
+    /// <summary>True when the compositor/viewport should fill with paper color instead of transparency.</summary>
+    public bool IsPaperBackgroundVisible =>
+        PaperLayer is { IsVisible: true } && PaperColor.A > 0;
+
     internal void SwapDimensions()
     {
         (Width, Height) = (Height, Width);
@@ -622,23 +626,38 @@ public sealed class DrawingDocument : IDisposable
     public void ToggleLayerVisibility(int index)
     {
         if (index < 0 || index >= _layers.Count) return;
-        var oldValue = _layers[index].IsVisible;
+        var layer = _layers[index];
+        var oldValue = layer.IsVisible;
         var newValue = !oldValue;
-        var dirtyRegion = LayerDirtyRegion(index);
-        PushHistoryState(new LayerPropertyHistoryState<bool>(index, oldValue, newValue, (layer, value) => layer.IsVisible = value, true, dirtyRegion));
-        _layers[index].IsVisible = newValue;
-        NotifyLayerMetadataChanged(dirtyRegion, index);
+        var dirtyRegion = layer.IsPaper
+            ? new PixelRegion(0, 0, Width, Height)
+            : LayerDirtyRegion(index);
+        PushHistoryState(new LayerPropertyHistoryState<bool>(index, oldValue, newValue, (l, value) => l.IsVisible = value, true, dirtyRegion));
+        layer.IsVisible = newValue;
+        if (layer.IsPaper)
+            NotifyPaperBackdropChanged(index);
+        else
+            NotifyLayerMetadataChanged(dirtyRegion, index);
     }
 
     public void ToggleLayerLock(int index)
     {
         if (index < 0 || index >= _layers.Count) return;
-        if (_layers[index].IsPaper) return;
         var oldValue = _layers[index].IsLocked;
         var newValue = !oldValue;
         PushHistoryState(new LayerPropertyHistoryState<bool>(index, oldValue, newValue, (layer, value) => layer.IsLocked = value, false, PixelRegion.Empty));
         _layers[index].IsLocked = newValue;
         NotifyLayerMetadataChanged(null, index);
+    }
+
+    internal void NotifyPaperBackdropChanged(int layerIndex)
+    {
+        LayerMetadataChanged?.Invoke(this, new LayerMetadataChangedEventArgs(layerIndex));
+        // Paper color is the compositor backdrop for every tile — partial dirty is not enough.
+        Changed?.Invoke(this, new DocumentChangedEventArgs(null, layerIndex));
+        MarkHistoryMutation();
+        HistoryChanged?.Invoke(this, EventArgs.Empty);
+        DirtyStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public void ToggleLayerAlphaLock(int index)
@@ -1322,7 +1341,7 @@ public sealed class DrawingDocument : IDisposable
         public PixelRegion VisualDirtyRegion => DirtyRegion;
 
         public IHistoryState CaptureRedo(DrawingDocument document) => new LayerPropertyHistoryState<T>(LayerIndex, NewValue, OldValue, Apply, AffectsComposite, DirtyRegion);
-        public void Restore(DrawingDocument document) { if (LayerIndex < 0 || LayerIndex >= document._layers.Count) return; Apply(document._layers[LayerIndex], OldValue); document.NotifyLayerMetadataChanged(AffectsComposite ? DirtyRegion : null, LayerIndex); }
+        public void Restore(DrawingDocument document) { if (LayerIndex < 0 || LayerIndex >= document._layers.Count) return; var layer = document._layers[LayerIndex]; Apply(layer, OldValue); if (AffectsComposite && layer.IsPaper) document.NotifyPaperBackdropChanged(LayerIndex); else document.NotifyLayerMetadataChanged(AffectsComposite ? DirtyRegion : null, LayerIndex); }
     }
 
     private sealed record DocumentPropertyHistoryState<T>(T OldValue, T NewValue, Action<T> Apply, bool AffectsVisual, PixelRegion VisualDirtyRegion) : IHistoryState

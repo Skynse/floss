@@ -34,7 +34,9 @@ public sealed class CompositeTool : ITool
     public void PointerDown(ToolContext ctx, CanvasInputSample s)
     {
         Input.ToolAuxMode = ctx.ToolAuxMode;
-        if (Input is RectInputProcess rip)
+        if (Output is SelectionAreaOutput sao)
+            ctx.ActiveSelectionOp = SelectOpHelper.ResolveForSelection(sao.Operation, ctx);
+        if (Input is RectInputProcess rip && Output is not SelectionAreaOutput)
             rip.Constrain = rip.ConsumesModifier(ctx.CurrentModifiers);
         Input.PointerDown(s);
         if (Input.GetImmediateResult() is { } immediate)
@@ -68,9 +70,8 @@ public sealed class CompositeTool : ITool
     {
         Input.PointerUp(s);
         if (Input.GetResult() is { } result)
-        {
             Output.Execute(ctx, result);
-        }
+        ClearSelectionGesture(ctx);
         InvalidateUi(ctx);
     }
 
@@ -78,6 +79,7 @@ public sealed class CompositeTool : ITool
     {
         Input.Cancel();
         Output.Cancel();
+        ClearSelectionGesture(ctx);
     }
 
     public bool HasPendingOperation =>
@@ -95,7 +97,8 @@ public sealed class CompositeTool : ITool
 
     public bool CanCommitFromClick => Input is PolylineInputProcess;
 
-    public bool ConsumesModifier(Avalonia.Input.KeyModifiers mods) => Input.ConsumesModifier(mods);
+    public bool ConsumesModifier(Avalonia.Input.KeyModifiers mods)
+        => Output is not SelectionAreaOutput && Input.ConsumesModifier(mods);
 
     public void Commit(ToolContext ctx)
     {
@@ -109,8 +112,11 @@ public sealed class CompositeTool : ITool
         else if (Input.IsActive)
             Input.Cancel();
 
+        ClearSelectionGesture(ctx);
         InvalidateUi(ctx);
     }
+
+    private static void ClearSelectionGesture(ToolContext ctx) => ctx.ActiveSelectionOp = null;
 
     private void InvalidateUi(ToolContext ctx)
     {

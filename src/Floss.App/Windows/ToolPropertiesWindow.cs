@@ -1370,7 +1370,7 @@ public sealed class ToolPropertiesWindow : Window
 
             case OutputProcessType.SelectionArea when cat == "Selection Settings":
                 panel.Children.Add(BuildGenericComboRow<SelectMode>("Selection Mode",
-                    _toolPreset.SelectMode, v => CommitTool(p => p.SelectMode = v), toolPropId: "select.mode"));
+                    _toolPreset.SelectMode, v => CommitTool(p => { p.SelectMode = v; p.SyncSelectInputFromMode(); }), toolPropId: "select.mode"));
                 panel.Children.Add(BuildGenericComboRow<SelectOp>("Operation",
                     _toolPreset.SelectOp, v => CommitTool(p => p.SelectOp = v), toolPropId: "select.op"));
                 break;

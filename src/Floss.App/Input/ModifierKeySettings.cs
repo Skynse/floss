@@ -27,6 +27,9 @@ public enum ToolAuxOperationType
 {
     None = 0,
     StraightLine,
+    AddToSelection,
+    RemoveFromSelection,
+    SelectFromSelection,
 }
 
 public sealed class ModifierKeyAssignment
@@ -96,8 +99,44 @@ public sealed class ModifierKeySettings
             ];
         }
 
+        settings.EnsureSelectionToolModifierDefaults();
+
         return settings;
     }
+
+    internal void EnsureSelectionToolModifierDefaults()
+    {
+        foreach (var input in new[] { InputProcessType.Rect, InputProcessType.Lasso, InputProcessType.Polyline })
+        {
+            var key = KeyFor((int)input, (int)OutputProcessType.SelectionArea);
+            if (!ToolSpecificAssignments.ContainsKey(key))
+                ToolSpecificAssignments[key] = CreateSelectionModifierDefaults();
+        }
+
+        var wandKey = KeyFor((int)InputProcessType.Click, (int)OutputProcessType.MagicWand);
+        if (!ToolSpecificAssignments.ContainsKey(wandKey))
+            ToolSpecificAssignments[wandKey] = CreateSelectionModifierDefaults();
+    }
+
+    private static List<ModifierKeyAssignment> CreateSelectionModifierDefaults() =>
+    [
+        new() { Modifiers = KeyModifiers.Shift, Action = ModifierAction.ToolAux, ToolAuxOper = ToolAuxOperationType.AddToSelection },
+        new() { Modifiers = KeyModifiers.Alt, Action = ModifierAction.ToolAux, ToolAuxOper = ToolAuxOperationType.RemoveFromSelection },
+        new() { Modifiers = KeyModifiers.Alt | KeyModifiers.Shift, Action = ModifierAction.ToolAux, ToolAuxOper = ToolAuxOperationType.SelectFromSelection },
+        new() { Modifiers = KeyModifiers.Control, Action = ModifierAction.None },
+        new() { Modifiers = KeyModifiers.Control | KeyModifiers.Alt, Action = ModifierAction.None },
+        new() { Modifiers = KeyModifiers.Control | KeyModifiers.Shift, Action = ModifierAction.ChangeToolTemporarily, TemporaryToolPresetId = ToolGroupConfig.SelectLayerPresetId },
+        new() { Modifiers = KeyModifiers.Control | KeyModifiers.Alt | KeyModifiers.Shift, Action = ModifierAction.None },
+
+        new() { Key = Key.Space, Modifiers = KeyModifiers.None, Action = ModifierAction.Common },
+        new() { Key = Key.Space, Modifiers = KeyModifiers.Control, Action = ModifierAction.Common },
+        new() { Key = Key.Space, Modifiers = KeyModifiers.Alt, Action = ModifierAction.Common },
+        new() { Key = Key.Space, Modifiers = KeyModifiers.Shift, Action = ModifierAction.Common },
+        new() { Key = Key.Space, Modifiers = KeyModifiers.Control | KeyModifiers.Alt, Action = ModifierAction.Common },
+        new() { Key = Key.Space, Modifiers = KeyModifiers.Control | KeyModifiers.Shift, Action = ModifierAction.Common },
+        new() { Key = Key.Space, Modifiers = KeyModifiers.Alt | KeyModifiers.Shift, Action = ModifierAction.Common },
+        new() { Key = Key.Space, Modifiers = KeyModifiers.Control | KeyModifiers.Alt | KeyModifiers.Shift, Action = ModifierAction.Common },
+    ];
 
     private static string KeyFor(int input, int output) => $"{input}:{output}";
 
@@ -143,7 +182,11 @@ public sealed class ModifierKeySettings
         {
             var path = AppPaths.ModifierKeySettingsPath;
             if (File.Exists(path))
-                return JsonSerializer.Deserialize<ModifierKeySettings>(File.ReadAllText(path), JsonOpts) ?? CreateDefaults();
+            {
+                var settings = JsonSerializer.Deserialize<ModifierKeySettings>(File.ReadAllText(path), JsonOpts) ?? CreateDefaults();
+                settings.EnsureSelectionToolModifierDefaults();
+                return settings;
+            }
         }
         catch (Exception ex) { CrashLog.Write(ex, "ModifierKeySettings.Load"); }
         return CreateDefaults();

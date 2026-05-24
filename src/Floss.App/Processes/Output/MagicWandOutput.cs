@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Floss.App.Document;
+using Floss.App.Input;
 using Floss.App.Tools;
 using SkiaSharp;
 
@@ -25,18 +26,19 @@ public sealed class MagicWandOutput : IOutputProcess
 
         var docX = (int)click.Point.X;
         var docY = (int)click.Point.Y;
+        var op = SelectOpHelper.ResolveForSelection(Operation, ctx);
         var before = ctx.Selection.CaptureSnapshot();
 
         if (FillReference != FillReferenceMode.CurrentLayer)
         {
             var buf = BuildReferenceBuffer(ctx, FillReference);
-            ctx.Selection.SetFromFloodFillBuffer(buf, docX, docY, Tolerance, Operation);
+            ctx.Selection.SetFromFloodFillBuffer(buf, docX, docY, Tolerance, op);
         }
         else
         {
             ctx.Selection.SetFromFloodFill(layer.Pixels,
                 docX - layer.OffsetX, docY - layer.OffsetY,
-                layer.OffsetX, layer.OffsetY, Tolerance, Operation);
+                layer.OffsetX, layer.OffsetY, Tolerance, op);
         }
 
         ctx.CommitSelectionMutation(before);

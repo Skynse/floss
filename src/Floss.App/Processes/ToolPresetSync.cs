@@ -1,0 +1,84 @@
+using Floss.App.Processes.Input;
+using Floss.App.Processes.Output;
+
+namespace Floss.App.Processes;
+
+/// <summary>
+/// Keeps live CompositeTool instances aligned with their ToolPreset.
+/// Tools are cached by preset id; scalar preset edits must be pushed here.
+/// </summary>
+internal static class ToolPresetSync
+{
+    public static void Apply(CompositeTool tool, ToolPreset preset)
+    {
+        ApplyInput(tool.Input, preset);
+        ApplyOutput(tool.Output, preset);
+    }
+
+    private static void ApplyInput(IInputProcess input, ToolPreset preset)
+    {
+        switch (input)
+        {
+            case BrushStrokeInputProcess brushStroke:
+                brushStroke.Stabilization = preset.Stabilization > 0.001 ? preset.Stabilization : 0.3;
+                break;
+            case LassoInputProcess lasso:
+                lasso.Stabilization = preset.Stabilization > 0.001 ? preset.Stabilization : 0.3;
+                break;
+            case PolylineInputProcess polyline:
+                polyline.ClosePath = preset.PolylineClosePath;
+                break;
+            case RectInputProcess rect:
+                rect.ShapeKind = preset.ShapeKind;
+                break;
+            case LiquifyInputProcess liquify:
+                liquify.BrushSize = preset.LiquifySize;
+                break;
+        }
+    }
+
+    private static void ApplyOutput(IOutputProcess output, ToolPreset preset)
+    {
+        switch (output)
+        {
+            case DirectDrawOutput directDraw:
+                directDraw.Antialiasing = preset.Antialiasing;
+                break;
+            case SelectionAreaOutput selection:
+                selection.Operation = preset.SelectOp;
+                selection.Antialiasing = preset.AntialiasingQuality != AntialiasingQuality.None;
+                break;
+            case MagicWandOutput wand:
+                wand.Operation = preset.SelectOp;
+                wand.Tolerance = preset.Tolerance;
+                wand.FillReference = preset.FillReference;
+                break;
+            case FloodFillOutput fill:
+                fill.Tolerance = preset.Tolerance;
+                fill.FillReference = preset.FillReference;
+                break;
+            case ClosedAreaFillOutput closedFill:
+                closedFill.Antialiasing = preset.AntialiasingQuality != AntialiasingQuality.None;
+                break;
+            case GradientOutput gradient:
+                gradient.Antialiasing = preset.Antialiasing;
+                gradient.GradientType = preset.GradientType;
+                break;
+            case StrokeOutput stroke:
+                stroke.Antialiasing = preset.Antialiasing;
+                stroke.StrokeWidth = preset.PolylineStrokeWidth;
+                stroke.ClosePath = preset.PolylineClosePath;
+                stroke.ShapeKind = preset.ShapeKind;
+                stroke.ShapeDrawMode = preset.ShapeDrawMode;
+                break;
+            case EyedropperOutput eyedropper:
+                eyedropper.SampleMode = preset.EyedropperSampleMode;
+                eyedropper.ExcludeLockedLayers = preset.EyedropperExcludeLockedLayers;
+                eyedropper.ExcludeReferenceLayers = preset.EyedropperExcludeReferenceLayers;
+                break;
+            case ZoomOutput zoom:
+                zoom.Direction = preset.ZoomDirection;
+                break;
+        }
+    }
+}

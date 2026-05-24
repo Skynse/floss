@@ -420,6 +420,31 @@ public sealed class ModifierKeySettingsWindow : Window
             Text = DescriptionFor(current)
         };
 
+        var auxOperDropdown = new ComboBox
+        {
+            Width = 150,
+            Height = 24,
+            FontSize = 10,
+            Margin = new Thickness(4, 0),
+            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(3),
+            IsVisible = current?.Action == ModifierAction.ToolAux
+        };
+        foreach (var oper in Enum.GetValues<ToolAuxOperationType>())
+        {
+            if (oper == ToolAuxOperationType.None) continue;
+            auxOperDropdown.Items.Add(new ComboBoxItem { Content = ToolAuxLabel(oper), Tag = oper });
+        }
+        if (current?.Action == ModifierAction.ToolAux)
+        {
+            var auxIdx = Array.FindIndex(auxOperDropdown.Items.OfType<ComboBoxItem>().ToArray(),
+                i => i.Tag is ToolAuxOperationType t && t == current.ToolAuxOper);
+            auxOperDropdown.SelectedIndex = Math.Max(0, auxIdx);
+        }
+
         var settingsBtn = new Button
         {
             Content = "Settings",
@@ -451,17 +476,35 @@ public sealed class ModifierKeySettingsWindow : Window
             });
         };
 
+        auxOperDropdown.SelectionChanged += (_, _) =>
+        {
+            if (auxOperDropdown.SelectedItem is not ComboBoxItem { Tag: ToolAuxOperationType oper }) return;
+            SetToolAuxOper(key, mods, comboKey, oper);
+            descLabel.Text = DescriptionFor(GetAssignment(key, mods, comboKey));
+            _settings.Save();
+        };
+
         actionDropdown.SelectionChanged += (_, _) =>
         {
             if (actionDropdown.SelectedItem is not ComboBoxItem { Tag: ModifierAction action }) return;
-            SetAction(key, mods, action, comboKey);
+            var prior = GetAssignment(key, mods, comboKey);
+            SetAction(key, mods, action, comboKey, prior?.ToolAuxOper);
             settingsBtn.IsVisible = action is ModifierAction.ChangeToolTemporarily or ModifierAction.AlternateInvocation;
+            auxOperDropdown.IsVisible = action == ModifierAction.ToolAux;
+            if (action == ModifierAction.ToolAux)
+            {
+                var assignment = GetAssignment(key, mods, comboKey);
+                var auxIdx = Array.FindIndex(auxOperDropdown.Items.OfType<ComboBoxItem>().ToArray(),
+                    i => i.Tag is ToolAuxOperationType t && t == assignment?.ToolAuxOper);
+                auxOperDropdown.SelectedIndex = Math.Max(0, auxIdx);
+            }
             descLabel.Text = DescriptionFor(GetAssignment(key, mods, comboKey));
             _settings.Save();
         };
 
         var row = new Grid { Margin = new Thickness(0, 0, 0, 1) };
         row.ColumnDefinitions.Add(new ColumnDefinition(130, GridUnitType.Pixel));
+        row.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
         row.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
         row.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
         row.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
@@ -478,10 +521,12 @@ public sealed class ModifierKeySettingsWindow : Window
 
         Grid.SetColumn(label, 0);
         Grid.SetColumn(actionDropdown, 1);
-        Grid.SetColumn(settingsBtn, 2);
-        Grid.SetColumn(descLabel, 3);
+        Grid.SetColumn(auxOperDropdown, 2);
+        Grid.SetColumn(settingsBtn, 3);
+        Grid.SetColumn(descLabel, 4);
         row.Children.Add(label);
         row.Children.Add(actionDropdown);
+        row.Children.Add(auxOperDropdown);
         row.Children.Add(settingsBtn);
         row.Children.Add(descLabel);
 
@@ -494,8 +539,13 @@ public sealed class ModifierKeySettingsWindow : Window
         };
     }
 
-    private void SetAction(Avalonia.Input.Key? key, KeyModifiers mods, ModifierAction action, string? comboKey)
+    private void SetAction(Avalonia.Input.Key? key, KeyModifiers mods, ModifierAction action, string? comboKey,
+        ToolAuxOperationType? priorAuxOper = null)
     {
+        var defaultAux = priorAuxOper is ToolAuxOperationType prior && prior != ToolAuxOperationType.None
+            ? prior
+            : ToolAuxOperationType.StraightLine;
+
         if (comboKey != null)
         {
             if (!_settings.ToolSpecificAssignments.TryGetValue(comboKey, out var lst))
@@ -505,7 +555,13 @@ public sealed class ModifierKeySettingsWindow : Window
             }
             lst.RemoveAll(a => a.Key == key && a.Modifiers == mods);
             if (action != ModifierAction.None)
-                lst.Add(new ModifierKeyAssignment { Key = key, Modifiers = mods, Action = action });
+                lst.Add(new ModifierKeyAssignment
+                {
+                    Key = key,
+                    Modifiers = mods,
+                    Action = action,
+                    ToolAuxOper = action == ModifierAction.ToolAux ? defaultAux : ToolAuxOperationType.None
+                });
             if (lst.Count == 0)
                 _settings.ToolSpecificAssignments.Remove(comboKey);
         }
@@ -513,8 +569,43 @@ public sealed class ModifierKeySettingsWindow : Window
         {
             _settings.GeneralAssignments.RemoveAll(a => a.Key == key && a.Modifiers == mods);
             if (action != ModifierAction.None)
-                _settings.GeneralAssignments.Add(new ModifierKeyAssignment { Key = key, Modifiers = mods, Action = action });
+                _settings.GeneralAssignments.Add(new ModifierKeyAssignment
+                {
+                    Key = key,
+                    Modifiers = mods,
+                    Action = action,
+                    ToolAuxOper = action == ModifierAction.ToolAux ? defaultAux : ToolAuxOperationType.None
+                });
         }
+    }
+
+    private void SetToolAuxOper(Avalonia.Input.Key? key, KeyModifiers mods, string? comboKey, ToolAuxOperationType oper)
+    {
+        List<ModifierKeyAssignment> lst;
+        if (comboKey != null)
+        {
+            if (!_settings.ToolSpecificAssignments.TryGetValue(comboKey, out lst!))
+            {
+                lst = [];
+                _settings.ToolSpecificAssignments[comboKey] = lst;
+            }
+        }
+        else
+        {
+            lst = _settings.GeneralAssignments;
+        }
+
+        var existing = lst.FirstOrDefault(a => a.Key == key && a.Modifiers == mods);
+        if (existing != null)
+            existing.ToolAuxOper = oper;
+        else
+            lst.Add(new ModifierKeyAssignment
+            {
+                Key = key,
+                Modifiers = mods,
+                Action = ModifierAction.ToolAux,
+                ToolAuxOper = oper
+            });
     }
 
     private void SetTemporaryToolPreset(Avalonia.Input.Key? key, KeyModifiers mods, string? comboKey, string presetId)
@@ -560,6 +651,9 @@ public sealed class ModifierKeySettingsWindow : Window
             ModifierAction.ToolAux => a.ToolAuxOper switch
             {
                 ToolAuxOperationType.StraightLine => "Straight line",
+                ToolAuxOperationType.AddToSelection => "Add to selection",
+                ToolAuxOperationType.RemoveFromSelection => "Remove from selection",
+                ToolAuxOperationType.SelectFromSelection => "Select from selection",
                 _ => ""
             },
             ModifierAction.ChangeBrushSize => "",
@@ -576,6 +670,15 @@ public sealed class ModifierKeySettingsWindow : Window
         }
         return presetId;
     }
+
+    private static string ToolAuxLabel(ToolAuxOperationType oper) => oper switch
+    {
+        ToolAuxOperationType.StraightLine => "Straight line",
+        ToolAuxOperationType.AddToSelection => "Add to selection",
+        ToolAuxOperationType.RemoveFromSelection => "Remove from selection",
+        ToolAuxOperationType.SelectFromSelection => "Select from selection",
+        _ => oper.ToString()
+    };
 
     private static string ActionLabel(ModifierAction action) => action switch
     {
