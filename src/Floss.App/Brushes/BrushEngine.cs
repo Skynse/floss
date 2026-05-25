@@ -475,7 +475,24 @@ public sealed class BrushEngine : IDisposable
 
         bool blendModeCanRasterize = SupportsCpuRasterBlendMode(brush.BlendMode);
 
-        if (blendModeCanRasterize && !isMultiTipSingle && !usesProceduralStamp)
+        // Cached dab tile-major path — for non-procedural stamps (image tips) or
+        // graph stamps that don't have a fast analytical path (the analytical
+        // circle/soft-round path is faster than generating and blitting dabs).
+        bool tryCachedDabs = !usesProceduralStamp;
+        if (!tryCachedDabs && _stamps.Count >= 4)
+        {
+            var graph = brush.Tip switch
+            {
+                ProceduralBrushTip p => p.Graph,
+                NodeBrushTip n when !n.IsDirectImageSampler => n.Graph,
+                _ => null
+            };
+            if (graph != null &&
+                !BrushTipStampFastPath.TryCreate(graph, (float)brush.Hardness, out _))
+                tryCachedDabs = true; // complex graph — cached dabs faster than per-pixel eval
+        }
+
+        if (blendModeCanRasterize && !isMultiTipSingle && tryCachedDabs)
         {
             var baseColor = stroke.BaseColor;
             float brushGrain = (float)brush.Grain;
@@ -1055,13 +1072,20 @@ public sealed class BrushEngine : IDisposable
 
         // Krita-style LOD rendering: at zoom < 1.0, render stamps into a
         // downscaled buffer then upscale to full-res tiles. Reduces pixel
-        // work by lodScale² while preserving visual brush size.
+        // work by effectiveScale² while preserving visual brush size.
+        // When the brush is larger than the mask, cap internal rendering at
+        // the mask resolution (Krita's KisQImagePyramid — max level is the
+        // one fitting within MIPMAP_SIZE_THRESHOLD). Without this, the scratch
+        // buffer is full-res even though the mask is smaller.
         var lodScale = CanvasZoom < 1.0 ? (float)CanvasZoom : 1f;
+        var brushScale = brush.Size > stroke.BaseMaskSize
+            ? stroke.BaseMaskSize / (float)brush.Size : 1f;
+        var effectiveScale = Math.Min(lodScale, brushScale);
 
-        if (lodScale < 1f)
+        if (effectiveScale < 1f)
         {
-            var lodW = Math.Max(1, (int)Math.Ceiling(needW * lodScale));
-            var lodH = Math.Max(1, (int)Math.Ceiling(needH * lodScale));
+            var lodW = Math.Max(1, (int)Math.Ceiling(needW * effectiveScale));
+            var lodH = Math.Max(1, (int)Math.Ceiling(needH * effectiveScale));
 
             if (_lodScratch == null || _lodScratch.Width < lodW || _lodScratch.Height < lodH)
             {
@@ -1083,7 +1107,7 @@ public sealed class BrushEngine : IDisposable
                 lc.Restore();
 
                 lc.Save();
-                float invLod = 1f / lodScale;
+                float invLod = 1f / effectiveScale;
                 lc.Scale(invLod, invLod);
                 lc.Translate(-dirty.X, -dirty.Y);
                 lc.ClipRect(SKRect.Create(dirty.X, dirty.Y, w, h));
@@ -3631,7 +3655,7 @@ public sealed class BrushEngine : IDisposable
             State.NextStampDistance = BrushSpacing.EffectiveDistance(
                 brush, initSize, Math.Clamp(initSpacingMul, 0.05f, 4f), 0f);
 
-            BaseMaskSize = Math.Max(1, Math.Min(256, (int)Math.Ceiling(brush.Size)));
+            BaseMaskSize = Math.Max(1, Math.Min(512, (int)Math.Ceiling(brush.Size)));
             _deferMaskGeneration = UsesProceduralStampEvaluation(brush, TipFor(0), 0);
             if (!_deferMaskGeneration)
                 _mask = TipFor(0).GenerateMask(BaseMaskSize, (float)brush.Hardness);
