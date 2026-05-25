@@ -38,9 +38,68 @@ public sealed class SelectionMask
     private SKRectI _geoRect;
     private List<SKPoint> _geoPoly = [];
     private SelectionGeometry _geoType = SelectionGeometry.None;
+    private readonly List<object> _outlineParts = []; // SKRectI or SKPoint[]
+    private Geometry? _cachedOutlineGeo;
+    private bool _outlineDirty;
     private StreamGeometry? _cachedMaskGeo;
 
     private enum SelectionGeometry { None, Rect, Polygon, Mask }
+
+    private void AddOutlinePart(object shape)
+    {
+        _outlineParts.Add(shape);
+        _outlineDirty = true;
+    }
+
+    private void SetOutlinePart(object shape)
+    {
+        _outlineParts.Clear();
+        _outlineParts.Add(shape);
+        _outlineDirty = true;
+    }
+
+    private void ClearOutline()
+    {
+        _outlineParts.Clear();
+        _cachedOutlineGeo = null;
+        _outlineDirty = false;
+    }
+
+    private Geometry? GetOutlineGeometry()
+    {
+        if (_outlineParts.Count == 0) return null;
+        if (!_outlineDirty && _cachedOutlineGeo != null) return _cachedOutlineGeo;
+
+        Geometry? result = null;
+        foreach (var part in _outlineParts)
+        {
+            Geometry? geo = null;
+            if (part is SKRectI r && r.Width > 0)
+                geo = new RectangleGeometry(new Avalonia.Rect(r.Left, r.Top, r.Width, r.Height));
+            else if (part is SKPoint[] pts && pts.Length >= 3)
+                geo = BuildOutlinePoly(pts);
+
+            if (geo == null) continue;
+            result = result == null ? geo : new CombinedGeometry(GeometryCombineMode.Union, result, geo);
+        }
+
+        _cachedOutlineGeo = result;
+        _outlineDirty = false;
+        return result;
+    }
+
+    private static StreamGeometry BuildOutlinePoly(SKPoint[] pts)
+    {
+        var geo = new StreamGeometry();
+        using (var c = geo.Open())
+        {
+            c.BeginFigure(new Avalonia.Point(pts[0].X, pts[0].Y), true);
+            for (int i = 1; i < pts.Length; i++)
+                c.LineTo(new Avalonia.Point(pts[i].X, pts[i].Y));
+            c.EndFigure(true);
+        }
+        return geo;
+    }
 
     public bool HasSelection => _mask != null;
 
@@ -140,6 +199,9 @@ public sealed class SelectionMask
         _geoType = Enum.TryParse<SelectionGeometry>(snapshot.GeometryType, out var type)
             ? type
             : SelectionGeometry.None;
+        _outlineParts.Clear();
+        _cachedOutlineGeo = null;
+        _outlineDirty = false;
         _cachedMaskGeo = null;
         _simplifyOutline = false;
         InvalidateAlphaTexture();
@@ -159,6 +221,7 @@ public sealed class SelectionMask
         _mask = null;
         _geoType = SelectionGeometry.None;
         _geoPoly.Clear();
+        ClearOutline();
         _cachedMaskGeo = null;
         _maskBounds = null;
         _selectedCount = 0;
@@ -194,12 +257,14 @@ public sealed class SelectionMask
         }
 
         CommitMask(next);
+        ClearOutline();
         if (_mask != null)
         {
             if (hadExplicitMask && TryGetSolidRectBounds(out var rect))
             {
                 _geoType = SelectionGeometry.Rect;
                 _geoRect = rect;
+                SetOutlinePart(rect);
             }
             else
             {
@@ -223,16 +288,26 @@ public sealed class SelectionMask
         ApplyRectOp(next, x1, y1, x2, y2, op);
 
         CommitMask(next);
+        var newRect = new SKRectI(x1, y1, x2, y2);
         if (op == SelectOp.Replace && TryGetSolidRectBounds(out var solid))
         {
             _geoType = SelectionGeometry.Rect;
             _geoRect = solid;
+            SetOutlinePart(solid);
+        }
+        else if (op == SelectOp.Replace)
+        {
+            _geoType = SelectionGeometry.Mask;
+            _geoPoly.Clear();
+            _geoRect = newRect;
+            SetOutlinePart(newRect);
         }
         else
         {
             _geoType = SelectionGeometry.Mask;
-            _geoRect = new SKRectI(x1, y1, x2, y2);
             _geoPoly.Clear();
+            _geoRect = default;
+            AddOutlinePart(newRect);
         }
         _cachedMaskGeo = null;
     }
@@ -247,30 +322,58 @@ public sealed class SelectionMask
         for (int i = 1; i < points.Count; i++) path.LineTo(points[i]);
         path.Close();
 
-        using var region = new SKRegion();
-        region.SetPath(path, new SKRegion(new SKRectI(0, 0, _docW, _docH)));
-
         var bounds = path.Bounds;
         int x1 = Math.Clamp((int)bounds.Left, 0, _docW - 1);
         int y1 = Math.Clamp((int)bounds.Top, 0, _docH - 1);
         int x2 = Math.Clamp((int)Math.Ceiling(bounds.Right), 0, _docW - 1);
         int y2 = Math.Clamp((int)Math.Ceiling(bounds.Bottom), 0, _docH - 1);
+        int bW = x2 - x1 + 1;
+        int bH = y2 - y1 + 1;
+        if (bW <= 0 || bH <= 0) return;
+
+        // Krita approach: rasterize the path into an Alpha8 bitmap in one
+        // native draw call instead of per-pixel region.Contains(). Skia
+        // handles the scanline rasterization in C++.
+        using var raster = new SKBitmap(new SKImageInfo(bW, bH, SKColorType.Alpha8, SKAlphaType.Opaque));
+        using (var canvas = new SKCanvas(raster))
+        using (var fill = new SKPaint { Color = SKColors.White, IsAntialias = false, BlendMode = SKBlendMode.Src })
+        {
+            canvas.Clear(SKColors.Transparent);
+            canvas.Translate(-x1, -y1);
+            canvas.DrawPath(path, fill);
+        }
 
         var next = CreateBaseMask(op);
-        ApplyRegionOp(next, x1, y1, x2, y2, op, region.Contains);
+        unsafe
+        {
+            var rp = (byte*)raster.GetPixels().ToPointer();
+            int stride = raster.RowBytes;
+            for (int y = y1; y <= y2; y++)
+            {
+                int ri = (y - y1) * stride;
+                int di = y * _docW + x1;
+                for (int x = 0; x < bW; x++)
+                {
+                    if (rp[ri + x] > 0)
+                        ApplyAt(next, di + x, op, true);
+                }
+            }
+        }
 
         CommitMask(next);
+        var polyPts = points is SKPoint[] arr ? arr : points.ToArray();
         if (op == SelectOp.Replace)
         {
             _geoType = SelectionGeometry.Polygon;
             _geoPoly = new List<SKPoint>(points);
+            SetOutlinePart(polyPts);
         }
         else
         {
             _geoType = SelectionGeometry.Mask;
-            // Keep the polygon so DrawOutlinePass can render it instead of
-            // falling back to BuildMaskOutline → DrawBoundsRect (rectangle).
-            _geoPoly = new List<SKPoint>(points);
+            _geoPoly.Clear();
+            _geoRect = default;
+            AddOutlinePart(polyPts);
         }
         _cachedMaskGeo = null;
     }
@@ -294,11 +397,20 @@ public sealed class SelectionMask
         var next = CreateBaseMask(op);
         BeginVisitPass();
 
+        // Krita-style color-similarity cache: for flat-color regions, avoid
+        // recomputing the Manhattan distance for every pixel with the same RGBA.
+        var simCache = new Dictionary<uint, bool>(1024);
+
         bool Similar(int idx)
         {
             int pOff = idx * 4;
-            return Math.Abs(refBuf[pOff] - refB) + Math.Abs(refBuf[pOff + 1] - refG)
+            uint packed = (uint)(refBuf[pOff] | (refBuf[pOff + 1] << 8) | (refBuf[pOff + 2] << 16) | (refBuf[pOff + 3] << 24));
+            if (simCache.TryGetValue(packed, out var cached))
+                return cached;
+            var result = Math.Abs(refBuf[pOff] - refB) + Math.Abs(refBuf[pOff + 1] - refG)
                 + Math.Abs(refBuf[pOff + 2] - refR) + Math.Abs(refBuf[pOff + 3] - refA) <= tolInt;
+            simCache[packed] = result;
+            return result;
         }
 
         FloodFillMask(next, startDocX, startDocY, op, (docX, docY) => Similar(docY * _docW + docX));
@@ -309,6 +421,7 @@ public sealed class SelectionMask
         _cachedMaskGeo = null;
         _simplifyOutline = false;
         _geoPoly.Clear();
+        ClearOutline();
     }
 
     public void SetFromFloodFill(
@@ -333,10 +446,17 @@ public sealed class SelectionMask
         var next = CreateBaseMask(op);
         BeginVisitPass();
 
+        var simCache = new Dictionary<int, bool>(1024);
+
         bool Similar(int docX, int docY)
         {
             pixels.GetPixel(docX - offsetX, docY - offsetY, out byte b, out byte g, out byte r, out byte a);
-            return Math.Abs(b - refB) + Math.Abs(g - refG) + Math.Abs(r - refR) + Math.Abs(a - refA) <= tolInt;
+            int packed = b | (g << 8) | (r << 16) | (a << 24);
+            if (simCache.TryGetValue(packed, out var cached))
+                return cached;
+            var result = Math.Abs(b - refB) + Math.Abs(g - refG) + Math.Abs(r - refR) + Math.Abs(a - refA) <= tolInt;
+            simCache[packed] = result;
+            return result;
         }
 
         FloodFillMask(next, startDocX, startDocY, op, Similar);
@@ -347,6 +467,7 @@ public sealed class SelectionMask
         _cachedMaskGeo = null;
         _simplifyOutline = false;
         _geoPoly.Clear();
+        ClearOutline();
     }
 
     public void RenderOverlay(DrawingContext dc, double zoom)
@@ -356,8 +477,11 @@ public sealed class SelectionMask
     {
         if (!HasSelection || _geoType == SelectionGeometry.None) return;
 
-        var t = Math.Max(0.5, 1.0 / zoom);
-        var dash = Math.Max(2.0, 4.0 / zoom);
+        // Fixed document-space dash length — the dash count per boundary
+        // stays constant at any zoom, preventing infinite segment explosions
+        // that would lag the renderer at extreme magnification.
+        const double t = 1.5;
+        const double dash = 4.0;
         var cycle = dash * 2;
         var offset = phase % (float)cycle;
 
@@ -369,6 +493,13 @@ public sealed class SelectionMask
     {
         var pen = new Pen(brush, thickness, new DashStyle([dash, dash], offset));
 
+        var outline = GetOutlineGeometry();
+        if (outline != null)
+        {
+            dc.DrawGeometry(null, pen, outline);
+            return;
+        }
+
         if (_geoType == SelectionGeometry.Rect)
         {
             var r = new Avalonia.Rect(_geoRect.Left, _geoRect.Top, _geoRect.Width, _geoRect.Height);
@@ -376,9 +507,6 @@ public sealed class SelectionMask
             return;
         }
 
-        // Polygon outline (Replace or non-Replace — always prefer the drawn
-        // shape over pixel-edge tracing to avoid the MaxOutlineSegments
-        // fallback-to-rectangle path).
         if (_geoPoly.Count >= 2)
         {
             dc.DrawGeometry(null, pen, BuildPolygonGeometry());
@@ -387,7 +515,6 @@ public sealed class SelectionMask
 
         if (_geoType == SelectionGeometry.Mask)
         {
-            // Use stored rect geometry when available (non-Replace rect ops).
             if (_geoRect.Width > 0 && _geoRect.Height > 0)
             {
                 var r = new Avalonia.Rect(_geoRect.Left, _geoRect.Top, _geoRect.Width, _geoRect.Height);
@@ -688,22 +815,28 @@ public sealed class SelectionMask
 
     private void ApplyRectOp(byte[] next, int x1, int y1, int x2, int y2, SelectOp op)
     {
-        var shape = new SKRectI(x1, y1, x2, y2);
         if (op == SelectOp.Intersect && _mask != null)
         {
+            var shape = new SKRectI(x1, y1, x2, y2);
             var iter = IterationBoundsForIntersect(shape);
             for (int py = iter.Top; py < iter.Bottom; py++)
+            {
+                int row = py * _docW;
                 for (int px = iter.Left; px < iter.Right; px++)
                 {
-                    bool inside = px >= x1 && px < x2 && py >= y1 && py < y2;
-                    Apply(next, px, py, op, inside);
+                    bool inside = (uint)(px - x1) < (uint)(x2 - x1) && (uint)(py - y1) < (uint)(y2 - y1);
+                    ApplyAt(next, row + px, op, inside);
                 }
+            }
             return;
         }
 
         for (int py = y1; py < y2; py++)
-            for (int px = x1; px < x2; px++)
-                Apply(next, px, py, op, true);
+        {
+            int row = py * _docW + x1;
+            for (int px = 0; px < x2 - x1; px++)
+                ApplyAt(next, row + px, op, true);
+        }
     }
 
     private void ApplyRegionOp(byte[] next, int x1, int y1, int x2, int y2, SelectOp op,
@@ -754,8 +887,10 @@ public sealed class SelectionMask
     }
 
     private void Apply(byte[] mask, int x, int y, SelectOp op, bool inside)
+        => ApplyAt(mask, y * _docW + x, op, inside);
+
+    private static void ApplyAt(byte[] mask, int idx, SelectOp op, bool inside)
     {
-        int idx = y * _docW + x;
         bool cur = mask[idx] > 0;
         mask[idx] = (op switch
         {

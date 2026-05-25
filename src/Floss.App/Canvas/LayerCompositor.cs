@@ -1194,12 +1194,8 @@ public sealed class LayerCompositor : IDisposable
         // full-res composit + nearest-neighbor downsample per layer.
         // Clipped layers require the base-layer mask, which the LOD path
         // doesn't yet support — fall back to full-res composite for any
-        // render list containing clipped items.
-        var hasClipped = false;
-        for (var i = 0; i < renderList.Count; i++)
-        {
-            if (renderList[i].IsClipped) { hasClipped = true; break; }
-        }
+        // render list containing clipped items, including inside groups.
+        var hasClipped = HasClippedDescendant(renderList);
 
         if (hasClipped)
         {
@@ -1574,6 +1570,27 @@ public sealed class LayerCompositor : IDisposable
             if (layer.ExpressionColor != ExpressionColorMode.Color) return false;
         }
         return true;
+    }
+
+    private static bool HasClippedDescendant(IReadOnlyList<ProjectionSiblingItem> renderList)
+    {
+        for (var i = 0; i < renderList.Count; i++)
+        {
+            if (renderList[i].IsClipped) return true;
+            var layer = renderList[i].Layer;
+            if (layer.IsGroup && HasClippingInChildren(layer.Children)) return true;
+        }
+        return false;
+    }
+
+    private static bool HasClippingInChildren(IReadOnlyList<DrawingLayer> children)
+    {
+        for (var i = 0; i < children.Count; i++)
+        {
+            if (children[i].IsClipping) return true;
+            if (children[i].IsGroup && HasClippingInChildren(children[i].Children)) return true;
+        }
+        return false;
     }
 
     private unsafe void CompositeTileLodFastCpu(WriteableBitmap tile, PixelRegion tileRect,

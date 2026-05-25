@@ -42,7 +42,7 @@ public sealed class PenPressureSettingsWindow : Window
         _enableToggle.IsCheckedChanged += (_, _) =>
         {
             _working.Enabled = _enableToggle.IsChecked == true;
-            _curveGraph.IsEditingEnabled = _working.Enabled;
+            _curveGraph!.IsEditingEnabled = _working.Enabled;
         };
 
         // ── Curve graph ───────────────────────────────────────────────────

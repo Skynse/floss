@@ -475,24 +475,7 @@ public sealed class BrushEngine : IDisposable
 
         bool blendModeCanRasterize = SupportsCpuRasterBlendMode(brush.BlendMode);
 
-        // Cached dab tile-major path — for non-procedural stamps (image tips) or
-        // graph stamps that don't have a fast analytical path (the analytical
-        // circle/soft-round path is faster than generating and blitting dabs).
-        bool tryCachedDabs = !usesProceduralStamp;
-        if (!tryCachedDabs && _stamps.Count >= 4)
-        {
-            var graph = brush.Tip switch
-            {
-                ProceduralBrushTip p => p.Graph,
-                NodeBrushTip n when !n.IsDirectImageSampler => n.Graph,
-                _ => null
-            };
-            if (graph != null &&
-                !BrushTipStampFastPath.TryCreate(graph, (float)brush.Hardness, out _))
-                tryCachedDabs = true; // complex graph — cached dabs faster than per-pixel eval
-        }
-
-        if (blendModeCanRasterize && !isMultiTipSingle && tryCachedDabs)
+        if (blendModeCanRasterize && !isMultiTipSingle && !usesProceduralStamp)
         {
             var baseColor = stroke.BaseColor;
             float brushGrain = (float)brush.Grain;
@@ -1739,7 +1722,7 @@ public sealed class BrushEngine : IDisposable
                             }
 
                             if (hasGrainTable)
-                                alpha *= grainTable[(py - dirty.Y) * dirty.Width + (px - dirty.X)];
+                                alpha *= grainTable![(py - dirty.Y) * dirty.Width + (px - dirty.X)];
                             else if (hasProceduralGrain)
                             {
                                 if (texPx != null)
@@ -2073,7 +2056,7 @@ public sealed class BrushEngine : IDisposable
                 {
                     int gy = py - dirty.Y, gx = px - dirty.X;
                     if (gy >= 0 && gy < dirty.Height && gx >= 0 && gx < dirty.Width)
-                        alpha *= grainTable[gy * dirty.Width + gx];
+                        alpha *= grainTable![gy * dirty.Width + gx];
                 }
                 else if (hasProceduralGrain)
                 {
@@ -2240,7 +2223,7 @@ public sealed class BrushEngine : IDisposable
                 {
                     int gy = py - dirty.Y, gx = px - dirty.X;
                     if (gy >= 0 && gy < dirty.Height && gx >= 0 && gx < dirty.Width)
-                        alpha *= grainTable[gy * dirty.Width + gx];
+                        alpha *= grainTable![gy * dirty.Width + gx];
                 }
                 else if (hasProceduralGrain)
                 {

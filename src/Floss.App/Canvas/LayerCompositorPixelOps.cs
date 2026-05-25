@@ -178,8 +178,10 @@ internal static class LayerCompositorPixelOps
         var offsetY = layer.OffsetY;
         var baseOffsetX = baseLayer.OffsetX;
         var baseOffsetY = baseLayer.OffsetY;
-        var baseW = baseLayer.Width;
-        var baseH = baseLayer.Height;
+        var baseMinX = baseLayer.MinX;
+        var baseMaxX = baseLayer.MaxX;
+        var baseMinY = baseLayer.MinY;
+        var baseMaxY = baseLayer.MaxY;
 
         var docLeft = Math.Max(Math.Max(clip.X, offsetX + layer.MinX), 0);
         var docTop = Math.Max(Math.Max(clip.Y, offsetY + layer.MinY), 0);
@@ -234,7 +236,7 @@ internal static class LayerCompositorPixelOps
                     var dstRow = dst + (docY - originY) * dstStride;
                     var baseY = docY - baseOffsetY;
 
-                    if (baseY < 0 || baseY >= baseH) continue;
+                    if (baseY < baseMinY || baseY >= baseMaxY) continue;
 
                     var baseTileY = FloorDiv(baseY, ts);
                     var baseTileLocalY = baseY - baseTileY * ts;
@@ -250,7 +252,7 @@ internal static class LayerCompositorPixelOps
 
                         var docX = srcX + offsetX;
                         var baseX = docX - baseOffsetX;
-                        if (baseX < 0 || baseX >= baseW) continue;
+                        if (baseX < baseMinX || baseX >= baseMaxX) continue;
 
                         var baseTileX = FloorDiv(baseX, ts);
                         if (baseTileX != prevBaseTileX)
@@ -350,8 +352,10 @@ internal static class LayerCompositorPixelOps
         int originX,
         int originY)
     {
-        var baseW = baseLayer.Width;
-        var baseH = baseLayer.Height;
+        var baseMinX = baseLayer.MinX;
+        var baseMaxX = baseLayer.MaxX;
+        var baseMinY = baseLayer.MinY;
+        var baseMaxY = baseLayer.MaxY;
         var baseOffsetX = baseLayer.OffsetX;
         var baseOffsetY = baseLayer.OffsetY;
 
@@ -363,7 +367,7 @@ internal static class LayerCompositorPixelOps
         for (int docY = clip.Y; docY < clip.Bottom; docY++)
         {
             var baseY = docY - baseOffsetY;
-            if (baseY < 0 || baseY >= baseH) continue;
+            if (baseY < baseMinY || baseY >= baseMaxY) continue;
 
             var srcRow = src + (docY - clip.Y) * srcStride;
             var dstRow = dst + (docY - originY) * dstStride;
@@ -380,7 +384,7 @@ internal static class LayerCompositorPixelOps
                 if (rawA == 0) continue;
 
                 var baseX = docX - baseOffsetX;
-                if (baseX < 0 || baseX >= baseW) continue;
+                if (baseX < baseMinX || baseX >= baseMaxX) continue;
 
                 var baseTileX = FloorDiv(baseX, ts);
                 if (baseTileX != prevBaseTileX)

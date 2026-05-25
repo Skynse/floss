@@ -24,10 +24,12 @@ public sealed class CompositeTool : ITool
 
     public void Deactivate(ToolContext ctx)
     {
-        if (HasPendingOperation)
-            Cancel(ctx);
-        else
-            Input.Cancel();
+        var hadPending = HasPendingOperation;
+        Input.Cancel();
+        if (Output is DirectDrawOutput directDraw && directDraw.HasPendingWork)
+            directDraw.FinalizeAccepting();
+        else if (Output is { } output && hadPending)
+            output.Cancel();
         InvalidateUi(ctx);
     }
 

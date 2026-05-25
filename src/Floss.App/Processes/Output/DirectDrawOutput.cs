@@ -446,6 +446,22 @@ public sealed class DirectDrawOutput : IOutputProcess
     public bool HasPendingWork =>
         _processing || _processingScheduled || _active != null || _pendingTransactions.Count > 0;
 
+    // Marks the active/accepting transaction as finalize-requested so the
+    // background task will commit it normally, then detaches _accepting.
+    // Call this when switching away from the tool while drawing — do NOT
+    // call Cancel(), which would block the UI thread and revert the stroke.
+    public void FinalizeAccepting()
+    {
+        if (_accepting != null)
+        {
+            _accepting.FinalizeRequested = true;
+            _accepting = null;
+        }
+        if (_active != null && !_active.FinalizeRequested)
+            _active.FinalizeRequested = true;
+        ScheduleProcessQueued();
+    }
+
     private void WaitForProcessingToFinish()
     {
         // Wait up to 2 seconds for the background rasterize Task.Run to complete.

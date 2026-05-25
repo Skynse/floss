@@ -232,7 +232,7 @@ public partial class MainWindow : Window
         else
         {
             var cat = group.Categories.FirstOrDefault(c => c.Name == _selectedCategory);
-            if (cat == null || cat.PresetIds.Count == 0)
+            if (cat == null)
             {
                 _selectedCategory = group.Categories.FirstOrDefault(c => c.PresetIds.Count > 0)?.Name;
                 cat = _selectedCategory == null

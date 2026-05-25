@@ -429,6 +429,7 @@ public sealed class NodeBrushTip : IBrushTip, IDisposable
     private readonly Dictionary<(int Size, int Hardness, string Graph, string Material), SKBitmap> _maskCache = [];
     private readonly string _graphCacheKey;
     private IReadOnlyList<BrushTipData> _materialTips = [];
+    private readonly object _directTipLock = new();
     private ImageBrushTip? _directImageTip;
     private string _directImageKey = "";
 
@@ -442,14 +443,11 @@ public sealed class NodeBrushTip : IBrushTip, IDisposable
 
     public void BindMaterialTips(IReadOnlyList<BrushTipData> materialTips)
     {
+        // Never dispose caches here — the engine thread may hold live
+        // references to masks from a prior lookup. Old cache entries with
+        // outdated material keys simply won't match future lookups; they
+        // accumulate harmlessly until Dispose().
         _materialTips = materialTips ?? [];
-        ResetDirectImageTip();
-        lock (_cacheLock)
-        {
-            foreach (var mask in _maskCache.Values)
-                mask.Dispose();
-            _maskCache.Clear();
-        }
     }
 
     public bool IsDirectImageSampler => Graph.TryGetDirectImageSampler(_materialTips, out _);
@@ -475,7 +473,12 @@ public sealed class NodeBrushTip : IBrushTip, IDisposable
 
     public void Dispose()
     {
-        ResetDirectImageTip();
+        lock (_directTipLock)
+        {
+            _directImageTip?.Dispose();
+            _directImageTip = null;
+            _directImageKey = "";
+        }
         lock (_cacheLock)
         {
             foreach (var mask in _maskCache.Values)
@@ -517,20 +520,18 @@ public sealed class NodeBrushTip : IBrushTip, IDisposable
     private ImageBrushTip GetDirectImageTip(byte[] pngBytes)
     {
         var key = Convert.ToHexString(SHA256.HashData(pngBytes));
-        if (_directImageTip != null && _directImageKey == key)
+        lock (_directTipLock)
+        {
+            if (_directImageTip != null && _directImageKey == key)
+                return _directImageTip;
+
+            // Don't dispose the old tip — the engine thread may still hold
+            // live references to masks obtained from it. The old tip will
+            // be disposed when this NodeBrushTip is disposed.
+            _directImageKey = key;
+            _directImageTip = new ImageBrushTip(pngBytes);
             return _directImageTip;
-
-        ResetDirectImageTip();
-        _directImageKey = key;
-        _directImageTip = new ImageBrushTip(pngBytes);
-        return _directImageTip;
-    }
-
-    private void ResetDirectImageTip()
-    {
-        _directImageTip?.Dispose();
-        _directImageTip = null;
-        _directImageKey = "";
+        }
     }
 }
 

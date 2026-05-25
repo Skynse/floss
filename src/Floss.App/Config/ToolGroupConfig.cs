@@ -744,8 +744,6 @@ public sealed class ToolGroupConfig
         foreach (var category in group.Categories)
             category.PresetIds.RemoveAll(id => !validIds.Contains(id));
 
-        group.Categories.RemoveAll(category => category.PresetIds.Count == 0);
-
         if (group.LastActiveCategoryName != null &&
             !group.Categories.Any(category => category.Name == group.LastActiveCategoryName))
         {
