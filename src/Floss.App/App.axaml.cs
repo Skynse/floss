@@ -21,6 +21,7 @@ public partial class App : Application
     public static ShortcutsConfig Shortcuts { get; private set; } = new();
     public static ToolGroupConfig ToolGroups { get; private set; } = new();
     public static ModifierKeySettings ModifierKeys { get; private set; } = ModifierKeySettings.CreateDefaults();
+    public static PenPressureSettings PenPressure { get; private set; } = new();
 
     public override void Initialize()
     {
@@ -106,6 +107,7 @@ public partial class App : Application
                 Config = AppConfig.Load();
                 Shortcuts = ShortcutsConfig.Load();
                 ModifierKeys = ModifierKeySettings.Load();
+                PenPressure = PenPressureSettings.Load(AppPaths.PenPressureSettingsPath);
 
                 splash.SetStatus("Loading tools and brushes...");
                 ToolGroups = ToolGroupConfig.Load();

@@ -402,7 +402,10 @@ public sealed class DrawingCanvas : Control, IDisposable
     }
 
     private static (CanvasInputSource Source, double Pressure) GetCanvasInputSampleInfo(PointerPoint point, CanvasInputPhase phase)
-        => TabletInput.GetSampleInfo(point, phase);
+    {
+        var (source, pressure) = TabletInput.GetSampleInfo(point, phase);
+        return (source, App.PenPressure.Evaluate(pressure));
+    }
 
     public double PanOffsetX { get; set; }
     public double PanOffsetY { get; set; }

@@ -244,6 +244,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private Panel _toolRailStack = null!;
     private SettingsWindow? _settingsWindow;
     private Floss.App.Windows.ModifierKeySettingsWindow? _modifierKeySettingsWindow;
+    private Floss.App.Windows.PenPressureSettingsWindow? _penPressureSettingsWindow;
 
     // ── Avalonia KeyBinding shortcut registration ──────────────────────────
     private sealed class DelegateCommand : System.Windows.Input.ICommand
@@ -861,6 +862,8 @@ public partial class MainWindow : Window, Tools.IViewportController
                 timelapseMenu,
                 new Separator(),
                 _resetViewMenuItem,
+                new Separator(),
+                MenuAction("_Pen Pressure Settings...", OpenPenPressureSettings),
                 new Separator(),
                 MenuAction("_Settings...", OpenSettings),
                 MenuAction("_Modifier Key Settings...", OpenModifierKeySettings)

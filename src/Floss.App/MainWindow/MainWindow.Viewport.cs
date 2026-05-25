@@ -768,4 +768,12 @@ public partial class MainWindow : ICanvasInputHost
         _modifierKeySettingsWindow.Closed += (_, _) => _modifierKeySettingsWindow = null;
         _modifierKeySettingsWindow.Show(this);
     }
+
+    private void OpenPenPressureSettings()
+    {
+        if (_penPressureSettingsWindow != null) { _penPressureSettingsWindow.Activate(); return; }
+        _penPressureSettingsWindow = new Floss.App.Windows.PenPressureSettingsWindow();
+        _penPressureSettingsWindow.Closed += (_, _) => _penPressureSettingsWindow = null;
+        _penPressureSettingsWindow.Show(this);
+    }
 }
