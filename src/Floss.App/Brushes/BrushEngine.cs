@@ -124,6 +124,10 @@ public sealed class BrushEngine : IDisposable
     private int _sampleBufferStride;
     private readonly SKPaint _scratchCompositePaint = new() { BlendMode = SKBlendMode.SrcOver };
     private readonly Dictionary<string, SKBitmap?> _textureCache = new();
+    private readonly Dictionary<int, List<PlacedDab>> _dabBuckets = new();
+    private readonly Dictionary<int, List<PlacedColorDab>> _colorDabBuckets = new();
+    private readonly Dictionary<int, byte[]?> _smearSnapshots = new(32);
+    private float[]? _grainTable;
     private string _lastRasterPath = "None";
     private int _lastCachedDabCount;
     private int _lastTileBucketCount;
@@ -948,20 +952,20 @@ public sealed class BrushEngine : IDisposable
     private static StampSample CreateStamp(ActiveStroke stroke, BrushPreset brush, in StrokePoint sp)
     {
         var dyn = brush.Dynamics;
-        var parameterGraphs = brush.ParameterGraphs;
-        var sizeMul = EvalParameter(parameterGraphs, BrushParameterTarget.Size, sp, dyn.EvalSize(sp));
-        var opacMul = EvalParameter(parameterGraphs, BrushParameterTarget.Opacity, sp, dyn.EvalOpacity(sp));
-        var flowMul = EvalParameter(parameterGraphs, BrushParameterTarget.Flow, sp, dyn.EvalFlow(sp));
-        var hardness = EvalParameter(parameterGraphs, BrushParameterTarget.Hardness, sp,
+        var paramLookup = stroke.ParamGraphLookup;
+        var sizeMul = EvalParameter(paramLookup, BrushParameterTarget.Size, sp, dyn.EvalSize(sp));
+        var opacMul = EvalParameter(paramLookup, BrushParameterTarget.Opacity, sp, dyn.EvalOpacity(sp));
+        var flowMul = EvalParameter(paramLookup, BrushParameterTarget.Flow, sp, dyn.EvalFlow(sp));
+        var hardness = EvalParameter(paramLookup, BrushParameterTarget.Hardness, sp,
             dyn.Hardness.IsEnabled ? dyn.EvalHardness(sp) : (float)brush.Hardness);
-        var spacingMul = EvalParameter(parameterGraphs, BrushParameterTarget.Spacing, sp, dyn.EvalSpacing(sp));
-        var tipDensityMul = EvalParameter(parameterGraphs, BrushParameterTarget.TipDensity, sp,
+        var spacingMul = EvalParameter(paramLookup, BrushParameterTarget.Spacing, sp, dyn.EvalSpacing(sp));
+        var tipDensityMul = EvalParameter(paramLookup, BrushParameterTarget.TipDensity, sp,
             dyn.TipDensity.IsEnabled ? dyn.EvalTipDensity(sp) : 1f);
-        var tipThicknessMul = EvalParameter(parameterGraphs, BrushParameterTarget.TipThickness, sp,
+        var tipThicknessMul = EvalParameter(paramLookup, BrushParameterTarget.TipThickness, sp,
             dyn.TipThickness.IsEnabled ? dyn.EvalTipThickness(sp) : 1f);
-        var scatter = EvalParameter(parameterGraphs, BrushParameterTarget.Scatter, sp,
+        var scatter = EvalParameter(paramLookup, BrushParameterTarget.Scatter, sp,
             dyn.Scatter.IsEnabled ? dyn.EvalScatter(sp) : 0f);
-        var rotDeg = EvalParameter(parameterGraphs, BrushParameterTarget.Angle, sp, dyn.EvalRotationDeg(sp));
+        var rotDeg = EvalParameter(paramLookup, BrushParameterTarget.Angle, sp, dyn.EvalRotationDeg(sp));
         var size = Math.Max(0.5f, (float)brush.Size * sizeMul);
         // Opacity is independent of AmountOfPaint. AmountOfPaint controls how much
         // brush color is deposited, not the visibility of the stamp.
@@ -997,13 +1001,8 @@ public sealed class BrushEngine : IDisposable
             Math.Clamp(sp.Speed, 0f, 1f));
     }
 
-    private static float EvalParameter(IReadOnlyList<BrushParameterGraph> graphs, BrushParameterTarget target, in StrokePoint sp, float fallback)
-    {
-        var graph = graphs.FirstOrDefault(g => g.Target == target);
-        return graph == null || graph.Validate().Count > 0
-            ? fallback
-            : graph.Evaluate(sp, fallback);
-    }
+    private static float EvalParameter(Dictionary<BrushParameterTarget, BrushParameterGraph> lookup, BrushParameterTarget target, in StrokePoint sp, float fallback)
+        => lookup.TryGetValue(target, out var graph) ? graph.Evaluate(sp, fallback) : fallback;
 
     private static int SelectTipIndex(BrushPreset brush, in StrokePoint sp)
     {
@@ -1790,7 +1789,8 @@ public sealed class BrushEngine : IDisposable
             return false;
 
         const int tsz = TiledPixelBuffer.TileSize;
-        var buckets = new Dictionary<int, List<PlacedDab>>();
+        _dabBuckets.Clear();
+        var buckets = _dabBuckets;
 
         stroke.EnterDabCacheUse();
         try
@@ -1906,7 +1906,8 @@ public sealed class BrushEngine : IDisposable
             return false;
 
         const int tsz = TiledPixelBuffer.TileSize;
-        var buckets = new Dictionary<int, List<PlacedColorDab>>();
+        _colorDabBuckets.Clear();
+        var buckets = _colorDabBuckets;
 
         stroke.EnterColorDabCacheUse();
         try
@@ -2654,7 +2655,7 @@ public sealed class BrushEngine : IDisposable
             var sampleW = Math.Max(1, sampleRight - sampleLeft);
             var sampleH = Math.Max(1, sampleBottom - sampleTop);
             var numPixels = sampleW * sampleH;
-            var minSamples = Math.Min(numPixels, Math.Max(64, (int)MathF.Round(0.02f * numPixels)));
+            var minSamples = Math.Min(numPixels, Math.Clamp((int)MathF.Round(0.02f * numPixels), 64, 256));
 
             float accR = 0f, accG = 0f, accB = 0f, accA = 0f, colorWeightSum = 0f, alphaWeightSum = 0f;
             var hIndex2 = 1;
@@ -2848,7 +2849,8 @@ public sealed class BrushEngine : IDisposable
             return SpatialSmearResult.Failed;
 
         const int tsz = TiledPixelBuffer.TileSize;
-        var srcSnapshots = new Dictionary<int, byte[]?>(32);
+        _smearSnapshots.Clear();
+        var srcSnapshots = _smearSnapshots;
         var srcMinX = pxMinX + offsetX;
         var srcMinY = pxMinY + offsetY;
         var srcMaxX = pxMaxX + offsetX;
@@ -3557,7 +3559,9 @@ public sealed class BrushEngine : IDisposable
         if ((long)w * h > MaxPrecomputedGrainPixels)
             return null;
 
-        var table = new float[w * h];
+        if (_grainTable == null || _grainTable.Length < w * h)
+            _grainTable = new float[w * h];
+        var table = _grainTable;
         if (texPx != null)
         {
             Parallel.For(0, h, y =>
@@ -3616,6 +3620,10 @@ public sealed class BrushEngine : IDisposable
         public ActiveStroke(BrushPreset brush, CanvasInputSample sample)
         {
             _brush = brush;
+            ParamGraphLookup = new Dictionary<BrushParameterTarget, BrushParameterGraph>(brush.ParameterGraphs.Count);
+            foreach (var g in brush.ParameterGraphs)
+                if (g.Validate().Count == 0)
+                    ParamGraphLookup[g.Target] = g;
             BrushMaterialTips.BindToPreset(brush);
             if (brush.TipSelectionMode != BrushTipSelectionMode.Single && brush.Tips.Count > 0)
                 _ownedTipSet = brush.Tips.Select(t => t.CreateTip()).ToList();
@@ -3632,8 +3640,8 @@ public sealed class BrushEngine : IDisposable
                 (float)sample.X, (float)sample.Y, (float)sample.Pressure,
                 (float)sample.TiltX, (float)sample.TiltY, (float)sample.Twist,
                 0, 0, 0, 0, 0, StrokeRandom);
-            var initSizeMul = EvalParameter(brush.ParameterGraphs, BrushParameterTarget.Size, sp, brush.Dynamics.EvalSize(sp));
-            var initSpacingMul = EvalParameter(brush.ParameterGraphs, BrushParameterTarget.Spacing, sp, brush.Dynamics.EvalSpacing(sp));
+            var initSizeMul = EvalParameter(ParamGraphLookup, BrushParameterTarget.Size, sp, brush.Dynamics.EvalSize(sp));
+            var initSpacingMul = EvalParameter(ParamGraphLookup, BrushParameterTarget.Spacing, sp, brush.Dynamics.EvalSpacing(sp));
             var initSize = Math.Max(BrushSpacing.MinStampSizePx, (float)brush.Size * Math.Max(0.5f, initSizeMul));
             State.NextStampDistance = BrushSpacing.EffectiveDistance(
                 brush, initSize, Math.Clamp(initSpacingMul, 0.05f, 4f), 0f);
@@ -3660,6 +3668,7 @@ public sealed class BrushEngine : IDisposable
         }
 
         public float StrokeRandom { get; }
+        public readonly Dictionary<BrushParameterTarget, BrushParameterGraph> ParamGraphLookup;
         public StrokeState State;
         public int BaseMaskSize { get; }
         private SKBitmap? _mask;
