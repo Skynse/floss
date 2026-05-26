@@ -42,7 +42,7 @@ public sealed class DockTabGroup : Grid
         _tabStrip = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Background = new SolidColorBrush(Color.Parse("#2a2a2e")),
+            Background = new SolidColorBrush(Color.Parse("#292929")),
             Margin = new Thickness(0, 0, 0, 0)
         };
 
@@ -96,11 +96,11 @@ public sealed class DockTabGroup : Grid
         foreach (var (id, tab) in _tabs)
         {
             var isActive = id == _activeId;
-            tab.Background = new SolidColorBrush(Color.Parse(isActive ? "#1e1e20" : "#2a2a2e"));
-            tab.BorderBrush = new SolidColorBrush(Color.Parse(isActive ? "#0078d4" : "Transparent"));
+            tab.Background = new SolidColorBrush(Color.Parse(isActive ? "#1a1a1a" : "#292929"));
+            tab.BorderBrush = new SolidColorBrush(Color.Parse(isActive ? "#4f78b8" : "Transparent"));
             tab.BorderThickness = new Thickness(0, 0, 0, isActive ? 2 : 0);
             if (tab.Child is TextBlock tb)
-                tb.Foreground = new SolidColorBrush(Color.Parse(isActive ? "#cccccc" : "#8a8a8e"));
+                tb.Foreground = new SolidColorBrush(Color.Parse(isActive ? "#e0e0e0" : "#787878"));
         }
 
         if (_content.TryGetValue(_activeId, out var content))

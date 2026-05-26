@@ -80,14 +80,14 @@ public partial class MainWindow
         };
 
         // ── Expression Color ──
-        var exprRow = new DockPanel { LastChildFill = true };
+        var exprRow = new StackPanel { Spacing = 4 };
         var exprLabel = new TextBlock
         {
             Text = "Expression color",
             FontSize = 11,
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            Width = 80,
-            VerticalAlignment = VerticalAlignment.Center
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 4, 0, 0)
         };
         _expressionColorCombo = new ComboBox
         {
@@ -102,7 +102,6 @@ public partial class MainWindow
             if (_expressionColorCombo.SelectedItem is ExpressionColorMode mode)
                 SetExpressionColor(mode);
         };
-        DockPanel.SetDock(exprLabel, Dock.Left);
         exprRow.Children.Add(exprLabel);
         exprRow.Children.Add(_expressionColorCombo);
 

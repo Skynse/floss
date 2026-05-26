@@ -11,100 +11,55 @@ using static Floss.App.Config.AppColors;
 public partial class MainWindow
 {
     private StackPanel _colorSlidersPanel = null!;
-    private TabControl _colorSpaceTabs = null!;
 
     // HSV controls
     private Slider _hsvHueSlider = null!;
     private Slider _hsvSatSlider = null!;
     private Slider _hsvValSlider = null!;
 
-    // RGB controls  
-    private Slider _rgbRSlider = null!;
-    private Slider _rgbGSlider = null!;
-    private Slider _rgbBSlider = null!;
-
-    // Preview
     private Border _colorPreview = null!;
     private bool _syncingColorSliders;
     private bool _updatingFromHsv;
 
     private StackPanel BuildColorSlidersSection()
     {
-        _colorSlidersPanel = new StackPanel { Spacing = 4, Margin = new Thickness(8, 4, 8, 6) };
+        _colorSlidersPanel = new StackPanel { Spacing = 3, Margin = new Thickness(8, 2, 8, 4) };
 
-        _colorSpaceTabs = new TabControl
-        {
-            FontSize = 10,
-            Padding = new Thickness(0),
-            Margin = new Thickness(0, 0, 0, 4)
-        };
+        _hsvHueSlider = CreateColorSlider(0, 360);
+        _hsvSatSlider = CreateColorSlider(0, 100);
+        _hsvValSlider = CreateColorSlider(0, 100);
+        _colorSlidersPanel.Children.Add(_hsvHueSlider);
+        _colorSlidersPanel.Children.Add(_hsvSatSlider);
+        _colorSlidersPanel.Children.Add(_hsvValSlider);
 
-        // HSV Tab — gradients are updated dynamically in RefreshColorSliders
-        var hsvPanel = new StackPanel { Spacing = 4 };
-        _hsvHueSlider = CreateColorSlider("H", 0, 360);
-        _hsvSatSlider = CreateColorSlider("S", 0, 100);
-        _hsvValSlider = CreateColorSlider("V", 0, 100);
-        hsvPanel.Children.Add(_hsvHueSlider);
-        hsvPanel.Children.Add(_hsvSatSlider);
-        hsvPanel.Children.Add(_hsvValSlider);
-        _colorSpaceTabs.Items.Add(new TabItem { Header = "HSV", Content = hsvPanel });
-
-        // RGB Tab — static gradients, never change
-        var rgbPanel = new StackPanel { Spacing = 4 };
-        _rgbRSlider = CreateColorSlider("R", 0, 255, Colors.Black, Colors.Red);
-        _rgbGSlider = CreateColorSlider("G", 0, 255, Colors.Black, Colors.Green);
-        _rgbBSlider = CreateColorSlider("B", 0, 255, Colors.Black, Colors.Blue);
-        rgbPanel.Children.Add(_rgbRSlider);
-        rgbPanel.Children.Add(_rgbGSlider);
-        rgbPanel.Children.Add(_rgbBSlider);
-        _colorSpaceTabs.Items.Add(new TabItem { Header = "RGB", Content = rgbPanel });
-
-        // Color Preview
         _colorPreview = new Border
         {
-            Height = 24,
+            Height = 16,
+            Margin = new Thickness(0, 2, 0, 0),
             BorderThickness = new Thickness(1),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             CornerRadius = new CornerRadius(2),
             Background = new SolidColorBrush(_canvas?.Brush.Color ?? Colors.Black)
         };
-
-        _colorSlidersPanel.Children.Add(_colorSpaceTabs);
         _colorSlidersPanel.Children.Add(_colorPreview);
 
-        // Wire events
         WireColorSlider(_hsvHueSlider, () => UpdateColorFromHsv());
         WireColorSlider(_hsvSatSlider, () => UpdateColorFromHsv());
         WireColorSlider(_hsvValSlider, () => UpdateColorFromHsv());
-        WireColorSlider(_rgbRSlider, () => UpdateColorFromRgb());
-        WireColorSlider(_rgbGSlider, () => UpdateColorFromRgb());
-        WireColorSlider(_rgbBSlider, () => UpdateColorFromRgb());
 
         RefreshColorSliders();
         return _colorSlidersPanel;
     }
 
-    private static Slider CreateColorSlider(string label, double min, double max)
+    private static Slider CreateColorSlider(double min, double max)
     {
         return new Slider
         {
             Minimum = min,
             Maximum = max,
-            Height = 20,
+            Height = 18,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
-    }
-
-    private static Slider CreateColorSlider(string label, double min, double max, Color startColor, Color endColor)
-    {
-        var slider = CreateColorSlider(label, min, max);
-        slider.Background = new LinearGradientBrush
-        {
-            StartPoint = new RelativePoint(0, 0.5, RelativeUnit.Relative),
-            EndPoint = new RelativePoint(1, 0.5, RelativeUnit.Relative),
-            GradientStops = { new GradientStop(startColor, 0), new GradientStop(endColor, 1) }
-        };
-        return slider;
     }
 
     private static void WireColorSlider(Slider slider, Action onChange)
@@ -128,15 +83,6 @@ public partial class MainWindow
         _updatingFromHsv = false;
     }
 
-    private void UpdateColorFromRgb()
-    {
-        if (_syncingColorSliders) return;
-        var r = (byte)Math.Clamp(_rgbRSlider.Value, 0, 255);
-        var g = (byte)Math.Clamp(_rgbGSlider.Value, 0, 255);
-        var b = (byte)Math.Clamp(_rgbBSlider.Value, 0, 255);
-        SetColor(Color.FromRgb(r, g, b));
-    }
-
     private void RefreshColorSliders()
     {
         if (_colorSlidersPanel == null || _canvas == null) return;
@@ -149,8 +95,6 @@ public partial class MainWindow
 
             if (_updatingFromHsv)
             {
-                // HSV sliders drove this update — read values directly to avoid
-                // the RGB→HSV roundtrip clobbering H/S at low value or saturation.
                 h = _hsvHueSlider.Value;
                 s = _hsvSatSlider.Value / 100;
                 v = _hsvValSlider.Value / 100;
@@ -162,10 +106,6 @@ public partial class MainWindow
                 _hsvSatSlider.Value = s * 100;
                 _hsvValSlider.Value = v * 100;
             }
-
-            _rgbRSlider.Value = color.R;
-            _rgbGSlider.Value = color.G;
-            _rgbBSlider.Value = color.B;
 
             _colorPreview.Background = new SolidColorBrush(color);
             UpdateHsvGradients(h, s, v);

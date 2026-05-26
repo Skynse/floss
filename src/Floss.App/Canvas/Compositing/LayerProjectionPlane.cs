@@ -186,6 +186,12 @@ internal sealed class LayerProjectionPlane : IDisposable
                     _host.CompositeClippedGroupIntoBuffer(dst, dstStride, width, height, item.Layer, baseLayer,
                         opacityScale, clip, originX, originY);
                 }
+                else if (item.Layer.Adjustment != null)
+                {
+                    AdjustmentLayerProcessor.ApplyClipped(dst, dstStride, width, height,
+                        item.Layer.Adjustment, item.Layer.Opacity * opacityScale,
+                        baseLayer, clip, originX, originY);
+                }
                 else
                 {
                     _host.CompositeClippedPaintLayer(dst, dstStride, width, height, item.Layer, baseLayer,
@@ -195,6 +201,12 @@ internal sealed class LayerProjectionPlane : IDisposable
             else if (item.Layer.IsGroup)
             {
                 CompositeGroupNode(dst, dstStride, width, height, item.Layer, opacityScale, clip, originX, originY);
+            }
+            else if (item.Layer.Adjustment != null)
+            {
+                AdjustmentLayerProcessor.Apply(dst, dstStride, width, height,
+                    item.Layer.Adjustment, item.Layer.Opacity * opacityScale,
+                    clip, originX, originY);
             }
             else
             {

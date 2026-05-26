@@ -55,8 +55,45 @@ public partial class MainWindow
     private static readonly IBrush GroupPreviewBgActive = new SolidColorBrush(Color.Parse("#334158"));
 
     // Miscellaneous UI Elements
-    // Layer thumbnail — white so dark strokes stay visible on the dark panel.
-    private static readonly IBrush PreviewThumbBg = new SolidColorBrush(Colors.White);
+    // Layer thumbnail — alpha checkerboard so transparent regions are visible.
+    private static readonly IBrush PreviewThumbBg = CreateThumbCheckerboardBrush();
+
+    private static IBrush CreateThumbCheckerboardBrush()
+    {
+        var dark = new SolidColorBrush(Color.Parse("#888888"));
+        var light = new SolidColorBrush(Color.Parse("#BBBBBB"));
+        var checkSize = 6.0;
+        var group = new DrawingGroup();
+        // Dark squares at (0,0) and (cs,cs)
+        group.Children.Add(new GeometryDrawing
+        {
+            Brush = dark,
+            Geometry = new RectangleGeometry(new Rect(0, 0, checkSize, checkSize))
+        });
+        group.Children.Add(new GeometryDrawing
+        {
+            Brush = dark,
+            Geometry = new RectangleGeometry(new Rect(checkSize, checkSize, checkSize, checkSize))
+        });
+        // Light squares at (cs,0) and (0,cs)
+        group.Children.Add(new GeometryDrawing
+        {
+            Brush = light,
+            Geometry = new RectangleGeometry(new Rect(checkSize, 0, checkSize, checkSize))
+        });
+        group.Children.Add(new GeometryDrawing
+        {
+            Brush = light,
+            Geometry = new RectangleGeometry(new Rect(0, checkSize, checkSize, checkSize))
+        });
+        return new DrawingBrush(group)
+        {
+            TileMode = TileMode.Tile,
+            DestinationRect = new RelativeRect(0, 0, checkSize * 2, checkSize * 2, RelativeUnit.Absolute),
+            Stretch = Stretch.None
+        };
+    }
+
     private static readonly IBrush PreviewFrameBorder = new SolidColorBrush(Color.Parse(Stroke));
     private static readonly IBrush SwatchBorder = new SolidColorBrush(Color.Parse(Stroke));
 
@@ -449,6 +486,8 @@ public partial class MainWindow
 
         DragDrop.SetAllowDrop(row, true);
         row.PointerPressed += LayerRowPointerPressed;
+        row.PointerMoved += LayerRowPointerMoved;
+        row.PointerReleased += LayerRowPointerReleased;
         row.Tapped += LayerRowTapped;
         row.DoubleTapped += LayerRowDoubleTapped;
         row.AddHandler(DragDrop.DragOverEvent, LayerRowDragOver);
@@ -540,6 +579,12 @@ public partial class MainWindow
         {
             var count = CountLayersInTree(layer);
             return count == 1 ? "1 layer" : $"{count} layers";
+        }
+
+        if (layer.Adjustment != null)
+        {
+            var opPct = (int)Math.Round(layer.Opacity * 100);
+            return $"{opPct}%  {AdjustmentLayerData.DisplayName(layer.Adjustment.Kind)}";
         }
 
         var flags = new List<string>(4);
@@ -635,10 +680,38 @@ public partial class MainWindow
         var deleteItem = Item("_Delete", DeleteSelectedLayers, new KeyGesture(Key.Delete, KeyModifiers.Control));
         deleteItem.IsEnabled = CanDeleteSelectedLayers();
 
+        MenuItem AdjItem(string header, AdjustmentKind kind)
+        {
+            var mi = new MenuItem { Header = header };
+            mi.Click += (_, _) =>
+            {
+                FocusLayerForAction(index);
+                _canvas.AddAdjustmentLayer(kind);
+                OpenAdjustmentLayerDialog(_canvas.ActiveLayerIndex);
+            };
+            return mi;
+        }
+
         var items = new List<MenuItem>
         {
             Item("_New Layer Above", () => _canvas.AddLayer(), new KeyGesture(Key.N, KeyModifiers.Control | KeyModifiers.Shift)),
             Item("New _Folder Above", () => _canvas.AddGroupLayer(), new KeyGesture(Key.G, KeyModifiers.Control)),
+            new MenuItem
+            {
+                Header = "New _Correction Layer",
+                ItemsSource = new object[]
+                {
+                    AdjItem("Brightness / Contrast", AdjustmentKind.BrightnessContrast),
+                    AdjItem("Hue / Saturation / Luminosity", AdjustmentKind.HueSaturationLuminosity),
+                    AdjItem("Level Correction", AdjustmentKind.LevelCorrection),
+                    AdjItem("Tone Curve", AdjustmentKind.ToneCurve),
+                    AdjItem("Color Balance", AdjustmentKind.ColorBalance),
+                    AdjItem("Posterization", AdjustmentKind.Posterization),
+                    AdjItem("Binarization", AdjustmentKind.Binarization),
+                    AdjItem("Gradient Map", AdjustmentKind.GradientMap),
+                    AdjItem("Reverse Gradient", AdjustmentKind.ReverseGradient),
+                }
+            },
             Item("_Duplicate", () => _canvas.DuplicateLayer(), new KeyGesture(Key.J, KeyModifiers.Control)),
             Item("_Copy", () => _canvas.CopyLayer(index)),
             pasteItem,
@@ -834,7 +907,7 @@ public partial class MainWindow
         BuildLayerList();
     }
 
-    private async void LayerRowPointerPressed(object? sender, PointerPressedEventArgs e)
+    private void LayerRowPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         try
         {
@@ -860,16 +933,40 @@ public partial class MainWindow
                 return;
             }
 
-        // When pressing on a layer that's already part of the multi-selection,
-        // don't call SelectLayerWithModifiers — it would clear the set (no modifier
-        // held during a drag gesture) and reduce the drag to a single layer.
-        if (!_selectedLayerIndices.Contains(index))
+        // Ctrl+click always toggles selection (even on already-selected layers).
+        // For plain click on an already-selected layer, skip SelectLayerWithModifiers
+        // so the multi-selection persists through the pending drag gesture.
+        var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+        if (ctrl || !alreadySelected)
             SelectLayerWithModifiers(index, e.KeyModifiers);
 
-        if (e.ClickCount > 1) return;
-        _layerDragSourceIndex = index;
+        // Don't start a drag when modifier keys are held (Ctrl=toggle, Shift=range).
+        if (ctrl || e.KeyModifiers.HasFlag(KeyModifiers.Shift) || e.ClickCount > 1) return;
 
-        // Include all selected layers in the drag payload so multi-select works
+        // Store pending drag state; actual drag starts in PointerMoved after threshold exceeded.
+        _pendingDragIndex = index;
+        _pendingDragStartPos = point.Position;
+        _pendingDragArgs = e;
+        }
+        catch (Exception ex) { CrashLog.Write(ex, "MainWindow.LayerRowPointerPressed"); }
+    }
+
+    private const double LayerDragThreshold = 6.0;
+
+    private async void LayerRowPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (_pendingDragIndex < 0 || _pendingDragArgs == null) return;
+        var pos = e.GetCurrentPoint(sender as Visual).Position;
+        var dx = pos.X - _pendingDragStartPos.X;
+        var dy = pos.Y - _pendingDragStartPos.Y;
+        if (dx * dx + dy * dy < LayerDragThreshold * LayerDragThreshold) return;
+
+        var index = _pendingDragIndex;
+        var args = _pendingDragArgs!;
+        _pendingDragIndex = -1;
+        _pendingDragArgs = null;
+
+        _layerDragSourceIndex = index;
         var draggedIndices = _selectedLayerIndices.Contains(index)
             ? _selectedLayerIndices.OrderBy(i => i).ToList()
             : new List<int> { index };
@@ -878,10 +975,14 @@ public partial class MainWindow
         var item = new DataTransferItem();
         item.SetText(string.Join(",", draggedIndices));
         data.Add(item);
-        await DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
+        await DragDrop.DoDragDropAsync(args, data, DragDropEffects.Move);
         _layerDragSourceIndex = -1;
-        }
-        catch (Exception ex) { CrashLog.Write(ex, "MainWindow.LayerRowPointerPressed"); }
+    }
+
+    private void LayerRowPointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        _pendingDragIndex = -1;
+        _pendingDragArgs = null;
     }
 
     private void WindowPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -901,7 +1002,15 @@ public partial class MainWindow
         if (sender is not Border row || row.Tag is not int index) return;
         if (IsLayerRowInteractiveSource(e.Source)) return;
         _canvas.SelectLayer(index);
-        BeginLayerRename(index);
+        var layers = _canvas.Layers;
+        if (index >= 0 && index < layers.Count && layers[index].Adjustment != null)
+        {
+            OpenAdjustmentLayerDialog(index);
+        }
+        else
+        {
+            BeginLayerRename(index);
+        }
         e.Handled = true;
     }
 
@@ -1217,6 +1326,26 @@ public partial class MainWindow
         RenderOptions.SetBitmapInterpolationMode(image, Avalonia.Media.Imaging.BitmapInterpolationMode.None);
         frame.Child = image;
         return (frame, image);
+    }
+
+    private async void OpenAdjustmentLayerDialog(int layerIndex)
+    {
+        var layers = _canvas.Layers;
+        if (layerIndex < 0 || layerIndex >= layers.Count) return;
+        var layer = layers[layerIndex];
+        if (layer.Adjustment == null) return;
+
+        var snapshot = layer.Adjustment.Clone();
+        var dlg = new Floss.App.Windows.AdjustmentLayerDialog(
+            layer.Adjustment,
+            preview => _canvas.PreviewLayerAdjustmentParams(layerIndex, preview));
+
+        await dlg.ShowDialog(this);
+
+        if (dlg.Result != null)
+            _canvas.SetLayerAdjustmentParams(layerIndex, dlg.Result);
+        else
+            _canvas.PreviewLayerAdjustmentParams(layerIndex, snapshot);
     }
 
     private sealed record LayerRowRefs(

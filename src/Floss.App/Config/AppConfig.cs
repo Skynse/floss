@@ -55,12 +55,42 @@ public sealed class AppConfig
             if (File.Exists(AppPaths.ConfigPath))
             {
                 var json = File.ReadAllText(AppPaths.ConfigPath);
-                return JsonSerializer.Deserialize<AppConfig>(json) ?? new AppConfig();
+                var cfg = JsonSerializer.Deserialize<AppConfig>(json) ?? new AppConfig();
+                ValidateOrResetLayout(cfg);
+                return cfg;
             }
         }
         catch (Exception ex) { CrashLog.Write(ex, "AppConfig.Load"); }
         return new AppConfig();
     }
+
+    /// <summary>
+    /// Checks the workspace layout for orphaned panels (e.g., from a tab-group dissolve bug).
+    /// If corrupted, resets to default and sets <see cref="LayoutWasReset"/> so the UI can notify.
+    /// </summary>
+    private static void ValidateOrResetLayout(AppConfig cfg)
+    {
+        try
+        {
+            cfg.WorkspaceLayout ??= Docking.WorkspaceLayout.CreateDefault();
+            var orphan = cfg.WorkspaceLayout.FindOrphanedPanel();
+            if (orphan != null)
+            {
+                cfg.WorkspaceLayout = Docking.WorkspaceLayout.CreateDefault();
+                cfg.WorkspaceLayout.Normalize(Docking.PanelRegistry.AllIds);
+                cfg.LayoutWasReset = true;
+                Console.Error.WriteLine($"[Floss] Workspace layout was corrupted (orphaned panel '{orphan}'), reset to defaults.");
+            }
+        }
+        catch { /* If validation itself fails, ignore */ }
+    }
+
+    /// <summary>
+    /// True if the workspace layout had to be reset due to corruption on load.
+    /// Cleared after first check.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool LayoutWasReset { get; set; }
 
     public void Save()
     {

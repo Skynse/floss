@@ -12,19 +12,18 @@ namespace Floss.App.Docking;
 public sealed class WorkspaceLayout
 {
     public double LeftRailWidth { get; set; } = 48;
-    public double RightPanelWidth { get; set; } = 520;
+    public double RightPanelWidth { get; set; } = 320;
     public double RightDockSplit { get; set; } = 0.5;
     public double BottomDockHeight { get; set; } = 320;
 
     [JsonInclude]
     public List<DockColumnLayout> RightColumns { get; set; } =
     [
-        new() { Id = "right-0", PanelIds = ["brush", "tool-properties", "layer-properties", "layers"] },
-        new() { Id = "right-1", PanelIds = ["color", "color-slider", "brush-size"] }
+        new() { Id = "right-0", PanelIds = ["brush", "color", "color-slider", "layers"] }
     ];
 
     [JsonInclude]
-    public DockColumnLayout LeftColumn { get; set; } = new() { Id = "left", PanelIds = ["tools"] };
+    public DockColumnLayout LeftColumn { get; set; } = new() { Id = "left", PanelIds = [] };
 
     [JsonInclude]
     public DockColumnLayout BottomColumn { get; set; } = new() { Id = "bottom", PanelIds = ["node-graph"] };
@@ -38,7 +37,7 @@ public sealed class WorkspaceLayout
 
     [JsonInclude]
     [JsonPropertyName("HiddenDockers")]
-    public HashSet<string> HiddenPanelIds { get; set; } = [];
+    public HashSet<string> HiddenPanelIds { get; set; } = ["tools", "tool-properties", "layer-properties"];
 
     /// <summary>Per-panel content state (scroll position, selected category, etc.).</summary>
     [JsonInclude]
@@ -55,7 +54,10 @@ public sealed class WorkspaceLayout
     /// </summary>
     public void Normalize(IReadOnlyList<string> knownIds)
     {
-        if (RightColumns.Count < 2)
+        // Migrate: brush is now a first-class docked panel, not a popup-only panel
+        HiddenPanelIds.Remove("brush");
+
+        if (RightColumns.Count < 1)
             RightColumns = CreateDefault().RightColumns;
 
         BottomColumn ??= CreateDefault().BottomColumn;
@@ -75,6 +77,7 @@ public sealed class WorkspaceLayout
             if (LeftColumn.ContainsPanel(id)) continue;
             if (BottomColumn.ContainsPanel(id)) continue;
             if (FloatingPanels.ContainsKey(id)) continue;
+            if (HiddenPanelIds.Contains(id)) continue;
 
             var def = PanelRegistry.Get(id);
             var zone = def?.DefaultZone ?? "right-0";
@@ -92,6 +95,39 @@ public sealed class WorkspaceLayout
 
         // Deduplicate: remove from non-default columns
         DeduplicateColumns(known);
+    }
+
+    /// <summary>
+    /// Returns the first panel ID that is referenced in a TabGroup but not accessible
+    /// through PanelIds or Rows (orphaned). Returns null if layout is valid.
+    /// </summary>
+    public string? FindOrphanedPanel()
+    {
+        var allColumns = new List<DockColumnLayout> { LeftColumn };
+        allColumns.AddRange(RightColumns);
+        allColumns.Add(BottomColumn);
+
+        foreach (var col in allColumns)
+        {
+            // Collect all panel IDs reachable through PanelIds + TabGroups resolution
+            var reachable = new HashSet<string>();
+            var resolved = col.ResolvedRows();
+            foreach (var row in resolved)
+                foreach (var pid in row.PanelIds)
+                    reachable.Add(pid);
+
+            // Check TabGroups for panels not in reachable set
+            foreach (var (key, tab) in col.TabGroups)
+            {
+                foreach (var pid in tab.PanelIds)
+                {
+                    if (!reachable.Contains(pid))
+                        return pid; // orphaned!
+                }
+            }
+        }
+
+        return null; // Valid
     }
 
     private void DeduplicateColumns(HashSet<string> known)
@@ -263,6 +299,7 @@ public sealed class DockColumnLayout
                 var soloId = tab.PanelIds[0];
                 var idx = PanelIds.IndexOf(key);
                 if (idx >= 0) PanelIds[idx] = soloId;
+                else PanelIds.Add(soloId); // Key not in PanelIds — add solo directly
                 TabGroups.Remove(key);
             }
         }

@@ -10,25 +10,25 @@ namespace Floss.App.Config;
 public static class AppColors
 {
     // ── Background hierarchy ─────────────────────────────────────────────
-    public const string Bg0      = "#1b1b1b";   // deepest bg (window chrome)
-    public const string Bg1      = "#242424";   // panel/toolbar bg
-    public const string Bg2      = "#2b2b2b";   // elevated surface (dockers, dialogs)
-    public const string Bg3      = "#343434";   // hover/active surface
-    public const string BgSidebar = "#202020";  // sidebar/panel rail
+    public const string Bg0      = "#131313";   // deepest bg (window chrome)
+    public const string Bg1      = "#1a1a1a";   // panel/toolbar bg
+    public const string Bg2      = "#212121";   // elevated surface (dockers, dialogs)
+    public const string Bg3      = "#292929";   // hover/active surface
+    public const string BgSidebar = "#171717";  // sidebar/panel rail
 
     // ── Borders ──────────────────────────────────────────────────────────
-    public const string Stroke   = "#3c3c3c";
+    public const string Stroke   = "#2e2e2e";
 
     // ── Text ─────────────────────────────────────────────────────────────
-    public const string TextPrimary   = "#e2e2e2";
-    public const string TextSecondary = "#b8b8b8";
-    public const string TextMuted     = "#858585";
+    public const string TextPrimary   = "#e0e0e0";
+    public const string TextSecondary = "#aaaaaa";
+    public const string TextMuted     = "#787878";
 
     // ── Accent ───────────────────────────────────────────────────────────
     public const string Accent     = "#4f78b8";
-    public const string AccentSoft = "#30445f";  // muted accent bg
+    public const string AccentSoft = "#263850";  // muted accent bg
     public const string AccentWarm     = "#d28a45";
-    public const string AccentWarmSoft = "#4a3524";
+    public const string AccentWarmSoft = "#3d2b1e";
 
     // ── Semantic ─────────────────────────────────────────────────────────
     public const string Success = "#3fb950";
@@ -36,7 +36,7 @@ public static class AppColors
     public const string Danger  = "#da3633";
 
     // ── Slider ───────────────────────────────────────────────────────────
-    public const string SliderTrack      = "#141414";
+    public const string SliderTrack      = "#0d0d0d";
     public const string SliderFill       = "#3a6bc9";
     public const string SliderFillHover  = "#4a7de0";
     public const string SliderFillActive = "#5a8ef5";

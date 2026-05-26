@@ -32,7 +32,7 @@ public static class FlossFileFormat
         for (var i = 0; i < document.Layers.Count; i++)
         {
             var layer = document.Layers[i];
-            if (layer.IsGroup) continue;
+            if (layer.IsGroup || layer.Adjustment != null) continue;
 
             var entry = archive.CreateEntry($"layers/layer{i}.bgra", CompressionLevel.Optimal);
             using var entryStream = entry.Open();
@@ -112,7 +112,30 @@ public static class FlossFileFormat
                 layer.LayerColor = Avalonia.Media.Color.FromArgb(255, (byte)lc.R, (byte)lc.G, (byte)lc.B);
             layer.ExpressionColor = info.ExpressionColor;
 
-            if (!layer.IsGroup && !string.IsNullOrWhiteSpace(info.PixelPath))
+            if (info.Adjustment is { } adj)
+            {
+                layer.Adjustment = new AdjustmentLayerData
+                {
+                    Kind = adj.Kind,
+                    Brightness = adj.Brightness, Contrast = adj.Contrast,
+                    Hue = adj.Hue, Saturation = adj.Saturation, Luminosity = adj.Luminosity,
+                    Levels = adj.Levels,
+                    LevelInBlack = adj.LevelInBlack, LevelInWhite = adj.LevelInWhite,
+                    LevelGamma = adj.LevelGamma,
+                    LevelOutBlack = adj.LevelOutBlack, LevelOutWhite = adj.LevelOutWhite,
+                    CurveAll = (float[])adj.CurveAll.Clone(),
+                    CurveR = (float[])adj.CurveR.Clone(),
+                    CurveG = (float[])adj.CurveG.Clone(),
+                    CurveB = (float[])adj.CurveB.Clone(),
+                    ShadowR = adj.ShadowR, ShadowG = adj.ShadowG, ShadowB = adj.ShadowB,
+                    MidtoneR = adj.MidtoneR, MidtoneG = adj.MidtoneG, MidtoneB = adj.MidtoneB,
+                    HighlightR = adj.HighlightR, HighlightG = adj.HighlightG, HighlightB = adj.HighlightB,
+                    Threshold = adj.Threshold,
+                    GradientStops = (float[])adj.GradientStops.Clone()
+                };
+            }
+
+            if (!layer.IsGroup && layer.Adjustment == null && !string.IsNullOrWhiteSpace(info.PixelPath))
                 LoadLayerPixels(archive, layer, info.PixelPath);
 
             layers.Add(layer);
@@ -161,9 +184,28 @@ public static class FlossFileFormat
                 IsPaper = layer.IsPaper,
                 IndentLevel = layer.IndentLevel,
                 ParentIndex = layer.Parent != null && layerIndexes.TryGetValue(layer.Parent, out var pIdx) ? pIdx : null,
-                PixelPath = !layer.IsGroup ? $"layers/layer{i}.bgra" : null,
+                PixelPath = !layer.IsGroup && layer.Adjustment == null ? $"layers/layer{i}.bgra" : null,
                 LayerColor = layer.LayerColor is { } lc ? new SerializableColor(lc.R, lc.G, lc.B) : null,
-                ExpressionColor = layer.ExpressionColor
+                ExpressionColor = layer.ExpressionColor,
+                Adjustment = layer.Adjustment == null ? null : new AdjustmentLayerManifest
+                {
+                    Kind = layer.Adjustment.Kind,
+                    Brightness = layer.Adjustment.Brightness, Contrast = layer.Adjustment.Contrast,
+                    Hue = layer.Adjustment.Hue, Saturation = layer.Adjustment.Saturation, Luminosity = layer.Adjustment.Luminosity,
+                    Levels = layer.Adjustment.Levels,
+                    LevelInBlack = layer.Adjustment.LevelInBlack, LevelInWhite = layer.Adjustment.LevelInWhite,
+                    LevelGamma = layer.Adjustment.LevelGamma,
+                    LevelOutBlack = layer.Adjustment.LevelOutBlack, LevelOutWhite = layer.Adjustment.LevelOutWhite,
+                    CurveAll = (float[])layer.Adjustment.CurveAll.Clone(),
+                    CurveR = (float[])layer.Adjustment.CurveR.Clone(),
+                    CurveG = (float[])layer.Adjustment.CurveG.Clone(),
+                    CurveB = (float[])layer.Adjustment.CurveB.Clone(),
+                    ShadowR = layer.Adjustment.ShadowR, ShadowG = layer.Adjustment.ShadowG, ShadowB = layer.Adjustment.ShadowB,
+                    MidtoneR = layer.Adjustment.MidtoneR, MidtoneG = layer.Adjustment.MidtoneG, MidtoneB = layer.Adjustment.MidtoneB,
+                    HighlightR = layer.Adjustment.HighlightR, HighlightG = layer.Adjustment.HighlightG, HighlightB = layer.Adjustment.HighlightB,
+                    Threshold = layer.Adjustment.Threshold,
+                    GradientStops = (float[])layer.Adjustment.GradientStops.Clone()
+                }
             });
         }
 
@@ -338,6 +380,38 @@ public static class FlossFileFormat
         [JsonPropertyName("pixelPath")] public string? PixelPath { get; set; }
         [JsonPropertyName("layerColor")] public SerializableColor? LayerColor { get; set; }
         [JsonPropertyName("expressionColor")] public ExpressionColorMode ExpressionColor { get; set; } = ExpressionColorMode.Color;
+        [JsonPropertyName("adjustment")] public AdjustmentLayerManifest? Adjustment { get; set; }
+    }
+
+    private sealed class AdjustmentLayerManifest
+    {
+        [JsonPropertyName("kind")] public AdjustmentKind Kind { get; set; }
+        [JsonPropertyName("brightness")] public float Brightness { get; set; }
+        [JsonPropertyName("contrast")] public float Contrast { get; set; }
+        [JsonPropertyName("hue")] public float Hue { get; set; }
+        [JsonPropertyName("saturation")] public float Saturation { get; set; }
+        [JsonPropertyName("luminosity")] public float Luminosity { get; set; }
+        [JsonPropertyName("levels")] public int Levels { get; set; } = 4;
+        [JsonPropertyName("levelInBlack")] public float LevelInBlack { get; set; }
+        [JsonPropertyName("levelInWhite")] public float LevelInWhite { get; set; } = 255f;
+        [JsonPropertyName("levelGamma")] public float LevelGamma { get; set; } = 1f;
+        [JsonPropertyName("levelOutBlack")] public float LevelOutBlack { get; set; }
+        [JsonPropertyName("levelOutWhite")] public float LevelOutWhite { get; set; } = 255f;
+        [JsonPropertyName("curveAll")] public float[] CurveAll { get; set; } = [0f, 0f, 255f, 255f];
+        [JsonPropertyName("curveR")] public float[] CurveR { get; set; } = [0f, 0f, 255f, 255f];
+        [JsonPropertyName("curveG")] public float[] CurveG { get; set; } = [0f, 0f, 255f, 255f];
+        [JsonPropertyName("curveB")] public float[] CurveB { get; set; } = [0f, 0f, 255f, 255f];
+        [JsonPropertyName("shadowR")] public float ShadowR { get; set; }
+        [JsonPropertyName("shadowG")] public float ShadowG { get; set; }
+        [JsonPropertyName("shadowB")] public float ShadowB { get; set; }
+        [JsonPropertyName("midtoneR")] public float MidtoneR { get; set; }
+        [JsonPropertyName("midtoneG")] public float MidtoneG { get; set; }
+        [JsonPropertyName("midtoneB")] public float MidtoneB { get; set; }
+        [JsonPropertyName("highlightR")] public float HighlightR { get; set; }
+        [JsonPropertyName("highlightG")] public float HighlightG { get; set; }
+        [JsonPropertyName("highlightB")] public float HighlightB { get; set; }
+        [JsonPropertyName("threshold")] public float Threshold { get; set; } = 127f;
+        [JsonPropertyName("gradientStops")] public float[] GradientStops { get; set; } = [0f, 0f, 0f, 0f, 1f, 1f, 1f, 1f];
     }
 
     public sealed record SerializableColor(byte R, byte G, byte B, byte A = 255);

@@ -1379,6 +1379,14 @@ public sealed class LayerCompositor : IDisposable
                     ArrayPool<byte>.Shared.Return(temp);
                 }
             }
+            else if (layer.Adjustment != null)
+            {
+                // dst is LOD-scaled (dstW×dstH); Apply* methods index by clip coords,
+                // so pass a zero-based LOD-space region instead of document-space clip.
+                AdjustmentLayerProcessor.Apply(dst, dstStride, dstW, dstH,
+                    layer.Adjustment, layer.Opacity * opacityScale,
+                    new PixelRegion(0, 0, dstW, dstH), 0, 0);
+            }
             else
             {
                 var blendMode = layer.BlendMode;
@@ -1625,6 +1633,7 @@ public sealed class LayerCompositor : IDisposable
             var layer = item.Layer;
             if (item.IsClipped) return false;
             if (layer.IsGroup) return false;
+            if (layer.Adjustment != null) return false;
             if (layer.BlendMode != "Normal") return false;
             if (layer.LayerColor.HasValue) return false;
             if (layer.ExpressionColor != ExpressionColorMode.Color) return false;
@@ -1858,11 +1867,19 @@ public sealed class LayerCompositor : IDisposable
                 if (!baseLayer.IsVisible) continue;
                 if (item.Layer.IsGroup)
                     CompositeClippedGroup(dst, dstStride, width, height, item.Layer, baseLayer, opacityScale, clip, originX, originY);
+                else if (item.Layer.Adjustment != null)
+                    AdjustmentLayerProcessor.ApplyClipped(dst, dstStride, width, height,
+                        item.Layer.Adjustment, item.Layer.Opacity * opacityScale,
+                        baseLayer, clip, originX, originY);
                 else
                     LayerCompositorPixelOps.CompositeClippedLayer(dst, dstStride, width, height, item.Layer, baseLayer, opacityScale, clip, originX, originY);
             }
             else if (item.Layer.IsGroup)
                 Projection.CompositeGroupNode(dst, dstStride, width, height, item.Layer, opacityScale, clip, originX, originY);
+            else if (item.Layer.Adjustment != null)
+                AdjustmentLayerProcessor.Apply(dst, dstStride, width, height,
+                    item.Layer.Adjustment, item.Layer.Opacity * opacityScale,
+                    clip, originX, originY);
             else
                 LayerCompositorPixelOps.CompositeLayer(dst, dstStride, width, height, item.Layer, opacityScale, clip, originX, originY);
         }

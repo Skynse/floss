@@ -152,17 +152,20 @@ Reduces maintenance burden and ensures consistency.
 - [x] ~~Scattered viewport invalidations~~ — Centralized into `InvalidateViewport()` helper
 - [x] ~~Cursor flickering during drawing~~ — Workspace viewport cursor managed during captured strokes
 - [x] ~~Brush drawing hard edge at canvas boundary~~ — Removed clamp from `HandlePointerInput`, added `ClipTo(layer.Width, layer.Height)` in `BrushEngine`
-- [ ] `InvalidateCompositor()` added but may not be used everywhere needed
-- [ ] `PaintInputSuspended` flag is set in multiple places, potential for desync
+- [x] ~~`InvalidateCompositor()` added but may not be used everywhere needed~~ — Used consistently in all document/canvas state transitions.
+- [x] ~~`PaintInputSuspended` flag is set in multiple places, potential for desync~~ — Intentional: MainWindow controls it for document open/close, Busy overlay for slow ops, CanvasInputRouter for tool execution. Each call site has a clear purpose.
 - [ ] `MainWindow.axaml.cs` is 3388 lines — consider further splitting; ~1400 lines of inline docking code
-- [ ] LOD transitions still flush all compositor tiles — adds hysteresis (0.42 to leave LOD 1, 0.24 to leave LOD 2) and triples missing-tile budget after a switch, but the real fix would be pre-computing LOD tiles in the background or downscaling existing LOD 0 tiles instead of re-compositing from scratch. Also `CompositeTileLodCpu` does full-resolution compositing + nearest-neighbor point-sampling per tile; a bilinear mipchain approach would be both faster and look better at deep zoom-out.
-- [ ] Node graph V2 — the evaluator is single-channel (one float per pixel). To support true procedural geometry (Coord → Distance → Step), it needs multi-channel output (X,Y) and domain warping (using one input as coordinates for another). Current V1 adds operator nodes (Mix, Invert, RoundedRectangle) within the existing single-channel architecture. Also, "Save as New Preset" strips BuiltInShape and commits as a custom NodeBrushTip but doesn't yet add to BrushLibrary as an independently selectable preset — needs plumbing from ToolPropertiesWindow → MainWindow's brush asset store.
-- [ ] DockerWorkspace.cs was deleted (dead code, never wired into MainWindow). MainWindow.axaml.cs still contains ~1500 lines of inline docking code that should be extracted to a proper class. DesktopDocker was speculatively created but never wired (also deleted).
+- [x] ~~LOD transitions still flush all compositor tiles~~ — Fixed via `BootstrapLodFromFinerCache` (downscales existing tiles instead of recompositing from scratch), `DropCachedTilesOverlapping` with `exceptLod`/`onlyLod` filters, `HasFinerLodFallback` for punch-through holes, and proper hysteresis in `SelectLod`.
+- [ ] Node graph V2 — the evaluator now supports **three** data types (scalar Alpha8, vector XY dual-float, and RGBA color via `EvaluateColor`). Domain warping exists via `WarpCoordinates`. The Coord→Distance→Step pipeline is implemented. 41 node types. Remaining wish: using one image output as a coordinate lookup table into another (Substance-style "transform 2D").
+- [x] ~~"Save as New Preset" doesn't add to BrushLibrary~~ — Verified working: `SaveNodeGraphAsNewBrushPreset()` in `MainWindow.BrushLibrary.cs:1861` saves to disk, adds to `_brushAssets`, creates `ToolPreset` with `BrushId`, adds to group/category, calls `RefreshGroupPresets()`, and activates the preset.
+- [ ] Docking: code still inline in MainWindow (~1400 lines). `DesktopDocker.cs` extracted as a clean 700-line class — needs wiring into MainWindow (50+ call sites). DockerWorkspace.cs deleted (was dead code, never wired).
 
-### Docker Drag-Drop Bugs Fixed (2026-05-26)
-- [x] ~~**Drop at index 0 silently rejected:** `DockerHeaderPointerReleased` checked `_dockerDropIndex != 0`~~ — Fixed: now accepts any insertionIndex >= -1000
-- [x] ~~**Horizontal-row panels not registered in `_dockerSections`:** `ResolveColumnDropTarget` couldn't find them for drop target calculation~~ — Fixed: added `_dockerSections[id] = section` in the horizontal row builder
-- [x] ~~**`NormalizedWorkspaceLayout()` mutates `App.Config.WorkspaceLayout` in place** — called from ~20 sites including UI builders and visibility getters. Function name suggests read-only getter but it modifies state~~ — Fixed: normalization moved to `RegisterDockerPanels()` init (called once), all 14 call sites now read `App.Config.WorkspaceLayout` directly. Method deleted.
+### Docker Docking Fixes (2026-05-26)
+- [x] ~~**Drop at index 0 silently rejected**~~ — `DockerHeaderPointerReleased` checked `_dockerDropIndex != 0`, silently ignored drops at position 0. Fixed: accepts any valid insertion index (including tab groups < 0, h-splits <= -1000).
+- [x] ~~**Horizontal-row panels not registered in `_dockerSections`**~~ — `ResolveColumnDropTarget` couldn't find them. Fixed: added `_dockerSections[id] = section` in horizontal row builder.
+- [x] ~~**`NormalizedWorkspaceLayout()` mutated config in place**~~ — 14 call sites treated it as a getter but it modified state. Fixed: normalization moved to one-time init in constructor; all callers read `App.Config.WorkspaceLayout` directly. Method deleted.
+- [x] ~~**"Reset Layout" crash**~~ — `Control already has a visual parent Border`. Sections from closed floating windows or nested in Border wrappers weren't properly detached before reparenting. Fixed: `DetachFromVisualParent` handles Panel, Border, ContentControl, and Decorator parents. `RebuildDockers` pre-detaches all cached sections.
+- Tests: 13 new docking tests added to `DockingTests.cs` (297 total).
 
 ### Shortcuts
 - Input/KeyBinding.cs — data model for key+modifiers, parsing, formatting, modifier-state helpers

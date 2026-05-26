@@ -13,8 +13,15 @@ using static Floss.App.Config.AppColors;
 public partial class MainWindow
 {
     // ── Color section ─────────────────────────────────────────────────────────
+    private int _colorViewMode; // 0=wheel, 1=hsv, 2=rgb
+    private StackPanel? _colorContentArea;
+    private Control? _wheelView;
+    private Control? _hsvView;
+    private Control? _rgbView;
+
     private StackPanel BuildColorSection()
     {
+        // Color wheel view
         _colorPicker = new HsvColorPicker
         {
             Height = 150,
@@ -48,15 +55,125 @@ public partial class MainWindow
             ItemHeight = SwatchSize + 2
         };
 
+        _wheelView = new StackPanel
+        {
+            Children = { _colorPicker, new Border { Margin = new Thickness(8, 0, 8, 4), Child = _hexInput } }
+        };
+
+        // HSV sliders view
+        _hsvView = BuildColorSlidersSection();
+
+        // RGB sliders view  
+        _rgbView = BuildRgbSlidersView();
+
+        // Content area that switches
+        _colorContentArea = new StackPanel();
+        ApplyColorViewMode();
+
+        // Kebab menu button
+        var menuBtn = new Button
+        {
+            Content = Icons.Make(Icons.DotsVertical, 14, new SolidColorBrush(Color.Parse(TextMuted))),
+            Width = 20, Height = 20,
+            Background = Avalonia.Media.Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+            Margin = new Thickness(0, 0, 4, 0)
+        };
+        menuBtn.Click += (_, _) =>
+        {
+            var menu = new ContextMenu();
+            var wheelItem = new MenuItem { Header = "Color Wheel", IsChecked = _colorViewMode == 0 };
+            var hsvItem = new MenuItem { Header = "HSV Sliders", IsChecked = _colorViewMode == 1 };
+            var rgbItem = new MenuItem { Header = "RGB Sliders", IsChecked = _colorViewMode == 2 };
+            wheelItem.Click += (_, _) => { _colorViewMode = 0; ApplyColorViewMode(); };
+            hsvItem.Click += (_, _) => { _colorViewMode = 1; ApplyColorViewMode(); };
+            rgbItem.Click += (_, _) => { _colorViewMode = 2; ApplyColorViewMode(); };
+            menu.ItemsSource = new object[] { wheelItem, hsvItem, rgbItem };
+            menu.Open(menuBtn);
+        };
+
+        var header = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            Margin = new Thickness(0, 0, 0, 2)
+        };
+        Grid.SetColumn(menuBtn, 1);
+        header.Children.Add(menuBtn);
+
         return new StackPanel
         {
             Children =
             {
-                _colorPicker,
-                new Border { Margin = new Thickness(8, 0, 8, 4), Child = _hexInput },
+                header,
+                _colorContentArea,
                 _swatchPanel
             }
         };
+    }
+
+    private void ApplyColorViewMode()
+    {
+        if (_colorContentArea == null) return;
+        _colorContentArea.Children.Clear();
+        _colorContentArea.Children.Add((_colorViewMode switch
+        {
+            0 => _wheelView,
+            1 => _hsvView,
+            2 => _rgbView,
+            _ => _wheelView
+        })!);
+    }
+
+    private StackPanel BuildRgbSlidersView()
+    {
+        var panel = new StackPanel { Spacing = 3, Margin = new Thickness(8, 2, 8, 4) };
+        _rgbRSlider = CreateRgbSlider(0, 255, Colors.Black, Colors.Red);
+        _rgbGSlider = CreateRgbSlider(0, 255, Colors.Black, Colors.Green);
+        _rgbBSlider = CreateRgbSlider(0, 255, Colors.Black, Colors.Blue);
+        panel.Children.Add(_rgbRSlider);
+        panel.Children.Add(_rgbGSlider);
+        panel.Children.Add(_rgbBSlider);
+
+        var preview = new Border
+        {
+            Height = 16, Margin = new Thickness(0, 2, 0, 0),
+            BorderThickness = new Thickness(1),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            CornerRadius = new CornerRadius(2),
+            Background = new SolidColorBrush(Colors.Black)
+        };
+        panel.Children.Add(preview);
+
+        WireRgbSliders(_rgbRSlider, _rgbGSlider, _rgbBSlider, preview);
+        return panel;
+    }
+
+    private static Slider CreateRgbSlider(double min, double max, Color start, Color end)
+    {
+        var s = new Slider { Minimum = min, Maximum = max, Height = 18, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
+        s.Background = new LinearGradientBrush
+        {
+            StartPoint = new RelativePoint(0, 0.5, RelativeUnit.Relative),
+            EndPoint = new RelativePoint(1, 0.5, RelativeUnit.Relative),
+            GradientStops = { new GradientStop(start, 0), new GradientStop(end, 1) }
+        };
+        return s;
+    }
+
+    private void WireRgbSliders(Slider r, Slider g, Slider b, Border preview)
+    {
+        void update() {
+            if (_syncingColorSliders) return;
+            var cr = Color.FromRgb((byte)Math.Clamp(r.Value, 0, 255), (byte)Math.Clamp(g.Value, 0, 255), (byte)Math.Clamp(b.Value, 0, 255));
+            preview.Background = new SolidColorBrush(cr);
+            SetColor(cr, syncPicker: false);
+            SyncPickerFromColor(cr);
+        }
+        r.PropertyChanged += (_, e) => { if (e.Property == Slider.ValueProperty) update(); };
+        g.PropertyChanged += (_, e) => { if (e.Property == Slider.ValueProperty) update(); };
+        b.PropertyChanged += (_, e) => { if (e.Property == Slider.ValueProperty) update(); };
     }
 
     // ── Color picker ──────────────────────────────────────────────────────────

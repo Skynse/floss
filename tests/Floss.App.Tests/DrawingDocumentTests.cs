@@ -295,17 +295,15 @@ public class DrawingDocumentTests
         var document = new DrawingDocument(128, 64);
         document.AddBackgroundLayer();
 
+        // Paper layers are handled by the compositor via PaperColor — no pixel fill needed.
         var background = document.Layers[0];
-        background.Pixels.GetPixel(0, 0, out var b1, out var g1, out var r1, out var a1);
-        background.Pixels.GetPixel(64, 0, out var b2, out var g2, out var r2, out var a2);
-        TestAssertions.SequenceEqual(new byte[] { 255, 255, 255, 255 }, [b1, g1, r1, a1]);
-        TestAssertions.SequenceEqual(new byte[] { 255, 255, 255, 255 }, [b2, g2, r2, a2]);
-
-        background.Pixels.Clear(new PixelRegion(0, 0, 1, 1));
-        background.Pixels.GetPixel(0, 0, out _, out _, out _, out var clearedAlpha);
-        background.Pixels.GetPixel(64, 0, out b2, out g2, out r2, out a2);
-        TestAssertions.Equal((byte)0, clearedAlpha);
-        TestAssertions.SequenceEqual(new byte[] { 255, 255, 255, 255 }, [b2, g2, r2, a2]);
+        Assert.True(background.IsPaper);
+        Assert.True(background.IsLocked);
+        Assert.Equal("Paper", background.Name);
+        Assert.NotNull(document.PaperLayer);
+        Assert.Equal(document.PaperLayer, background);
+        Assert.Equal(128, background.Width);
+        Assert.Equal(64, background.Height);
     }
 
     [Fact]

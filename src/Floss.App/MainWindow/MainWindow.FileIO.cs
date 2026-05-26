@@ -4,6 +4,7 @@ using System.Linq;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using Floss.App.Canvas;
+using Floss.App.Clip;
 using Floss.App.Document;
 using Floss.App.FlossFiles;
 using Floss.App.ImageFiles;
@@ -39,7 +40,7 @@ public partial class MainWindow
     // ── File I/O ──────────────────────────────────────────────────────────────
     private static readonly FilePickerFileType DocumentFileType = new("Supported Documents")
     {
-        Patterns = ["*.floss", "*.psd", "*.kra", "*.png", "*.jpg", "*.jpeg", "*.jpe", "*.webp", "*.bmp", "*.dib", "*.gif", "*.tif", "*.tiff", "*.ico", "*.wbmp"]
+        Patterns = ["*.floss", "*.psd", "*.kra", "*.clip", "*.png", "*.jpg", "*.jpeg", "*.jpe", "*.webp", "*.bmp", "*.dib", "*.gif", "*.tif", "*.tiff", "*.ico", "*.wbmp"]
     };
 
     private static readonly FilePickerFileType KraFileType = new("Krita Document")
@@ -232,6 +233,7 @@ public partial class MainWindow
 
         var document = IsPsdPath(path) ? PsdImporter.Load(stream)
             : IsKraPath(path) ? KraImporter.Load(stream)
+            : IsClipPath(path) ? ClipImporter.Load(stream)
             : ImageFileImporter.Load(stream, path);
         return (document, null);
     }
@@ -446,6 +448,9 @@ public partial class MainWindow
 
     private static bool IsKraPath(string path)
         => string.Equals(Path.GetExtension(path), ".kra", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsClipPath(string path)
+        => string.Equals(Path.GetExtension(path), ".clip", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsFlossPath(string path)
         => string.Equals(Path.GetExtension(path), FlossFileFormat.Extension, StringComparison.OrdinalIgnoreCase);

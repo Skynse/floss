@@ -136,8 +136,8 @@ public partial class MainWindow : ICanvasInputHost
         SyncViewportStateToCanvas();
         InvalidateViewport();
         ClampCanvasPan();
-        _zoomDisplay.Text = $"{Math.Round(_zoom * 100)}%";
-        _rotDisplay.Text = "0°";
+        if (_zoomDisplay != null) _zoomDisplay.Text = $"{Math.Round(_zoom * 100)}%";
+        if (_rotDisplay != null) _rotDisplay.Text = "0°";
         PostUpdateStatus();
         UpdateSelectionActionBar();
     }
@@ -161,7 +161,7 @@ public partial class MainWindow : ICanvasInputHost
         SyncViewportStateToCanvas();
         InvalidateViewport();
         ClampCanvasPan();
-        _rotDisplay.Text = $"{Math.Round(_rotation)}°";
+        if (_rotDisplay != null) _rotDisplay.Text = $"{Math.Round(_rotation)}°";
         PostUpdateStatus();
         UpdateSelectionActionBar();
     }
@@ -193,8 +193,8 @@ public partial class MainWindow : ICanvasInputHost
         InvalidateViewport();
         ClampCanvasPan();
 
-        _zoomDisplay.Text = $"{Math.Round(_zoom * 100)}%";
-        _rotDisplay.Text = "0°";
+        if (_zoomDisplay != null) _zoomDisplay.Text = $"{Math.Round(_zoom * 100)}%";
+        if (_rotDisplay != null) _rotDisplay.Text = "0°";
         UpdateStatus();
         UpdateSelectionActionBar();
     }
@@ -242,10 +242,7 @@ public partial class MainWindow : ICanvasInputHost
 
     private void ApplyCanvasOnlyLayout(bool canvasOnly)
     {
-        if (_leftRail != null) _leftRail.IsVisible = !canvasOnly;
-        if (_leftSplitter != null) _leftSplitter.IsVisible = !canvasOnly;
         if (_rightPanel != null) _rightPanel.IsVisible = !canvasOnly;
-        if (_splitterControl != null) _splitterControl.IsVisible = !canvasOnly;
 
         if (_rootGrid == null || _rootColumnWidths == null)
             return;

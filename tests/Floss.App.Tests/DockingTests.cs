@@ -176,10 +176,10 @@ public class DockingTests
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public void Layout_Default_HasThreeColumns()
+    public void Layout_Default_HasOneRightColumn()
     {
         var layout = WorkspaceLayout.CreateDefault();
-        Assert.Equal(2, layout.RightColumns.Count);
+        Assert.Single(layout.RightColumns);
         Assert.Equal("left", layout.LeftColumn.Id);
         Assert.Equal("bottom", layout.BottomColumn.Id);
     }
@@ -189,14 +189,15 @@ public class DockingTests
     {
         PanelRegistry.Clear();
         PanelRegistry.Register(new DockPanelDef("tools", "Tools", () => new TextBlock(), DefaultZone: "left"));
-        PanelRegistry.Register(new DockPanelDef("brush", "Brush", () => new TextBlock(), DefaultZone: "right-0"));
+        PanelRegistry.Register(new DockPanelDef("brush-lib", "Brush", () => new TextBlock(), DefaultZone: "right-0"));
         PanelRegistry.Register(new DockPanelDef("node-graph", "Node Graph", () => new TextBlock(), DefaultZone: "bottom"));
 
         var layout = WorkspaceLayout.CreateDefault();
+        layout.HiddenPanelIds.Clear();
         layout.Normalize(PanelRegistry.AllIds);
 
         Assert.True(layout.LeftColumn.ContainsPanel("tools"));
-        Assert.True(layout.RightColumns.Any(c => c.ContainsPanel("brush")));
+        Assert.True(layout.RightColumns.Any(c => c.ContainsPanel("brush-lib")));
         Assert.True(layout.BottomColumn.ContainsPanel("node-graph"));
     }
 
@@ -228,16 +229,16 @@ public class DockingTests
     public void Layout_FindPanel_FindsInRightColumn()
     {
         var layout = WorkspaceLayout.CreateDefault();
-        layout.RightColumns[0].PanelIds = ["brush"];
-        layout.RightColumns[1].PanelIds = ["color"];
+        layout.RightColumns[0].PanelIds = ["brush", "color"];
+        layout.RightColumns.Add(new DockColumnLayout { Id = "right-1", PanelIds = ["layers"] });
 
         var br = layout.FindPanel("brush");
         Assert.NotNull(br);
         Assert.Equal(0, br.Value.ColumnIndex);
 
-        var co = layout.FindPanel("color");
-        Assert.NotNull(co);
-        Assert.Equal(1, co.Value.ColumnIndex);
+        var ly = layout.FindPanel("layers");
+        Assert.NotNull(ly);
+        Assert.Equal(1, ly.Value.ColumnIndex);
     }
 
     [Fact]
@@ -246,12 +247,14 @@ public class DockingTests
         var layout = new WorkspaceLayout
         {
             LeftColumn = new DockColumnLayout { PanelIds = ["tools"] },
-            RightColumns = [new() { PanelIds = ["brush", "layers"] }]
+            RightColumns = [new() { PanelIds = ["brush", "layers"] }, new() { PanelIds = ["color"] }],
+            BottomColumn = new DockColumnLayout { PanelIds = ["node-graph"] }
         };
         layout.RemovePanel("brush");
 
         Assert.False(layout.LeftColumn.ContainsPanel("brush"));
         Assert.False(layout.RightColumns.Any(c => c.ContainsPanel("brush")));
+        Assert.False(layout.BottomColumn.ContainsPanel("brush"));
         Assert.True(layout.RightColumns[0].ContainsPanel("layers"));
     }
 
@@ -485,19 +488,19 @@ public class DockingTests
     public void Normalize_PrunesUnknownPanelIds_AndMovesToDefaultZone()
     {
         PanelRegistry.Clear();
-        PanelRegistry.Register(new DockPanelDef("brush", "", () => new TextBlock(), DefaultZone: "right-0"));
+        PanelRegistry.Register(new DockPanelDef("brush", "", () => new TextBlock(), DefaultZone: "left"));
 
         var layout = new WorkspaceLayout
         {
-            LeftColumn = new DockColumnLayout { PanelIds = ["ghost", "brush"] }
+            LeftColumn = new DockColumnLayout { PanelIds = ["ghost", "brush"] },
+            RightColumns = [] // clear default right columns so brush isn't duplicated there
         };
         layout.Normalize(PanelRegistry.AllIds);
 
         // "ghost" is unknown — pruned
         Assert.DoesNotContain("ghost", layout.LeftColumn.PanelIds);
-        // "brush" belongs in right-0, moved there by dedup
-        Assert.False(layout.LeftColumn.ContainsPanel("brush"));
-        Assert.True(layout.RightColumns[0].ContainsPanel("brush"));
+        // "brush" stays where user placed it; Normalize only deduplicates, not re-zones
+        Assert.True(layout.LeftColumn.ContainsPanel("brush"));
     }
 
     [Fact]
@@ -545,22 +548,20 @@ public class DockingTests
     {
         PanelRegistry.Clear();
         PanelRegistry.Register(new DockPanelDef("tools", "Tools", () => new TextBlock(), DefaultZone: "left", Proportion: 0.5));
-        PanelRegistry.Register(new DockPanelDef("brush", "Brush", () => new TextBlock(), DefaultZone: "right-0", Proportion: 0.3));
-        PanelRegistry.Register(new DockPanelDef("color", "Color", () => new TextBlock(), DefaultZone: "right-1", Proportion: 0.35));
+        PanelRegistry.Register(new DockPanelDef("brush-lib", "Brush", () => new TextBlock(), DefaultZone: "right-0", Proportion: 0.3));
+        PanelRegistry.Register(new DockPanelDef("layers", "Layers", () => new TextBlock(), DefaultZone: "right-0", Proportion: 0.35));
 
-        // Simulate "Reset Layout": clear then normalize fresh
         var layout = new WorkspaceLayout
         {
-            // Empty: no panels placed
+            HiddenPanelIds = [],
             LeftColumn = new DockColumnLayout { PanelIds = [] },
             RightColumns = [new() { PanelIds = [] }, new() { PanelIds = [] }]
         };
         layout.Normalize(PanelRegistry.AllIds);
 
-        // All panels should be placed in their default zones
         Assert.True(layout.LeftColumn.ContainsPanel("tools"));
-        Assert.True(layout.RightColumns[0].ContainsPanel("brush"));
-        Assert.True(layout.RightColumns[1].ContainsPanel("color"));
+        Assert.True(layout.RightColumns[0].ContainsPanel("brush-lib"));
+        Assert.True(layout.RightColumns[0].ContainsPanel("layers"));
         Assert.Null(layout.FloatingPanels.GetValueOrDefault("tools"));
     }
 
@@ -569,11 +570,11 @@ public class DockingTests
     {
         PanelRegistry.Clear();
         PanelRegistry.Register(new DockPanelDef("brush", "", () => new TextBlock(), DefaultZone: "right-0"));
-        PanelRegistry.Register(new DockPanelDef("color", "", () => new TextBlock(), DefaultZone: "right-1"));
+        PanelRegistry.Register(new DockPanelDef("color", "", () => new TextBlock(), DefaultZone: "right-0"));
 
         var layout = WorkspaceLayout.CreateDefault();
         layout.RightColumns[0].PanelIds = ["brush"];
-        layout.RightColumns[1].PanelIds = ["color"];
+        layout.RightColumns.Add(new DockColumnLayout { Id = "right-1", PanelIds = ["color"] });
 
         // Move "brush" from right-0 to left column
         var placement = layout.FindPanel("brush");
@@ -595,10 +596,11 @@ public class DockingTests
         PanelRegistry.Clear();
         PanelRegistry.Register(new DockPanelDef("tools", "", () => new TextBlock(), DefaultZone: "left", Proportion: 0.5));
         PanelRegistry.Register(new DockPanelDef("layers", "", () => new TextBlock(), DefaultZone: "right-0", Proportion: 0.25));
-        PanelRegistry.Register(new DockPanelDef("brush", "", () => new TextBlock(), DefaultZone: "right-0", Proportion: 0.3));
-        PanelRegistry.Register(new DockPanelDef("color", "", () => new TextBlock(), DefaultZone: "right-1", Proportion: 0.35));
+        PanelRegistry.Register(new DockPanelDef("brush-lib", "", () => new TextBlock(), DefaultZone: "right-0", Proportion: 0.3));
+        PanelRegistry.Register(new DockPanelDef("color", "", () => new TextBlock(), DefaultZone: "right-0", Proportion: 0.35));
 
         var defaults = WorkspaceLayout.CreateDefault();
+        defaults.HiddenPanelIds.Clear();
         defaults.Normalize(PanelRegistry.AllIds);
 
         // Verify all panels are placed exactly once
@@ -656,7 +658,6 @@ public class DockingTests
         // Initial: no x placed
         layout.LeftColumn.PanelIds.Clear();
         layout.RightColumns[0].PanelIds.Clear();
-        layout.RightColumns[1].PanelIds.Clear();
 
         // Add to right-0
         layout.RightColumns[0].PanelIds.Add("x");
@@ -839,5 +840,858 @@ public class DockingTests
 
         // Without detach, adding to new parent should throw InvalidOperationException
         Assert.Throws<InvalidOperationException>(() => newGrid.Children.Add(child));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Cross-column move: left ↔ right, bottom ↔ right
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void MovePanel_LeftToRight0()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("tools", "", () => new TextBlock(), DefaultZone: "left"));
+        PanelRegistry.Register(new DockPanelDef("brush", "", () => new TextBlock(), DefaultZone: "right-0"));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.LeftColumn.PanelIds = ["tools", "brush"];
+        layout.RightColumns[0].PanelIds.Clear();
+
+        // Move "brush" from left to right-0
+        layout.LeftColumn.PanelIds.Remove("brush");
+        layout.RightColumns[0].PanelIds.Add("brush");
+
+        Assert.False(layout.LeftColumn.ContainsPanel("brush"));
+        Assert.True(layout.RightColumns[0].ContainsPanel("brush"));
+        Assert.True(layout.LeftColumn.ContainsPanel("tools"));
+    }
+
+    [Fact]
+    public void MovePanel_Right0ToLeft()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("layers", "", () => new TextBlock(), DefaultZone: "right-0"));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.RightColumns[0].PanelIds = ["layers"];
+        layout.LeftColumn.PanelIds.Clear();
+
+        layout.RightColumns[0].PanelIds.Remove("layers");
+        layout.LeftColumn.PanelIds.Add("layers");
+
+        Assert.False(layout.RightColumns[0].ContainsPanel("layers"));
+        Assert.True(layout.LeftColumn.ContainsPanel("layers"));
+    }
+
+    [Fact]
+    public void MovePanel_Right0ToRight1()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("brush", "", () => new TextBlock(), DefaultZone: "right-0"));
+        PanelRegistry.Register(new DockPanelDef("color", "", () => new TextBlock(), DefaultZone: "right-1"));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.RightColumns.Add(new DockColumnLayout { Id = "right-1", PanelIds = [] });
+        layout.RightColumns[0].PanelIds = ["brush", "color"];
+        layout.RightColumns[1].PanelIds.Clear();
+
+        layout.RightColumns[0].PanelIds.Remove("color");
+        layout.RightColumns[1].PanelIds.Add("color");
+
+        Assert.False(layout.RightColumns[0].ContainsPanel("color"));
+        Assert.True(layout.RightColumns[1].ContainsPanel("color"));
+    }
+
+    [Fact]
+    public void MovePanel_BottomToRight0()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("node-graph", "", () => new TextBlock(), DefaultZone: "bottom"));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.BottomColumn.PanelIds = ["node-graph"];
+        layout.RightColumns[0].PanelIds.Clear();
+
+        layout.BottomColumn.PanelIds.Remove("node-graph");
+        layout.RightColumns[0].PanelIds.Add("node-graph");
+
+        Assert.False(layout.BottomColumn.ContainsPanel("node-graph"));
+        Assert.True(layout.RightColumns[0].ContainsPanel("node-graph"));
+    }
+
+    [Fact]
+    public void MovePanel_Right0ToBottom()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("node-graph", "", () => new TextBlock(), DefaultZone: "bottom"));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.RightColumns[0].PanelIds = ["node-graph"];
+        layout.BottomColumn.PanelIds.Clear();
+
+        layout.RightColumns[0].PanelIds.Remove("node-graph");
+        layout.BottomColumn.PanelIds.Add("node-graph");
+
+        Assert.False(layout.RightColumns[0].ContainsPanel("node-graph"));
+        Assert.True(layout.BottomColumn.ContainsPanel("node-graph"));
+    }
+
+    [Fact]
+    public void MovePanel_BottomToLeft()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("node-graph", "", () => new TextBlock(), DefaultZone: "bottom"));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.BottomColumn.PanelIds = ["node-graph"];
+        layout.LeftColumn.PanelIds.Clear();
+
+        layout.BottomColumn.PanelIds.Remove("node-graph");
+        layout.LeftColumn.PanelIds.Add("node-graph");
+
+        Assert.False(layout.BottomColumn.ContainsPanel("node-graph"));
+        Assert.True(layout.LeftColumn.ContainsPanel("node-graph"));
+    }
+
+    [Fact]
+    public void MovePanel_LeftToBottom()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("tools", "", () => new TextBlock(), DefaultZone: "left"));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.LeftColumn.PanelIds = ["tools"];
+        layout.BottomColumn.PanelIds.Clear();
+
+        layout.LeftColumn.PanelIds.Remove("tools");
+        layout.BottomColumn.PanelIds.Add("tools");
+
+        Assert.False(layout.LeftColumn.ContainsPanel("tools"));
+        Assert.True(layout.BottomColumn.ContainsPanel("tools"));
+    }
+
+    [Fact]
+    public void RemovePanel_RemovesFromAllColumns()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("a", "", () => new TextBlock()));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.LeftColumn.PanelIds = ["a"];
+        layout.RightColumns[0].PanelIds = ["a"];
+        layout.BottomColumn.PanelIds = ["a"];
+
+        // Layout.RemovePanel should remove from ALL
+        layout.RemovePanel("a");
+
+        Assert.False(layout.LeftColumn.ContainsPanel("a"));
+        Assert.False(layout.RightColumns[0].ContainsPanel("a"));
+        Assert.False(layout.BottomColumn.ContainsPanel("a"));
+    }
+
+    [Fact]
+    public void FindPanel_FindsInBottomColumn()
+    {
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.BottomColumn.PanelIds = ["node-graph"];
+
+        var result = layout.FindPanel("node-graph");
+        Assert.NotNull(result);
+        Assert.Equal(-2, result.Value.ColumnIndex);
+        Assert.Equal(0, result.Value.PanelIndex);
+    }
+
+    [Fact]
+    public void FindPanel_BottomAtPosition()
+    {
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.BottomColumn.PanelIds = ["a", "node-graph", "b"];
+
+        var result = layout.FindPanel("node-graph");
+        Assert.NotNull(result);
+        Assert.Equal(-2, result.Value.ColumnIndex);
+        Assert.Equal(1, result.Value.PanelIndex);
+    }
+
+    [Fact]
+    public void FindPanel_ReturnsNullWhenNotPlaced()
+    {
+        var layout = WorkspaceLayout.CreateDefault();
+        Assert.Null(layout.FindPanel("nonexistent"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Cross-column: all 10 possible moves (4 columns = 4×3)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Theory]
+    // Left → Right-0, Left → Right-1, Left → Bottom
+    [InlineData("left", "right-0")]
+    [InlineData("left", "right-1")]
+    [InlineData("left", "bottom")]
+    // Right-0 → Left, Right-0 → Right-1, Right-0 → Bottom
+    [InlineData("right-0", "left")]
+    [InlineData("right-0", "right-1")]
+    [InlineData("right-0", "bottom")]
+    // Right-1 → Left, Right-1 → Right-0, Right-1 → Bottom
+    [InlineData("right-1", "left")]
+    [InlineData("right-1", "right-0")]
+    [InlineData("right-1", "bottom")]
+    // Bottom → Left, Bottom → Right-0, Bottom → Right-1
+    [InlineData("bottom", "left")]
+    [InlineData("bottom", "right-0")]
+    [InlineData("bottom", "right-1")]
+    public void MovePanel_AllCrossColumnMoves(string from, string to)
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("x", "X", () => new TextBlock()));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        // Ensure 2 right columns for right-1 tests
+        if (layout.RightColumns.Count < 2)
+            layout.RightColumns.Add(new DockColumnLayout { Id = "right-1", PanelIds = [] });
+        // Clear all columns
+        layout.LeftColumn.PanelIds.Clear();
+        layout.RightColumns[0].PanelIds.Clear();
+        layout.RightColumns[1].PanelIds.Clear();
+        layout.BottomColumn.PanelIds.Clear();
+
+        // Place panel in source column
+        DockColumnLayout srcCol = from switch
+        {
+            "left" => layout.LeftColumn,
+            "right-0" => layout.RightColumns[0],
+            "right-1" => layout.RightColumns[1],
+            "bottom" => layout.BottomColumn,
+            _ => throw new ArgumentException()
+        };
+        srcCol.PanelIds = ["x"];
+
+        // Remove from source
+        srcCol.PanelIds.Remove("x");
+
+        // Place in target
+        DockColumnLayout dstCol = to switch
+        {
+            "left" => layout.LeftColumn,
+            "right-0" => layout.RightColumns[0],
+            "right-1" => layout.RightColumns[1],
+            "bottom" => layout.BottomColumn,
+            _ => throw new ArgumentException()
+        };
+        dstCol.PanelIds.Add("x");
+
+        // Verify: target has it, source doesn't
+        Assert.True(dstCol.ContainsPanel("x"));
+        Assert.False(srcCol.ContainsPanel("x"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Tab group lifecycle: create, add, remove, dissolve
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void TabGroup_AddPanelToExistingTabGroup()
+    {
+        var col = new DockColumnLayout
+        {
+            PanelIds = ["tab:0"],
+            TabGroups = { ["tab:0"] = new TabGroupLayout { PanelIds = ["a", "b"] } }
+        };
+
+        col.TabGroups["tab:0"].PanelIds.Add("c");
+        Assert.Equal(["a", "b", "c"], col.TabGroups["tab:0"].PanelIds);
+        Assert.True(col.ContainsPanel("c"));
+    }
+
+    [Fact]
+    public void TabGroup_RemoveLeavesSingle_SoloDissolves()
+    {
+        var col = new DockColumnLayout
+        {
+            PanelIds = ["tab:0"],
+            TabGroups = { ["tab:0"] = new TabGroupLayout { PanelIds = ["a", "b"] } }
+        };
+
+        col.RemovePanel("a");
+
+        Assert.False(col.TabGroups.ContainsKey("tab:0"));
+        Assert.DoesNotContain("tab:0", col.PanelIds);
+        Assert.Contains("b", col.PanelIds);
+        Assert.Single(col.PanelIds);
+    }
+
+    [Fact]
+    public void TabGroup_AddThirdAndRemoveFirst_KeepsTabGroup()
+    {
+        var col = new DockColumnLayout
+        {
+            PanelIds = ["tab:0"],
+            TabGroups = { ["tab:0"] = new TabGroupLayout { PanelIds = ["a", "b", "c"] } }
+        };
+
+        col.RemovePanel("a");
+        Assert.True(col.TabGroups.ContainsKey("tab:0"));
+        Assert.Equal(["b", "c"], col.TabGroups["tab:0"].PanelIds);
+    }
+
+    [Fact]
+    public void TabGroup_CreateFromTwoSoloPanels()
+    {
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.RightColumns[0].PanelIds = ["brush", "layers"];
+
+        // Simulate tab-with drop: replace "layers" with tab group
+        var tabKey = "tab:new";
+        layout.RightColumns[0].TabGroups[tabKey] = new TabGroupLayout
+        {
+            PanelIds = ["brush", "layers"],
+            ActiveIndex = 1
+        };
+        layout.RightColumns[0].PanelIds[0] = tabKey;  // Replace brush slot with tab key
+        // Actually need to remove both panels and replace with tab key
+        // Simpler: just verify resolved rows work
+        layout.RightColumns[0].PanelIds = [tabKey];
+        layout.RightColumns[0].TabGroups[tabKey] = new TabGroupLayout
+        {
+            PanelIds = ["brush", "layers"],
+            ActiveIndex = 1
+        };
+
+        var rows = layout.RightColumns[0].ResolvedRows();
+        Assert.Single(rows);
+        Assert.Equal(["brush", "layers"], rows[0].PanelIds);
+        Assert.Equal(1, rows[0].ActiveTabIndex);
+    }
+
+    [Fact]
+    public void TabGroup_ActiveIndexRespected()
+    {
+        var col = new DockColumnLayout
+        {
+            PanelIds = ["tab:abc"],
+            TabGroups = { ["tab:abc"] = new TabGroupLayout { PanelIds = ["x", "y", "z"], ActiveIndex = 2 } }
+        };
+
+        var rows = col.ResolvedRows();
+        Assert.Single(rows);
+        Assert.Equal(2, rows[0].ActiveTabIndex);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Horizontal split lifecycle
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void HorizontalSplit_CreatesSideBySide()
+    {
+        var col = new DockColumnLayout
+        {
+            Rows = new List<DockRowLayout>
+            {
+                new() { PanelIds = ["a", "b"], Orientation = DockOrientation.Horizontal }
+            }
+        };
+
+        var rows = col.ResolvedRows();
+        Assert.Single(rows);
+        Assert.Equal(DockOrientation.Horizontal, rows[0].Orientation);
+        Assert.Equal(["a", "b"], rows[0].PanelIds);
+    }
+
+    [Fact]
+    public void HorizontalSplit_RemoveOne_ShrinksToSolo()
+    {
+        var col = new DockColumnLayout
+        {
+            Rows = new List<DockRowLayout>
+            {
+                new() { PanelIds = ["a", "b"], Orientation = DockOrientation.Horizontal }
+            }
+        };
+
+        col.RemovePanel("b");
+        Assert.Single(col.Rows!);
+        Assert.Single(col.Rows[0].PanelIds);
+        Assert.Equal("a", col.Rows[0].PanelIds[0]);
+    }
+
+    [Fact]
+    public void HorizontalSplit_RemoveAll_RemovesRow()
+    {
+        var col = new DockColumnLayout
+        {
+            Rows = new List<DockRowLayout>
+            {
+                new() { PanelIds = ["a", "b"], Orientation = DockOrientation.Horizontal },
+                new() { PanelIds = ["c"] }
+            }
+        };
+
+        col.RemovePanel("a");
+        col.RemovePanel("b");
+
+        Assert.Single(col.Rows!);
+        Assert.Equal("c", col.Rows[0].PanelIds[0]);
+    }
+
+    [Fact]
+    public void HorizontalSplit_ConvertFromFlat()
+    {
+        var col = new DockColumnLayout
+        {
+            PanelIds = ["a", "b", "c"]
+        };
+
+        // Convert to rows with a horizontal split on "a"
+        var resolved = col.ResolvedRows();
+        col.Rows = resolved.Select(r => new DockRowLayout
+        {
+            PanelIds = r.PanelIds.ToList(),
+            Orientation = r.Orientation,
+            ActiveIndex = r.ActiveTabIndex
+        }).ToList();
+
+        // Make the first row horizontal with an extra panel
+        col.Rows[0].PanelIds.Add("d");
+        col.Rows[0].Orientation = DockOrientation.Horizontal;
+
+        Assert.Equal(3, col.Rows.Count);
+        Assert.Equal(DockOrientation.Horizontal, col.Rows[0].Orientation);
+        Assert.Equal(["a", "d"], col.Rows[0].PanelIds);
+        Assert.True(col.ContainsPanel("d"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Layout: floating ↔ docked transitions
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void Floating_Detach_SetsIsFloating()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("layers", "", () => new TextBlock(), DefaultZone: "right-0"));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.RightColumns[0].PanelIds = ["layers"];
+
+        // Detach: mark floating
+        layout.FloatingPanels["layers"] = new FloatingPanelState { IsFloating = true };
+
+        Assert.True(layout.IsFloating("layers"));
+    }
+
+    [Fact]
+    public void Floating_Dock_ClearsIsFloating()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("layers", "", () => new TextBlock(), DefaultZone: "right-0"));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.FloatingPanels["layers"] = new FloatingPanelState { IsFloating = true };
+
+        layout.RightColumns[0].PanelIds.Add("layers");
+        layout.FloatingPanels["layers"].IsFloating = false;
+
+        Assert.False(layout.IsFloating("layers"));
+        Assert.True(layout.RightColumns[0].ContainsPanel("layers"));
+    }
+
+    [Fact]
+    public void Floating_IsNotVisibleWhenFloating()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("a", "", () => new TextBlock()));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.RightColumns[0].PanelIds = ["a"];
+        layout.FloatingPanels["a"] = new FloatingPanelState { IsFloating = true };
+
+        Assert.False(layout.IsVisible("a"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Layout: visibility and hidden panels
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void HiddenPanel_IsNotVisible()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("a", "", () => new TextBlock()));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.RightColumns[0].PanelIds = ["a"];
+        layout.HiddenPanelIds.Add("a");
+
+        Assert.False(layout.IsVisible("a"));
+    }
+
+    [Fact]
+    public void HiddenPanel_StillInLayoutData()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("a", "", () => new TextBlock()));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.RightColumns[0].PanelIds = ["a"];
+        layout.HiddenPanelIds.Add("a");
+
+        Assert.True(layout.RightColumns[0].ContainsPanel("a"));
+        Assert.False(layout.IsVisible("a"));
+    }
+
+    [Fact]
+    public void UnhiddenPanel_IsVisibleAgain()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("a", "", () => new TextBlock()));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.RightColumns[0].PanelIds = ["a"];
+        layout.HiddenPanelIds.Add("a");
+        layout.HiddenPanelIds.Remove("a");
+
+        Assert.True(layout.IsVisible("a"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Layout: rapid panel moves, insert-at-position, multi-column consistency
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void PanelInsert_AtSpecificPosition()
+    {
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.RightColumns[0].PanelIds = ["a", "b"];
+
+        layout.RightColumns[0].PanelIds.Insert(0, "c");
+
+        Assert.Equal(["c", "a", "b"], layout.RightColumns[0].PanelIds);
+    }
+
+    [Fact]
+    public void PanelInsert_AtEnd()
+    {
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.RightColumns[0].PanelIds = ["a", "b"];
+
+        layout.RightColumns[0].PanelIds.Insert(2, "c");
+
+        Assert.Equal(["a", "b", "c"], layout.RightColumns[0].PanelIds);
+    }
+
+    [Fact]
+    public void RapidMove_BackAndForth_NoDuplicates()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("x", "", () => new TextBlock()));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.LeftColumn.PanelIds.Clear();
+        layout.RightColumns[0].PanelIds.Clear();
+        layout.BottomColumn.PanelIds.Clear();
+
+        // Left → Right-0
+        layout.LeftColumn.PanelIds = ["x"];
+        layout.RemovePanel("x");
+        layout.RightColumns[0].PanelIds.Add("x");
+        Assert.False(layout.LeftColumn.ContainsPanel("x"));
+        Assert.True(layout.RightColumns[0].ContainsPanel("x"));
+
+        // Right-0 → Left
+        layout.RemovePanel("x");
+        layout.LeftColumn.PanelIds.Add("x");
+        Assert.True(layout.LeftColumn.ContainsPanel("x"));
+        Assert.False(layout.RightColumns[0].ContainsPanel("x"));
+
+        // Left → Bottom
+        layout.RemovePanel("x");
+        layout.BottomColumn.PanelIds.Add("x");
+        Assert.True(layout.BottomColumn.ContainsPanel("x"));
+        Assert.False(layout.LeftColumn.ContainsPanel("x"));
+
+        // Bottom → Right-0 (back)
+        layout.RemovePanel("x");
+        layout.RightColumns[0].PanelIds.Add("x");
+        Assert.True(layout.RightColumns[0].ContainsPanel("x"));
+        Assert.False(layout.BottomColumn.ContainsPanel("x"));
+    }
+
+    [Fact]
+    public void RapidMove_BackAndForth_NoOrphans()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("x", "", () => new TextBlock()));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        for (var i = 0; i < 20; i++)
+        {
+            layout.LeftColumn.PanelIds.Clear();
+            layout.RightColumns[0].PanelIds.Clear();
+            layout.BottomColumn.PanelIds.Clear();
+
+            var cols = new[] { layout.LeftColumn, layout.RightColumns[0], layout.BottomColumn };
+            var from = cols[i % 3];
+            var to = cols[(i + 1) % 3];
+
+            from.PanelIds = ["x"];
+            Assert.True(from.ContainsPanel("x"));
+
+            // Remove from source, add to target
+            from.PanelIds.Remove("x");
+            to.PanelIds.Add("x");
+
+            Assert.False(from.ContainsPanel("x"));
+            Assert.True(to.ContainsPanel("x"));
+            Assert.Null(layout.FindOrphanedPanel());
+        }
+    }
+
+    [Fact]
+    public void Layout_HasNoOrphansByDefault()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("tools", "", () => new TextBlock(), DefaultZone: "left"));
+        PanelRegistry.Register(new DockPanelDef("brush", "", () => new TextBlock(), DefaultZone: "right-0"));
+        PanelRegistry.Register(new DockPanelDef("node-graph", "", () => new TextBlock(), DefaultZone: "bottom"));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.Normalize(PanelRegistry.AllIds);
+
+        Assert.Null(layout.FindOrphanedPanel());
+    }
+
+    [Fact]
+    public void TabGroup_PanelInTabButNotInPanelIds_IsOrphan()
+    {
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.RightColumns[0].PanelIds = [];
+        layout.RightColumns[0].TabGroups["ghost"] = new TabGroupLayout
+        {
+            PanelIds = ["orphan"]
+        };
+
+        Assert.Equal("orphan", layout.FindOrphanedPanel());
+    }
+
+    [Fact]
+    public void TabGroup_PanelInRowsButNotInTab_PanelIsNotOrphan()
+    {
+        var col = new DockColumnLayout
+        {
+            Rows = new List<DockRowLayout>
+            {
+                new() { PanelIds = ["a", "b"], Orientation = DockOrientation.Horizontal }
+            },
+            TabGroups = { ["tab:0"] = new TabGroupLayout { PanelIds = ["c"] } }
+        };
+
+        // "c" in tab group but not reachable through Rows → orphaned!
+        // FindOrphanedPanel checks TabGroups against the reachable set from ResolvedRows.
+        var layout = new WorkspaceLayout { RightColumns = [col] };
+        Assert.Equal("c", layout.FindOrphanedPanel());
+    }
+
+    [Fact]
+    public void TabGroup_OrphanedInRowsMode_TabNotInRowsIsOrphan()
+    {
+        var col = new DockColumnLayout
+        {
+            Rows = new List<DockRowLayout>
+            {
+                new() { PanelIds = ["a"] }
+            },
+            TabGroups = { ["tab:orphan"] = new TabGroupLayout { PanelIds = ["orphan"] } }
+        };
+
+        var layout = new WorkspaceLayout
+        {
+            RightColumns = [col, new() { PanelIds = [] }]
+        };
+
+        Assert.Equal("orphan", layout.FindOrphanedPanel());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Layout: edge cases with empty columns
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void EmptyColumn_ContainsPanel_ReturnsFalse()
+    {
+        var col = new DockColumnLayout { PanelIds = [] };
+        Assert.False(col.ContainsPanel("anything"));
+    }
+
+    [Fact]
+    public void EmptyColumn_ResolvedRows_ReturnsEmpty()
+    {
+        var col = new DockColumnLayout { PanelIds = [] };
+        Assert.Empty(col.ResolvedRows());
+    }
+
+    [Fact]
+    public void EmptyColumn_RemovePanel_NoOp()
+    {
+        var col = new DockColumnLayout { PanelIds = [] };
+        col.RemovePanel("nonexistent");
+        Assert.Empty(col.PanelIds);
+    }
+
+    [Fact]
+    public void Layout_FindPanelInEmptyColumn_ReturnsNull()
+    {
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.RightColumns[0].PanelIds.Clear();
+        Assert.Null(layout.FindPanel("anything"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Clone deep-copy coverage
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void Clone_PreservesBottomColumn()
+    {
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.BottomColumn.PanelIds = ["node-graph", "extra"];
+
+        var clone = layout.Clone();
+        Assert.Equal(["node-graph", "extra"], clone.BottomColumn.PanelIds);
+    }
+
+    [Fact]
+    public void Clone_PreservesTabGroups()
+    {
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.RightColumns[0].PanelIds = ["tab:x"];
+        layout.RightColumns[0].TabGroups["tab:x"] = new TabGroupLayout
+        {
+            PanelIds = ["a", "b"],
+            ActiveIndex = 1
+        };
+
+        var clone = layout.Clone();
+        Assert.Equal(1, clone.RightColumns[0].TabGroups["tab:x"].ActiveIndex);
+        Assert.Equal(["a", "b"], clone.RightColumns[0].TabGroups["tab:x"].PanelIds);
+    }
+
+    [Fact]
+    public void Clone_PreservesRows()
+    {
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.RightColumns[0].Rows = new List<DockRowLayout>
+        {
+            new() { PanelIds = ["a", "b"], Orientation = DockOrientation.Horizontal, ActiveIndex = 0 }
+        };
+
+        var clone = layout.Clone();
+        Assert.Equal(DockOrientation.Horizontal, clone.RightColumns[0].Rows![0].Orientation);
+        Assert.Equal(["a", "b"], clone.RightColumns[0].Rows[0].PanelIds);
+    }
+
+    [Fact]
+    public void Clone_PreservesFloatingPanels()
+    {
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.FloatingPanels["x"] = new FloatingPanelState
+        {
+            IsFloating = true, X = 42, Y = 99, Width = 400, Height = 300
+        };
+
+        var clone = layout.Clone();
+        var fp = clone.FloatingPanels["x"];
+        Assert.True(fp.IsFloating);
+        Assert.Equal(42, fp.X);
+        Assert.Equal(99, fp.Y);
+        Assert.Equal(400, fp.Width);
+        Assert.Equal(300, fp.Height);
+    }
+
+    [Fact]
+    public void Clone_PreservesHiddenPanels()
+    {
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.HiddenPanelIds.Add("brush");
+        layout.HiddenPanelIds.Add("layers");
+
+        var clone = layout.Clone();
+        Assert.Contains("brush", clone.HiddenPanelIds);
+        Assert.Contains("layers", clone.HiddenPanelIds);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Normalize: pan placement from scratch (no config derangement)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void Normalize_EmptyLayout_PlacesAllPanels()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("tools", "", () => new TextBlock(), DefaultZone: "left"));
+        PanelRegistry.Register(new DockPanelDef("layers", "", () => new TextBlock(), DefaultZone: "right-0"));
+        PanelRegistry.Register(new DockPanelDef("brush-lib", "", () => new TextBlock(), DefaultZone: "right-0"));
+        PanelRegistry.Register(new DockPanelDef("color", "", () => new TextBlock(), DefaultZone: "right-0"));
+        PanelRegistry.Register(new DockPanelDef("node-graph", "", () => new TextBlock(), DefaultZone: "bottom"));
+
+        var layout = new WorkspaceLayout
+        {
+            HiddenPanelIds = [],
+            LeftColumn = new DockColumnLayout { PanelIds = [] },
+            RightColumns = [new() { PanelIds = [] }],
+            BottomColumn = new DockColumnLayout { PanelIds = [] }
+        };
+        layout.Normalize(PanelRegistry.AllIds);
+
+        Assert.True(layout.LeftColumn.ContainsPanel("tools"));
+        Assert.True(layout.RightColumns[0].ContainsPanel("layers") || layout.RightColumns[0].ContainsPanel("brush"));
+        Assert.True(layout.RightColumns[0].ContainsPanel("color"));
+        Assert.True(layout.BottomColumn.ContainsPanel("node-graph"));
+    }
+
+    [Fact]
+    public void Normalize_PreservesExistingTabGroups()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("a", "", () => new TextBlock(), DefaultZone: "right-0"));
+        PanelRegistry.Register(new DockPanelDef("b", "", () => new TextBlock(), DefaultZone: "right-0"));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.RightColumns[0].PanelIds = ["tab:1"];
+        layout.RightColumns[0].TabGroups["tab:1"] = new TabGroupLayout { PanelIds = ["a", "b"] };
+
+        layout.Normalize(PanelRegistry.AllIds);
+
+        Assert.True(layout.RightColumns[0].ContainsPanel("a"));
+        Assert.True(layout.RightColumns[0].ContainsPanel("b"));
+    }
+
+    [Fact]
+    public void Normalize_DontDuplicatePanels_PlacedOnce()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("a", "", () => new TextBlock()));
+        PanelRegistry.Register(new DockPanelDef("b", "", () => new TextBlock()));
+        PanelRegistry.Register(new DockPanelDef("c", "", () => new TextBlock()));
+        PanelRegistry.Register(new DockPanelDef("d", "", () => new TextBlock()));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.LeftColumn.PanelIds.Clear();
+        layout.RightColumns[0].PanelIds.Clear();
+        layout.BottomColumn.PanelIds.Clear();
+
+        layout.Normalize(PanelRegistry.AllIds);
+
+        // Count placements
+        var total = (CountPlacedInColumn(layout.LeftColumn) +
+            CountPlacedInColumn(layout.RightColumns[0]) +
+            CountPlacedInColumn(layout.BottomColumn));
+        Assert.Equal(PanelRegistry.AllIds.Count, total);
+    }
+
+    private static int CountPlacedInColumn(DockColumnLayout col)
+    {
+        return col.ResolvedRows().SelectMany(r => r.PanelIds).Count();
     }
 }

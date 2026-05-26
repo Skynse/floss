@@ -1184,6 +1184,9 @@ public sealed class DrawingCanvas : Control, IDisposable
     public void AddLayer() => _document.AddLayer();
     public void AddGroupLayer() => _document.AddGroupLayer();
     public void AddBackgroundLayer() => _document.AddBackgroundLayer();
+    public void AddAdjustmentLayer(AdjustmentKind kind) => _document.AddAdjustmentLayer(kind);
+    public void SetLayerAdjustmentParams(int layerIndex, AdjustmentLayerData newParams) => _document.SetLayerAdjustmentParams(layerIndex, newParams);
+    public void PreviewLayerAdjustmentParams(int layerIndex, AdjustmentLayerData newParams) => _document.PreviewLayerAdjustmentParams(layerIndex, newParams);
     public void GroupSelectedLayers(IReadOnlyList<int> indices) => _document.GroupSelectedLayers(indices);
     public void DuplicateLayer() => _document.DuplicateActiveLayer();
     public void SelectLayer(int index) => _document.SelectLayer(index);

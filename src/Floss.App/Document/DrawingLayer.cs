@@ -37,6 +37,7 @@ public sealed class DrawingLayer : IDisposable
     public bool IsAlphaLocked { get; set; }
     public bool IsReference { get; set; }
     public bool IsPaper { get; set; }
+    public AdjustmentLayerData? Adjustment { get; set; }
     public int IndentLevel { get; set; }
     public DrawingLayer? Parent { get; set; }
     public List<DrawingLayer> Children { get; } = [];
@@ -111,11 +112,20 @@ public sealed class DrawingLayer : IDisposable
             var docW = Math.Max(1, Width);
             var docH = Math.Max(1, Height);
 
+            const int checkSize = 4;
+            const byte cbDark = 0x88;
+            const byte cbLight = 0xBB;
+
             for (var y = 0; y < dstH; y++)
             {
                 var dstRow = (uint*)(dst + y * dstFrame.RowBytes);
                 for (var x = 0; x < dstW; x++)
-                    dstRow[x] = 0xFFFFFFFF;
+                {
+                    var onDark = ((x / checkSize) + (y / checkSize)) % 2 == 0;
+                    dstRow[x] = onDark
+                        ? (uint)(cbDark | (cbDark << 8) | (cbDark << 16) | (0xFFu << 24))
+                        : (uint)(cbLight | (cbLight << 8) | (cbLight << 16) | (0xFFu << 24));
+                }
             }
 
             for (var y = 0; y < dstH; y++)
@@ -148,12 +158,14 @@ public sealed class DrawingLayer : IDisposable
                     if (tile == null || tilLocalX is < 0 or >= ts || tilLocalY is < 0 or >= ts)
                         continue;
 
-                    var offset = (tilLocalY * ts + tilLocalX) * 4;
-                    var b = tile[offset];
-                    var g = tile[offset + 1];
-                    var r = tile[offset + 2];
-                    var a = tile[offset + 3];
-                    *(uint*)dstPx = BlendThumbnailPixelOnWhite(b, g, r, a);
+                    var off = (tilLocalY * ts + tilLocalX) * 4;
+                    var b = tile[off];
+                    var g = tile[off + 1];
+                    var r = tile[off + 2];
+                    var a = tile[off + 3];
+                    // Get the checkerboard pixel at this position
+                    var (cbR, cbG, cbB) = CheckerboardBg(x, y, checkSize, cbDark, cbLight);
+                    *(uint*)dstPx = BlendThumbnailPixelOnCheckers(b, g, r, a, cbR, cbG, cbB);
                 }
             }
         }
@@ -161,15 +173,22 @@ public sealed class DrawingLayer : IDisposable
         _thumbnailDirty = false;
     }
 
-    private static uint BlendThumbnailPixelOnWhite(byte b, byte g, byte r, byte a)
+    private static (byte r, byte g, byte b) CheckerboardBg(int x, int y, int checkSize, byte dark, byte light)
     {
-        if (a == 0) return 0xFFFFFFFF;
+        var onDark = ((x / checkSize) + (y / checkSize)) % 2 == 0;
+        var v = onDark ? dark : light;
+        return (v, v, v);
+    }
+
+    private static uint BlendThumbnailPixelOnCheckers(byte b, byte g, byte r, byte a, byte cbR, byte cbG, byte cbB)
+    {
+        if (a == 0) return (uint)(cbB | (cbG << 8) | (cbR << 16) | (255u << 24));
         if (a == 255) return (uint)(b | (g << 8) | (r << 16) | (255u << 24));
         var fa = a / 255.0;
         var inv = 1.0 - fa;
-        var ob = (byte)(b * fa + 255 * inv);
-        var og = (byte)(g * fa + 255 * inv);
-        var or = (byte)(r * fa + 255 * inv);
+        var ob = (byte)(b * fa + cbB * inv);
+        var og = (byte)(g * fa + cbG * inv);
+        var or = (byte)(r * fa + cbR * inv);
         return (uint)(ob | (og << 8) | (or << 16) | (255u << 24));
     }
 

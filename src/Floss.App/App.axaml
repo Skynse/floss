@@ -296,11 +296,13 @@
                                 </RepeatButton>
                             </Track.DecreaseButton>
                             <Track.Thumb>
-                                <Thumb Width="12" Cursor="SizeWestEast">
+                                <Thumb Width="10" Cursor="SizeWestEast">
                                     <Thumb.Template>
                                         <ControlTemplate>
-                                            <Border Width="12" Height="18" CornerRadius="3"
-                                                    Background="{StaticResource SliderThumbLine}"
+                                            <Border Width="10" Height="10"
+                                                    Background="Transparent"
+                                                    BorderBrush="White"
+                                                    BorderThickness="1.5"
                                                     VerticalAlignment="Center"/>
                                         </ControlTemplate>
                                     </Thumb.Template>

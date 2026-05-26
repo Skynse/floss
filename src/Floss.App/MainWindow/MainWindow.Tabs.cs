@@ -286,8 +286,8 @@ public partial class MainWindow
         // Sync UI
         _canvasFrame.IsVisible = tab.HasDocument;
         SetDocumentPanelsVisible(tab.HasDocument);
-        _zoomDisplay.Text = $"{Math.Round(_zoom * 100)}%";
-        _rotDisplay.Text = $"{Math.Round(_rotation)}°";
+        if (_zoomDisplay != null) _zoomDisplay.Text = $"{Math.Round(_zoom * 100)}%";
+        if (_rotDisplay != null) _rotDisplay.Text = $"{Math.Round(_rotation)}°";
         SyncCanvasFrameToDocument(fitToViewport: false);
         BuildLayerList();
         RefreshColorSliders();

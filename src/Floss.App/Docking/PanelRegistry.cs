@@ -39,11 +39,11 @@ public static class PanelRegistry
             buildContent("tools"),
             Proportion: 0.50, MinHeight: 120, DefaultZone: "left"));
 
-        Register(new DockPanelDef("brush", "Brush",
+        Register(new DockPanelDef("brush", "Brush Library",
             buildContent("brush"),
             Proportion: 0.30, MinHeight: 160, DefaultZone: "right-0"));
 
-        Register(new DockPanelDef("tool-properties", "Tool Property",
+        Register(new DockPanelDef("tool-properties", "Tool",
             buildContent("tool-properties"),
             Proportion: 0.15, MinHeight: 64, DefaultZone: "right-0"));
 
@@ -57,15 +57,11 @@ public static class PanelRegistry
 
         Register(new DockPanelDef("color", "Color",
             buildContent("color"),
-            Proportion: 0.35, MinHeight: 180, DefaultZone: "right-1"));
+            Proportion: 0.35, MinHeight: 180, DefaultZone: "right-0"));
 
-        Register(new DockPanelDef("color-slider", "Color Slider",
+        Register(new DockPanelDef("color-slider", "Color Sliders",
             buildContent("color-slider"),
-            Proportion: 0.25, MinHeight: 64, DefaultZone: "right-1"));
-
-        Register(new DockPanelDef("brush-size", "Brush Size",
-            buildContent("brush-size"),
-            Proportion: 0.30, MinHeight: 140, DefaultZone: "right-1"));
+            Proportion: 0.15, MinHeight: 48, DefaultZone: "right-0"));
 
         Register(new DockPanelDef("node-graph", "Node Graph",
             buildContent("node-graph"),

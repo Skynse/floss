@@ -210,7 +210,8 @@ public sealed class DrawingDocument : IDisposable
                 IndentLevel = layer.IndentLevel,
                 IsAlphaLocked = layer.IsAlphaLocked,
                 IsReference = layer.IsReference,
-                IsPaper = layer.IsPaper
+                IsPaper = layer.IsPaper,
+                Adjustment = layer.Adjustment?.Clone()
             };
             if (!layer.IsGroup)
             {
@@ -463,6 +464,43 @@ public sealed class DrawingDocument : IDisposable
         NotifyLayersChanged();
     }
 
+    public void AddAdjustmentLayer(AdjustmentKind kind, string? name = null)
+    {
+        BeginDocumentMutation();
+
+        var layer = new DrawingLayer(name ?? AdjustmentLayerData.DisplayName(kind), Width, Height)
+        {
+            Adjustment = new AdjustmentLayerData { Kind = kind }
+        };
+        if (ActiveLayerIndex >= 0 && ActiveLayerIndex < _layers.Count)
+            InsertLayerNear(layer, ActiveLayer!, LayerDropPlacement.Above);
+        else
+            _layers.Add(layer);
+        RebuildFlatLayerOrder();
+        ActiveLayerIndex = _layers.IndexOf(layer);
+        NotifyLayersChanged();
+    }
+
+    public void SetLayerAdjustmentParams(int layerIndex, AdjustmentLayerData newParams)
+    {
+        if (layerIndex < 0 || layerIndex >= _layers.Count) return;
+        var layer = _layers[layerIndex];
+        if (layer.Adjustment == null) return;
+        var oldParams = layer.Adjustment.Clone();
+        layer.Adjustment = newParams.Clone();
+        PushHistoryState(new AdjustmentParamsHistoryState(layerIndex, oldParams, newParams.Clone(), new PixelRegion(0, 0, Width, Height)));
+        NotifyLayerMetadataChanged(new PixelRegion(0, 0, Width, Height), layerIndex);
+    }
+
+    public void PreviewLayerAdjustmentParams(int layerIndex, AdjustmentLayerData newParams)
+    {
+        if (layerIndex < 0 || layerIndex >= _layers.Count) return;
+        var layer = _layers[layerIndex];
+        if (layer.Adjustment == null) return;
+        layer.Adjustment = newParams.Clone();
+        PreviewLayerMetadataChanged(new PixelRegion(0, 0, Width, Height), layerIndex);
+    }
+
     public void AddGroupLayer()
     {
         BeginDocumentMutation();
@@ -507,7 +545,7 @@ public sealed class DrawingDocument : IDisposable
         var bg = new DrawingLayer("Paper", Width, Height);
         bg.IsLocked = true;
         bg.IsPaper = true;
-        bg.FillSolid(bg.Pixels.Bounds, PaperColor);
+        // No pixel fill needed — compositor handles paper fill via PaperColor.
 
         var roots = RootLayers();
         roots.Add(bg);
@@ -888,19 +926,11 @@ public sealed class DrawingDocument : IDisposable
         var toMerge = sorted.Select(i => _layers[i]).ToList();
         var merged = compositor.CompositeToBgra(toMerge, Width, Height);
 
-        var topmostIndex = sorted[^1];
-        var topmostLayer = _layers[topmostIndex];
-        var anchor = topmostLayer.Parent != null
-            ? _layers.FirstOrDefault(l => l.Parent == topmostLayer.Parent && !toMerge.Contains(l))
-            : _layers.FirstOrDefault(l => l.Parent == null && !toMerge.Contains(l));
+        var topmostLayer = _layers[sorted[^1]];
 
-        var mergedLayer = new DrawingLayer("Merged", Width, Height);
+        var mergedLayer = new DrawingLayer(topmostLayer.Name, Width, Height);
         mergedLayer.Pixels.CopyFromBgra(merged, Width, Height);
-
-        if (anchor != null)
-            InsertLayerNear(mergedLayer, anchor, LayerDropPlacement.Above);
-        else
-            InsertLayerNear(mergedLayer, topmostLayer, LayerDropPlacement.Above);
+        InsertLayerNear(mergedLayer, topmostLayer, LayerDropPlacement.Above);
 
         foreach (var layer in toMerge)
         {
@@ -1040,7 +1070,13 @@ public sealed class DrawingDocument : IDisposable
         DirtyStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private PixelRegion LayerDirtyRegion(int index) => index < 0 || index >= _layers.Count ? PixelRegion.Empty : _layers[index].DocumentContentBounds.ClipTo(Width, Height);
+    private PixelRegion LayerDirtyRegion(int index)
+    {
+        if (index < 0 || index >= _layers.Count) return PixelRegion.Empty;
+        var layer = _layers[index];
+        if (layer.Adjustment != null) return new PixelRegion(0, 0, Width, Height);
+        return layer.DocumentContentBounds.ClipTo(Width, Height);
+    }
     private List<DrawingLayer> RootLayers() => _layers.Where(layer => layer.Parent == null).ToList();
 
     private IEnumerable<DrawingLayer> VisibleLayerOrder()
@@ -1129,7 +1165,8 @@ public sealed class DrawingDocument : IDisposable
             IsOpen = source.IsOpen,
             IsClipping = source.IsClipping,
             IsPaper = source.IsPaper,
-            IndentLevel = source.IndentLevel
+            IndentLevel = source.IndentLevel,
+            Adjustment = source.Adjustment?.Clone()
         };
         copy.RestoreTiles(source.CaptureTiles());
         foreach (var child in source.Children) { var childCopy = CloneLayerTree(child); childCopy.Parent = copy; copy.Children.Add(childCopy); }
@@ -1162,11 +1199,11 @@ public sealed class DrawingDocument : IDisposable
         return a.Mask.AsSpan().SequenceEqual(b.Mask);
     }
 
-    private LayerSnapshot CaptureLayerSnapshot(DrawingLayer layer) => new(layer.Name, layer.IsVisible, layer.IsLocked, layer.IsAlphaLocked, layer.IsReference, layer.IsPaper, layer.Opacity, layer.BlendMode, layer.OffsetX, layer.OffsetY, layer.IsGroup, layer.IsOpen, layer.IsClipping, layer.IndentLevel, layer.Parent is null ? -1 : _layers.IndexOf(layer.Parent), layer.Width, layer.Height, layer.CaptureTiles());
+    private LayerSnapshot CaptureLayerSnapshot(DrawingLayer layer) => new(layer.Name, layer.IsVisible, layer.IsLocked, layer.IsAlphaLocked, layer.IsReference, layer.IsPaper, layer.Opacity, layer.BlendMode, layer.OffsetX, layer.OffsetY, layer.IsGroup, layer.IsOpen, layer.IsClipping, layer.IndentLevel, layer.Parent is null ? -1 : _layers.IndexOf(layer.Parent), layer.Width, layer.Height, layer.CaptureTiles(), layer.Adjustment?.Clone());
 
     private DrawingLayer CreateLayerFromSnapshot(LayerSnapshot snap)
     {
-        var layer = new DrawingLayer(snap.Name, snap.BitmapWidth, snap.BitmapHeight) { IsVisible = snap.IsVisible, IsLocked = snap.IsLocked, IsAlphaLocked = snap.IsAlphaLocked, IsReference = snap.IsReference, IsPaper = snap.IsPaper, Opacity = snap.Opacity, BlendMode = snap.BlendMode, OffsetX = snap.OffsetX, OffsetY = snap.OffsetY, IsGroup = snap.IsGroup, IsOpen = snap.IsOpen, IsClipping = snap.IsClipping, IndentLevel = snap.IndentLevel };
+        var layer = new DrawingLayer(snap.Name, snap.BitmapWidth, snap.BitmapHeight) { IsVisible = snap.IsVisible, IsLocked = snap.IsLocked, IsAlphaLocked = snap.IsAlphaLocked, IsReference = snap.IsReference, IsPaper = snap.IsPaper, Opacity = snap.Opacity, BlendMode = snap.BlendMode, OffsetX = snap.OffsetX, OffsetY = snap.OffsetY, IsGroup = snap.IsGroup, IsOpen = snap.IsOpen, IsClipping = snap.IsClipping, IndentLevel = snap.IndentLevel, Adjustment = snap.Adjustment?.Clone() };
         layer.RestoreTiles(snap.Tiles);
         return layer;
     }
@@ -1197,7 +1234,7 @@ public sealed class DrawingDocument : IDisposable
 
     // --- Records and State Classes ---
     private sealed record DocumentSnapshot(int Width, int Height, int ActiveLayerIndex, LayerSnapshot[] Layers, SelectionMask.Snapshot Selection);
-    private sealed record LayerSnapshot(string Name, bool IsVisible, bool IsLocked, bool IsAlphaLocked, bool IsReference, bool IsPaper, double Opacity, string BlendMode, int OffsetX, int OffsetY, bool IsGroup, bool IsOpen, bool IsClipping, int IndentLevel, int ParentIndex, int BitmapWidth, int BitmapHeight, Dictionary<(int X, int Y), byte[]> Tiles);
+    private sealed record LayerSnapshot(string Name, bool IsVisible, bool IsLocked, bool IsAlphaLocked, bool IsReference, bool IsPaper, double Opacity, string BlendMode, int OffsetX, int OffsetY, bool IsGroup, bool IsOpen, bool IsClipping, int IndentLevel, int ParentIndex, int BitmapWidth, int BitmapHeight, Dictionary<(int X, int Y), byte[]> Tiles, AdjustmentLayerData? Adjustment = null);
 
     private interface IHistoryState
     {
@@ -1348,6 +1385,22 @@ public sealed class DrawingDocument : IDisposable
     {
         public IHistoryState CaptureRedo(DrawingDocument document) => new DocumentPropertyHistoryState<T>(NewValue, OldValue, Apply, AffectsVisual, VisualDirtyRegion);
         public void Restore(DrawingDocument document) { Apply(OldValue); document.DirtyStateChanged?.Invoke(document, EventArgs.Empty); }
+    }
+
+    private sealed record AdjustmentParamsHistoryState(int LayerIndex, AdjustmentLayerData OldParams, AdjustmentLayerData NewParams, PixelRegion DirtyRegion) : IHistoryState
+    {
+        public bool AffectsVisual => true;
+        public PixelRegion VisualDirtyRegion => DirtyRegion;
+
+        public IHistoryState CaptureRedo(DrawingDocument document) => new AdjustmentParamsHistoryState(LayerIndex, NewParams, OldParams, DirtyRegion);
+        public void Restore(DrawingDocument document)
+        {
+            if (LayerIndex < 0 || LayerIndex >= document._layers.Count) return;
+            var layer = document._layers[LayerIndex];
+            if (layer.Adjustment == null) return;
+            layer.Adjustment = OldParams.Clone();
+            document.NotifyLayerMetadataChanged(DirtyRegion, LayerIndex);
+        }
     }
 }
 
