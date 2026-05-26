@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using Floss.App.Brushes;
 
-namespace Floss.App;
+namespace Floss.App.Config;
 
 public static class PresetPackageFormat
 {

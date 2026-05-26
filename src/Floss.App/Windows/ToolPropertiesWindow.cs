@@ -16,9 +16,9 @@ using Floss.App.Processes;
 using Floss.App.Tools;
 using SkiaSharp;
 
-namespace Floss.App;
+namespace Floss.App.Windows;
 
-using static Floss.App.AppColors;
+using static Floss.App.Config.AppColors;
 
 public sealed class ToolPropertiesWindow : Window
 {

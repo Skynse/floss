@@ -6,9 +6,9 @@ using Avalonia.Media;
 using Floss.App.Brushes;
 using static Floss.App.Brushes.BrushDynamics;
 
-namespace Floss.App;
+namespace Floss.App.Windows;
 
-using static Floss.App.AppColors;
+using static Floss.App.Config.AppColors;
 
 public sealed class AngleDynamicsPopupWindow : Window
 {

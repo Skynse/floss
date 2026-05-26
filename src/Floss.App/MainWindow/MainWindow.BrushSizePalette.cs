@@ -9,7 +9,7 @@ using Floss.App.Brushes;
 
 namespace Floss.App;
 
-using static Floss.App.AppColors;
+using static Floss.App.Config.AppColors;
 
 public partial class MainWindow
 {

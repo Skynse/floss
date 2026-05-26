@@ -11,7 +11,7 @@ using Floss.App.Brushes;
 using Floss.App.Input;
 using SkiaSharp;
 
-namespace Floss.App;
+namespace Floss.App.Controls;
 
 public sealed class BrushStrokePreview : Control
 {

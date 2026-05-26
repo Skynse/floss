@@ -6,9 +6,9 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Floss.App.Brushes;
 
-namespace Floss.App;
+namespace Floss.App.Windows;
 
-using static Floss.App.AppColors;
+using static Floss.App.Config.AppColors;
 
 public sealed class DynamicsPopupWindow : Window
 {

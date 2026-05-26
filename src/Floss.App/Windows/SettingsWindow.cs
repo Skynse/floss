@@ -11,9 +11,9 @@ using Avalonia.Media;
 using Floss.App.Input;
 using KeyBinding = Floss.App.Input.KeyBinding;
 
-namespace Floss.App;
+namespace Floss.App.Windows;
 
-using static Floss.App.AppColors;
+using static Floss.App.Config.AppColors;
 
 public sealed class SettingsWindow : Window
 {

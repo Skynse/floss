@@ -7,9 +7,9 @@ using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using SkiaSharp;
 
-namespace Floss.App;
+namespace Floss.App.Windows;
 
-using static Floss.App.AppColors;
+using static Floss.App.Config.AppColors;
 
 public sealed class ColorPickerWindow : Window
 {

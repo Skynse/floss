@@ -16,7 +16,7 @@ using Floss.App.Document;
 
 namespace Floss.App;
 
-using static Floss.App.AppColors;
+using static Floss.App.Config.AppColors;
 
 public partial class MainWindow : Window
 {
@@ -1997,7 +1997,7 @@ public partial class MainWindow : Window
             busy.Report($"Reading {file.Name}…");
             await using var stream = await file.OpenReadAsync();
             List<Brushes.BrushAsset> brushes;
-            try { brushes = await System.Threading.Tasks.Task.Run(() => Brushes.AbrImporter.Import(stream, out lastDiag)); }
+            try { brushes = await System.Threading.Tasks.Task.Run(() => AbrImporter.Import(stream, out lastDiag)); }
             catch (Exception ex) { CrashLog.Write(ex, "MainWindow.BrushLibrary.AbrImport"); continue; }
 
             busy.Report($"Saving {file.Name}…");

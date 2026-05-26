@@ -8,7 +8,7 @@ using Avalonia.Threading;
 
 namespace Floss.App;
 
-using static Floss.App.AppColors;
+using static Floss.App.Config.AppColors;
 
 /// <summary>
 /// Ref-counted busy indicator: footer progress strip + optional canvas overlay.

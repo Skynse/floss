@@ -11,7 +11,7 @@ using Floss.App.Input;
 
 namespace Floss.App.Windows;
 
-using static Floss.App.AppColors;
+using static Floss.App.Config.AppColors;
 
 public sealed class ModifierKeySettingsWindow : Window
 {

@@ -12,7 +12,7 @@ using Floss.App.Psd;
 
 namespace Floss.App;
 
-using static Floss.App.AppColors;
+using static Floss.App.Config.AppColors;
 
 using Avalonia.Media;
 using SkiaSharp;

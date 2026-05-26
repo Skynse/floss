@@ -1,6 +1,6 @@
 using Floss.App.Tools;
 
-namespace Floss.App.Processes;
+namespace Floss.App.Processes.Output;
 
 // Consumes IProcessedInput and applies an effect to the document.
 public interface IOutputProcess

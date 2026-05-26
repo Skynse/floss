@@ -27,7 +27,7 @@ using Floss.App.Windows;
 
 namespace Floss.App;
 
-using static Floss.App.AppColors;
+using static Floss.App.Config.AppColors;
 
 public partial class MainWindow : Window, Tools.IViewportController
 {
@@ -624,6 +624,8 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         _selectionActionBar = BuildSelectionActionBar();
         _workspaceViewport.Children.Add(_selectionActionBar);
+
+        WireDragDrop();
 
         _canvasStatusText = MiniText();
         _footerStatusText = MiniText();

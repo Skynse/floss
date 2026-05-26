@@ -9,7 +9,7 @@ using Floss.App.Brushes;
 using Microsoft.Data.Sqlite;
 using SkiaSharp;
 
-namespace Floss.App;
+namespace Floss.App.Config;
 
 public sealed class PresetStore
 {

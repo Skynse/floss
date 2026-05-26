@@ -16,7 +16,7 @@ using Avalonia.Controls.Templates;
 
 namespace Floss.App;
 
-using static Floss.App.AppColors;
+using static Floss.App.Config.AppColors;
 
 public partial class MainWindow
 {

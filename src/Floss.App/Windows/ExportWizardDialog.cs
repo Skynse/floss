@@ -6,7 +6,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using SkiaSharp;
 
-namespace Floss.App;
+namespace Floss.App.Windows;
 
 using static AppColors;
 

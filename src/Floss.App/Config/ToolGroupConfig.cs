@@ -10,7 +10,7 @@ using Floss.App.Input;
 using Floss.App.Tools;
 using KeyBinding = Floss.App.Input.KeyBinding;
 
-namespace Floss.App;
+namespace Floss.App.Config;
 
 // Input process determines how user input is captured (CSP-style).
 public enum InputProcessType

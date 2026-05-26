@@ -2,7 +2,7 @@ using Avalonia.Input;
 using Avalonia.Media;
 using Floss.App.Input;
 
-namespace Floss.App.Processes;
+namespace Floss.App.Processes.Input;
 
 // Captures raw pointer input, applies stabilization/smoothing, produces IProcessedInput.
 public interface IInputProcess

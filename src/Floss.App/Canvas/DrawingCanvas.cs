@@ -950,15 +950,45 @@ public sealed class DrawingCanvas : Control, IDisposable
     {
         if (!CanPaste) return;
         var pixels = _clipboardPixels!;
-        var w = _clipboardW;
-        var h = _clipboardH;
+        var srcW = _clipboardW;
+        var srcH = _clipboardH;
+
+        int docMaxDim = Math.Max(_document.Width, _document.Height);
+        float fitTarget = docMaxDim * 0.5f;
+        float scale = Math.Min(1f, fitTarget / Math.Max(srcW, srcH));
+
+        int w = srcW, h = srcH;
+        byte[] scaledPixels;
+        if (scale < 1f)
+        {
+            w = Math.Max(1, (int)(srcW * scale));
+            h = Math.Max(1, (int)(srcH * scale));
+            scaledPixels = new byte[w * h * 4];
+            for (var y = 0; y < h; y++)
+            for (var x = 0; x < w; x++)
+            {
+                int sx = (int)(x / scale);
+                int sy = (int)(y / scale);
+                int si = (sy * srcW + sx) * 4;
+                int di = (y * w + x) * 4;
+                scaledPixels[di] = pixels[si];
+                scaledPixels[di + 1] = pixels[si + 1];
+                scaledPixels[di + 2] = pixels[si + 2];
+                scaledPixels[di + 3] = pixels[si + 3];
+            }
+        }
+        else
+        {
+            scaledPixels = pixels;
+        }
 
         _document.BeginDocumentMutation();
         var layer = new DrawingLayer("Pasted", _document.Width, _document.Height);
-        layer.Pixels.CopyFromBgra(pixels, w, h);
+        layer.Pixels.CopyFromBgra(scaledPixels, w, h);
         var insertIdx = Math.Min(_document.ActiveLayerIndex + 1, _document.Layers.Count);
         _document.InsertAndSelectLayer(layer, insertIdx);
         InvalidateVisual();
+        BeginSelectionTransform();
     }
 
     public async Task<bool> PasteFromOSClipboardAsync()
@@ -1025,17 +1055,33 @@ public sealed class DrawingCanvas : Control, IDisposable
         return PasteSKBitmap(skBitmap, "Pasted");
     }
 
-    private bool PasteSKBitmap(SKBitmap skBitmap, string name)
+    internal bool PasteSKBitmap(SKBitmap skBitmap, string name)
     {
-        var w = skBitmap.Width;
-        var h = skBitmap.Height;
+        int docMaxDim = Math.Max(_document.Width, _document.Height);
+        float fitTarget = docMaxDim * 0.5f;
+        float scale = Math.Min(1f, fitTarget / Math.Max(skBitmap.Width, skBitmap.Height));
+
+        SKBitmap scaled;
+        if (scale < 1f)
+        {
+            int sw = Math.Max(1, (int)(skBitmap.Width * scale));
+            int sh = Math.Max(1, (int)(skBitmap.Height * scale));
+            scaled = skBitmap.Resize(new SKImageInfo(sw, sh), new SKSamplingOptions(SKFilterMode.Linear));
+        }
+        else
+        {
+            scaled = skBitmap;
+        }
+
+        var w = scaled.Width;
+        var h = scaled.Height;
 
         var pixels = new byte[w * h * 4];
         for (var y = 0; y < h; y++)
         {
             for (var x = 0; x < w; x++)
             {
-                var c = skBitmap.GetPixel(x, y);
+                var c = scaled.GetPixel(x, y);
                 var offset = (y * w + x) * 4;
                 pixels[offset] = c.Blue;
                 pixels[offset + 1] = c.Green;
@@ -1043,6 +1089,9 @@ public sealed class DrawingCanvas : Control, IDisposable
                 pixels[offset + 3] = c.Alpha;
             }
         }
+
+        if (scaled != skBitmap)
+            scaled.Dispose();
 
         _document.BeginDocumentMutation();
         var layer = new DrawingLayer(name, _document.Width, _document.Height);
@@ -1381,7 +1430,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             }
 
             if (_toolController.IsAlternateActive
-                || _ctx.ActivePreset?.OutputProcess == Floss.App.OutputProcessType.Eyedropper)
+                || _ctx.ActivePreset?.OutputProcess == OutputProcessType.Eyedropper)
             {
                 var swatchR = 10.0 / CanvasZoom;
                 var swatchPos = new Point(pos.X + swatchR * 1.6, pos.Y - swatchR * 1.6);

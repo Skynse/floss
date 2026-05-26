@@ -17,6 +17,20 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Using Include="Floss.App.Brushes" />
+    <Using Include="Floss.App.Brushes.Graph" />
+    <Using Include="Floss.App.Brushes.Engine" />
+    <Using Include="Floss.App.Brushes.Tips" />
+    <Using Include="Floss.App.Brushes.IO" />
+    <Using Include="Floss.App.Brushes.Curves" />
+    <Using Include="Floss.App.Canvas.Compositing" />
+    <Using Include="Floss.App.Windows" />
+    <Using Include="Floss.App.Config" />
+    <Using Include="Floss.App.Controls" />
+    <Using Include="Floss.App.Diagnostics" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Remove="**\*.onnx" />
     <AvaloniaResource Include="../../packaging/icon.png" Link="Assets/icon.png" />
   </ItemGroup>

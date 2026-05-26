@@ -7,7 +7,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 
-namespace Floss.App;
+namespace Floss.App.Controls;
 
 public sealed record CurveChangedArgs(float[] CurvePoints);
 

@@ -6,7 +6,7 @@ using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 
-namespace Floss.App;
+namespace Floss.App.Controls;
 
 public sealed class ToneCurve : Control
 {

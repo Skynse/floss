@@ -3,7 +3,7 @@ using System.IO;
 using Floss.App.Canvas;
 using Floss.App.Processes;
 
-namespace Floss.App;
+namespace Floss.App.Document;
 
 /// <summary>
 /// A single open document tab. Owns its canvas, tool factory, and file metadata.

@@ -877,7 +877,7 @@ public sealed class DrawingDocument : IDisposable
         NotifyLayersChanged();
     }
 
-    public void MergeSelectedLayers(IReadOnlyList<int> indices, Floss.App.Canvas.LayerCompositor compositor)
+    public void MergeSelectedLayers(IReadOnlyList<int> indices, LayerCompositor compositor)
     {
         if (indices.Count < 2) return;
         var sorted = indices.OrderBy(i => i).ToList();
@@ -915,7 +915,7 @@ public sealed class DrawingDocument : IDisposable
         NotifyLayersChanged();
     }
 
-    public void FlattenGroup(int groupIndex, Floss.App.Canvas.LayerCompositor compositor)
+    public void FlattenGroup(int groupIndex, LayerCompositor compositor)
     {
         if (groupIndex < 0 || groupIndex >= _layers.Count) return;
         var group = _layers[groupIndex];

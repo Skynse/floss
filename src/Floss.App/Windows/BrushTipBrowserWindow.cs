@@ -13,9 +13,9 @@ using Avalonia.Platform.Storage;
 using Floss.App.Brushes;
 using SkiaSharp;
 
-namespace Floss.App;
+namespace Floss.App.Windows;
 
-using static Floss.App.AppColors;
+using static Floss.App.Config.AppColors;
 
 public sealed class BrushTipBrowserWindow : Window
 {
