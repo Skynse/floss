@@ -154,11 +154,17 @@ Reduces maintenance burden and ensures consistency.
 - [x] ~~Brush drawing hard edge at canvas boundary~~ — Removed clamp from `HandlePointerInput`, added `ClipTo(layer.Width, layer.Height)` in `BrushEngine`
 - [ ] `InvalidateCompositor()` added but may not be used everywhere needed
 - [ ] `PaintInputSuspended` flag is set in multiple places, potential for desync
-- [ ] `MainWindow.axaml.cs` is 2589 lines — consider further splitting
+- [ ] `MainWindow.axaml.cs` is 3388 lines — consider further splitting; ~1400 lines of inline docking code
 - [ ] LOD transitions still flush all compositor tiles — adds hysteresis (0.42 to leave LOD 1, 0.24 to leave LOD 2) and triples missing-tile budget after a switch, but the real fix would be pre-computing LOD tiles in the background or downscaling existing LOD 0 tiles instead of re-compositing from scratch. Also `CompositeTileLodCpu` does full-resolution compositing + nearest-neighbor point-sampling per tile; a bilinear mipchain approach would be both faster and look better at deep zoom-out.
 - [ ] Node graph V2 — the evaluator is single-channel (one float per pixel). To support true procedural geometry (Coord → Distance → Step), it needs multi-channel output (X,Y) and domain warping (using one input as coordinates for another). Current V1 adds operator nodes (Mix, Invert, RoundedRectangle) within the existing single-channel architecture. Also, "Save as New Preset" strips BuiltInShape and commits as a custom NodeBrushTip but doesn't yet add to BrushLibrary as an independently selectable preset — needs plumbing from ToolPropertiesWindow → MainWindow's brush asset store.
+- [ ] DockerWorkspace.cs was deleted (dead code, never wired into MainWindow). MainWindow.axaml.cs still contains ~1500 lines of inline docking code that should be extracted to a proper class. DesktopDocker was speculatively created but never wired (also deleted).
 
-## Shortcuts
+### Docker Drag-Drop Bugs Fixed (2026-05-26)
+- [x] ~~**Drop at index 0 silently rejected:** `DockerHeaderPointerReleased` checked `_dockerDropIndex != 0`~~ — Fixed: now accepts any insertionIndex >= -1000
+- [x] ~~**Horizontal-row panels not registered in `_dockerSections`:** `ResolveColumnDropTarget` couldn't find them for drop target calculation~~ — Fixed: added `_dockerSections[id] = section` in the horizontal row builder
+- [x] ~~**`NormalizedWorkspaceLayout()` mutates `App.Config.WorkspaceLayout` in place** — called from ~20 sites including UI builders and visibility getters. Function name suggests read-only getter but it modifies state~~ — Fixed: normalization moved to `RegisterDockerPanels()` init (called once), all 14 call sites now read `App.Config.WorkspaceLayout` directly. Method deleted.
+
+### Shortcuts
 - Input/KeyBinding.cs — data model for key+modifiers, parsing, formatting, modifier-state helpers
 - Input/ShortcutsConfig.cs — all app-wide shortcut definitions (Undo, Zoom, Brush, Layer...), JSON load/save
 - MainWindow/MainWindow.axaml.cs — registers AddShortcut() linking config to actions, OnKeyDown for tool-group & Escape

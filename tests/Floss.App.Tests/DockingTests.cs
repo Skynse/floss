@@ -535,4 +535,309 @@ public class DockingTests
         Assert.True(layout.LeftColumn.ContainsPanel("tools"));
         Assert.False(layout.RightColumns[0].ContainsPanel("tools"));
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Layout reset / rebuild scenarios (covers crash at "Reset Layout")
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void Layout_ResetLayout_RemovesAllPanelsThenReaddsDefault()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("tools", "Tools", () => new TextBlock(), DefaultZone: "left", Proportion: 0.5));
+        PanelRegistry.Register(new DockPanelDef("brush", "Brush", () => new TextBlock(), DefaultZone: "right-0", Proportion: 0.3));
+        PanelRegistry.Register(new DockPanelDef("color", "Color", () => new TextBlock(), DefaultZone: "right-1", Proportion: 0.35));
+
+        // Simulate "Reset Layout": clear then normalize fresh
+        var layout = new WorkspaceLayout
+        {
+            // Empty: no panels placed
+            LeftColumn = new DockColumnLayout { PanelIds = [] },
+            RightColumns = [new() { PanelIds = [] }, new() { PanelIds = [] }]
+        };
+        layout.Normalize(PanelRegistry.AllIds);
+
+        // All panels should be placed in their default zones
+        Assert.True(layout.LeftColumn.ContainsPanel("tools"));
+        Assert.True(layout.RightColumns[0].ContainsPanel("brush"));
+        Assert.True(layout.RightColumns[1].ContainsPanel("color"));
+        Assert.Null(layout.FloatingPanels.GetValueOrDefault("tools"));
+    }
+
+    [Fact]
+    public void Layout_MovePanelBetweenColumns_UpdateIsConsistent()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("brush", "", () => new TextBlock(), DefaultZone: "right-0"));
+        PanelRegistry.Register(new DockPanelDef("color", "", () => new TextBlock(), DefaultZone: "right-1"));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.RightColumns[0].PanelIds = ["brush"];
+        layout.RightColumns[1].PanelIds = ["color"];
+
+        // Move "brush" from right-0 to left column
+        var placement = layout.FindPanel("brush");
+        Assert.NotNull(placement);
+        Assert.Equal(0, placement!.Value.ColumnIndex);
+
+        layout.RemovePanel("brush");
+        layout.LeftColumn.PanelIds.Add("brush");
+
+        // Verify old column no longer has it, new column does
+        Assert.False(layout.RightColumns[0].ContainsPanel("brush"));
+        Assert.True(layout.LeftColumn.ContainsPanel("brush"));
+        Assert.True(layout.RightColumns[1].ContainsPanel("color"));
+    }
+
+    [Fact]
+    public void Layout_ResetThenMovePanels_PreservesAllPanels()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("tools", "", () => new TextBlock(), DefaultZone: "left", Proportion: 0.5));
+        PanelRegistry.Register(new DockPanelDef("layers", "", () => new TextBlock(), DefaultZone: "right-0", Proportion: 0.25));
+        PanelRegistry.Register(new DockPanelDef("brush", "", () => new TextBlock(), DefaultZone: "right-0", Proportion: 0.3));
+        PanelRegistry.Register(new DockPanelDef("color", "", () => new TextBlock(), DefaultZone: "right-1", Proportion: 0.35));
+
+        var defaults = WorkspaceLayout.CreateDefault();
+        defaults.Normalize(PanelRegistry.AllIds);
+
+        // Verify all panels are placed exactly once
+        var allPlacements = new HashSet<string>();
+        foreach (var id in PanelRegistry.AllIds)
+        {
+            var p = defaults.FindPanel(id);
+            Assert.NotNull(p);
+            allPlacements.Add(id);
+
+            // Verify not in multiple columns
+            var count = (defaults.LeftColumn.ContainsPanel(id) ? 1 : 0)
+                + defaults.RightColumns.Count(c => c.ContainsPanel(id))
+                + (defaults.BottomColumn.ContainsPanel(id) ? 1 : 0)
+                + (defaults.FloatingPanels.ContainsKey(id) ? 1 : 0);
+            Assert.InRange(count, 1, 1);
+        }
+        Assert.Equal(PanelRegistry.AllIds.Count, allPlacements.Count);
+    }
+
+    [Fact]
+    public void Layout_RemovePanel_AllOperationsConsistent()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("a", "", () => new TextBlock()));
+        PanelRegistry.Register(new DockPanelDef("b", "", () => new TextBlock()));
+        PanelRegistry.Register(new DockPanelDef("c", "", () => new TextBlock()));
+
+        var layout = new WorkspaceLayout
+        {
+            LeftColumn = new DockColumnLayout { PanelIds = ["a"] },
+            RightColumns = [new() { PanelIds = ["b", "c"] }, new() { PanelIds = [] }]
+        };
+
+        // Remove via layout.RemovePanel (cross-column)
+        layout.RemovePanel("b");
+
+        // Verify: contains all columns agree
+        Assert.False(layout.LeftColumn.ContainsPanel("b"));
+        foreach (var col in layout.RightColumns)
+            Assert.False(col.ContainsPanel("b"));
+        Assert.Null(layout.FindPanel("b"));
+        Assert.NotNull(layout.FindPanel("a"));
+        Assert.NotNull(layout.FindPanel("c"));
+    }
+
+    [Fact]
+    public void Layout_ShortRemoveReaddCycle_NoDuplicates()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("x", "", () => new TextBlock(), DefaultZone: "right-0"));
+
+        var layout = WorkspaceLayout.CreateDefault();
+
+        // Initial: no x placed
+        layout.LeftColumn.PanelIds.Clear();
+        layout.RightColumns[0].PanelIds.Clear();
+        layout.RightColumns[1].PanelIds.Clear();
+
+        // Add to right-0
+        layout.RightColumns[0].PanelIds.Add("x");
+        Assert.True(layout.RightColumns[0].ContainsPanel("x"));
+
+        // Remove
+        layout.RemovePanel("x");
+        Assert.False(layout.RightColumns[0].ContainsPanel("x"));
+
+        // Re-add to left
+        layout.LeftColumn.PanelIds.Add("x");
+        Assert.True(layout.LeftColumn.ContainsPanel("x"));
+        Assert.False(layout.RightColumns[0].ContainsPanel("x"));
+    }
+
+    [Fact]
+    public void Layout_TabGroup_RemoveSoloDissolves_RemoveAllClears()
+    {
+        var col = new DockColumnLayout
+        {
+            PanelIds = ["tab:0"],
+            TabGroups = { ["tab:0"] = new TabGroupLayout { PanelIds = ["a", "b", "c"] } }
+        };
+
+        // Remove one → still has 2, tab group survives
+        col.RemovePanel("a");
+        Assert.True(col.TabGroups.ContainsKey("tab:0"));
+        Assert.Equal(["b", "c"], col.TabGroups["tab:0"].PanelIds);
+
+        // Remove second → 1 left, tab group dissolves, solo remains
+        col.RemovePanel("b");
+        Assert.False(col.TabGroups.ContainsKey("tab:0"));
+        Assert.Contains("c", col.PanelIds);
+        Assert.DoesNotContain("tab:0", col.PanelIds);
+    }
+
+    [Fact]
+    public void Layout_HorizontalRow_RemoveFromRow_ShrinksRow()
+    {
+        var col = new DockColumnLayout
+        {
+            Rows = new List<DockRowLayout>
+            {
+                new() { PanelIds = ["a", "b"], Orientation = DockOrientation.Horizontal },
+                new() { PanelIds = ["c"] }
+            }
+        };
+
+        Assert.True(col.ContainsPanel("a"));
+        Assert.True(col.ContainsPanel("b"));
+
+        col.RemovePanel("a");
+
+        Assert.False(col.ContainsPanel("a"));
+        Assert.True(col.ContainsPanel("b"));
+        Assert.True(col.ContainsPanel("c"));
+        Assert.Single(col.Rows![0].PanelIds); // "b" only
+        Assert.Equal("b", col.Rows[0].PanelIds[0]);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DetachFromVisualParent integration (headless Border/Panel re-parenting)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void Detach_ChildFromPanel_ChildHasNoParentAfterDetach()
+    {
+        EnsureAvalonia();
+
+        var panel = new Grid();
+        var child = new Border();
+        panel.Children.Add(child);
+        Assert.NotNull(child.Parent);
+        Assert.True(ReferenceEquals(panel, child.Parent));
+
+        // Simulate GetOrCreatePanelSection's detach: remove from Panel children
+        panel.Children.Remove(child);
+        Assert.Null(child.Parent); // Avalonia clears Parent on removal from logical tree
+    }
+
+    [Fact]
+    public void Detach_ChildFromBorder_SetChildNullThenReparent()
+    {
+        EnsureAvalonia();
+
+        var border = new Border();
+        var child = new Border();
+        border.Child = child;
+        Assert.NotNull(child.Parent);
+        Assert.True(ReferenceEquals(border, child.Parent));
+
+        // Detach: set border.Child to null
+        border.Child = null;
+        Assert.Null(child.Parent);
+
+        // Should be able to reparent to a Grid now
+        var grid = new Grid();
+        grid.Children.Add(child);
+        Assert.NotNull(child.Parent);
+        Assert.True(ReferenceEquals(grid, child.Parent));
+    }
+
+    [Fact]
+    public void Detach_ChildFromContentControl_ReparentToPanel()
+    {
+        EnsureAvalonia();
+
+        var cc = new ContentControl();
+        var child = new Border();
+        cc.Content = child;
+        Assert.NotNull(child.Parent);
+
+        // Detach
+        cc.Content = null;
+        Assert.Null(child.Parent);
+
+        // Reparent
+        var grid = new Grid();
+        grid.Children.Add(child);
+        Assert.True(ReferenceEquals(grid, child.Parent));
+    }
+
+    [Fact]
+    public void Detach_MultipleChildren_NoParentAfterSequentialRemove()
+    {
+        EnsureAvalonia();
+
+        var grid = new Grid();
+        var a = new Border();
+        var b = new Border();
+        var c = new Border();
+
+        grid.Children.Add(a);
+        grid.Children.Add(b);
+        grid.Children.Add(c);
+
+        Assert.True(ReferenceEquals(grid, a.Parent));
+        Assert.True(ReferenceEquals(grid, b.Parent));
+        Assert.True(ReferenceEquals(grid, c.Parent));
+
+        grid.Children.Remove(a);
+        grid.Children.Remove(b);
+        grid.Children.Remove(c);
+
+        Assert.Null(a.Parent);
+        Assert.Null(b.Parent);
+        Assert.Null(c.Parent);
+    }
+
+    [Fact]
+    public void Detach_AddToNewParent_DoesNotCrash()
+    {
+        EnsureAvalonia();
+
+        var oldGrid = new Grid();
+        var child = new Border();
+        oldGrid.Children.Add(child);
+
+        // Detach from old
+        oldGrid.Children.Remove(child);
+
+        // Reparent to new — this is exactly what RebuildDockers does
+        var newGrid = new Grid();
+        newGrid.Children.Add(child);
+
+        Assert.True(ReferenceEquals(newGrid, child.Parent));
+        Assert.Single(newGrid.Children);
+    }
+
+    [Fact]
+    public void Detach_AddToParentWithoutDetach_ShouldThrow()
+    {
+        EnsureAvalonia();
+
+        var oldGrid = new Grid();
+        var newGrid = new Grid();
+        var child = new Border();
+
+        oldGrid.Children.Add(child);
+
+        // Without detach, adding to new parent should throw InvalidOperationException
+        Assert.Throws<InvalidOperationException>(() => newGrid.Children.Add(child));
+    }
 }

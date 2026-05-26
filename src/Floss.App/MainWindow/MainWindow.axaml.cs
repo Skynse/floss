@@ -554,6 +554,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         _showRulers = App.Config.ShowRulers;
 
         RegisterDockerPanels();
+        App.Config.WorkspaceLayout.Normalize(PanelRegistry.AllIds);
         BuildUi();
         InitInputRouter();
         WireControls();
@@ -1251,7 +1252,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     // ── Left column ────────────────────────────────────────────────────────────
     private Border BuildLeftColumn()
     {
-        var layout = NormalizedWorkspaceLayout();
+        var layout = App.Config.WorkspaceLayout;
         var column = BuildDockColumn(layout.LeftColumn, -1);
 
         return new Border
@@ -1268,7 +1269,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     // ── Right panel ───────────────────────────────────────────────────────────
     private Border BuildRightPanel()
     {
-        var layout = NormalizedWorkspaceLayout();
+        var layout = App.Config.WorkspaceLayout;
         var columns = layout.RightColumns;
         var grid = new Grid { ClipToBounds = true };
         _dockerHostGrid = grid;
@@ -1377,6 +1378,7 @@ public partial class MainWindow : Window, Tools.IViewportController
                     var frac = 1.0 / count;
                     horizontalGrid.ColumnDefinitions.Add(new ColumnDefinition(frac, GridUnitType.Star));
                     var section = GetOrCreatePanelSection(rowPanelIds[ci]);
+                    _dockerSections[rowPanelIds[ci]] = section;
                     _dockerSectionColumns[rowPanelIds[ci]] = columnIndex;
                     Grid.SetColumn(section, ci);
                     horizontalGrid.Children.Add(section);
@@ -1481,8 +1483,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     {
         if (_dockerSections.TryGetValue(id, out var cached))
         {
-            if (cached.Parent is Panel parent)
-                parent.Children.Remove(cached);
+            DetachFromVisualParent(cached);
             return cached;
         }
 
@@ -1502,10 +1503,36 @@ public partial class MainWindow : Window, Tools.IViewportController
         }
 
         var content = info.Build();
-        if (content.Parent is Panel contentParent)
-            contentParent.Children.Remove(content);
+        DetachFromVisualParent(content);
 
         return PanelSection(id, info.Title, content);
+    }
+
+    /// <summary>
+    /// Detaches a control from its current visual parent, regardless of parent type.
+    /// Handles Panel (Grid, StackPanel), Border, ContentControl, Decorator.
+    /// </summary>
+    private static void DetachFromVisualParent(Control control)
+    {
+        var parent = control.Parent;
+        if (parent == null) return;
+
+        if (parent is Panel panel)
+        {
+            panel.Children.Remove(control);
+        }
+        else if (parent is Border border && ReferenceEquals(border.Child, control))
+        {
+            border.Child = null;
+        }
+        else if (parent is ContentControl cc && ReferenceEquals(cc.Content, control))
+        {
+            cc.Content = null;
+        }
+        else if (parent is Decorator decorator && ReferenceEquals(decorator.Child, control))
+        {
+            decorator.Child = null;
+        }
     }
 
     private Border PanelSection(string id, string title, Control content)
@@ -1612,8 +1639,8 @@ public partial class MainWindow : Window, Tools.IViewportController
     private void DockerHeaderPointerReleased(string id, Control header, PointerReleasedEventArgs e)
     {
         if (_draggingDockerId != id) return;
-        // Accept -1 (left column) or >= 0 (right column)
-        if (_isDockerDragging && _dockerDropColumn >= -1 && _dockerDropIndex != 0)
+        // Accept left column (-1), right column (>=0), or special tabs/splits (< 0)
+        if (_isDockerDragging && _dockerDropColumn >= -1)
             ApplyDockerDrop(id, _dockerDropColumn, _dockerDropIndex);
         CancelDockerDrag();
         e.Pointer.Capture(null);
@@ -1822,7 +1849,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private void ApplyDockerDrop(string id, int columnIndex, int insertionIndex)
     {
         SaveWorkspaceLayoutFromUi();
-        var layout = NormalizedWorkspaceLayout();
+        var layout = App.Config.WorkspaceLayout;
 
         foreach (var column in layout.RightColumns)
             column.PanelIds.Remove(id);
@@ -1947,86 +1974,6 @@ public partial class MainWindow : Window, Tools.IViewportController
     private static string DockerTitle(string id)
         => PanelRegistry.Get(id)?.Title ?? id;
 
-    private WorkspaceLayout NormalizedWorkspaceLayout()
-    {
-        var layout = App.Config.WorkspaceLayout ??= WorkspaceLayout.CreateDefault();
-        if (layout.RightColumns.Count < 2)
-            layout.RightColumns = WorkspaceLayout.CreateDefault().RightColumns;
-        layout.BottomColumn ??= WorkspaceLayout.CreateDefault().BottomColumn;
-
-        var known = new HashSet<string>(PanelRegistry.AllIds);
-        foreach (var column in layout.RightColumns)
-            column.PanelIds = column.PanelIds.Where(known.Contains).Distinct().ToList();
-        layout.LeftColumn.PanelIds = layout.LeftColumn.PanelIds.Where(known.Contains).Distinct().ToList();
-        layout.BottomColumn.PanelIds = layout.BottomColumn.PanelIds.Where(known.Contains).Distinct().ToList();
-
-        foreach (var id in known)
-        {
-            if (layout.RightColumns.Any(c => c.PanelIds.Contains(id))) continue;
-            if (layout.LeftColumn.PanelIds.Contains(id)) continue;
-            if (layout.BottomColumn.PanelIds.Contains(id)) continue;
-            if (layout.FloatingPanels.ContainsKey(id)) continue;
-
-            var def = PanelRegistry.Get(id);
-            var zone = def?.DefaultZone ?? "right-0";
-
-            if (zone == "left")
-                layout.LeftColumn.PanelIds.Add(id);
-            else if (zone == "bottom")
-                layout.BottomColumn.PanelIds.Add(id);
-            else if (zone.StartsWith("right-") && int.TryParse(zone.AsSpan(6), out var rightIdx)
-                     && rightIdx < layout.RightColumns.Count)
-                layout.RightColumns[rightIdx].PanelIds.Add(id);
-            else
-                layout.RightColumns[0].PanelIds.Add(id);
-        }
-
-        // Deduplicate: panels that ended up in multiple columns (e.g. from old
-        // configs where BottomColumn didn't exist) should be kept in the column
-        // matching their DefaultZone.
-        foreach (var id in known)
-        {
-            var inRight = layout.RightColumns.Where(c => c.ContainsPanel(id)).ToList();
-            var inLeft = layout.LeftColumn.ContainsPanel(id);
-            var inBottom = layout.BottomColumn.ContainsPanel(id);
-            var placementCount = inRight.Count + (inLeft ? 1 : 0) + (inBottom ? 1 : 0);
-            if (placementCount <= 1) continue;
-
-            var def = PanelRegistry.Get(id);
-            var zone = def?.DefaultZone ?? "right-0";
-
-            if (zone == "bottom" && inBottom)
-            {
-                foreach (var c in inRight) c.RemovePanel(id);
-                if (inLeft) layout.LeftColumn.RemovePanel(id);
-            }
-            else if (zone == "left" && inLeft)
-            {
-                foreach (var c in inRight) c.RemovePanel(id);
-                if (inBottom) layout.BottomColumn.RemovePanel(id);
-            }
-            else
-            {
-                // Keep in first matching RightColumn, remove from others
-                var keepCol = inRight.FirstOrDefault();
-                if (keepCol == null)
-                {
-                    // Panel is in both left and bottom — keep in left (override)
-                    if (inLeft && inBottom) layout.BottomColumn.RemovePanel(id);
-                }
-                else
-                {
-                    if (inLeft) layout.LeftColumn.RemovePanel(id);
-                    if (inBottom) layout.BottomColumn.RemovePanel(id);
-                    foreach (var c in inRight)
-                        if (c != keepCol) c.RemovePanel(id);
-                }
-            }
-        }
-
-        return layout;
-    }
-
     private bool IsDockerFloating(string id)
         => App.Config.WorkspaceLayout.FloatingPanels.TryGetValue(id, out var f) && f.IsFloating;
 
@@ -2092,7 +2039,7 @@ public partial class MainWindow : Window, Tools.IViewportController
             return;
         }
 
-        var layout = NormalizedWorkspaceLayout();
+        var layout = App.Config.WorkspaceLayout;
         if (layout.HiddenPanelIds.Contains(id))
             layout.HiddenPanelIds.Remove(id);
         else
@@ -2105,7 +2052,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     {
         if (id == "node-graph")
             return _nodeGraphDockVisible;
-        return !NormalizedWorkspaceLayout().HiddenPanelIds.Contains(id);
+        return !App.Config.WorkspaceLayout.HiddenPanelIds.Contains(id);
     }
 
     private void RefreshDockersMenu(MenuItem dockersMenu)
@@ -2126,7 +2073,7 @@ public partial class MainWindow : Window, Tools.IViewportController
 
     private (DockColumnLayout Column, int ColumnIndex, int PanelIndex)? FindDockerPlacement(string id)
     {
-        var layout = NormalizedWorkspaceLayout();
+        var layout = App.Config.WorkspaceLayout;
         var leftIdx = layout.LeftColumn.PanelIds.IndexOf(id);
         if (leftIdx >= 0)
             return (layout.LeftColumn, -1, leftIdx);
@@ -2159,7 +2106,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         var placement = FindDockerPlacement(id);
         if (placement == null) return;
         var (column, columnIndex, panelIndex) = placement.Value;
-        var layout = NormalizedWorkspaceLayout();
+        var layout = App.Config.WorkspaceLayout;
 
         column.PanelIds.RemoveAt(panelIndex);
 
@@ -2184,7 +2131,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private void DockDockerToColumn(string id, int columnIndex)
     {
         SaveWorkspaceLayoutFromUi();
-        var layout = NormalizedWorkspaceLayout();
+        var layout = App.Config.WorkspaceLayout;
 
         foreach (var column in layout.RightColumns)
             column.PanelIds.Remove(id);
@@ -2241,7 +2188,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private void SplitPanelHorizontal(string sourceId, string targetId)
     {
         SaveWorkspaceLayoutFromUi();
-        var layout = NormalizedWorkspaceLayout();
+        var layout = App.Config.WorkspaceLayout;
 
         DockColumnLayout? sourceCol = null;
         if (layout.LeftColumn.ContainsPanel(sourceId)) sourceCol = layout.LeftColumn;
@@ -2488,7 +2435,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private void SyncLeftColumnWidth()
     {
         if (_rootGrid == null || _rootGrid.ColumnDefinitions.Count < 1) return;
-        var layout = NormalizedWorkspaceLayout();
+        var layout = App.Config.WorkspaceLayout;
         var hasFullPanels = layout.LeftColumn.PanelIds.Any(id => id != "tools");
         if (hasFullPanels)
         {
@@ -2526,8 +2473,10 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         _dockerRows.Clear();
 
-        // Clear section cache for panels that were removed (floated/deleted)
-        // Sections for panels that are still visible are preserved in _dockerSections.
+        // Detach all cached sections before rebuilding to prevent "already has parent" errors
+        // when sections are reparented by GetOrCreatePanelSection during the rebuild.
+        foreach (var kv in _dockerSections)
+            DetachFromVisualParent(kv.Value);
 
         // Rebuild left column
         if (_leftRail != null)
@@ -2570,7 +2519,7 @@ public partial class MainWindow : Window, Tools.IViewportController
 
     private void SaveWorkspaceLayoutFromUi()
     {
-        var layout = NormalizedWorkspaceLayout();
+        var layout = App.Config.WorkspaceLayout;
         if (_rootGrid != null && _rootGrid.ColumnDefinitions.Count > 4)
         {
             if (_rootGrid.ColumnDefinitions[0].ActualWidth > 0)
@@ -2598,7 +2547,7 @@ public partial class MainWindow : Window, Tools.IViewportController
 
     private void SavePanelProportions()
     {
-        var layout = NormalizedWorkspaceLayout();
+        var layout = App.Config.WorkspaceLayout;
 
         // Collect all visible row IDs per column (solo panel IDs + tab group first-panel IDs)
         var columnRows = new Dictionary<int, List<string>>();
