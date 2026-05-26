@@ -211,14 +211,13 @@ internal static class AlphaLockPixelOps
     public static bool TryWriteColor(
         TiledPixelBuffer pixels, int x, int y,
         byte srcB, byte srcG, byte srcR, byte srcA,
-        bool alphaLocked)
+        bool alphaLocked,
+        SKBlendMode blendMode = SKBlendMode.SrcOver)
     {
+        if (srcA == 0) return false;
         pixels.GetPixel(x, y, out byte db, out byte dg, out byte dr, out byte da);
         if (alphaLocked && da == 0) return false;
-        if (srcA == 255)
-            SetColor(ref db, ref dg, ref dr, ref da, srcB, srcG, srcR, srcA, alphaLocked);
-        else
-            BlendSrcOverColor(ref db, ref dg, ref dr, ref da, srcB, srcG, srcR, srcA, alphaLocked);
+        CompositeBrushPixel(ref db, ref dg, ref dr, ref da, srcB, srcG, srcR, srcA, alphaLocked, blendMode);
         pixels.SetPixel(x, y, db, dg, dr, da);
         return true;
     }

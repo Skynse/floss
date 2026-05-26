@@ -25,6 +25,9 @@ public sealed class ClosedAreaFillOutput : IOutputProcess
 
         var points = poly.SmoothedPoints;
         var color = ctx.PaintColor;
+        var brushOpacity = ctx.Brush != null ? Math.Clamp(ctx.Brush.Opacity, 0.0, 1.0) : 1.0;
+        var blendMode = ctx.Brush?.BlendMode ?? SKBlendMode.SrcOver;
+        var effectiveA = (byte)Math.Round(color.A * brushOpacity);
 
         using var skPath = new SKPath();
         skPath.MoveTo((float)points[0].X, (float)points[0].Y);
@@ -54,7 +57,7 @@ public sealed class ClosedAreaFillOutput : IOutputProcess
 
                 using var paint = new SKPaint
                 {
-                    Color = new SKColor(color.R, color.G, color.B, color.A),
+                    Color = new SKColor(color.R, color.G, color.B, effectiveA),
                     IsAntialias = true,
                     Style = SKPaintStyle.Fill
                 };
@@ -76,7 +79,7 @@ public sealed class ClosedAreaFillOutput : IOutputProcess
                         if (skColor.Alpha == 0) continue;
 
                         if (AlphaLockPixelOps.TryWriteColor(layer.Pixels, lx, ly,
-                                skColor.Blue, skColor.Green, skColor.Red, skColor.Alpha, layer.IsAlphaLocked))
+                                skColor.Blue, skColor.Green, skColor.Red, skColor.Alpha, layer.IsAlphaLocked, blendMode))
                         {
                             changed = true;
                             minX = Math.Min(minX, docX);
@@ -104,7 +107,7 @@ public sealed class ClosedAreaFillOutput : IOutputProcess
                     int ly = docY - layer.OffsetY;
 
                     if (AlphaLockPixelOps.TryWriteColor(layer.Pixels, lx, ly,
-                            color.B, color.G, color.R, color.A, layer.IsAlphaLocked))
+                            color.B, color.G, color.R, effectiveA, layer.IsAlphaLocked, blendMode))
                     {
                         changed = true;
                         minX = Math.Min(minX, docX);

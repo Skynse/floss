@@ -50,6 +50,9 @@ public sealed class FloodFillOutput : IOutputProcess
         }
 
         var fillColor = ctx.PaintColor;
+        var brushOpacity = ctx.Brush != null ? Math.Clamp(ctx.Brush.Opacity, 0.0, 1.0) : 1.0;
+        var blendMode = ctx.Brush?.BlendMode ?? SKBlendMode.SrcOver;
+        var effectiveA = (byte)Math.Round(fillColor.A * brushOpacity);
         var toleranceSq = (int)(Tolerance * 255 * Tolerance * 255 * 4);
 
         var beforeTiles = layer.Pixels.CaptureTiles(layer.Pixels.Bounds);
@@ -98,7 +101,7 @@ public sealed class FloodFillOutput : IOutputProcess
             var lx = x - layer.OffsetX;
             var ly = y - layer.OffsetY;
             if (AlphaLockPixelOps.TryWriteColor(layer.Pixels, lx, ly,
-                    fillColor.B, fillColor.G, fillColor.R, fillColor.A, layer.IsAlphaLocked))
+                    fillColor.B, fillColor.G, fillColor.R, effectiveA, layer.IsAlphaLocked, blendMode))
             {
                 changed = true;
                 minX = Math.Min(minX, x); minY = Math.Min(minY, y);

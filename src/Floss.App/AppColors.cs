@@ -36,7 +36,10 @@ public static class AppColors
     public const string Danger  = "#da3633";
 
     // ── Slider ───────────────────────────────────────────────────────────
-    public const string SliderTrack = "#181818";
-    public const string SliderFill  = "#4f78b8";
-    public const string SliderThumb = "#88a6d4";
+    public const string SliderTrack      = "#141414";
+    public const string SliderFill       = "#3a6bc9";
+    public const string SliderFillHover  = "#4a7de0";
+    public const string SliderFillActive = "#5a8ef5";
+    public const string SliderThumb      = "#88a6d4";
+    public const string SliderThumbLine  = "#7aa4ec";
 }

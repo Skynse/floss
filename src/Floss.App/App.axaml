@@ -163,71 +163,65 @@
             <Setter Property="Background" Value="{StaticResource Bg2}"/>
         </Style>
 
-        <!-- ── Horizontal slider — modern rounded track ─────────────────── -->
+        <!-- ── Horizontal slider — flat scrub bar ──────────────────────── -->
+        <!--
+            Click-anywhere + drag-anywhere works via Avalonia's Slider internals:
+            Slider.OnApplyTemplate attaches TrackPressed (→ MoveToPoint) to BOTH
+            PART_DecreaseButton and PART_IncreaseButton using Tunnel routing, and
+            TrackMoved (→ MoveToPoint while dragging) to the Slider itself.
+            RepeatButtons MUST remain hit-testable or Tunnel never fires.
+        -->
         <Style Selector="Slider:horizontal">
             <Setter Property="Background" Value="{StaticResource SliderTrack}"/>
-            <Setter Property="MinHeight" Value="18"/>
-            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="MinHeight" Value="20"/>
+            <Setter Property="MaxHeight" Value="20"/>
+            <Setter Property="Cursor" Value="SizeWestEast"/>
+            <Setter Property="Padding" Value="0"/>
             <Setter Property="Template">
                 <ControlTemplate>
-                    <Grid MinHeight="20" VerticalAlignment="Center">
-                        <Border VerticalAlignment="Center" Height="4" CornerRadius="2"
-                                Background="{TemplateBinding Background}"
-                                IsHitTestVisible="False"/>
+                    <Border Background="{TemplateBinding Background}"
+                            Height="20" ClipToBounds="True">
                         <Track Name="PART_Track" Orientation="Horizontal"
                                Minimum="{TemplateBinding Minimum}"
                                Maximum="{TemplateBinding Maximum}"
                                Value="{TemplateBinding Value, Mode=TwoWay}">
                             <Track.DecreaseButton>
-                                <RepeatButton Name="PART_DecreaseButton" Focusable="False" Cursor="Hand">
+                                <RepeatButton Name="PART_DecreaseButton" Focusable="False">
                                     <RepeatButton.Template>
                                         <ControlTemplate>
-                                            <Border Name="Fill" Height="4" VerticalAlignment="Center"
-                                                    CornerRadius="2,0,0,2" Background="{StaticResource SliderFill}"/>
+                                            <Border Name="Fill" Background="{StaticResource SliderFill}"/>
                                         </ControlTemplate>
                                     </RepeatButton.Template>
                                 </RepeatButton>
                             </Track.DecreaseButton>
                             <Track.Thumb>
-                                <Thumb Cursor="Hand" Width="14" Height="14">
+                                <Thumb Width="2" Cursor="SizeWestEast">
                                     <Thumb.Template>
                                         <ControlTemplate>
-                                            <Grid Width="14" Height="14">
-                                                <Ellipse Width="12" Height="12"
-                                                         Fill="{StaticResource SliderThumb}"
-                                                         Stroke="{StaticResource Bg1}"
-                                                         StrokeThickness="1"/>
-                                            </Grid>
+                                            <Border Width="2" Background="{StaticResource SliderThumbLine}"/>
                                         </ControlTemplate>
                                     </Thumb.Template>
                                 </Thumb>
                             </Track.Thumb>
                             <Track.IncreaseButton>
-                                <RepeatButton Name="PART_IncreaseButton" Focusable="False" Cursor="Hand">
+                                <RepeatButton Name="PART_IncreaseButton" Focusable="False">
                                     <RepeatButton.Template>
                                         <ControlTemplate>
-                                            <Border Height="8" VerticalAlignment="Center"
-                                                    Background="Transparent"/>
+                                            <Border Background="Transparent"/>
                                         </ControlTemplate>
                                     </RepeatButton.Template>
                                 </RepeatButton>
                             </Track.IncreaseButton>
                         </Track>
-                    </Grid>
+                    </Border>
                 </ControlTemplate>
             </Setter>
         </Style>
         <Style Selector="Slider:horizontal:pointerover /template/ RepeatButton#PART_DecreaseButton /template/ Border#Fill">
-            <Setter Property="Background" Value="#4d82ec"/>
+            <Setter Property="Background" Value="{StaticResource SliderFillHover}"/>
         </Style>
         <Style Selector="Slider:horizontal:pressed /template/ RepeatButton#PART_DecreaseButton /template/ Border#Fill">
-            <Setter Property="Background" Value="#5a90f5"/>
-        </Style>
-        <Style Selector="Slider:horizontal:pointerover /template/ Thumb /template/ Ellipse">
-            <Setter Property="Fill" Value="#90b4f8"/>
-        </Style>
-        <Style Selector="Slider:horizontal:pressed /template/ Thumb /template/ Ellipse">
-            <Setter Property="Fill" Value="#a8c4fa"/>
+            <Setter Property="Background" Value="{StaticResource SliderFillActive}"/>
         </Style>
 
         <!-- ── ScrollBar ───────────────────────────────────────────────── -->
@@ -246,6 +240,31 @@
         </Style>
         <Style Selector="ListBoxItem:pointerover">
             <Setter Property="Background" Value="{StaticResource Bg2}"/>
+        </Style>
+
+        <!-- ── Section header label ────────────────────────────────────── -->
+        <!-- Usage: <TextBlock Classes="section-header" Text="COLOR"/> -->
+        <Style Selector="TextBlock.section-header">
+            <Setter Property="FontSize"     Value="10"/>
+            <Setter Property="FontWeight"   Value="SemiBold"/>
+            <Setter Property="Foreground"   Value="{StaticResource TextMuted}"/>
+            <Setter Property="LetterSpacing" Value="1.5"/>
+            <Setter Property="Margin"       Value="0,0,0,5"/>
+        </Style>
+
+        <!-- ── Panel separator rule ────────────────────────────────────── -->
+        <!-- Usage: <Separator/> or <Border Classes="rule"/> -->
+        <Style Selector="Separator">
+            <Setter Property="Background" Value="{StaticResource Stroke}"/>
+            <Setter Property="Height"     Value="1"/>
+            <Setter Property="Margin"     Value="0,6"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+        </Style>
+        <Style Selector="Border.rule">
+            <Setter Property="Background" Value="{StaticResource Stroke}"/>
+            <Setter Property="Height"     Value="1"/>
+            <Setter Property="Margin"     Value="0,6"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
         </Style>
 
     </Application.Styles>

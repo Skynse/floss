@@ -49,8 +49,9 @@ public static class FlossFileFormat
             }
         }
 
-        WriteMergedImage(archive, document, "mergedimage.png");
-        WriteMergedImage(archive, document, "preview.png", maxSide: 512);
+        using var merged = DocumentRasterizer.RenderFlattenedBitmap(document);
+        WriteMergedImage(archive, merged, "mergedimage.png");
+        WriteMergedImage(archive, merged, "preview.png", maxSide: 512);
     }
 
     public static LoadedDocument LoadDocument(Stream stream)
@@ -255,17 +256,24 @@ public static class FlossFileFormat
         layer.MarkThumbnailDirty();
     }
 
-    private static void WriteMergedImage(ZipArchive archive, DrawingDocument document, string path, int? maxSide = null)
+    private static void WriteMergedImage(ZipArchive archive, SKBitmap source, string path, int? maxSide = null)
     {
-        using var bitmap = DocumentRasterizer.RenderFlattenedBitmap(document);
-        using var output = maxSide.HasValue ? ResizeForPreview(bitmap, maxSide.Value) : bitmap.Copy();
-        using var image = SKImage.FromBitmap(output);
-        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
-        if (data == null) return;
+        SKBitmap? owned = null;
+        var bitmap = maxSide.HasValue ? owned = ResizeForPreview(source, maxSide.Value) : source;
+        try
+        {
+            using var image = SKImage.FromBitmap(bitmap);
+            using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+            if (data == null) return;
 
-        var entry = archive.CreateEntry(path, CompressionLevel.Optimal);
-        using var entryStream = entry.Open();
-        data.SaveTo(entryStream);
+            var entry = archive.CreateEntry(path, CompressionLevel.NoCompression);
+            using var entryStream = entry.Open();
+            data.SaveTo(entryStream);
+        }
+        finally
+        {
+            owned?.Dispose();
+        }
     }
 
     private static SKBitmap ResizeForPreview(SKBitmap source, int maxSide)

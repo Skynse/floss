@@ -27,6 +27,9 @@ public sealed class StrokeOutput : IOutputProcess
         if (layer == null || layer.IsGroup || layer.IsLocked) return;
 
         var color = ctx.PaintColor;
+        var brushOpacity = ctx.Brush != null ? Math.Clamp(ctx.Brush.Opacity, 0.0, 1.0) : 1.0;
+        var blendMode = ctx.Brush?.BlendMode ?? SKBlendMode.SrcOver;
+        var effectiveA = (byte)Math.Round(color.A * brushOpacity);
         var points = new System.Collections.Generic.List<CanvasInputSample>();
 
         switch (input)
@@ -65,13 +68,13 @@ public sealed class StrokeOutput : IOutputProcess
 
         using var fillPaint = new SKPaint
         {
-            Color = new SKColor(color.R, color.G, color.B, color.A),
+            Color = new SKColor(color.R, color.G, color.B, effectiveA),
             IsAntialias = Antialiasing,
             Style = SKPaintStyle.Fill
         };
         using var strokePaint = new SKPaint
         {
-            Color = new SKColor(color.R, color.G, color.B, color.A),
+            Color = new SKColor(color.R, color.G, color.B, effectiveA),
             StrokeWidth = StrokeWidth,
             IsAntialias = Antialiasing,
             Style = SKPaintStyle.Stroke,
@@ -119,7 +122,7 @@ public sealed class StrokeOutput : IOutputProcess
                 if (skColor.Alpha == 0) continue;
 
                 if (AlphaLockPixelOps.TryWriteColor(layer.Pixels, lx, ly,
-                        skColor.Blue, skColor.Green, skColor.Red, skColor.Alpha, layer.IsAlphaLocked))
+                        skColor.Blue, skColor.Green, skColor.Red, skColor.Alpha, layer.IsAlphaLocked, blendMode))
                     changed = true;
             }
         }

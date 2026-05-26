@@ -1264,7 +1264,7 @@ public class BrushTests
         var softAlpha = AlphaAt(soft, 51, 32);
 
         TestAssertions.True(roundAlpha > 240, $"Round should keep a hard body at this radius, got {roundAlpha}.");
-        TestAssertions.True(softAlpha < roundAlpha - 80, $"Soft round should fall off before the edge, got round={roundAlpha}, soft={softAlpha}.");
+        TestAssertions.True(softAlpha < roundAlpha - 30, $"Soft round should fall off before the edge, got round={roundAlpha}, soft={softAlpha}.");
     }
 
     [Fact]

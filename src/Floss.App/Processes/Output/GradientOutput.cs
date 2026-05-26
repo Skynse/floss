@@ -28,6 +28,9 @@ public sealed class GradientOutput : IOutputProcess
         var x2 = drag.Current.X;
         var y2 = drag.Current.Y;
         var color = ctx.PaintColor;
+        var brushOpacity = ctx.Brush != null ? Math.Clamp(ctx.Brush.Opacity, 0.0, 1.0) : 1.0;
+        var blendMode = ctx.Brush?.BlendMode ?? SKBlendMode.SrcOver;
+        var effectiveA = (byte)Math.Round(color.A * brushOpacity);
 
         var beforeTiles = layer.Pixels.CaptureTiles(layer.Pixels.Bounds);
         bool changed = false;
@@ -42,7 +45,7 @@ public sealed class GradientOutput : IOutputProcess
             paint.Shader = SKShader.CreateLinearGradient(
                 new SKPoint((float)(x1 - layer.OffsetX), (float)(y1 - layer.OffsetY)),
                 new SKPoint((float)(x2 - layer.OffsetX), (float)(y2 - layer.OffsetY)),
-                new[] { new SKColor(color.R, color.G, color.B, color.A), SKColors.Transparent },
+                new[] { new SKColor(color.R, color.G, color.B, effectiveA), SKColors.Transparent },
                 new[] { 0f, 1f },
                 SKShaderTileMode.Clamp);
         }
@@ -54,7 +57,7 @@ public sealed class GradientOutput : IOutputProcess
                 Math.Pow(x2 - x1, 2) + Math.Pow(y2 - y1, 2));
             paint.Shader = SKShader.CreateRadialGradient(
                 new SKPoint(cx, cy), radius,
-                new[] { new SKColor(color.R, color.G, color.B, color.A), SKColors.Transparent },
+                new[] { new SKColor(color.R, color.G, color.B, effectiveA), SKColors.Transparent },
                 new[] { 0f, 1f },
                 SKShaderTileMode.Clamp);
         }
@@ -74,7 +77,7 @@ public sealed class GradientOutput : IOutputProcess
                 if (skColor.Alpha == 0) continue;
 
                 if (AlphaLockPixelOps.TryWriteColor(layer.Pixels, lx, ly,
-                        skColor.Blue, skColor.Green, skColor.Red, skColor.Alpha, layer.IsAlphaLocked))
+                        skColor.Blue, skColor.Green, skColor.Red, skColor.Alpha, layer.IsAlphaLocked, blendMode))
                     changed = true;
             }
         }

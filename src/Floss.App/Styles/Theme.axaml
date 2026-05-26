@@ -31,9 +31,12 @@
     <Color x:Key="Danger">#da3633</Color>
 
     <!-- Slider -->
-    <Color x:Key="SliderTrack">#181818</Color>
-    <Color x:Key="SliderFill">#4f78b8</Color>
+    <Color x:Key="SliderTrack">#141414</Color>
+    <Color x:Key="SliderFill">#3a6bc9</Color>
+    <Color x:Key="SliderFillHover">#4a7de0</Color>
+    <Color x:Key="SliderFillActive">#5a8ef5</Color>
     <Color x:Key="SliderThumb">#88a6d4</Color>
+    <Color x:Key="SliderThumbLine">#7aa4ec</Color>
 
     <!-- ── Brushes (convenience) ────────────────────────────────────────── -->
     <SolidColorBrush x:Key="Bg0Brush"         Color="{StaticResource Bg0}"/>

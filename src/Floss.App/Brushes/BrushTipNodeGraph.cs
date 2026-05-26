@@ -39,6 +39,10 @@ public enum BrushTipNodeKind
     Absolute,
     Mix,
     Invert,
+    TextureStamp,
+    Erosion,
+    DirectionalBlur,
+    RaggedEdge,
 }
 
 public sealed class BrushTipNode
@@ -538,7 +542,12 @@ public sealed class NodeBrushTip : IBrushTip, IDisposable
 public static class BrushTipNodeGraphEvaluator
 {
     public static bool CanEvaluateViaStamp(BrushTipNodeGraph graph, IReadOnlyList<BrushTipData>? materialTips = null)
-        => !GraphUsesColor(graph, materialTips) && !graph.ContainsImageSampler(materialTips);
+        => !GraphUsesColor(graph, materialTips)
+        && !graph.ContainsImageSampler(materialTips)
+        && !graph.Nodes.Exists(n => n.Kind is BrushTipNodeKind.TextureStamp
+            or BrushTipNodeKind.Erosion
+            or BrushTipNodeKind.DirectionalBlur
+            or BrushTipNodeKind.RaggedEdge);
 
     public static unsafe SKBitmap Evaluate(BrushTipNodeGraph graph, int size, float brushHardness, IReadOnlyList<BrushTipData>? materialTips = null)
     {
@@ -581,8 +590,8 @@ public static class BrushTipNodeGraphEvaluator
                 BrushTipNodeKind.Value => Scalar(Constant(node)),
                 BrushTipNodeKind.DistanceField => Scalar(DistanceField(node, stack)),
                 BrushTipNodeKind.BoxDistanceField => Scalar(BoxDistanceField(node, stack)),
-                BrushTipNodeKind.Circle => Scalar(Circle(node)),
-                BrushTipNodeKind.Rectangle => Scalar(Rectangle(node)),
+                BrushTipNodeKind.Circle => Scalar(Circle(node, stack)),
+                BrushTipNodeKind.Rectangle => Scalar(Rectangle(node, stack)),
                 BrushTipNodeKind.LinearGradient => Scalar(LinearGradient(node, stack)),
                 BrushTipNodeKind.Stripe => Scalar(Stripe(node, stack)),
                 BrushTipNodeKind.ImageSampler => Scalar(ImageSampler(node, materialTips)),
@@ -600,7 +609,11 @@ public static class BrushTipNodeGraphEvaluator
                 BrushTipNodeKind.Absolute => Scalar(Unary(node, stack, v => Math.Abs(v - node.X) * Math.Clamp(node.Opacity, 0f, 1f))),
                 BrushTipNodeKind.Mix => Scalar(Mix(node, stack)),
                 BrushTipNodeKind.Invert => Scalar(Invert(node, stack)),
-                BrushTipNodeKind.RoundedRectangle => Scalar(RoundedRect(node)),
+                BrushTipNodeKind.RoundedRectangle => Scalar(RoundedRect(node, stack)),
+                BrushTipNodeKind.TextureStamp => Scalar(TextureStamp(node, materialTips)),
+                BrushTipNodeKind.Erosion => Scalar(Erosion(node, stack)),
+                BrushTipNodeKind.DirectionalBlur => Scalar(DirectionalBlur(node, stack)),
+                BrushTipNodeKind.RaggedEdge => Scalar(RaggedEdge(node, stack)),
                 _ => NodeSample.Zero(size)
             };
             stack.Remove(id);
@@ -747,19 +760,23 @@ public static class BrushTipNodeGraphEvaluator
             return result;
         }
 
-        float[] Circle(BrushTipNode node)
+        float[] Circle(BrushTipNode node, HashSet<string> stack)
         {
             var result = new float[size * size];
             var rx = Math.Max(0.001f, node.Radius * Math.Max(0.01f, node.Width));
             var ry = Math.Max(0.001f, node.Radius * Math.Max(0.01f, node.Height));
             var hard = CombinedHardness(node, brushHardness);
-            FillAnalytic(node, result, (x, y) =>
+            Func<float, float, float> alphaAt = (x, y) =>
             {
                 var dx = (x - node.X) / rx;
                 var dy = (y - node.Y) / ry;
                 var t = MathF.Sqrt(dx * dx + dy * dy);
                 return Falloff(t, hard) * Math.Clamp(node.Opacity, 0f, 1f);
-            });
+            };
+            if (node.Inputs.Count > 0)
+                FillWithCoordinates(node, result, stack, alphaAt);
+            else
+                FillAnalytic(node, result, alphaAt);
             return result;
         }
 
@@ -791,23 +808,27 @@ public static class BrushTipNodeGraphEvaluator
             return result;
         }
 
-        float[] Rectangle(BrushTipNode node)
+        float[] Rectangle(BrushTipNode node, HashSet<string> stack)
         {
             var result = new float[size * size];
             var halfW = Math.Max(0.001f, node.Width * 0.5f);
             var halfH = Math.Max(0.001f, node.Height * 0.5f);
             var hard = CombinedHardness(node, brushHardness);
-            FillAnalytic(node, result, (x, y) =>
+            Func<float, float, float> alphaAt = (x, y) =>
             {
                 var dx = MathF.Abs(x - node.X) / halfW;
                 var dy = MathF.Abs(y - node.Y) / halfH;
                 var t = MathF.Max(dx, dy);
                 return Falloff(t, hard) * Math.Clamp(node.Opacity, 0f, 1f);
-            });
+            };
+            if (node.Inputs.Count > 0)
+                FillWithCoordinates(node, result, stack, alphaAt);
+            else
+                FillAnalytic(node, result, alphaAt);
             return result;
         }
 
-        float[] RoundedRect(BrushTipNode node)
+        float[] RoundedRect(BrushTipNode node, HashSet<string> stack)
         {
             var result = new float[size * size];
             var halfW = Math.Max(0.001f, node.Width * 0.5f);
@@ -815,7 +836,7 @@ public static class BrushTipNodeGraphEvaluator
             var corner = Math.Clamp(node.Radius, 0f, Math.Min(halfW, halfH));
             var hard = CombinedHardness(node, brushHardness);
             var invRange = 1f / Math.Max(0.001f, Math.Min(halfW, halfH));
-            FillAnalytic(node, result, (x, y) =>
+            Func<float, float, float> alphaAt = (x, y) =>
             {
                 var ax = MathF.Abs(x - node.X);
                 var ay = MathF.Abs(y - node.Y);
@@ -829,7 +850,11 @@ public static class BrushTipNodeGraphEvaluator
                 var cornerDist = MathF.Sqrt(cx * cx + cy * cy);
                 var cornerT = (cornerDist - corner) * invRange + 1f;
                 return Falloff(Math.Clamp(cornerT, 0f, 1f), hard) * Math.Clamp(node.Opacity, 0f, 1f);
-            });
+            };
+            if (node.Inputs.Count > 0)
+                FillWithCoordinates(node, result, stack, alphaAt);
+            else
+                FillAnalytic(node, result, alphaAt);
             return result;
         }
 
@@ -955,6 +980,98 @@ public static class BrushTipNodeGraphEvaluator
             return result;
         }
 
+        float[] TextureStamp(BrushTipNode node, IReadOnlyList<BrushTipData>? tips)
+        {
+            var png = BrushMaterialTips.ResolveSamplerPng(node, tips);
+            if (png.Length == 0) return new float[size * size];
+            using var tip = new ImageBrushTip(png);
+            var stamp = tip.GenerateMask(size, 1f); // always full-res, scaling handled later
+            var scale = Math.Clamp(node.Scale, 0.05f, 8f);
+            var density = Math.Clamp(node.Density, 0f, 1f);
+            var result = new float[size * size];
+            unsafe
+            {
+                var px = (byte*)stamp.GetPixels().ToPointer();
+                int stride = stamp.RowBytes;
+                for (int y = 0; y < size; y++)
+                {
+                    int srcY = (int)(y * scale) % size;
+                    for (int x = 0; x < size; x++)
+                    {
+                        int srcX = (int)(x * scale) % size;
+                        float a = px[srcY * stride + srcX] / 255f;
+                        result[y * size + x] = Math.Clamp(a * density, 0f, 1f);
+                    }
+                }
+            }
+            return result;
+        }
+
+        float[] Erosion(BrushTipNode node, HashSet<string> stack)
+        {
+            var input = EvalScalarInput(node, 0, stack);
+            var radius = Math.Max(1, (int)(Math.Clamp(node.Radius, 0f, 1f) * size * 0.25f));
+            var result = new float[size * size];
+            for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                float min = 1f;
+                for (int dy = -radius; dy <= radius; dy++)
+                for (int dx = -radius; dx <= radius; dx++)
+                {
+                    int nx = x + dx, ny = y + dy;
+                    if ((uint)nx >= (uint)size || (uint)ny >= (uint)size) continue;
+                    if (MathF.Sqrt(dx * dx + dy * dy) > radius) continue;
+                    min = MathF.Min(min, input[ny * size + nx]);
+                    if (min == 0) break;
+                }
+            }
+            return result;
+        }
+
+        float[] DirectionalBlur(BrushTipNode node, HashSet<string> stack)
+        {
+            var input = EvalScalarInput(node, 0, stack);
+            var rad = node.RotationDegrees * MathF.PI / 180f;
+            var dirX = MathF.Cos(rad);
+            var dirY = MathF.Sin(rad);
+            var radius = Math.Max(1, (int)(Math.Clamp(node.Radius, 0f, 1f) * size * 0.3f));
+            var result = new float[size * size];
+            for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                float sum = 0, count = 0;
+                for (int s = -radius; s <= radius; s++)
+                {
+                    int nx = x + (int)(dirX * s + 0.5f);
+                    int ny = y + (int)(dirY * s + 0.5f);
+                    if ((uint)nx >= (uint)size || (uint)ny >= (uint)size) continue;
+                    sum += input[ny * size + nx];
+                    count++;
+                }
+                result[y * size + x] = count > 0 ? sum / count : input[y * size + x];
+            }
+            return result;
+        }
+
+        float[] RaggedEdge(BrushTipNode node, HashSet<string> stack)
+        {
+            var input = EvalScalarInput(node, 0, stack);
+            var freq = Math.Clamp(node.Scale, 0.5f, 64f);
+            var strength = Math.Clamp(node.Density, 0f, 1f);
+            var result = new float[size * size];
+            for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                float alpha = input[y * size + x];
+                if (alpha <= 0f || alpha >= 1f) { result[y * size + x] = alpha; continue; }
+                float noise = (Hash01(x, y, node.Seed) - 0.35f) * 1.54f; // roughly [-0.54, 1.0]
+                float edge = alpha - noise * strength * (1f - alpha);
+                result[y * size + x] = Math.Clamp(edge, 0f, 1f);
+            }
+            return result;
+        }
+
         void FillAnalytic(BrushTipNode node, float[] result, Func<float, float, float> alphaAt)
         {
             var radians = -node.RotationDegrees * MathF.PI / 180f;
@@ -1042,7 +1159,9 @@ public static class BrushTipNodeGraphEvaluator
         if (t >= 1f) return 0f;
         if (t <= hardness) return 1f;
         var fade = (t - hardness) / Math.Max(0.001f, 1f - hardness);
-        return (MathF.Cos(fade * MathF.PI) + 1f) * 0.5f;
+        var smooth = fade * fade * (3f - 2f * fade);
+        var exponent = 1f + hardness * 5f;
+        return 1f - MathF.Pow(smooth, exponent);
     }
 
     private static float Hash01(int x, int y, int seed)
@@ -1406,6 +1525,7 @@ public static class BrushTipNodeGraphEvaluator
             }
             return new ColorField(r, g, b, a, input.HasColor);
         }
+
     }
 
     private sealed class ColorField(float[] r, float[] g, float[] b, float[] a, bool hasColor)

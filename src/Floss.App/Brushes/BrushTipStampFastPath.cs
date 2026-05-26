@@ -220,6 +220,8 @@ public static class BrushTipStampFastPath
         if (t >= 1f) return 0f;
         if (t <= hardness) return 1f;
         var fade = (t - hardness) / Math.Max(0.001f, 1f - hardness);
-        return (MathF.Cos(fade * MathF.PI) + 1f) * 0.5f;
+        var smooth = fade * fade * (3f - 2f * fade);
+        var exponent = 1f + hardness * 5f;
+        return 1f - MathF.Pow(smooth, exponent);
     }
 }

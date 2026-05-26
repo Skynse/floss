@@ -1552,212 +1552,214 @@ public sealed class BrushEngine : IDisposable
             try
             {
 
-            float thickMul = MathF.Max(0.01f, MathF.Min(4f, brushThickness * stamp.TipThicknessMultiplier));
-            float scale = stamp.Size / MathF.Max(1f, baseMaskSize);
+                float thickMul = MathF.Max(0.01f, MathF.Min(4f, brushThickness * stamp.TipThicknessMultiplier));
+                float scale = stamp.Size / MathF.Max(1f, baseMaskSize);
 
-            // scaleX/scaleY: pixels per mask-pixel in each axis (used by image tip path)
-            float scaleX = isHorizontal ? scale : scale * thickMul;
-            float scaleY = isHorizontal ? scale * thickMul : scale;
-            if (brush.FlipHorizontal) scaleX = -scaleX;
-            if (brush.FlipVertical) scaleY = -scaleY;
+                // scaleX/scaleY: pixels per mask-pixel in each axis (used by image tip path)
+                float scaleX = isHorizontal ? scale : scale * thickMul;
+                float scaleY = isHorizontal ? scale * thickMul : scale;
+                if (brush.FlipHorizontal) scaleX = -scaleX;
+                if (brush.FlipVertical) scaleY = -scaleY;
 
-            // rx/ry: physical half-axes in pixels (used by procedural path + bbox)
-            float maxR = (baseMaskSize * 0.5f - 0.5f) * scale;
-            float rxBase = aspect >= 1f ? maxR : maxR * aspect;
-            float ryBase = aspect >= 1f ? maxR / aspect : maxR;
-            float rx = isHorizontal ? rxBase : rxBase * thickMul;
-            float ry = isHorizontal ? ryBase * thickMul : ryBase;
+                // rx/ry: physical half-axes in pixels (used by procedural path + bbox)
+                float maxR = (baseMaskSize * 0.5f - 0.5f) * scale;
+                float rxBase = aspect >= 1f ? maxR : maxR * aspect;
+                float ryBase = aspect >= 1f ? maxR / aspect : maxR;
+                float rx = isHorizontal ? rxBase : rxBase * thickMul;
+                float ry = isHorizontal ? ryBase * thickMul : ryBase;
 
-            // For image tips the effective half-extent is the full mask half-size × scale
-            float bboxHalfX = isImageTip ? halfBms * MathF.Abs(scaleX) : rx;
-            float bboxHalfY = isImageTip ? halfBms * MathF.Abs(scaleY) : ry;
-            if (bboxHalfX < 0.5f || bboxHalfY < 0.5f) continue;
+                // For image tips the effective half-extent is the full mask half-size × scale
+                float bboxHalfX = isImageTip ? halfBms * MathF.Abs(scaleX) : rx;
+                float bboxHalfY = isImageTip ? halfBms * MathF.Abs(scaleY) : ry;
+                if (bboxHalfX < 0.5f || bboxHalfY < 0.5f) continue;
 
-            // Always rotate for image tips (texture has directionality); skip for rotationally-symmetric circles
-            bool hasRot = MathF.Abs(stamp.Angle) > 0.1f && (isImageTip || useGraphEval || !isCircle);
-            float cosA = 1f, sinA = 0f;
-            if (hasRot)
-            {
-                float rad = stamp.Angle * MathF.PI / 180f;
-                cosA = MathF.Cos(rad);
-                sinA = MathF.Sin(rad);
-            }
-
-            float stampOpacity255 = StampOpacity255(blendMode, stamp.Opacity, baseAlpha);
-            if (stampOpacity255 <= 0) continue;
-
-            // Procedural-only params
-            float hardness = stamp.Hardness;
-            float hardnessRange = 1f - hardness;
-            float h2 = hardness * hardness;
-            bool hardEdge = !isImageTip && hardness >= 0.999f;
-
-            // Composite strategy — hoist outside pixel loops
-            bool isSrcOver = blendMode == SKBlendMode.SrcOver;
-            bool alphaLocked = layer.IsAlphaLocked;
-
-            // Grain strategy — precompute base value and nullity
-            float grainBase = 1f - brushGrain;
-            bool hasGrainTable = grainTable != null;
-            bool hasProceduralGrain = !hasGrainTable && brushGrain > 0f;
-            bool hasTexGrain = hasProceduralGrain && texPx != null;
-
-            // Image tip: get the cached Alpha8 mask and pin its pixels
-            SKBitmap? maskBmp = null;
-            byte* maskPx = null;
-            int maskStride = 0;
-            if (isImageTip)
-            {
-                maskBmp = stroke.MaskFor(stamp.Hardness);
-                maskPx = (byte*)maskBmp.GetPixels().ToPointer();
-                maskStride = maskBmp.RowBytes;
-            }
-
-            // Tight bounding box — for rotated image tips use the rotated-rectangle formula
-            float boxHX = hasRot ? (bboxHalfX * MathF.Abs(cosA) + bboxHalfY * MathF.Abs(sinA)) : bboxHalfX;
-            float boxHY = hasRot ? (bboxHalfX * MathF.Abs(sinA) + bboxHalfY * MathF.Abs(cosA)) : bboxHalfY;
-            float margin = 1.5f;
-            int bLeft   = (int)MathF.Floor(stamp.X - boxHX - margin);
-            int bTop    = (int)MathF.Floor(stamp.Y - boxHY - margin);
-            int bRight  = (int)MathF.Ceiling(stamp.X + boxHX + margin);
-            int bBottom = (int)MathF.Ceiling(stamp.Y + boxHY + margin);
-
-            int firstTx = (int)Math.Floor((double)bLeft    / tsz);
-            int firstTy = (int)Math.Floor((double)bTop     / tsz);
-            int lastTx  = (int)Math.Floor((double)(bRight  - 1) / tsz);
-            int lastTy  = (int)Math.Floor((double)(bBottom - 1) / tsz);
-
-            layer.Pixels.EnterPixelWriteLock();
-            try
-            {
-            for (int ty = firstTy; ty <= lastTy; ty++)
-            {
-                int tilePixY = ty * tsz;
-                int pxMinY = Math.Max(bTop,    tilePixY);
-                int pxMaxY = Math.Min(bBottom, tilePixY + tsz);
-                if (pxMinY >= pxMaxY) continue;
-
-                for (int tx = firstTx; tx <= lastTx; tx++)
+                // Always rotate for image tips (texture has directionality); skip for rotationally-symmetric circles
+                bool hasRot = MathF.Abs(stamp.Angle) > 0.1f && (isImageTip || useGraphEval || !isCircle);
+                float cosA = 1f, sinA = 0f;
+                if (hasRot)
                 {
-                    int tilePixX = tx * tsz;
-                    int pxMinX = Math.Max(bLeft,  tilePixX);
-                    int pxMaxX = Math.Min(bRight, tilePixX + tsz);
-                    if (pxMinX >= pxMaxX) continue;
+                    float rad = stamp.Angle * MathF.PI / 180f;
+                    cosA = MathF.Cos(rad);
+                    sinA = MathF.Sin(rad);
+                }
 
-                    var tile = layer.Pixels.GetOrCreateRawTile(tx, ty);
+                float stampOpacity255 = StampOpacity255(blendMode, stamp.Opacity, baseAlpha);
+                if (stampOpacity255 <= 0) continue;
 
-                    for (int py = pxMinY; py < pxMaxY; py++)
+                // Procedural-only params
+                float hardness = stamp.Hardness;
+                float hardnessRange = 1f - hardness;
+                float h2 = hardness * hardness;
+                bool hardEdge = !isImageTip && hardness >= 0.999f;
+
+                // Composite strategy — hoist outside pixel loops
+                bool isSrcOver = blendMode == SKBlendMode.SrcOver;
+                bool alphaLocked = layer.IsAlphaLocked;
+
+                // Grain strategy — precompute base value and nullity
+                float grainBase = 1f - brushGrain;
+                bool hasGrainTable = grainTable != null;
+                bool hasProceduralGrain = !hasGrainTable && brushGrain > 0f;
+                bool hasTexGrain = hasProceduralGrain && texPx != null;
+
+                // Image tip: get the cached Alpha8 mask and pin its pixels
+                SKBitmap? maskBmp = null;
+                byte* maskPx = null;
+                int maskStride = 0;
+                if (isImageTip)
+                {
+                    maskBmp = stroke.MaskFor(stamp.Hardness);
+                    maskPx = (byte*)maskBmp.GetPixels().ToPointer();
+                    maskStride = maskBmp.RowBytes;
+                }
+
+                // Tight bounding box — for rotated image tips use the rotated-rectangle formula
+                float boxHX = hasRot ? (bboxHalfX * MathF.Abs(cosA) + bboxHalfY * MathF.Abs(sinA)) : bboxHalfX;
+                float boxHY = hasRot ? (bboxHalfX * MathF.Abs(sinA) + bboxHalfY * MathF.Abs(cosA)) : bboxHalfY;
+                float margin = 1.5f;
+                int bLeft = (int)MathF.Floor(stamp.X - boxHX - margin);
+                int bTop = (int)MathF.Floor(stamp.Y - boxHY - margin);
+                int bRight = (int)MathF.Ceiling(stamp.X + boxHX + margin);
+                int bBottom = (int)MathF.Ceiling(stamp.Y + boxHY + margin);
+
+                int firstTx = (int)Math.Floor((double)bLeft / tsz);
+                int firstTy = (int)Math.Floor((double)bTop / tsz);
+                int lastTx = (int)Math.Floor((double)(bRight - 1) / tsz);
+                int lastTy = (int)Math.Floor((double)(bBottom - 1) / tsz);
+
+                layer.Pixels.EnterPixelWriteLock();
+                try
+                {
+                    for (int ty = firstTy; ty <= lastTy; ty++)
                     {
-                        int ly = py - tilePixY;
-                        int rowBase = ly * tsz * 4;
-                        float dy = py + 0.5f - stamp.Y;
+                        int tilePixY = ty * tsz;
+                        int pxMinY = Math.Max(bTop, tilePixY);
+                        int pxMaxY = Math.Min(bBottom, tilePixY + tsz);
+                        if (pxMinY >= pxMaxY) continue;
 
-                        for (int px = pxMinX; px < pxMaxX; px++)
+                        for (int tx = firstTx; tx <= lastTx; tx++)
                         {
-                            float dx = px + 0.5f - stamp.X;
+                            int tilePixX = tx * tsz;
+                            int pxMinX = Math.Max(bLeft, tilePixX);
+                            int pxMaxX = Math.Min(bRight, tilePixX + tsz);
+                            if (pxMinX >= pxMaxX) continue;
 
-                            // Apply inverse rotation to get brush-local coords
-                            float fdx, fdy;
-                            if (hasRot)
-                            {
-                                fdx = dx * cosA + dy * sinA;
-                                fdy = -dx * sinA + dy * cosA;
-                            }
-                            else { fdx = dx; fdy = dy; }
+                            var tile = layer.Pixels.GetOrCreateRawTile(tx, ty);
 
-                            float alpha;
-                            if (isImageTip)
+                            for (int py = pxMinY; py < pxMaxY; py++)
                             {
-                                // Map brush-local coords to mask pixel coords via inverse scale
-                                float mx = fdx / scaleX + halfBms;
-                                float my = fdy / scaleY + halfBms;
-                                if (mx < 0f || my < 0f || mx >= baseMaskSize || my >= baseMaskSize) continue;
+                                int ly = py - tilePixY;
+                                int rowBase = ly * tsz * 4;
+                                float dy = py + 0.5f - stamp.Y;
 
-                                // Bilinear sample the Alpha8 mask
-                                int ix0 = (int)mx, iy0 = (int)my;
-                                int ix1 = Math.Min(ix0 + 1, baseMaskSize - 1);
-                                int iy1 = Math.Min(iy0 + 1, baseMaskSize - 1);
-                                float fx = mx - ix0, fy = my - iy0;
-                                float a00 = maskPx[iy0 * maskStride + ix0];
-                                float a10 = maskPx[iy0 * maskStride + ix1];
-                                float a01 = maskPx[iy1 * maskStride + ix0];
-                                float a11 = maskPx[iy1 * maskStride + ix1];
-                                alpha = (a00 + (a10 - a00) * fx + (a01 - a00) * fy + (a00 - a10 - a01 + a11) * fx * fy) / 255f;
-                            }
-                            else if (useGraphEval)
-                            {
-                                float u = 0.5f + fdx / (rx * 2f);
-                                float v = 0.5f + fdy / (ry * 2f);
-                                if (u < 0f || v < 0f || u > 1f || v > 1f) continue;
-                                alpha = fastAlpha != null
-                                    ? fastAlpha(u, v)
-                                    : stampEval!.EvaluateAlpha(u, v);
-                                if (alpha <= 0f) continue;
-                            }
-                            else
-                            {
-                                // Analytical radial alpha — squared comparison avoids Sqrt for core pixels
-                                float ndx = fdx / rx;
-                                float ndy = fdy / ry;
-                                float t2 = ndx * ndx + ndy * ndy;
-                                if (t2 >= 1f) continue;
-
-                                if (hardEdge)
+                                for (int px = pxMinX; px < pxMaxX; px++)
                                 {
-                                    alpha = 1f;
-                                }
-                                else if (t2 <= h2)
-                                {
-                                    alpha = 1f;
-                                }
-                                else
-                                {
-                                    float t = MathF.Sqrt(t2);
-                                    float fade = hardnessRange > 0.001f ? (t - hardness) / hardnessRange : 1f;
-                                    alpha = isSoft
-                                        ? 1f - fade * fade * (3f - 2f * fade)
-                                        : (MathF.Cos(fade * MathF.PI) + 1f) * 0.5f;
-                                }
-                            }
+                                    float dx = px + 0.5f - stamp.X;
 
-                            if (hasGrainTable)
-                                alpha *= grainTable![(py - dirty.Y) * dirty.Width + (px - dirty.X)];
-                            else if (hasProceduralGrain)
-                            {
-                                if (texPx != null)
-                                    alpha *= grainBase + (texPx[((py % texH + texH) % texH) * texStride + ((px % texW + texW) % texW)] / 255.0f) * brushGrain;
-                                else
-                                    alpha *= grainBase + GrainNoise(px, py) * brushGrain;
-                            }
+                                    // Apply inverse rotation to get brush-local coords
+                                    float fdx, fdy;
+                                    if (hasRot)
+                                    {
+                                        fdx = dx * cosA + dy * sinA;
+                                        fdy = -dx * sinA + dy * cosA;
+                                    }
+                                    else { fdx = dx; fdy = dy; }
 
-                            int stampA = (int)(alpha * stampOpacity255 + 0.5f);
-                            if (stampA <= 0) continue;
-                            if (stampA > 255) stampA = 255;
+                                    float alpha;
+                                    if (isImageTip)
+                                    {
+                                        // Map brush-local coords to mask pixel coords via inverse scale
+                                        float mx = fdx / scaleX + halfBms;
+                                        float my = fdy / scaleY + halfBms;
+                                        if (mx < 0f || my < 0f || mx >= baseMaskSize || my >= baseMaskSize) continue;
 
-                            int lx = px - tilePixX;
-                            int offset = rowBase + lx * 4;
-                            if (isSrcOver)
-                            {
-                                byte ttda = tile[offset + 3];
-                                if (ttda == 0) { tile[offset] = (byte)brushB; tile[offset + 1] = (byte)brushG; tile[offset + 2] = (byte)brushR; tile[offset + 3] = (byte)stampA; }
-                                else if (alphaLocked) { int inv = 255 - stampA; tile[offset] = (byte)((brushB * stampA + tile[offset] * inv + 127) / 255); tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * inv + 127) / 255); tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * inv + 127) / 255); }
-                                else { int invSrcA = 255 - stampA; int outA = stampA + (ttda * invSrcA + 127) / 255; if (outA > 0) { int invDiv = ttda * invSrcA; tile[offset] = (byte)((brushB * stampA + tile[offset] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 3] = (byte)outA; } }
-                            }
-                            else
-                            {
-                                WriteCompositeStamp(tile, offset,
-                                    (byte)brushB, (byte)brushG, (byte)brushR, (byte)stampA,
-                                    alphaLocked, blendMode);
+                                        // Bilinear sample the Alpha8 mask
+                                        int ix0 = (int)mx, iy0 = (int)my;
+                                        int ix1 = Math.Min(ix0 + 1, baseMaskSize - 1);
+                                        int iy1 = Math.Min(iy0 + 1, baseMaskSize - 1);
+                                        float fx = mx - ix0, fy = my - iy0;
+                                        float a00 = maskPx[iy0 * maskStride + ix0];
+                                        float a10 = maskPx[iy0 * maskStride + ix1];
+                                        float a01 = maskPx[iy1 * maskStride + ix0];
+                                        float a11 = maskPx[iy1 * maskStride + ix1];
+                                        alpha = (a00 + (a10 - a00) * fx + (a01 - a00) * fy + (a00 - a10 - a01 + a11) * fx * fy) / 255f;
+                                    }
+                                    else if (useGraphEval)
+                                    {
+                                        float u = 0.5f + fdx / (rx * 2f);
+                                        float v = 0.5f + fdy / (ry * 2f);
+                                        if (u < 0f || v < 0f || u > 1f || v > 1f) continue;
+                                        alpha = fastAlpha != null
+                                            ? fastAlpha(u, v)
+                                            : stampEval!.EvaluateAlpha(u, v);
+                                        if (alpha <= 0f) continue;
+                                    }
+                                    else
+                                    {
+                                        // Analytical radial alpha — squared comparison avoids Sqrt for core pixels
+                                        float ndx = fdx / rx;
+                                        float ndy = fdy / ry;
+                                        float t2 = ndx * ndx + ndy * ndy;
+                                        if (t2 >= 1f) continue;
+
+                                        if (hardEdge)
+                                        {
+                                            alpha = 1f;
+                                        }
+                                        else if (t2 <= h2)
+                                        {
+                                            alpha = 1f;
+                                        }
+                                        else
+                                        {
+                                            float t = MathF.Sqrt(t2);
+                                            float fade = hardnessRange > 0.001f ? (t - hardness) / hardnessRange : 1f;
+                                            var smooth = fade * fade * (3f - 2f * fade);
+                                            var exponent = 1f + hardness * 5f;
+                                            alpha = isSoft
+                                                ? 1f - MathF.Pow(smooth, exponent * 0.7f)
+                                                : 1f - MathF.Pow(smooth, exponent);
+                                        }
+                                    }
+
+                                    if (hasGrainTable)
+                                        alpha *= grainTable![(py - dirty.Y) * dirty.Width + (px - dirty.X)];
+                                    else if (hasProceduralGrain)
+                                    {
+                                        if (texPx != null)
+                                            alpha *= grainBase + (texPx[((py % texH + texH) % texH) * texStride + ((px % texW + texW) % texW)] / 255.0f) * brushGrain;
+                                        else
+                                            alpha *= grainBase + GrainNoise(px, py) * brushGrain;
+                                    }
+
+                                    int stampA = (int)(alpha * stampOpacity255 + 0.5f);
+                                    if (stampA <= 0) continue;
+                                    if (stampA > 255) stampA = 255;
+
+                                    int lx = px - tilePixX;
+                                    int offset = rowBase + lx * 4;
+                                    if (isSrcOver)
+                                    {
+                                        byte ttda = tile[offset + 3];
+                                        if (ttda == 0) { tile[offset] = (byte)brushB; tile[offset + 1] = (byte)brushG; tile[offset + 2] = (byte)brushR; tile[offset + 3] = (byte)stampA; }
+                                        else if (alphaLocked) { int inv = 255 - stampA; tile[offset] = (byte)((brushB * stampA + tile[offset] * inv + 127) / 255); tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * inv + 127) / 255); tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * inv + 127) / 255); }
+                                        else { int invSrcA = 255 - stampA; int outA = stampA + (ttda * invSrcA + 127) / 255; if (outA > 0) { int invDiv = ttda * invSrcA; tile[offset] = (byte)((brushB * stampA + tile[offset] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 3] = (byte)outA; } }
+                                    }
+                                    else
+                                    {
+                                        WriteCompositeStamp(tile, offset,
+                                            (byte)brushB, (byte)brushG, (byte)brushR, (byte)stampA,
+                                            alphaLocked, blendMode);
+                                    }
+                                }
                             }
                         }
                     }
                 }
-            }
-            }
-            finally { layer.Pixels.ExitPixelWriteLock(); }
+                finally { layer.Pixels.ExitPixelWriteLock(); }
 
-            if (maskBmp != null)
-                stroke.ReleaseMask(maskBmp);
+                if (maskBmp != null)
+                    stroke.ReleaseMask(maskBmp);
             }
             finally
             {
@@ -2300,70 +2302,70 @@ public sealed class BrushEngine : IDisposable
         layer.Pixels.EnterPixelWriteLock();
         try
         {
-        for (int ty = firstTy; ty <= lastTy; ty++)
-        {
-            int tilePixY = ty * tsz;
-            int pxMinY = Math.Max(top, tilePixY);
-            int pxMaxY = Math.Min(bottom, tilePixY + tsz);
-            if (pxMinY >= pxMaxY) continue;
-
-            for (int tx = firstTx; tx <= lastTx; tx++)
+            for (int ty = firstTy; ty <= lastTy; ty++)
             {
-                int tilePixX = tx * tsz;
-                int pxMinX = Math.Max(left, tilePixX);
-                int pxMaxX = Math.Min(right, tilePixX + tsz);
-                if (pxMinX >= pxMaxX) continue;
+                int tilePixY = ty * tsz;
+                int pxMinY = Math.Max(top, tilePixY);
+                int pxMaxY = Math.Min(bottom, tilePixY + tsz);
+                if (pxMinY >= pxMaxY) continue;
 
-                var tile = layer.Pixels.GetOrCreateRawTile(tx, ty);
-
-                for (int py = pxMinY; py < pxMaxY; py++)
+                for (int tx = firstTx; tx <= lastTx; tx++)
                 {
-                    int localY = py - top;
-                    int ly = py - tilePixY;
-                    int rowBase = ly * tsz * 4;
-                    var maskRow = useFastPath ? maskPtr + localY * maskStride : null;
+                    int tilePixX = tx * tsz;
+                    int pxMinX = Math.Max(left, tilePixX);
+                    int pxMaxX = Math.Min(right, tilePixX + tsz);
+                    if (pxMinX >= pxMaxX) continue;
 
-                    for (int px = pxMinX; px < pxMaxX; px++)
+                    var tile = layer.Pixels.GetOrCreateRawTile(tx, ty);
+
+                    for (int py = pxMinY; py < pxMaxY; py++)
                     {
-                        int maskA = useFastPath
-                            ? maskRow![px - left]
-                            : SampleMaskAlpha(dab, px - left, localY);
-                        if (maskA == 0) continue;
+                        int localY = py - top;
+                        int ly = py - tilePixY;
+                        int rowBase = ly * tsz * 4;
+                        var maskRow = useFastPath ? maskPtr + localY * maskStride : null;
 
-                        float alpha = maskA / 255f;
-                        if (grainTable != null)
+                        for (int px = pxMinX; px < pxMaxX; px++)
                         {
-                            int gy = py - dirty.Y, gx = px - dirty.X;
-                            if (gy >= 0 && gy < dirty.Height && gx >= 0 && gx < dirty.Width)
-                                alpha *= grainTable[gy * dirty.Width + gx];
-                        }
-                        else if (brushGrain > 0f)
-                        {
-                            float noise;
-                            if (texPx != null)
+                            int maskA = useFastPath
+                                ? maskRow![px - left]
+                                : SampleMaskAlpha(dab, px - left, localY);
+                            if (maskA == 0) continue;
+
+                            float alpha = maskA / 255f;
+                            if (grainTable != null)
                             {
-                                int gtx = px % texW; if (gtx < 0) gtx += texW;
-                                int gty = py % texH; if (gty < 0) gty += texH;
-                                noise = texPx[gty * texStride + gtx] / 255.0f;
+                                int gy = py - dirty.Y, gx = px - dirty.X;
+                                if (gy >= 0 && gy < dirty.Height && gx >= 0 && gx < dirty.Width)
+                                    alpha *= grainTable[gy * dirty.Width + gx];
                             }
-                            else
-                                noise = GrainNoise(px, py);
-                            alpha *= 1f - brushGrain + noise * brushGrain;
+                            else if (brushGrain > 0f)
+                            {
+                                float noise;
+                                if (texPx != null)
+                                {
+                                    int gtx = px % texW; if (gtx < 0) gtx += texW;
+                                    int gty = py % texH; if (gty < 0) gty += texH;
+                                    noise = texPx[gty * texStride + gtx] / 255.0f;
+                                }
+                                else
+                                    noise = GrainNoise(px, py);
+                                alpha *= 1f - brushGrain + noise * brushGrain;
+                            }
+
+                            int stampA = (int)(alpha * stampOpacity255 + 0.5f);
+                            if (stampA <= 0) continue;
+                            if (stampA > 255) stampA = 255;
+
+                            int lx = px - tilePixX;
+                            int offset = rowBase + lx * 4;
+                            WriteCompositeStamp(tile, offset,
+                                (byte)brushB, (byte)brushG, (byte)brushR, (byte)stampA,
+                                layer.IsAlphaLocked, blendMode);
                         }
-
-                        int stampA = (int)(alpha * stampOpacity255 + 0.5f);
-                        if (stampA <= 0) continue;
-                        if (stampA > 255) stampA = 255;
-
-                        int lx = px - tilePixX;
-                        int offset = rowBase + lx * 4;
-                        WriteCompositeStamp(tile, offset,
-                            (byte)brushB, (byte)brushG, (byte)brushR, (byte)stampA,
-                            layer.IsAlphaLocked, blendMode);
                     }
                 }
             }
-        }
         }
         finally { layer.Pixels.ExitPixelWriteLock(); }
 
@@ -4102,8 +4104,8 @@ public sealed class BrushEngine : IDisposable
     {
         int gx = cx >> 2, gy = cy >> 2;
         float fx = (cx & 3) * 0.25f, fy = (cy & 3) * 0.25f;
-        float h00 = HashF(gx,     gy),     h10 = HashF(gx + 1, gy);
-        float h01 = HashF(gx,     gy + 1), h11 = HashF(gx + 1, gy + 1);
+        float h00 = HashF(gx, gy), h10 = HashF(gx + 1, gy);
+        float h01 = HashF(gx, gy + 1), h11 = HashF(gx + 1, gy + 1);
         return h00 + (h10 - h00) * fx + (h01 - h00) * fy + (h00 - h10 - h01 + h11) * fx * fy;
     }
 
