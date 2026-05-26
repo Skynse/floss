@@ -1073,7 +1073,9 @@ public static class AbrImporter
             smoothing = Math.Clamp(p.SmoothingValue / 100.0, 0.0, 1.0);
 
         // ── Kind ─────────────────────────────────────────────────────────────
-        var blendMode = p?.IsEraser == true ? SkiaSharp.SKBlendMode.DstOut : SkiaSharp.SKBlendMode.SrcOver;
+            var blendMode = p?.IsEraser == true
+                ? SkiaSharp.SKBlendMode.Clear
+                : SkiaSharp.SKBlendMode.SrcOver;
 
         var tipThickness = 1.0;
         if (p?.HasRoundness == true)

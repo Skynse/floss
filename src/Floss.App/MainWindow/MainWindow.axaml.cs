@@ -219,6 +219,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private bool _suppressFloatingDockerSnap;
     private Grid? _dockerHostGrid;
     private Border? _dockerDropIndicator;
+    private TextBlock? _dragHintText;
     private string? _draggingDockerId;
     private Point _dockerDragStart;
     private bool _isDockerDragging;
@@ -551,6 +552,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         Icon = new WindowIcon(AssetLoader.Open(new Uri(AppAssets.IconUri)));
         _brushLibrary = new BrushLibrary(AppPaths.BrushesDirectory);
         _showRulers = App.Config.ShowRulers;
+
+        RegisterDockerPanels();
         BuildUi();
         InitInputRouter();
         WireControls();
@@ -572,7 +575,7 @@ public partial class MainWindow : Window, Tools.IViewportController
             UpdateTabBar();
             SyncCanvasViewport();
             CaptureRootColumnWidths();
-            SetNodeGraphDockVisible(App.Config.ShowNodeGraphDock, reload: false);
+            SetNodeGraphDockVisible(!App.Config.WorkspaceLayout.HiddenPanelIds.Contains("node-graph"), reload: false);
         };
     }
 
@@ -850,6 +853,29 @@ public partial class MainWindow : Window, Tools.IViewportController
         };
         _resetViewMenuItem = MenuAction("_Reset View", ResetView);
 
+        var recentMenu = new MenuItem { Header = "Open _Recent" };
+        recentMenu.SubmenuOpened += (_, _) =>
+        {
+            var recent = App.Config.RecentFiles;
+            recentMenu.ItemsSource = recent.Length == 0
+                ? new object[] { new MenuItem { Header = "(No recent files)", IsEnabled = false } }
+                : recent.Select((path, i) =>
+                {
+                    var display = $"_{i + 1}: {Path.GetFileName(path)}  ({path})";
+                    var item = new MenuItem { Header = display };
+                    item.Click += async (_, _) => await OpenDocumentFromPathAsync(path);
+                    return (object)item;
+                }).Concat(new object[]
+                {
+                    new Separator(),
+                    MenuAction("_Clear Recent Files", () =>
+                    {
+                        App.Config.RecentFiles = [];
+                        App.Config.Save();
+                    })
+                }).ToArray();
+        };
+
         var fileMenu = new MenuItem
         {
             Header = "_File",
@@ -857,6 +883,8 @@ public partial class MainWindow : Window, Tools.IViewportController
             {
                 MenuAction("_New...", new KeyGesture(Key.N, KeyModifiers.Control), async () => await NewDocumentAsync()),
                 MenuAction("_Open...", new KeyGesture(Key.O, KeyModifiers.Control), async () => await OpenDocumentAsync()),
+                recentMenu,
+                new Separator(),
                 _saveMenuItem,
                 _saveAsMenuItem,
                 new Separator(),
@@ -1241,31 +1269,62 @@ public partial class MainWindow : Window, Tools.IViewportController
     private Border BuildRightPanel()
     {
         var layout = NormalizedWorkspaceLayout();
-        var leftDock = BuildDockColumn(layout.RightColumns[0], 0);
-        var rightDock = BuildDockColumn(layout.RightColumns[1], 1);
-
-        var splitter = new GridSplitter
-        {
-            Width = 3,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
-            Background = new SolidColorBrush(Color.Parse(Stroke))
-        };
-        splitter.DragCompleted += (_, _) => PersistWorkspaceLayout();
-
+        var columns = layout.RightColumns;
         var grid = new Grid { ClipToBounds = true };
         _dockerHostGrid = grid;
-        var split = Math.Clamp(layout.RightDockSplit, 0.2, 0.8);
-        grid.ColumnDefinitions.Add(new ColumnDefinition(split, GridUnitType.Star));
-        grid.ColumnDefinitions.Add(new ColumnDefinition(3, GridUnitType.Pixel));
-        grid.ColumnDefinitions.Add(new ColumnDefinition(1 - split, GridUnitType.Star));
 
-        Grid.SetColumn(leftDock, 0);
-        Grid.SetColumn(splitter, 1);
-        Grid.SetColumn(rightDock, 2);
-        grid.Children.Add(leftDock);
-        grid.Children.Add(splitter);
-        grid.Children.Add(rightDock);
+        var count = columns.Count;
+        if (count == 0)
+        {
+            return new Border
+            {
+                Background = new SolidColorBrush(Color.Parse(Bg1)),
+                BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+                ClipToBounds = true,
+                Child = grid
+            };
+        }
+
+        if (count == 1)
+        {
+            // Single column — full width, no splitter
+            grid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
+            var dock = BuildDockColumn(columns[0], 0);
+            Grid.SetColumn(dock, 0);
+            grid.Children.Add(dock);
+            return new Border
+            {
+                Background = new SolidColorBrush(Color.Parse(Bg1)),
+                BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+                ClipToBounds = true,
+                Child = grid
+            };
+        }
+
+        // Multiple columns: equal star distribution + splitters
+        var fraction = 1.0 / count;
+        for (var i = 0; i < count; i++)
+        {
+            grid.ColumnDefinitions.Add(new ColumnDefinition(fraction, GridUnitType.Star));
+
+            var dock = BuildDockColumn(columns[i], i);
+            Grid.SetColumn(dock, i * 2);
+            grid.Children.Add(dock);
+
+            if (i == count - 1) continue;
+
+            grid.ColumnDefinitions.Add(new ColumnDefinition(3, GridUnitType.Pixel));
+            var splitter = new GridSplitter
+            {
+                Width = 3,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
+                Background = new SolidColorBrush(Color.Parse(Stroke))
+            };
+            splitter.DragCompleted += (_, _) => PersistWorkspaceLayout();
+            Grid.SetColumn(splitter, i * 2 + 1);
+            grid.Children.Add(splitter);
+        }
 
         return new Border
         {
@@ -1277,37 +1336,85 @@ public partial class MainWindow : Window, Tools.IViewportController
         };
     }
 
-    private Grid BuildDockColumn(DockColumnConfig column, int columnIndex)
+    private Grid BuildDockColumn(DockColumnLayout column, int columnIndex)
     {
         var grid = new Grid { ClipToBounds = true };
-        var panelIds = column.Panels
-            .Where(id => GetDockerInfo(id) != null && !IsDockerFloating(id) && IsDockerVisible(id))
+
+        // Use ResolvedRows to get effective row layout (solo panels + tab groups)
+        var resolvedRows = column.ResolvedRows();
+        var visibleRows = resolvedRows
+            .Where(row => row.PanelIds.Any(id => GetDockerInfo(id) != null && !IsDockerFloating(id) && IsDockerVisible(id)))
             .ToList();
 
-        if (panelIds.Count == 0)
+        if (visibleRows.Count == 0)
             return grid;
 
-        for (var i = 0; i < panelIds.Count; i++)
+        for (var i = 0; i < visibleRows.Count; i++)
         {
-            var id = panelIds[i];
-            var height = App.Config.WorkspaceLayout.PanelHeights.TryGetValue(id, out var saved)
-                ? Math.Max(80, saved)
-                : DefaultDockerHeight(id);
-            var row = new RowDefinition(new GridLength(height, GridUnitType.Star))
+            var resolvedRow = visibleRows[i];
+            var rowPanelIds = resolvedRow.PanelIds;
+            var isTabGroup = resolvedRow.Orientation == DockOrientation.Vertical && rowPanelIds.Count > 1;
+            var isHorizontal = resolvedRow.Orientation == DockOrientation.Horizontal;
+            var primaryId = rowPanelIds[0];
+
+            var proportion = App.Config.WorkspaceLayout.PanelProportions.TryGetValue(
+                    isTabGroup ? "tab:" + string.Join("|", rowPanelIds) : primaryId, out var saved)
+                ? Math.Max(0.05, saved)
+                : (PanelRegistry.Get(primaryId)?.Proportion ?? 0.2);
+            var minH = rowPanelIds.Min(id => PanelRegistry.Get(id)?.MinHeight ?? 64);
+            var rowDef = new RowDefinition(new GridLength(proportion, GridUnitType.Star)) { MinHeight = minH };
+            _dockerRows[primaryId] = rowDef;
+            grid.RowDefinitions.Add(rowDef);
+
+            Control rowContent;
+            if (isHorizontal)
             {
-                MinHeight = MinDockerHeight(id)
-            };
-            _dockerRows[id] = row;
-            grid.RowDefinitions.Add(row);
+                // Side-by-side horizontal layout within this row
+                var horizontalGrid = new Grid { ClipToBounds = true };
+                var count = rowPanelIds.Count;
+                for (var ci = 0; ci < count; ci++)
+                {
+                    var frac = 1.0 / count;
+                    horizontalGrid.ColumnDefinitions.Add(new ColumnDefinition(frac, GridUnitType.Star));
+                    var section = GetOrCreatePanelSection(rowPanelIds[ci]);
+                    _dockerSectionColumns[rowPanelIds[ci]] = columnIndex;
+                    Grid.SetColumn(section, ci);
+                    horizontalGrid.Children.Add(section);
 
-            var info = GetDockerInfo(id)!;
-            var section = PanelSection(id, info.Title, info.Build());
-            _dockerSections[id] = section;
-            _dockerSectionColumns[id] = columnIndex;
-            Grid.SetRow(section, grid.RowDefinitions.Count - 1);
-            grid.Children.Add(section);
+                    if (ci < count - 1)
+                    {
+                        horizontalGrid.ColumnDefinitions.Add(new ColumnDefinition(3, GridUnitType.Pixel));
+                        var hSplitter = new GridSplitter
+                        {
+                            Width = 3,
+                            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
+                            Background = new SolidColorBrush(Color.Parse(Stroke))
+                        };
+                        hSplitter.DragCompleted += (_, _) => PersistWorkspaceLayout();
+                        Grid.SetColumn(hSplitter, ci * 2 + 1);
+                        horizontalGrid.Children.Add(hSplitter);
+                    }
+                }
+                rowContent = horizontalGrid;
+            }
+            else if (isTabGroup)
+            {
+                var tabGroup = BuildTabGroupRow(rowPanelIds, column);
+                rowContent = tabGroup;
+            }
+            else
+            {
+                var section = GetOrCreatePanelSection(primaryId);
+                _dockerSections[primaryId] = section;
+                _dockerSectionColumns[primaryId] = columnIndex;
+                rowContent = section;
+            }
 
-            if (i == panelIds.Count - 1) continue;
+            Grid.SetRow(rowContent, grid.RowDefinitions.Count - 1);
+            grid.Children.Add(rowContent);
+
+            if (i == visibleRows.Count - 1) continue;
             grid.RowDefinitions.Add(new RowDefinition(new GridLength(3, GridUnitType.Pixel)));
             var splitter = new GridSplitter
             {
@@ -1323,6 +1430,82 @@ public partial class MainWindow : Window, Tools.IViewportController
         }
 
         return grid;
+    }
+
+    /// <summary>
+    /// Builds a DockTabGroup for a set of panel IDs that share one row.
+    /// </summary>
+    private DockTabGroup BuildTabGroupRow(IReadOnlyList<string> panelIds, DockColumnLayout column)
+    {
+        var content = new Dictionary<string, Control>();
+        var titles = new Dictionary<string, string>();
+
+        var colIdx = column.Id switch
+        {
+            "left" => -1,
+            "bottom" => -2,
+            _ => int.TryParse(column.Id.StartsWith("right-") ? column.Id.AsSpan(6) : column.Id, out var ci) ? ci : 0
+        };
+
+        foreach (var id in panelIds)
+        {
+            var section = GetOrCreatePanelSection(id);
+            _dockerSectionColumns[id] = colIdx;
+            content[id] = section;
+            titles[id] = DockerTitle(id);
+        }
+
+        var activeIndex = 0;
+        var lookupKey = column.PanelIds.FirstOrDefault(p =>
+            column.TabGroups.TryGetValue(p, out var t) && t.PanelIds.SequenceEqual(panelIds));
+        if (lookupKey != null && column.TabGroups.TryGetValue(lookupKey, out var tab))
+            activeIndex = Math.Clamp(tab.ActiveIndex, 0, panelIds.Count - 1);
+
+        var tabGroup = new DockTabGroup(panelIds, content, titles, panelIds[activeIndex]);
+        tabGroup.TabChanged += id =>
+        {
+            var groupKey = column.PanelIds.FirstOrDefault(p =>
+                column.TabGroups.TryGetValue(p, out var t) && t.PanelIds.SequenceEqual(panelIds));
+            if (groupKey != null && column.TabGroups.TryGetValue(groupKey, out var tg))
+                tg.ActiveIndex = panelIds.ToList().IndexOf(id);
+        };
+        return tabGroup;
+    }
+
+    /// <summary>
+    /// Returns a cached panel section if one exists, detaching it from any
+    /// previous parent. Otherwise builds a fresh section from the factory.
+    /// This avoids "Control already has a parent" crashes during rebuild.
+    /// </summary>
+    private Border GetOrCreatePanelSection(string id)
+    {
+        if (_dockerSections.TryGetValue(id, out var cached))
+        {
+            if (cached.Parent is Panel parent)
+                parent.Children.Remove(cached);
+            return cached;
+        }
+
+        var info = GetDockerInfo(id);
+        if (info == null)
+        {
+            return new Border
+            {
+                Child = new TextBlock
+                {
+                    Text = $"Missing panel: {id}",
+                    Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+                    FontSize = 10,
+                    Margin = new Thickness(8)
+                }
+            };
+        }
+
+        var content = info.Build();
+        if (content.Parent is Panel contentParent)
+            contentParent.Children.Remove(content);
+
+        return PanelSection(id, info.Title, content);
     }
 
     private Border PanelSection(string id, string title, Control content)
@@ -1418,15 +1601,19 @@ public partial class MainWindow : Window, Tools.IViewportController
             return;
 
         _isDockerDragging = true;
-        if (_dockerHostGrid == null) return;
-        UpdateDockerDropPreview(id, e.GetPosition(_dockerHostGrid));
+        if (_rootGrid == null) return;
+
+        // Translate to root-grid coordinates so we can target both left and right columns
+        var rootPoint = e.GetPosition(_rootGrid);
+        UpdateDockerDropPreview(id, rootPoint);
         e.Handled = true;
     }
 
     private void DockerHeaderPointerReleased(string id, Control header, PointerReleasedEventArgs e)
     {
         if (_draggingDockerId != id) return;
-        if (_isDockerDragging && _dockerDropColumn >= 0 && _dockerDropIndex >= 0)
+        // Accept -1 (left column) or >= 0 (right column)
+        if (_isDockerDragging && _dockerDropColumn >= -1 && _dockerDropIndex != 0)
             ApplyDockerDrop(id, _dockerDropColumn, _dockerDropIndex);
         CancelDockerDrag();
         e.Pointer.Capture(null);
@@ -1441,16 +1628,20 @@ public partial class MainWindow : Window, Tools.IViewportController
         _dockerDropIndex = -1;
         if (_dockerDropIndicator != null)
             _dockerDropIndicator.IsVisible = false;
+        if (_dragHintText != null)
+            _dragHintText.IsVisible = false;
     }
 
-    private void UpdateDockerDropPreview(string movingId, Point hostPoint)
+    private void UpdateDockerDropPreview(string movingId, Point rootPoint)
     {
-        if (_dockerHostGrid == null) return;
-        var target = ResolveDockerDropTarget(movingId, hostPoint);
+        if (_rootGrid == null) return;
+        var target = ResolveDockerDropTarget(movingId, rootPoint);
         if (target == null)
         {
             if (_dockerDropIndicator != null)
                 _dockerDropIndicator.IsVisible = false;
+            if (_dragHintText != null)
+                _dragHintText.IsVisible = false;
             _dockerDropColumn = -1;
             _dockerDropIndex = -1;
             return;
@@ -1460,67 +1651,172 @@ public partial class MainWindow : Window, Tools.IViewportController
         _dockerDropColumn = columnIndex;
         _dockerDropIndex = insertionIndex;
 
+        // Create or reuse the drop zone indicator — a visible filled rectangle
         _dockerDropIndicator ??= new Border
         {
-            Height = 3,
-            Background = new SolidColorBrush(Color.Parse(Accent)),
+            Background = new SolidColorBrush(Color.Parse("#1a0078d4")), // semi-transparent blue
+            BorderBrush = new SolidColorBrush(Color.Parse(Accent)),
+            BorderThickness = new Thickness(2),
+            CornerRadius = new CornerRadius(3),
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top,
             IsHitTestVisible = false,
             ZIndex = 1000
         };
-        if (_dockerDropIndicator.Parent is Panel parent && parent != _dockerHostGrid)
-            parent.Children.Remove(_dockerDropIndicator);
-        if (!_dockerHostGrid.Children.Contains(_dockerDropIndicator))
-            _dockerHostGrid.Children.Add(_dockerDropIndicator);
 
-        _dockerDropIndicator.Width = Math.Max(16, width);
-        _dockerDropIndicator.Margin = new Thickness(Math.Round(x), Math.Round(y), 0, 0);
-        _dockerDropIndicator.IsVisible = true;
-    }
-
-    private (int ColumnIndex, int InsertionIndex, double X, double Y, double Width)? ResolveDockerDropTarget(string movingId, Point hostPoint)
-    {
-        if (_dockerHostGrid == null || _dockerHostGrid.ColumnDefinitions.Count < 3)
-            return null;
-        if (hostPoint.X < 0 || hostPoint.Y < 0 ||
-            hostPoint.X > _dockerHostGrid.Bounds.Width ||
-            hostPoint.Y > _dockerHostGrid.Bounds.Height)
-            return null;
-
-        var leftWidth = _dockerHostGrid.ColumnDefinitions[0].ActualWidth;
-        var splitterWidth = _dockerHostGrid.ColumnDefinitions[1].ActualWidth;
-        var rightWidth = _dockerHostGrid.ColumnDefinitions[2].ActualWidth;
-        var columnIndex = hostPoint.X <= leftWidth + splitterWidth * 0.5 ? 0 : 1;
-        var x = columnIndex == 0 ? 0 : leftWidth + splitterWidth;
-        var width = columnIndex == 0 ? leftWidth : rightWidth;
-
-        var ids = NormalizedWorkspaceLayout().RightColumns[columnIndex].Panels
-            .Where(id => id != movingId && !IsDockerFloating(id) && _dockerSections.ContainsKey(id))
-            .ToList();
-
-        if (ids.Count == 0)
-            return (columnIndex, 0, x, 0, width);
-
-        var insertionIndex = 0;
-        var y = 0.0;
-        for (var i = 0; i < ids.Count; i++)
+        // Action label
+        _dragHintText ??= new TextBlock
         {
-            var section = _dockerSections[ids[i]];
-            var topLeft = section.TranslatePoint(new Point(0, 0), _dockerHostGrid) ?? new Point(x, 0);
-            var midpoint = topLeft.Y + section.Bounds.Height * 0.5;
-            if (hostPoint.Y < midpoint)
-            {
-                y = topLeft.Y;
-                insertionIndex = i;
-                return (columnIndex, insertionIndex, x, Math.Max(0, y), width);
-            }
+            Foreground = new SolidColorBrush(Color.Parse("#cccccc")),
+            Background = new SolidColorBrush(Color.Parse("#cc1e1e20")),
+            FontSize = 11,
+            FontWeight = FontWeight.SemiBold,
+            Padding = new Thickness(8, 3),
+            IsHitTestVisible = false,
+            ZIndex = 1001
+        };
 
-            insertionIndex = i + 1;
-            y = topLeft.Y + section.Bounds.Height;
+        // Determine host and hint text
+        Panel host;
+        string hint;
+        if (columnIndex < 0)
+        {
+            host = (Panel)((Border)_leftRail!).Child!;
+            hint = insertionIndex <= -1000 ? "Split beside" :
+                   insertionIndex < 0 ? "Tab with" : "Move to left";
+        }
+        else
+        {
+            host = _dockerHostGrid!;
+            hint = insertionIndex <= -1000 ? "Split beside" :
+                   insertionIndex < 0 ? "Tab with" : "Move";
         }
 
-        return (columnIndex, insertionIndex, x, Math.Max(0, y), width);
+        // Place indicator
+        if (_dockerDropIndicator.Parent is Panel parent && parent != host)
+            parent.Children.Remove(_dockerDropIndicator);
+        if (!host.Children.Contains(_dockerDropIndicator))
+            host.Children.Add(_dockerDropIndicator);
+
+        if (_dragHintText.Parent is Panel tp && tp != host)
+            tp.Children.Remove(_dragHintText);
+        if (!host.Children.Contains(_dragHintText))
+            host.Children.Add(_dragHintText);
+
+        var rowH = Math.Max(40, host.Bounds.Height / Math.Max(1, host.Children.OfType<GridSplitter>().Count() + 1));
+        _dockerDropIndicator.Width = Math.Max(16, width - 8);
+        _dockerDropIndicator.Height = Math.Max(28, rowH * 0.6);
+        _dockerDropIndicator.Margin = new Thickness(Math.Round(x + 4), Math.Round(y), 0, 0);
+
+        _dragHintText.Text = hint;
+        _dragHintText.Margin = new Thickness(Math.Round(x + width / 2 - 40), Math.Round(y + rowH * 0.2), 0, 0);
+        _dockerDropIndicator.IsVisible = true;
+        _dragHintText.IsVisible = true;
+    }
+
+    private (int ColumnIndex, int InsertionIndex, double X, double Y, double Width)? ResolveDockerDropTarget(string movingId, Point rootPoint)
+    {
+        if (_rootGrid == null) return null;
+
+        var layout = App.Config.WorkspaceLayout;
+        if (layout == null) return null;
+
+        var rootWidth = _rootGrid.Bounds.Width;
+        if (rootWidth <= 0) return null;
+        if (rootPoint.X < 0 || rootPoint.Y < 0 || rootPoint.X > rootWidth || rootPoint.Y > _rootGrid.Bounds.Height) return null;
+
+        // Determine which side: left column or right panel.
+        // Use a generous target zone — the left rail in narrow mode is only 48px,
+        // so we extend the drop zone another 40px into the splitter/center area.
+        var leftWidth = _rootGrid.ColumnDefinitions.Count > 0
+            ? _rootGrid.ColumnDefinitions[0].ActualWidth
+            : 48;
+        leftWidth = Math.Max(leftWidth, 48); // minimum hit target even if collapsed
+
+        var rightStart = rootWidth - (_rootGrid.ColumnDefinitions.Count > 4
+            ? _rootGrid.ColumnDefinitions[4].ActualWidth
+            : 0);
+
+        // Left column: use rootPoint directly since left column starts at (0,0) in root grid
+        if (rootPoint.X <= leftWidth + 40)
+        {
+            var leftHost = (_leftRail as Border)?.Child as Grid;
+            return ResolveColumnDropTarget(-1, layout.LeftColumn.PanelIds,
+                movingId, rootPoint, leftHost, 0, leftWidth);
+        }
+
+        // Right panel: only if cursor is past the center area
+        if (_dockerHostGrid == null || rootPoint.X < rightStart - 40) return null;
+
+        var hostPoint = new Point(rootPoint.X - rightStart, rootPoint.Y);
+        var colCount = layout.RightColumns.Count;
+        if (colCount == 0) return null;
+
+        var totalW = _dockerHostGrid.Bounds.Width;
+        if (totalW <= 0) return null;
+        var colIdx = (int)(hostPoint.X / totalW * colCount);
+        colIdx = Math.Clamp(colIdx, 0, colCount - 1);
+
+        return ResolveColumnDropTarget(colIdx, layout.RightColumns[colIdx].PanelIds,
+            movingId, hostPoint, _dockerHostGrid, rightStart, totalW / colCount);
+    }
+
+    private static (int ColumnIndex, int InsertionIndex, double X, double Y, double Width)?
+        ResolveColumnDropTarget(int columnIndex, List<string> panelIds, string movingId,
+            Point localPoint, Grid? hostGrid, double xOffset, double width)
+    {
+        var ids = panelIds
+            .Where(id => id != movingId)
+            .ToList();
+
+        // No host grid or no visible panels — insert at end with fallback sizes
+        if (hostGrid == null)
+        {
+            return ids.Count == 0
+                ? (columnIndex, 0, xOffset, 0, width)
+                : (columnIndex, ids.Count, xOffset, ids.Count * 120.0, width);
+        }
+
+        // Clamp Y to valid range
+        var h = Math.Max(1, hostGrid.Bounds.Height);
+        var clampedY = Math.Clamp(localPoint.Y, 0, h);
+
+        if (ids.Count == 0)
+            return (columnIndex, 0, xOffset, 0, width);
+
+        var y = 0.0;
+        var insertIdx = 0;
+        const double tabDropZone = 22; // px from top of section to trigger tab-group drop
+        const double hsplitRatio = 0.7; // right edge zone for horizontal split (X > width * ratio)
+
+        for (var i = 0; i < ids.Count; i++)
+        {
+            var sectionY = (double)i / ids.Count * h;
+            var sectionH = h / ids.Count;
+
+            // Is the cursor inside this section vertically?
+            if (clampedY >= sectionY && clampedY < sectionY + sectionH)
+            {
+                // Horizontal-split: cursor is in the right portion of the section
+                if (localPoint.X > width * hsplitRatio)
+                    return (columnIndex, -(1000 + i + 1), xOffset, sectionY, width);
+
+                // Tab-drop: cursor is within the header zone
+                if (clampedY < sectionY + tabDropZone)
+                    return (columnIndex, -(i + 1), xOffset, sectionY, width);
+            }
+
+            if (clampedY < sectionY + sectionH * 0.5)
+            {
+                y = sectionY;
+                insertIdx = i;
+                return (columnIndex, insertIdx, xOffset, Math.Max(0, y), width);
+            }
+            insertIdx = i + 1;
+            y = sectionY + sectionH;
+        }
+
+        return (columnIndex, insertIdx, xOffset, Math.Max(0, y), width);
     }
 
     private void ApplyDockerDrop(string id, int columnIndex, int insertionIndex)
@@ -1529,18 +1825,78 @@ public partial class MainWindow : Window, Tools.IViewportController
         var layout = NormalizedWorkspaceLayout();
 
         foreach (var column in layout.RightColumns)
-            column.Panels.Remove(id);
-        layout.LeftColumn.Panels.Remove(id);
+            column.PanelIds.Remove(id);
+        layout.LeftColumn.PanelIds.Remove(id);
 
-        if (columnIndex < 0)
+        // Tab-group drop: insertionIndex is negative = tab with panel at index
+        if (insertionIndex < 0)
         {
-            insertionIndex = Math.Clamp(insertionIndex, 0, layout.LeftColumn.Panels.Count);
-            layout.LeftColumn.Panels.Insert(insertionIndex, id);
+            // Horizontal-split drop: insertionIndex <= -1000
+            if (insertionIndex <= -1000)
+            {
+                var hSplitTargetIdx = -insertionIndex - 1001;
+                DockColumnLayout targetCol;
+                List<string> colPanelIds;
+                if (columnIndex < 0)
+                {
+                    targetCol = layout.LeftColumn;
+                    colPanelIds = layout.LeftColumn.PanelIds;
+                }
+                else
+                {
+                    if ((uint)columnIndex >= (uint)layout.RightColumns.Count) return;
+                    targetCol = layout.RightColumns[columnIndex];
+                    colPanelIds = targetCol.PanelIds;
+                }
+
+                if (hSplitTargetIdx < 0 || hSplitTargetIdx >= colPanelIds.Count) return;
+                var targetId = colPanelIds[hSplitTargetIdx];
+                SplitPanelHorizontalImpl(targetCol, targetId, id);
+            }
+            else
+            {
+            // Tab-group drop: insertionIndex is negative = tab with panel at index
+            var tabTargetIdx = -insertionIndex - 1; // -1 → 0, -2 → 1, etc.
+            DockColumnLayout targetCol;
+            List<string> colPanelIds;
+            if (columnIndex < 0)
+            {
+                targetCol = layout.LeftColumn;
+                colPanelIds = layout.LeftColumn.PanelIds;
+            }
+            else
+            {
+                if ((uint)columnIndex >= (uint)layout.RightColumns.Count) return;
+                targetCol = layout.RightColumns[columnIndex];
+                colPanelIds = targetCol.PanelIds;
+            }
+
+            if (tabTargetIdx < 0 || tabTargetIdx >= colPanelIds.Count) return;
+            var targetId = colPanelIds[tabTargetIdx];
+
+            // Create a tab group with the target panel + the dropped panel
+            var tabKey = "tab:" + Guid.NewGuid().ToString()[..8];
+            var groupPanelIds = new List<string> { targetId, id };
+
+            targetCol.TabGroups[tabKey] = new TabGroupLayout
+            {
+                PanelIds = groupPanelIds,
+                ActiveIndex = 1 // Focus the newly dropped panel
+            };
+
+            // Replace target panel ID with tab group key
+            colPanelIds[tabTargetIdx] = tabKey;
+            }
+        }
+        else if (columnIndex < 0)
+        {
+            insertionIndex = Math.Clamp(insertionIndex, 0, layout.LeftColumn.PanelIds.Count);
+            layout.LeftColumn.PanelIds.Insert(insertionIndex, id);
         }
         else
         {
             if ((uint)columnIndex >= (uint)layout.RightColumns.Count) return;
-            var target = layout.RightColumns[columnIndex].Panels;
+            var target = layout.RightColumns[columnIndex].PanelIds;
             insertionIndex = Math.Clamp(insertionIndex, 0, target.Count);
             target.Insert(insertionIndex, id);
         }
@@ -1554,70 +1910,125 @@ public partial class MainWindow : Window, Tools.IViewportController
 
     private sealed record DockerInfo(string Id, string Title, Func<Control> Build);
 
-    private DockerInfo? GetDockerInfo(string id) => id switch
+    private void RegisterDockerPanels()
     {
-        "tools" => new DockerInfo(id, "Tools", BuildToolsContent),
-        "brush" => new DockerInfo(id, "Brush", BuildBrushSection),
-        "tool-properties" => new DockerInfo(id, "Tool Property", BuildToolPropertySection),
-        "layer-properties" => new DockerInfo(id, "Layer Properties", BuildLayerPropertiesSection),
-        "layers" => new DockerInfo(id, "Layers", BuildLayersSection),
-        "color" => new DockerInfo(id, "Color", BuildColorSection),
-        "color-slider" => new DockerInfo(id, "Color Slider", BuildColorSlidersSection),
-        "brush-size" => new DockerInfo(id, "Brush Size", () => new ScrollViewer
+        if (PanelRegistry.AllIds.Count > 0) return; // Already registered
+
+        PanelRegistry.RegisterDefaults(id => () =>
         {
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            ClipToBounds = true,
-            Content = BuildBrushSizePalette()
-        }),
-        _ => null
-    };
+            return id switch
+            {
+                "tools" => BuildToolsContent(),
+                "brush" => BuildBrushSection(),
+                "tool-properties" => BuildToolPropertySection(),
+                "layer-properties" => BuildLayerPropertiesSection(),
+                "layers" => BuildLayersSection(),
+                "color" => BuildColorSection(),
+                "color-slider" => BuildColorSlidersSection(),
+                "brush-size" => new ScrollViewer
+                {
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    ClipToBounds = true,
+                    Content = BuildBrushSizePalette()
+                },
+                "node-graph" => BuildNodeGraphDockerContent(),
+                _ => new TextBlock { Text = $"Unknown panel: {id}" }
+            };
+        });
+    }
 
-    private static readonly string[] AllDockerIds = ["tools", "brush", "tool-properties", "layer-properties", "layers", "color", "color-slider", "brush-size"];
-
-    private WorkspaceLayoutConfig NormalizedWorkspaceLayout()
+    private static DockerInfo? GetDockerInfo(string id)
     {
-        var layout = App.Config.WorkspaceLayout ??= WorkspaceLayoutConfig.Default();
+        var panel = PanelRegistry.Get(id);
+        return panel == null ? null : new DockerInfo(panel.Id, panel.Title, panel.BuildContent);
+    }
+
+    private static string DockerTitle(string id)
+        => PanelRegistry.Get(id)?.Title ?? id;
+
+    private WorkspaceLayout NormalizedWorkspaceLayout()
+    {
+        var layout = App.Config.WorkspaceLayout ??= WorkspaceLayout.CreateDefault();
         if (layout.RightColumns.Count < 2)
-            layout.RightColumns = WorkspaceLayoutConfig.Default().RightColumns;
-        var known = new HashSet<string>(AllDockerIds);
+            layout.RightColumns = WorkspaceLayout.CreateDefault().RightColumns;
+        layout.BottomColumn ??= WorkspaceLayout.CreateDefault().BottomColumn;
+
+        var known = new HashSet<string>(PanelRegistry.AllIds);
         foreach (var column in layout.RightColumns)
-            column.Panels = column.Panels.Where(known.Contains).Distinct().ToList();
-        layout.LeftColumn.Panels = layout.LeftColumn.Panels.Where(known.Contains).Distinct().ToList();
+            column.PanelIds = column.PanelIds.Where(known.Contains).Distinct().ToList();
+        layout.LeftColumn.PanelIds = layout.LeftColumn.PanelIds.Where(known.Contains).Distinct().ToList();
+        layout.BottomColumn.PanelIds = layout.BottomColumn.PanelIds.Where(known.Contains).Distinct().ToList();
+
         foreach (var id in known)
         {
-            if (layout.RightColumns.Any(c => c.Panels.Contains(id))) continue;
-            if (layout.LeftColumn.Panels.Contains(id)) continue;
+            if (layout.RightColumns.Any(c => c.PanelIds.Contains(id))) continue;
+            if (layout.LeftColumn.PanelIds.Contains(id)) continue;
+            if (layout.BottomColumn.PanelIds.Contains(id)) continue;
             if (layout.FloatingPanels.ContainsKey(id)) continue;
-            if (id == "tools")
-                layout.LeftColumn.Panels.Add(id);
+
+            var def = PanelRegistry.Get(id);
+            var zone = def?.DefaultZone ?? "right-0";
+
+            if (zone == "left")
+                layout.LeftColumn.PanelIds.Add(id);
+            else if (zone == "bottom")
+                layout.BottomColumn.PanelIds.Add(id);
+            else if (zone.StartsWith("right-") && int.TryParse(zone.AsSpan(6), out var rightIdx)
+                     && rightIdx < layout.RightColumns.Count)
+                layout.RightColumns[rightIdx].PanelIds.Add(id);
             else
-                layout.RightColumns[0].Panels.Add(id);
+                layout.RightColumns[0].PanelIds.Add(id);
         }
+
+        // Deduplicate: panels that ended up in multiple columns (e.g. from old
+        // configs where BottomColumn didn't exist) should be kept in the column
+        // matching their DefaultZone.
+        foreach (var id in known)
+        {
+            var inRight = layout.RightColumns.Where(c => c.ContainsPanel(id)).ToList();
+            var inLeft = layout.LeftColumn.ContainsPanel(id);
+            var inBottom = layout.BottomColumn.ContainsPanel(id);
+            var placementCount = inRight.Count + (inLeft ? 1 : 0) + (inBottom ? 1 : 0);
+            if (placementCount <= 1) continue;
+
+            var def = PanelRegistry.Get(id);
+            var zone = def?.DefaultZone ?? "right-0";
+
+            if (zone == "bottom" && inBottom)
+            {
+                foreach (var c in inRight) c.RemovePanel(id);
+                if (inLeft) layout.LeftColumn.RemovePanel(id);
+            }
+            else if (zone == "left" && inLeft)
+            {
+                foreach (var c in inRight) c.RemovePanel(id);
+                if (inBottom) layout.BottomColumn.RemovePanel(id);
+            }
+            else
+            {
+                // Keep in first matching RightColumn, remove from others
+                var keepCol = inRight.FirstOrDefault();
+                if (keepCol == null)
+                {
+                    // Panel is in both left and bottom — keep in left (override)
+                    if (inLeft && inBottom) layout.BottomColumn.RemovePanel(id);
+                }
+                else
+                {
+                    if (inLeft) layout.LeftColumn.RemovePanel(id);
+                    if (inBottom) layout.BottomColumn.RemovePanel(id);
+                    foreach (var c in inRight)
+                        if (c != keepCol) c.RemovePanel(id);
+                }
+            }
+        }
+
         return layout;
     }
 
     private bool IsDockerFloating(string id)
         => App.Config.WorkspaceLayout.FloatingPanels.TryGetValue(id, out var f) && f.IsFloating;
-
-    private static double DefaultDockerHeight(string id) => id switch
-    {
-        "brush" => 260,
-        "layers" => 220,
-        "brush-size" => 260,
-        "color" => 230,
-        "color-slider" => 170,
-        _ => 120
-    };
-
-    private static double MinDockerHeight(string id) => id switch
-    {
-        "brush" => 160,
-        "layers" => 140,
-        "brush-size" => 140,
-        "color" => 180,
-        _ => 64
-    };
 
     private ContextMenu BuildDockerContextMenu(string id)
     {
@@ -1647,34 +2058,60 @@ public partial class MainWindow : Window, Tools.IViewportController
         var reset = new MenuItem { Header = "_Reset Panel Size" };
         reset.Click += (_, _) =>
         {
-            App.Config.WorkspaceLayout.PanelHeights.Remove(id);
+            App.Config.WorkspaceLayout.PanelProportions.Remove(id);
             RebuildDockers();
+        };
+
+        // Horizontal split: place another panel beside this one in the same row
+        var splitMenu = new MenuItem { Header = "Split _Right", IsEnabled = !isFloating };
+        splitMenu.SubmenuOpened += (_, _) =>
+        {
+            splitMenu.ItemsSource = PanelRegistry.AllIds
+                .Where(pid => pid != id && !IsDockerFloating(pid) && IsDockerVisible(pid))
+                .Select(pid =>
+                {
+                    var item = new MenuItem { Header = DockerTitle(pid) };
+                    item.Click += (_, _) => SplitPanelHorizontal(id, pid);
+                    return (object)item;
+                })
+                .ToList();
         };
 
         return new ContextMenu
         {
-            ItemsSource = new object[] { floatItem, new Separator(), moveLeft, moveRight, new Separator(), moveUp, moveDown, new Separator(), reset }
+            ItemsSource = new object[] { floatItem, new Separator(), moveLeft, moveRight, new Separator(), moveUp, moveDown, new Separator(), splitMenu, new Separator(), reset }
         };
     }
 
     private void ToggleDockerVisibility(string id)
     {
+        // Node graph has its own bottom dock — delegate visibility toggle
+        if (id == "node-graph")
+        {
+            SetNodeGraphDockVisible(!_nodeGraphDockVisible);
+            return;
+        }
+
         var layout = NormalizedWorkspaceLayout();
-        if (layout.HiddenDockers.Contains(id))
-            layout.HiddenDockers.Remove(id);
+        if (layout.HiddenPanelIds.Contains(id))
+            layout.HiddenPanelIds.Remove(id);
         else
-            layout.HiddenDockers.Add(id);
+            layout.HiddenPanelIds.Add(id);
         RebuildDockers();
         App.Config.Save();
     }
 
     private bool IsDockerVisible(string id)
-        => !NormalizedWorkspaceLayout().HiddenDockers.Contains(id);
+    {
+        if (id == "node-graph")
+            return _nodeGraphDockVisible;
+        return !NormalizedWorkspaceLayout().HiddenPanelIds.Contains(id);
+    }
 
     private void RefreshDockersMenu(MenuItem dockersMenu)
     {
         dockersMenu.Items.Clear();
-        foreach (var id in AllDockerIds)
+        foreach (var id in PanelRegistry.AllIds)
         {
             var dockerId = id;
             var item = new MenuItem
@@ -1687,28 +2124,15 @@ public partial class MainWindow : Window, Tools.IViewportController
         }
     }
 
-    private static string DockerTitle(string id) => id switch
-    {
-        "tools" => "Tools",
-        "brush" => "Brush",
-        "tool-properties" => "Tool Property",
-        "layer-properties" => "Layer Properties",
-        "layers" => "Layers",
-        "color" => "Color",
-        "color-slider" => "Color Slider",
-        "brush-size" => "Brush Size",
-        _ => id
-    };
-
-    private (DockColumnConfig Column, int ColumnIndex, int PanelIndex)? FindDockerPlacement(string id)
+    private (DockColumnLayout Column, int ColumnIndex, int PanelIndex)? FindDockerPlacement(string id)
     {
         var layout = NormalizedWorkspaceLayout();
-        var leftIdx = layout.LeftColumn.Panels.IndexOf(id);
+        var leftIdx = layout.LeftColumn.PanelIds.IndexOf(id);
         if (leftIdx >= 0)
             return (layout.LeftColumn, -1, leftIdx);
         for (var col = 0; col < layout.RightColumns.Count; col++)
         {
-            var index = layout.RightColumns[col].Panels.IndexOf(id);
+            var index = layout.RightColumns[col].PanelIds.IndexOf(id);
             if (index >= 0)
                 return (layout.RightColumns[col], col, index);
         }
@@ -1721,10 +2145,10 @@ public partial class MainWindow : Window, Tools.IViewportController
         var placement = FindDockerPlacement(id);
         if (placement == null) return;
         var (column, _, panelIndex) = placement.Value;
-        var target = Math.Clamp(panelIndex + delta, 0, column.Panels.Count - 1);
+        var target = Math.Clamp(panelIndex + delta, 0, column.PanelIds.Count - 1);
         if (target == panelIndex) return;
-        column.Panels.RemoveAt(panelIndex);
-        column.Panels.Insert(target, id);
+        column.PanelIds.RemoveAt(panelIndex);
+        column.PanelIds.Insert(target, id);
         RebuildDockers();
         App.Config.Save();
     }
@@ -1737,20 +2161,20 @@ public partial class MainWindow : Window, Tools.IViewportController
         var (column, columnIndex, panelIndex) = placement.Value;
         var layout = NormalizedWorkspaceLayout();
 
-        column.Panels.RemoveAt(panelIndex);
+        column.PanelIds.RemoveAt(panelIndex);
 
         if (columnIndex < 0)
         {
-            layout.RightColumns[0].Panels.Add(id);
+            layout.RightColumns[0].PanelIds.Add(id);
         }
         else if (App.Config.WorkspaceLayout.RightColumns.Count >= 2)
         {
             var targetColumn = App.Config.WorkspaceLayout.RightColumns[columnIndex == 0 ? 1 : 0];
-            targetColumn.Panels.Add(id);
+            targetColumn.PanelIds.Add(id);
         }
         else
         {
-            layout.LeftColumn.Panels.Add(id);
+            layout.LeftColumn.PanelIds.Add(id);
         }
 
         RebuildDockers();
@@ -1763,13 +2187,13 @@ public partial class MainWindow : Window, Tools.IViewportController
         var layout = NormalizedWorkspaceLayout();
 
         foreach (var column in layout.RightColumns)
-            column.Panels.Remove(id);
-        layout.LeftColumn.Panels.Remove(id);
+            column.PanelIds.Remove(id);
+        layout.LeftColumn.PanelIds.Remove(id);
 
         if (columnIndex < 0)
-            layout.LeftColumn.Panels.Add(id);
+            layout.LeftColumn.PanelIds.Add(id);
         else if (columnIndex < layout.RightColumns.Count)
-            layout.RightColumns[columnIndex].Panels.Add(id);
+            layout.RightColumns[columnIndex].PanelIds.Add(id);
 
         if (layout.FloatingPanels.TryGetValue(id, out var floating))
             floating.IsFloating = false;
@@ -1787,7 +2211,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     {
         SaveWorkspaceLayoutFromUi();
         if (!App.Config.WorkspaceLayout.FloatingPanels.TryGetValue(id, out var floating))
-            floating = App.Config.WorkspaceLayout.FloatingPanels[id] = new FloatingDockerConfig();
+            floating = App.Config.WorkspaceLayout.FloatingPanels[id] = new FloatingPanelState();
         floating.IsFloating = true;
         if (floating.Width <= 0) floating.Width = 320;
         if (floating.Height <= 0) floating.Height = 480;
@@ -1810,6 +2234,54 @@ public partial class MainWindow : Window, Tools.IViewportController
         App.Config.Save();
     }
 
+    /// <summary>
+    /// Creates a horizontal side-by-side split: places targetId next to sourceId
+    /// in the same row. Converts the source's row to a horizontal layout.
+    /// </summary>
+    private void SplitPanelHorizontal(string sourceId, string targetId)
+    {
+        SaveWorkspaceLayoutFromUi();
+        var layout = NormalizedWorkspaceLayout();
+
+        DockColumnLayout? sourceCol = null;
+        if (layout.LeftColumn.ContainsPanel(sourceId)) sourceCol = layout.LeftColumn;
+        else
+            foreach (var rc in layout.RightColumns)
+                if (rc.ContainsPanel(sourceId)) { sourceCol = rc; break; }
+        if (sourceCol == null) return;
+
+        layout.RemovePanel(targetId);
+        SplitPanelHorizontalImpl(sourceCol, sourceId, targetId);
+
+        RebuildDockers();
+        App.Config.Save();
+    }
+
+    private static void SplitPanelHorizontalImpl(DockColumnLayout col, string sourceId, string targetId)
+    {
+        // Convert to Rows model if not already
+        if (col.Rows is not { Count: > 0 })
+        {
+            var resolved = col.ResolvedRows();
+            col.Rows = resolved.Select(r => new DockRowLayout
+            {
+                PanelIds = r.PanelIds.ToList(),
+                Orientation = r.Orientation,
+                ActiveIndex = r.ActiveTabIndex
+            }).ToList();
+        }
+
+        foreach (var row in col.Rows!)
+        {
+            if (row.PanelIds.Contains(sourceId))
+            {
+                row.PanelIds.Add(targetId);
+                row.Orientation = DockOrientation.Horizontal;
+                break;
+            }
+        }
+    }
+
     private void OpenFloatingDockersFromConfig()
     {
         foreach (var id in App.Config.WorkspaceLayout.FloatingPanels
@@ -1829,7 +2301,18 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         var cfg = App.Config.WorkspaceLayout.FloatingPanels.TryGetValue(id, out var f)
             ? f
-            : new FloatingDockerConfig();
+            : new FloatingPanelState();
+
+        // Reuse the cached section if available — it has properly wired controls.
+        // Otherwise build fresh content.
+        var section = _dockerSections.TryGetValue(id, out var cached)
+            ? cached
+            : PanelSection(id, info.Title, info.Build());
+
+        // Detach from any previous parent (e.g. the dock column it was in)
+        if (section.Parent is Panel parent)
+            parent.Children.Remove(section);
+
         var window = new Window
         {
             Title = info.Title,
@@ -1839,7 +2322,7 @@ public partial class MainWindow : Window, Tools.IViewportController
             MinHeight = 140,
             WindowStartupLocation = WindowStartupLocation.Manual,
             Background = new SolidColorBrush(Color.Parse(Bg0)),
-            Content = PanelSection(id, info.Title, info.Build())
+            Content = section
         };
         var position = FindFloatingDockerPosition(id, cfg, window.Width, window.Height);
         window.Position = position;
@@ -1863,7 +2346,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private const int DockerSnapDistance = 18;
     private const int DockerGap = 6;
 
-    private PixelPoint FindFloatingDockerPosition(string id, FloatingDockerConfig cfg, double width, double height)
+    private PixelPoint FindFloatingDockerPosition(string id, FloatingPanelState cfg, double width, double height)
     {
         var x = cfg.X;
         var y = cfg.Y;
@@ -1995,7 +2478,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     {
         if (!_floatingDockers.TryGetValue(id, out var window)) return;
         if (!App.Config.WorkspaceLayout.FloatingPanels.TryGetValue(id, out var cfg))
-            cfg = App.Config.WorkspaceLayout.FloatingPanels[id] = new FloatingDockerConfig();
+            cfg = App.Config.WorkspaceLayout.FloatingPanels[id] = new FloatingPanelState();
         cfg.X = window.Position.X;
         cfg.Y = window.Position.Y;
         cfg.Width = window.Width;
@@ -2006,7 +2489,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     {
         if (_rootGrid == null || _rootGrid.ColumnDefinitions.Count < 1) return;
         var layout = NormalizedWorkspaceLayout();
-        var hasFullPanels = layout.LeftColumn.Panels.Any(id => id != "tools");
+        var hasFullPanels = layout.LeftColumn.PanelIds.Any(id => id != "tools");
         if (hasFullPanels)
         {
             // Expand to stored width or a sensible default if we were in narrow mode
@@ -2034,10 +2517,17 @@ public partial class MainWindow : Window, Tools.IViewportController
                 _dockerHostGrid.Children.Remove(_dockerDropIndicator);
             _dockerDropIndicator = null;
         }
+        if (_dragHintText != null)
+        {
+            if (_dragHintText.Parent is Panel p)
+                p.Children.Remove(_dragHintText);
+            _dragHintText = null;
+        }
 
         _dockerRows.Clear();
-        _dockerSections.Clear();
-        _dockerSectionColumns.Clear();
+
+        // Clear section cache for panels that were removed (floated/deleted)
+        // Sections for panels that are still visible are preserved in _dockerSections.
 
         // Rebuild left column
         if (_leftRail != null)
@@ -2088,7 +2578,10 @@ public partial class MainWindow : Window, Tools.IViewportController
             if (_rootGrid.ColumnDefinitions[4].ActualWidth > 0)
                 layout.RightPanelWidth = Math.Max(300, _rootGrid.ColumnDefinitions[4].ActualWidth);
         }
-        if (_rightPanel is Border { Child: Grid dockGrid } && dockGrid.ColumnDefinitions.Count >= 3)
+        // Save right-panel column split ratio (relevant for 2-column layouts)
+        if (_rightPanel is Border { Child: Grid dockGrid }
+            && layout.RightColumns.Count == 2
+            && dockGrid.ColumnDefinitions.Count >= 3)
         {
             var left = dockGrid.ColumnDefinitions[0].ActualWidth;
             var right = dockGrid.ColumnDefinitions[2].ActualWidth;
@@ -2096,16 +2589,41 @@ public partial class MainWindow : Window, Tools.IViewportController
                 layout.RightDockSplit = left / (left + right);
         }
 
-        foreach (var (id, row) in _dockerRows)
-        {
-            var height = row.ActualHeight > 0
-                ? row.ActualHeight
-                : row.Height.IsAbsolute ? row.Height.Value : row.Height.Value;
-            layout.PanelHeights[id] = Math.Max(40, height);
-        }
+        // Save panel proportions by column (like Dock library's Proportion value)
+        SavePanelProportions();
 
         foreach (var id in _floatingDockers.Keys.ToArray())
             SaveFloatingDockerBounds(id);
+    }
+
+    private void SavePanelProportions()
+    {
+        var layout = NormalizedWorkspaceLayout();
+
+        // Collect all visible row IDs per column (solo panel IDs + tab group first-panel IDs)
+        var columnRows = new Dictionary<int, List<string>>();
+        columnRows[-1] = layout.LeftColumn.ResolvedRows().Select(r => r.PanelIds[0]).ToList();
+        for (var c = 0; c < layout.RightColumns.Count; c++)
+            columnRows[c] = layout.RightColumns[c].ResolvedRows().Select(r => r.PanelIds[0]).ToList();
+        columnRows[-2] = layout.BottomColumn.ResolvedRows().Select(r => r.PanelIds[0]).ToList();
+
+        foreach (var (ci, rowIds) in columnRows)
+        {
+            double totalH = 0;
+            var heights = new Dictionary<string, double>();
+            foreach (var id in rowIds)
+            {
+                if (!_dockerRows.TryGetValue(id, out var row)) continue;
+                var h = row.ActualHeight > 0 ? row.ActualHeight : row.Height.Value;
+                if (h <= 0) continue;
+                heights[id] = h;
+                totalH += h;
+            }
+
+            if (totalH <= 0) continue;
+            foreach (var (id, h) in heights)
+                layout.PanelProportions[id] = Math.Max(0.05, h / totalH);
+        }
     }
 
     private void PersistWorkspaceLayout()
@@ -2153,7 +2671,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         var reset = new MenuItem { Header = "_Reset Layout" };
         reset.Click += (_, _) =>
         {
-            App.Config.WorkspaceLayout = WorkspaceLayoutConfig.Default();
+            App.Config.WorkspaceLayout = WorkspaceLayout.CreateDefault();
             ApplyWorkspaceLayout();
         };
 
@@ -2325,7 +2843,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private void RestoreFromConfig()
     {
         var cfg = App.Config;
-        cfg.WorkspaceLayout ??= WorkspaceLayoutConfig.Default();
+        cfg.WorkspaceLayout ??= WorkspaceLayout.CreateDefault();
         if (_rootGrid != null && _rootGrid.ColumnDefinitions.Count > 4)
         {
             _rootGrid.ColumnDefinitions[0].Width = new GridLength(

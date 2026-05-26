@@ -1039,6 +1039,7 @@ public static class BrushTipNodeGraphEvaluator
                     min = MathF.Min(min, input[ny * size + nx]);
                     if (min == 0) break;
                 }
+                result[y * size + x] = min;
             }
             return result;
         }

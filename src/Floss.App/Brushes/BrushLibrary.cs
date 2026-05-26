@@ -252,7 +252,7 @@ public sealed class BrushLibrary
             WithGap(
                 new BrushPreset("Soft Eraser", 48, 1.0, 0.22, 0.25, Colors.Black, 0)
                 {
-                    BlendMode = SKBlendMode.DstOut,
+                    BlendMode = SKBlendMode.Clear,
                     Dynamics = new BrushDynamics
                     {
                         Size = CurveOption.Pressure(1.0f),
@@ -267,7 +267,7 @@ public sealed class BrushLibrary
             WithGap(
                 new BrushPreset("Hard Eraser", 24, 1.0, 0.94, 0.12, Colors.Black, 0)
                 {
-                    BlendMode = SKBlendMode.DstOut,
+                    BlendMode = SKBlendMode.Clear,
                     Dynamics = new BrushDynamics
                     {
                         Size = CurveOption.Pressure(1.0f),

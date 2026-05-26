@@ -19,6 +19,7 @@ global using Floss.App.Processes.Input;
 global using Floss.App.Processes.Output;
 global using Floss.App.Timelapse;
 global using Floss.App.Tools;
+global using Floss.App.Docking;
 global using Microsoft.Data.Sqlite;
 global using SkiaSharp;
 global using Xunit;

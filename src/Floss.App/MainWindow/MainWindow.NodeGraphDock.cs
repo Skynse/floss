@@ -19,6 +19,15 @@ public partial class MainWindow
     private string? _nodeGraphLoadedKey;
     private bool _nodeGraphCommitInProgress;
 
+    private Control BuildNodeGraphDockerContent()
+    {
+        EnsureNodeGraphDock();
+        var editor = _nodeGraphEditor!;
+        if (editor.Parent is Panel parent)
+            parent.Children.Remove(editor);
+        return editor;
+    }
+
     private void EnsureNodeGraphDock()
     {
         if (_nodeGraphEditor != null)
@@ -44,8 +53,11 @@ public partial class MainWindow
         {
             var h = _nodeGraphDockRow?.ActualHeight ?? 0;
             if (h > 0)
-                App.Config.NodeGraphDockHeight = h;
-            PersistWorkspaceLayout();
+            {
+                var proportion = h / (_workspaceViewport?.Bounds.Height ?? 1);
+                App.Config.WorkspaceLayout.PanelProportions["node-graph"] = Math.Clamp(proportion, 0.1, 0.8);
+                PersistWorkspaceLayout();
+            }
         };
     }
 
@@ -80,14 +92,19 @@ public partial class MainWindow
         centerArea.Children.Add(_nodeGraphEditor!);
         WireNodeGraphKeyboardSurface();
 
-        SetNodeGraphDockVisible(App.Config.ShowNodeGraphDock, reload: false);
+        SetNodeGraphDockVisible(!App.Config.WorkspaceLayout.HiddenPanelIds.Contains("node-graph"), reload: false);
     }
 
     private void SetNodeGraphDockVisible(bool visible, bool reload = true)
     {
         EnsureNodeGraphDock();
         _nodeGraphDockVisible = visible;
-        App.Config.ShowNodeGraphDock = visible;
+
+        // Sync with docker config (single source of truth)
+        var hidden = App.Config.WorkspaceLayout.HiddenPanelIds;
+        if (visible) hidden.Remove("node-graph");
+        else hidden.Add("node-graph");
+
         _nodeGraphEditor!.IsVisible = visible;
         _nodeGraphDockSplitter!.IsVisible = visible;
         if (_nodeGraphDockRow != null)
@@ -95,7 +112,9 @@ public partial class MainWindow
             if (visible)
             {
                 _nodeGraphDockRow.MinHeight = 160;
-                _nodeGraphDockRow.Height = new GridLength(Math.Clamp(App.Config.NodeGraphDockHeight, 180, 600));
+                var savedProportion = App.Config.WorkspaceLayout.PanelProportions.TryGetValue("node-graph", out var sp)
+                    ? Math.Clamp(sp, 0.1, 0.8) : 0.35;
+                _nodeGraphDockRow.Height = new GridLength(savedProportion, GridUnitType.Star);
             }
             else
             {

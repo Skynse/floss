@@ -28,6 +28,7 @@
     <Using Include="Floss.App.Config" />
     <Using Include="Floss.App.Controls" />
     <Using Include="Floss.App.Diagnostics" />
+    <Using Include="Floss.App.Docking" />
   </ItemGroup>
 
   <ItemGroup>

@@ -607,7 +607,7 @@ public sealed class ToolGroupConfig
         var eraserGroup = group.DefaultEngine == ToolPresetEngine.Eraser;
         foreach (var asset in assets)
         {
-            var isEraserAsset = asset.Preset.BlendMode == SkiaSharp.SKBlendMode.DstOut;
+            var isEraserAsset = IsEraserBlendMode(asset.Preset.BlendMode);
             if (eraserGroup != isEraserAsset) continue;
 
             var preset = new ToolPreset
@@ -657,6 +657,9 @@ public sealed class ToolGroupConfig
     private static bool IsAssetBackedGroup(ToolGroup group)
         => group.DefaultEngine is ToolPresetEngine.Brush or ToolPresetEngine.Eraser or ToolPresetEngine.Smudge;
 
+    private static bool IsEraserBlendMode(SkiaSharp.SKBlendMode mode)
+        => mode is SkiaSharp.SKBlendMode.DstOut or SkiaSharp.SKBlendMode.Clear;
+
     public void Save()
     {
         try { (Store ??= PresetStore.OpenDefault()).SaveToolGroups(Groups); }
@@ -684,7 +687,7 @@ public sealed class ToolGroupConfig
         {
             if (allBrushIds.Contains(asset.Id)) continue;
 
-            if (asset.Preset.BlendMode == SkiaSharp.SKBlendMode.DstOut && eraserGroup != null)
+            if (IsEraserBlendMode(asset.Preset.BlendMode) && eraserGroup != null)
             {
                 var preset = new ToolPreset
                 {
@@ -692,7 +695,7 @@ public sealed class ToolGroupConfig
                     InputProcess = InputProcessType.Eraser,
                     OutputProcess = OutputProcessType.DirectDraw,
                     BrushId = asset.Id,
-                    BrushBlendMode = SkiaSharp.SKBlendMode.DstOut
+                    BrushBlendMode = asset.Preset.BlendMode
                 };
                 eraserGroup.Presets.Add(preset);
                 if (asset.Category != null)

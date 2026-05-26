@@ -762,6 +762,18 @@ public partial class MainWindow : Window
         var newName = (await tcs.Task)?.Trim();
         if (string.IsNullOrWhiteSpace(newName) || newName == preset.Name) return;
         preset.Name = newName;
+
+        // Also rename the BrushAsset.Preset so the UI label stays in sync
+        if (preset.BrushId != null)
+        {
+            var asset = _brushAssets.FirstOrDefault(a => a.Id == preset.BrushId);
+            if (asset != null)
+            {
+                asset.Preset = asset.Preset with { Name = newName };
+                _brushLibrary.Save(asset);
+            }
+        }
+
         App.ToolGroups.Save();
         RefreshGroupPresets();
         if (_activeToolGroup == group && group.ActivePreset == preset)
@@ -912,8 +924,8 @@ public partial class MainWindow : Window
             Tip = new ProceduralBrushTip(BrushTipShape.Circle),
             Smoothing = 0.3
         };
-        if (preset.BrushBlendMode == SkiaSharp.SKBlendMode.DstOut)
-            brushPreset = brushPreset with { BlendMode = SkiaSharp.SKBlendMode.DstOut };
+        if (preset.BrushBlendMode.HasValue)
+            brushPreset = brushPreset with { BlendMode = preset.BrushBlendMode.Value };
 
         var asset = BrushAsset.FromPreset(brushPreset, category: _selectedCategory);
         _brushLibrary.Save(asset);

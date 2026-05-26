@@ -228,7 +228,7 @@ public sealed class BrushEngine : IDisposable
             return PixelRegion.Empty;
         }
 
-        if (brush.BlendMode != SKBlendMode.DstOut && brush.ColorMix)
+        if (brush.ColorMix)
         {
             try
             {
@@ -425,7 +425,7 @@ public sealed class BrushEngine : IDisposable
             return PixelRegion.Empty;
         }
 
-        if (brush.BlendMode != SKBlendMode.DstOut && brush.ColorMix)
+        if (brush.ColorMix)
         {
             try
             {
@@ -554,7 +554,7 @@ public sealed class BrushEngine : IDisposable
             var stamp = CreateStamp(stroke, brush, sp);
             _stamps.Add(stamp);
 
-            if (brush.BlendMode != SKBlendMode.DstOut && brush.ColorMix)
+            if (brush.ColorMix)
             {
                 stroke.EnterDabCacheUse();
                 try
@@ -3645,8 +3645,8 @@ public sealed class BrushEngine : IDisposable
                 FilterQuality = brush.Quality == BrushQuality.High ? SKFilterQuality.High : SKFilterQuality.Low,
 #pragma warning restore CS0618
                 BlendMode = brush.BlendMode,
-                Color = brush.BlendMode == SKBlendMode.DstOut ? SKColors.White : _baseColor,
-                ColorFilter = brush.BlendMode == SKBlendMode.DstOut ? null : SKColorFilter.CreateBlendMode(_baseColor, SKBlendMode.SrcIn)
+                Color = _baseColor,
+                ColorFilter = SKColorFilter.CreateBlendMode(_baseColor, SKBlendMode.SrcIn)
             };
         }
 
@@ -3682,9 +3682,7 @@ public sealed class BrushEngine : IDisposable
         {
             var colorAlphaRatio = _currentColor.Alpha / 255f;
             var alpha = (byte)Math.Clamp((int)(opacity * 255 * colorAlphaRatio), 0, 255);
-            Paint.Color = _brush.BlendMode == SKBlendMode.DstOut
-                ? new SKColor(255, 255, 255, alpha)
-                : new SKColor(_currentColor.Red, _currentColor.Green, _currentColor.Blue, alpha);
+            Paint.Color = new SKColor(_currentColor.Red, _currentColor.Green, _currentColor.Blue, alpha);
         }
 
         public void UpdateMatrix(StampSample stamp)
