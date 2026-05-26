@@ -513,25 +513,14 @@ public sealed class NodeGraphView : Control
         _zoomDirection = presetId == ToolGroupConfig.ViewZoomOutPresetId ? -1 : 1;
     }
 
-    private static int NodeInputCount(BrushTipNodeKind kind) => kind switch
-    {
-        BrushTipNodeKind.Output => 1,
-        BrushTipNodeKind.RotateCoordinates or BrushTipNodeKind.PolarRadius
-            or BrushTipNodeKind.PolarAngle => 1,
-        BrushTipNodeKind.WarpCoordinates => 2,
-        BrushTipNodeKind.DistanceField or BrushTipNodeKind.BoxDistanceField
-            or BrushTipNodeKind.LinearGradient or BrushTipNodeKind.Stripe
-            or BrushTipNodeKind.Noise => 1,
-        BrushTipNodeKind.Threshold or BrushTipNodeKind.SmoothStep
-            or BrushTipNodeKind.Invert or BrushTipNodeKind.Power
-            or BrushTipNodeKind.Sine or BrushTipNodeKind.Absolute => 1,
-        BrushTipNodeKind.Add or BrushTipNodeKind.Multiply or BrushTipNodeKind.Max
-            or BrushTipNodeKind.Min or BrushTipNodeKind.Subtract or BrushTipNodeKind.Mix => 2,
-        _ => 0
-    };
+    private static int NodeInputCount(BrushTipNodeKind kind)
+        => BrushTipNodeRegistry.InputCount(kind);
 
     private static bool HasImageSelector(BrushTipNode node)
-        => node.Kind == BrushTipNodeKind.ImageSampler;
+        => BrushTipNodeRegistry.HasImageSelector(node.Kind);
+
+    private static bool HasStandalonePreview(BrushTipNode node)
+        => BrushTipNodeRegistry.HasStandalonePreview(node.Kind);
 
     private static float PreviewBarHeightFor(BrushTipNode node)
         => HasImageSelector(node) ? ImageTipPreviewSize : PreviewBarHeight;
@@ -550,9 +539,6 @@ public sealed class NodeGraphView : Control
             w,
             h);
     }
-
-    private static bool HasStandalonePreview(BrushTipNode node)
-        => node.Kind == BrushTipNodeKind.Coordinates;
 
     private static bool ShowsPreviewBar(BrushTipNode node)
     {
@@ -600,160 +586,20 @@ public sealed class NodeGraphView : Control
         return new Rect(pos.X + 4, y, NodeWidth - 8, ImageSelectorRowHeight - 4);
     }
 
-    private static SolidColorBrush HeaderBrush(BrushTipNodeKind kind) => kind switch
+    private static SolidColorBrush HeaderBrush(BrushTipNodeKind kind) => BrushTipNodeRegistry.CategoryOf(kind) switch
     {
-        BrushTipNodeKind.Coordinates or BrushTipNodeKind.RotateCoordinates
-            or BrushTipNodeKind.WarpCoordinates
-            or BrushTipNodeKind.Value or BrushTipNodeKind.DistanceField
-            or BrushTipNodeKind.BoxDistanceField
-            or BrushTipNodeKind.Circle or BrushTipNodeKind.Rectangle
-            or BrushTipNodeKind.RoundedRectangle
-            or BrushTipNodeKind.LinearGradient or BrushTipNodeKind.Stripe
-            or BrushTipNodeKind.ImageSampler
-            or BrushTipNodeKind.Noise or BrushTipNodeKind.Bristle => GenBrush,
-        BrushTipNodeKind.Add or BrushTipNodeKind.Multiply
-            or BrushTipNodeKind.Max or BrushTipNodeKind.Min
-            or BrushTipNodeKind.Subtract or BrushTipNodeKind.Mix => CombBrush,
-        BrushTipNodeKind.Threshold or BrushTipNodeKind.Invert => ModBrush,
-        BrushTipNodeKind.Output => OutBrush,
+        NodeDescriptorCategory.Coordinate or NodeDescriptorCategory.Generator or NodeDescriptorCategory.Effect => GenBrush,
+        NodeDescriptorCategory.Math => CombBrush,
+        NodeDescriptorCategory.Mask => ModBrush,
+        NodeDescriptorCategory.Output => OutBrush,
         _ => GenBrush
     };
 
-    private sealed record NodeParam(
-        string Name, float Min, float Max,
-        Func<BrushTipNode, float> Get,
-        Action<BrushTipNode, float> Set);
+    private static NodeParam[] GetNodeParams(BrushTipNodeKind kind)
+        => BrushTipNodeRegistry.Params(kind);
 
-    private static NodeParam[] GetNodeParams(BrushTipNodeKind kind) => kind switch
-    {
-        BrushTipNodeKind.RotateCoordinates => new NodeParam[] {
-            new("Center X", 0f, 1f, n => n.X, (n, v) => n.X = v),
-            new("Center Y", 0f, 1f, n => n.Y, (n, v) => n.Y = v),
-            new("Scale", 0.05f, 8f, n => n.Scale, (n, v) => n.Scale = v),
-            new("Rotation", -180f, 180f, n => n.RotationDegrees, (n, v) => n.RotationDegrees = v),
-        },
-        BrushTipNodeKind.WarpCoordinates => new NodeParam[] {
-            new("Amount", 0f, 1f, n => n.Density, (n, v) => n.Density = v),
-            new("X Amp", 0f, 1f, n => n.Width, (n, v) => n.Width = v),
-            new("Y Amp", 0f, 1f, n => n.Height, (n, v) => n.Height = v),
-            new("Direction", -180f, 180f, n => n.RotationDegrees, (n, v) => n.RotationDegrees = v),
-        },
-        BrushTipNodeKind.PolarRadius => new NodeParam[] {
-            new("Center X", 0f, 1f, n => n.X, (n, v) => n.X = v),
-            new("Center Y", 0f, 1f, n => n.Y, (n, v) => n.Y = v),
-            new("Width", 0f, 1f, n => n.Width, (n, v) => n.Width = v),
-            new("Height", 0f, 1f, n => n.Height, (n, v) => n.Height = v),
-            new("Scale", 0.05f, 16f, n => n.Scale, (n, v) => n.Scale = v),
-        },
-        BrushTipNodeKind.PolarAngle => new NodeParam[] {
-            new("Center X", 0f, 1f, n => n.X, (n, v) => n.X = v),
-            new("Center Y", 0f, 1f, n => n.Y, (n, v) => n.Y = v),
-            new("Repeats", 0.05f, 64f, n => n.Scale, (n, v) => n.Scale = v),
-            new("Phase", -180f, 180f, n => n.RotationDegrees, (n, v) => n.RotationDegrees = v),
-        },
-        BrushTipNodeKind.Value => new NodeParam[] {
-            new("Value", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
-        },
-        BrushTipNodeKind.DistanceField or BrushTipNodeKind.BoxDistanceField => new NodeParam[] {
-            new("Center X", 0f, 1f, n => n.X, (n, v) => n.X = v),
-            new("Center Y", 0f, 1f, n => n.Y, (n, v) => n.Y = v),
-            new("Width", 0f, 1f, n => n.Width, (n, v) => n.Width = v),
-            new("Height", 0f, 1f, n => n.Height, (n, v) => n.Height = v),
-            new("Rotation", -180f, 180f, n => n.RotationDegrees, (n, v) => n.RotationDegrees = v),
-        },
-        BrushTipNodeKind.Circle => new NodeParam[] {
-            new("Radius", 0f, 1f, n => n.Radius, (n, v) => n.Radius = v),
-            new("Hardness", 0f, 1f, n => n.Hardness, (n, v) => n.Hardness = v),
-            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
-            new("Rotation", -180f, 180f, n => n.RotationDegrees, (n, v) => n.RotationDegrees = v),
-        },
-        BrushTipNodeKind.Rectangle => new NodeParam[] {
-            new("Width", 0f, 1f, n => n.Width, (n, v) => n.Width = v),
-            new("Height", 0f, 1f, n => n.Height, (n, v) => n.Height = v),
-            new("Hardness", 0f, 1f, n => n.Hardness, (n, v) => n.Hardness = v),
-            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
-            new("Rotation", -180f, 180f, n => n.RotationDegrees, (n, v) => n.RotationDegrees = v),
-        },
-        BrushTipNodeKind.Noise => new NodeParam[] {
-            new("Density", 0f, 1f, n => n.Density, (n, v) => n.Density = v),
-            new("Scale", 0.05f, 64f, n => n.Scale, (n, v) => n.Scale = v),
-            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
-        },
-        BrushTipNodeKind.Bristle => new NodeParam[] {
-            new("Density", 0f, 1f, n => n.Density, (n, v) => n.Density = v),
-            new("Width", 0f, 1f, n => n.Width, (n, v) => n.Width = v),
-            new("Height", 0f, 1f, n => n.Height, (n, v) => n.Height = v),
-            new("Hardness", 0f, 1f, n => n.Hardness, (n, v) => n.Hardness = v),
-            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
-        },
-        BrushTipNodeKind.LinearGradient => new NodeParam[] {
-            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
-        },
-        BrushTipNodeKind.Stripe => new NodeParam[] {
-            new("Scale", 1f, 128f, n => n.Scale, (n, v) => n.Scale = v),
-            new("Density", 0f, 1f, n => n.Density, (n, v) => n.Density = v),
-            new("Hardness", 0f, 1f, n => n.Hardness, (n, v) => n.Hardness = v),
-            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
-            new("Rotation", -180f, 180f, n => n.RotationDegrees, (n, v) => n.RotationDegrees = v),
-        },
-        BrushTipNodeKind.ImageSampler => new NodeParam[] {
-            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
-        },
-        BrushTipNodeKind.Threshold => new NodeParam[] {
-            new("Threshold", 0f, 1f, n => n.Threshold, (n, v) => n.Threshold = v),
-            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
-        },
-        BrushTipNodeKind.SmoothStep => new NodeParam[] {
-            new("Edge", 0f, 1f, n => n.Threshold, (n, v) => n.Threshold = v),
-            new("Softness", 0.001f, 1f, n => n.Hardness, (n, v) => n.Hardness = v),
-            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
-        },
-        BrushTipNodeKind.Power => new NodeParam[] {
-            new("Exponent", 0.05f, 16f, n => n.Scale, (n, v) => n.Scale = v),
-            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
-        },
-        BrushTipNodeKind.Sine => new NodeParam[] {
-            new("Frequency", 0.05f, 64f, n => n.Scale, (n, v) => n.Scale = v),
-            new("Phase", 0f, 1f, n => n.X, (n, v) => n.X = v),
-            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
-        },
-        BrushTipNodeKind.Absolute => new NodeParam[] {
-            new("Center", 0f, 1f, n => n.X, (n, v) => n.X = v),
-            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
-        },
-        BrushTipNodeKind.Mix => new NodeParam[] {
-            new("Factor", 0f, 1f, n => n.Density, (n, v) => n.Density = v),
-            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
-        },
-        BrushTipNodeKind.Invert => new NodeParam[] {
-            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
-        },
-        BrushTipNodeKind.RoundedRectangle => new NodeParam[] {
-            new("Width", 0f, 1f, n => n.Width, (n, v) => n.Width = v),
-            new("Height", 0f, 1f, n => n.Height, (n, v) => n.Height = v),
-            new("Radius", 0f, 1f, n => n.Radius, (n, v) => n.Radius = v),
-            new("Hardness", 0f, 1f, n => n.Hardness, (n, v) => n.Hardness = v),
-            new("Opacity", 0f, 1f, n => n.Opacity, (n, v) => n.Opacity = v),
-            new("Rotation", -180f, 180f, n => n.RotationDegrees, (n, v) => n.RotationDegrees = v),
-        },
-        _ => Array.Empty<NodeParam>(),
-    };
-
-    private static string NodeKindDisplayName(BrushTipNodeKind kind) => kind switch
-    {
-        BrushTipNodeKind.Coordinates => "UV Map",
-        BrushTipNodeKind.LinearGradient => "Linear Grad",
-        BrushTipNodeKind.ImageSampler => "Image Sampler",
-        BrushTipNodeKind.RoundedRectangle => "Round Rect",
-        BrushTipNodeKind.RotateCoordinates => "Rotate Coord",
-        BrushTipNodeKind.WarpCoordinates => "Warp Coord",
-        BrushTipNodeKind.PolarRadius => "Polar Radius",
-        BrushTipNodeKind.PolarAngle => "Polar Angle",
-        BrushTipNodeKind.DistanceField => "Ellipse Field",
-        BrushTipNodeKind.BoxDistanceField => "Box Field",
-        BrushTipNodeKind.SmoothStep => "Smooth Step",
-        _ => kind.ToString()
-    };
+    private static string NodeKindDisplayName(BrushTipNodeKind kind)
+        => BrushTipNodeRegistry.DisplayName(kind);
 
     private Point GetOutputPortPos(BrushTipNode node, Point nodePos) =>
         new(nodePos.X + NodeWidth, nodePos.Y + HeaderHeight / 2);

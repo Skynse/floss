@@ -87,6 +87,9 @@ public partial class MainWindow
     {
         _colorWell.Background = new SolidColorBrush(color);
         _canvas.SetPaintColor(color);
+        _strokePreview.Brush = _canvas.Brush;
+        _strokePreview.InvalidateBitmap();
+        _toolPropsWindow?.UpdatePreviewColor(color);
         if (syncPicker) SyncPickerFromColor(color);
         RefreshColorSliders();
     }

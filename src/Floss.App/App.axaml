@@ -163,24 +163,17 @@
             <Setter Property="Background" Value="{StaticResource Bg2}"/>
         </Style>
 
-        <!-- ── Horizontal slider — flat scrub bar ──────────────────────── -->
-        <!--
-            Click-anywhere + drag-anywhere works via Avalonia's Slider internals:
-            Slider.OnApplyTemplate attaches TrackPressed (→ MoveToPoint) to BOTH
-            PART_DecreaseButton and PART_IncreaseButton using Tunnel routing, and
-            TrackMoved (→ MoveToPoint while dragging) to the Slider itself.
-            RepeatButtons MUST remain hit-testable or Tunnel never fires.
-        -->
+        <!-- ── Horizontal slider — chunky scrub bar ──────────────────────── -->
         <Style Selector="Slider:horizontal">
             <Setter Property="Background" Value="{StaticResource SliderTrack}"/>
-            <Setter Property="MinHeight" Value="20"/>
-            <Setter Property="MaxHeight" Value="20"/>
+            <Setter Property="MinHeight" Value="28"/>
+            <Setter Property="MaxHeight" Value="28"/>
             <Setter Property="Cursor" Value="SizeWestEast"/>
             <Setter Property="Padding" Value="0"/>
             <Setter Property="Template">
                 <ControlTemplate>
                     <Border Background="{TemplateBinding Background}"
-                            Height="20" ClipToBounds="True">
+                            Height="28" ClipToBounds="True">
                         <Track Name="PART_Track" Orientation="Horizontal"
                                Minimum="{TemplateBinding Minimum}"
                                Maximum="{TemplateBinding Maximum}"
@@ -195,10 +188,12 @@
                                 </RepeatButton>
                             </Track.DecreaseButton>
                             <Track.Thumb>
-                                <Thumb Width="2" Cursor="SizeWestEast">
+                                <Thumb Width="12" Cursor="SizeWestEast">
                                     <Thumb.Template>
                                         <ControlTemplate>
-                                            <Border Width="2" Background="{StaticResource SliderThumbLine}"/>
+                                            <Border Width="12" Height="18" CornerRadius="3"
+                                                    Background="{StaticResource SliderThumbLine}"
+                                                    VerticalAlignment="Center"/>
                                         </ControlTemplate>
                                     </Thumb.Template>
                                 </Thumb>

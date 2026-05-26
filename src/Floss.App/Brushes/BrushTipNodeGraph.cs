@@ -43,6 +43,12 @@ public enum BrushTipNodeKind
     Erosion,
     DirectionalBlur,
     RaggedEdge,
+    Perlin,
+    Voronoi,
+    IsotropicBlur,
+    EdgeDetect,
+    Transform,
+    Remap,
 }
 
 public sealed class BrushTipNode
@@ -547,7 +553,9 @@ public static class BrushTipNodeGraphEvaluator
         && !graph.Nodes.Exists(n => n.Kind is BrushTipNodeKind.TextureStamp
             or BrushTipNodeKind.Erosion
             or BrushTipNodeKind.DirectionalBlur
-            or BrushTipNodeKind.RaggedEdge);
+            or BrushTipNodeKind.RaggedEdge
+            or BrushTipNodeKind.IsotropicBlur
+            or BrushTipNodeKind.EdgeDetect);
 
     public static unsafe SKBitmap Evaluate(BrushTipNodeGraph graph, int size, float brushHardness, IReadOnlyList<BrushTipData>? materialTips = null)
     {
@@ -614,6 +622,12 @@ public static class BrushTipNodeGraphEvaluator
                 BrushTipNodeKind.Erosion => Scalar(Erosion(node, stack)),
                 BrushTipNodeKind.DirectionalBlur => Scalar(DirectionalBlur(node, stack)),
                 BrushTipNodeKind.RaggedEdge => Scalar(RaggedEdge(node, stack)),
+                BrushTipNodeKind.Perlin => Scalar(Perlin(node, stack)),
+                BrushTipNodeKind.Voronoi => Scalar(Voronoi(node, stack)),
+                BrushTipNodeKind.IsotropicBlur => Scalar(IsotropicBlur(node, stack)),
+                BrushTipNodeKind.EdgeDetect => Scalar(EdgeDetect(node, stack)),
+                BrushTipNodeKind.Transform => Transform(node, stack),
+                BrushTipNodeKind.Remap => Scalar(Remap(node, stack)),
                 _ => NodeSample.Zero(size)
             };
             stack.Remove(id);
@@ -1072,6 +1086,113 @@ public static class BrushTipNodeGraphEvaluator
             return result;
         }
 
+        float[] Perlin(BrushTipNode node, HashSet<string> stack)
+        {
+            var (coordX, coordY) = EvalVectorInputOrCoordinates(node, 0, stack);
+            var scale = Math.Clamp(node.Scale, 0.5f, 32f);
+            var detail = Math.Clamp(node.Density, 0f, 1f);
+            var opacity = Math.Clamp(node.Opacity, 0f, 1f);
+            var result = new float[size * size];
+            int octaves = Math.Clamp((int)(detail * 6f + 1f), 1, 7);
+            for (var i = 0; i < result.Length; i++)
+            {
+                float v = FbmNoise(coordX[i] * scale, coordY[i] * scale, octaves);
+                result[i] = Math.Clamp((v * 0.5f + 0.5f) * opacity, 0f, 1f);
+            }
+            return result;
+        }
+
+        float[] Voronoi(BrushTipNode node, HashSet<string> stack)
+        {
+            var (coordX, coordY) = EvalVectorInputOrCoordinates(node, 0, stack);
+            var scale = Math.Clamp(node.Scale, 0.5f, 32f);
+            var density = Math.Clamp(node.Density, 0f, 1f);
+            var opacity = Math.Clamp(node.Opacity, 0f, 1f);
+            var result = new float[size * size];
+            float jitter = 0.7f + density * 0.3f;
+            for (var i = 0; i < result.Length; i++)
+            {
+                result[i] = Math.Clamp(VoronoiDistance(coordX[i] * scale, coordY[i] * scale, jitter) * opacity, 0f, 1f);
+            }
+            return result;
+        }
+
+        float[] IsotropicBlur(BrushTipNode node, HashSet<string> stack)
+        {
+            var input = EvalScalarInput(node, 0, stack);
+            var radius = Math.Max(1, (int)(Math.Clamp(node.Radius, 0f, 1f) * size * 0.2f));
+            var result = new float[size * size];
+            for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                float sum = 0, weight = 0;
+                for (int dy = -radius; dy <= radius; dy++)
+                for (int dx = -radius; dx <= radius; dx++)
+                {
+                    int nx = x + dx, ny = y + dy;
+                    if ((uint)nx >= (uint)size || (uint)ny >= (uint)size) continue;
+                    float d = MathF.Sqrt(dx * dx + dy * dy);
+                    if (d > radius) continue;
+                    float w = 1f - d / (radius + 1);
+                    sum += input[ny * size + nx] * w;
+                    weight += w;
+                }
+                result[y * size + x] = weight > 0 ? sum / weight : 0f;
+            }
+            return result;
+        }
+
+        float[] EdgeDetect(BrushTipNode node, HashSet<string> stack)
+        {
+            var input = EvalScalarInput(node, 0, stack);
+            var strength = Math.Clamp(node.Opacity, 0f, 1f);
+            var result = new float[size * size];
+            for (int y = 1; y < size - 1; y++)
+            for (int x = 1; x < size - 1; x++)
+            {
+                int p = y * size + x;
+                float gx = input[p + 1] - input[p - 1];
+                float gy = input[p + size] - input[p - size];
+                float mag = MathF.Sqrt(gx * gx + gy * gy) * strength;
+                result[p] = Math.Clamp(mag, 0f, 1f);
+            }
+            return result;
+        }
+
+        float[] Remap(BrushTipNode node, HashSet<string> stack)
+        {
+            var input = EvalScalarInput(node, 0, stack);
+            float inMin = Math.Clamp(node.Threshold, 0f, 1f);
+            float inMax = Math.Clamp(node.Hardness, 0f, 1f);
+            float outMin = Math.Clamp(node.Opacity, 0f, 1f);
+            float outMax = Math.Clamp(node.Scale, 0f, 1f);
+            float inRange = Math.Max(0.0001f, inMax - inMin);
+            float outRange = outMax - outMin;
+            var result = new float[size * size];
+            for (var i = 0; i < result.Length; i++)
+            {
+                float t = (input[i] - inMin) / inRange;
+                result[i] = Math.Clamp(outMin + t * outRange, 0f, 1f);
+            }
+            return result;
+        }
+
+        NodeSample Transform(BrushTipNode node, HashSet<string> stack)
+        {
+            var (srcX, srcY) = EvalVectorInputOrCoordinates(node, 0, stack);
+            float s = Math.Max(0.01f, node.Scale);
+            float ox = node.X;
+            float oy = node.Y;
+            var xs = new float[size * size];
+            var ys = new float[size * size];
+            for (var i = 0; i < xs.Length; i++)
+            {
+                xs[i] = (srcX[i] - 0.5f) * s + 0.5f + ox;
+                ys[i] = (srcY[i] - 0.5f) * s + 0.5f + oy;
+            }
+            return new NodeSample(xs, ys);
+        }
+
         void FillAnalytic(BrushTipNode node, float[] result, Func<float, float, float> alphaAt)
         {
             var radians = -node.RotationDegrees * MathF.PI / 180f;
@@ -1179,6 +1300,76 @@ public static class BrushTipNodeGraphEvaluator
             h ^= h >> 16;
             return (h & 0x00FFFFFF) / 16777215f;
         }
+    }
+
+    public static float Hash01(float x, float y, int seed)
+    {
+        int ix = (int)MathF.Floor(x * 256f);
+        int iy = (int)MathF.Floor(y * 256f);
+        return Hash01(ix, iy, seed);
+    }
+
+    public static float Grad(int hash, float x, float y)
+    {
+        int h = hash & 7;
+        float u = h < 4 ? x : y;
+        float v = h < 4 ? y : x;
+        return ((h & 1) != 0 ? -u : u) + ((h & 2) != 0 ? -v : v);
+    }
+
+    public static float FbmNoise(float x, float y, int octaves)
+    {
+        float value = 0, amp = 1, freq = 1, max = 0;
+        int seed = 1;
+        for (int i = 0; i < octaves; i++)
+        {
+            value += amp * PerlinNoise2D(x * freq, y * freq, seed + i * 42);
+            max += amp;
+            amp *= 0.5f;
+            freq *= 2f;
+        }
+        return value / max;
+    }
+
+    public static float PerlinNoise2D(float x, float y, int seed)
+    {
+        int x0 = (int)MathF.Floor(x);
+        int y0 = (int)MathF.Floor(y);
+        int x1 = x0 + 1;
+        int y1 = y0 + 1;
+
+        float sx = x - x0;
+        float sy = y - y0;
+        float sx2 = sx * sx * (3f - 2f * sx);
+        float sy2 = sy * sy * (3f - 2f * sy);
+
+        float n0 = Grad(Hash01(x0, y0, seed).GetHashCode(), sx, sy);
+        float n1 = Grad(Hash01(x1, y0, seed).GetHashCode(), sx - 1, sy);
+        float ix0 = n0 + sx2 * (n1 - n0);
+
+        float n2 = Grad(Hash01(x0, y1, seed).GetHashCode(), sx, sy - 1);
+        float n3 = Grad(Hash01(x1, y1, seed).GetHashCode(), sx - 1, sy - 1);
+        float ix1 = n2 + sx2 * (n3 - n2);
+
+        return ix0 + sy2 * (ix1 - ix0);
+    }
+
+    public static float VoronoiDistance(float x, float y, float jitter)
+    {
+        int cx = (int)MathF.Floor(x);
+        int cy = (int)MathF.Floor(y);
+        float minDist = float.MaxValue;
+        for (int dy = -1; dy <= 1; dy++)
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            int nx = cx + dx;
+            int ny = cy + dy;
+            float px = nx + (Hash01(nx, ny, 7) * 2f - 1f) * jitter;
+            float py = ny + (Hash01(nx, ny, 13) * 2f - 1f) * jitter;
+            float d = (x - px) * (x - px) + (y - py) * (y - py);
+            if (d < minDist) minDist = d;
+        }
+        return MathF.Sqrt(minDist) * 0.7f;
     }
 
     private static SKBitmap NewAlpha8(int size)

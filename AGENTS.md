@@ -11,6 +11,17 @@
 
 **File:** `src/Floss.App/MainWindow/MainWindow.Tabs.cs`
 
+### SrcOver "Grainy" Brush Strokes (Small Alpha Integer Division Truncation)
+**Root cause:** All 3 brush stamp SrcOver paths used `dstColor * invDiv / 255` where `invDiv = dstA * (255 - srcA)`. Integer division **without rounding** truncated the result — at small alpha values (e.g. `dstA=5, invSrcA=250`, `1250/255 = 4` instead of `4.902`), producing ~10% color error per overlapping dab. Error compounded across multiple overlapping strokes, causing dark/grainy appearance.
+
+**Fix:** Replaced `invDiv / 255` with `dstCont = (ttda * invSrcA + 127) / 255`, matching the compositor's `CompositeNormalRowManaged` pattern which uses proper +127 rounding. Also eliminated the intermediate `invDiv` variable — `dstCont` is computed once and reused for color blending.
+
+**Key insight:** Krita uses entirely unpremultiplied alpha throughout the paint pipeline (verified against `kis_circle_mask_generator.cpp`, `fillGrayBrushWithColor`, `KoCompositeOpAlphaBase`). Floss.App already matched this convention — the bug was purely integer rounding precision.
+
+**Files:**
+- `src/Floss.App/Brushes/BrushEngine.cs:1727,2064,2231` — 3 stamp SrcOver paths fixed
+- `src/Floss.App/Canvas/CompositeNormalRowManaged.cs:33-38` — correct pattern (reference)
+
 ## Architecture
 
 ### Layer compositing (Krita-aligned)

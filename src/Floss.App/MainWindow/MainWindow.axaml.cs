@@ -136,7 +136,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private Border _colorWell = null!;
     private WrapPanel _swatchPanel = null!;
     private WrapPanel _brushCategoryPanel = null!;
-    private StackPanel _presetPanel = null!;
+    private Panel _presetPanel = null!;
     private ScrollViewer? _brushPresetScroll;
     private StackPanel _toolPropertyPanel = null!;
     private TextBlock _toolPropertyTitle = null!;
@@ -2269,8 +2269,6 @@ public partial class MainWindow : Window, Tools.IViewportController
             Minimum = min,
             Maximum = max,
             Value = value,
-            Height = 20,
-            MinHeight = 18,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
         ToolTip.SetTip(s, tip);
@@ -2540,7 +2538,7 @@ public partial class MainWindow : Window, Tools.IViewportController
                     try
                     {
                         _toolPropsWindow.SyncFromToolPreset(preset);
-                        _toolPropsWindow.SyncFromPreset(overridden);
+                        _toolPropsWindow.SyncFromPreset(overridden with { Color = _canvas.Brush.Color });
                     }
                     finally
                     {
@@ -2573,7 +2571,7 @@ public partial class MainWindow : Window, Tools.IViewportController
                     try
                     {
                         _toolPropsWindow.SyncFromToolPreset(preset);
-                        _toolPropsWindow.SyncFromPreset(overridden);
+                        _toolPropsWindow.SyncFromPreset(overridden with { Color = _canvas.Brush.Color });
                     }
                     finally
                     {

@@ -774,9 +774,9 @@ internal static class LayerCompositorPixelOps
 
         if (dstA <= 0)
         {
-            dst[0] = (byte)Math.Clamp(srcB * srcA * 255, 0, 255);
-            dst[1] = (byte)Math.Clamp(srcG * srcA * 255, 0, 255);
-            dst[2] = (byte)Math.Clamp(srcR * srcA * 255, 0, 255);
+            dst[0] = (byte)Math.Clamp(srcB * 255, 0, 255);
+            dst[1] = (byte)Math.Clamp(srcG * 255, 0, 255);
+            dst[2] = (byte)Math.Clamp(srcR * 255, 0, 255);
             dst[3] = (byte)Math.Clamp(srcA * 255, 0, 255);
             return;
         }

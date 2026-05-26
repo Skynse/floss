@@ -44,7 +44,10 @@ public partial class MainWindow : Window
         };
         // Docker rebuild creates a new panel; drop cached rows still parented to the old tree.
         _brushPresetRowCache.Clear();
-        _presetPanel = new StackPanel { Spacing = 1, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
+        _presetPanel = new WrapPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+        };
 
         _strokePreview = new BrushStrokePreview { Height = 48 };
 
@@ -57,13 +60,13 @@ public partial class MainWindow : Window
         duplicateBrushBtn.Click += (_, _) => DuplicateActiveBrush();
         editBrushBtn.Click += (_, _) => OpenToolProperties();
 
-        var presetScroll = new ScrollViewer
+        var presetScroll = ScrollHelper.Create(sv =>
         {
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
-            Content = _presetPanel
-        };
+            sv.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+            sv.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+            sv.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch;
+            sv.Content = _presetPanel;
+        });
         _brushPresetScroll = presetScroll;
 
         _sizeSlider = MkSlider(1, BrushSizeLimits.FallbackMaxDiameterPx, 20, "Size");
@@ -355,8 +358,8 @@ public partial class MainWindow : Window
         var row = new Button
         {
             Height = 38,
+            Width = 190,
             Padding = new Thickness(0),
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
             Background = new SolidColorBrush(Color.Parse(Bg2)),
@@ -400,8 +403,8 @@ public partial class MainWindow : Window
         var row = new Button
         {
             Height = 26,
+            Width = 190,
             Padding = new Thickness(0),
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
             Background = new SolidColorBrush(Color.Parse(isActive ? AccentSoft : Bg2)),
@@ -1714,7 +1717,7 @@ public partial class MainWindow : Window
             _syncingToolPropertyPanel = true;
             try
             {
-                _toolPropsWindow.SyncFromPreset(applied);
+                _toolPropsWindow.SyncFromPreset(applied with { Color = _canvas.Brush.Color });
             }
             finally
             {
@@ -1811,7 +1814,7 @@ public partial class MainWindow : Window
                     _syncingToolPropertyPanel = true;
                     try
                     {
-                        _toolPropsWindow.SyncFromPreset(brushPreset);
+                        _toolPropsWindow.SyncFromPreset(brushPreset with { Color = _canvas.Brush.Color });
                     }
                     finally
                     {

@@ -119,9 +119,9 @@ internal static class AlphaLockPixelOps
 
         if (da <= 0)
         {
-            dstR = (byte)Math.Clamp(sr * sa * 255.0 + 0.5, 0, 255);
-            dstG = (byte)Math.Clamp(sg * sa * 255.0 + 0.5, 0, 255);
-            dstB = (byte)Math.Clamp(sb * sa * 255.0 + 0.5, 0, 255);
+            dstR = srcR;
+            dstG = srcG;
+            dstB = srcB;
             dstA = cover;
             return;
         }

@@ -70,9 +70,9 @@ public sealed class BrushTipStampContext : IDisposable
             BrushTipNodeKind.Value => Math.Clamp(node.Opacity, 0f, 1f),
             BrushTipNodeKind.DistanceField => DistanceField(node, u, v, stack),
             BrushTipNodeKind.BoxDistanceField => BoxDistanceField(node, u, v, stack),
-            BrushTipNodeKind.Circle => Circle(node, u, v),
-            BrushTipNodeKind.Rectangle => Rectangle(node, u, v),
-            BrushTipNodeKind.RoundedRectangle => RoundedRect(node, u, v),
+            BrushTipNodeKind.Circle => Circle(node, u, v, stack),
+            BrushTipNodeKind.Rectangle => Rectangle(node, u, v, stack),
+            BrushTipNodeKind.RoundedRectangle => RoundedRect(node, u, v, stack),
             BrushTipNodeKind.LinearGradient => LinearGradient(node, u, v, stack),
             BrushTipNodeKind.Stripe => Stripe(node, u, v, stack),
             BrushTipNodeKind.ImageSampler => ImageSampler(node, u, v),
@@ -94,6 +94,9 @@ public sealed class BrushTipStampContext : IDisposable
                 Math.Abs(v0 - node.X) * Math.Clamp(node.Opacity, 0f, 1f)),
             BrushTipNodeKind.Mix => Mix(node, u, v, stack),
             BrushTipNodeKind.Invert => 1f - EvalScalarInput(node, 0, u, v, stack),
+            BrushTipNodeKind.Perlin => Perlin(node, u, v, stack),
+            BrushTipNodeKind.Voronoi => Voronoi(node, u, v, stack),
+            BrushTipNodeKind.Remap => Remap(node, u, v, stack),
             _ => 0f
         };
 
@@ -118,6 +121,7 @@ public sealed class BrushTipStampContext : IDisposable
             BrushTipNodeKind.Coordinates => (u, v),
             BrushTipNodeKind.RotateCoordinates => RotateCoordinates(node, u, v, stack),
             BrushTipNodeKind.WarpCoordinates => WarpCoordinates(node, u, v, stack),
+            BrushTipNodeKind.Transform => Transform(node, u, v, stack),
             _ => EvalVectorInputOrCoordinates(node, 0, u, v, stack)
         };
 
@@ -200,9 +204,10 @@ public sealed class BrushTipStampContext : IDisposable
         return (1f - smooth) * opacity;
     }
 
-    private float Circle(BrushTipNode node, float u, float v)
+    private float Circle(BrushTipNode node, float u, float v, HashSet<string> stack)
     {
-        var (x, y) = TransformCoords(node, u, v);
+        var (x, y) = EvalVectorInputOrCoordinates(node, 0, u, v, stack);
+        (x, y) = TransformCoords(node, x, y);
         var rx = Math.Max(0.001f, node.Radius * Math.Max(0.01f, node.Width));
         var ry = Math.Max(0.001f, node.Radius * Math.Max(0.01f, node.Height));
         var hard = CombinedHardness(node);
@@ -234,9 +239,10 @@ public sealed class BrushTipStampContext : IDisposable
         return Math.Clamp(MathF.Max(dx, dy), 0f, 1f);
     }
 
-    private float Rectangle(BrushTipNode node, float u, float v)
+    private float Rectangle(BrushTipNode node, float u, float v, HashSet<string> stack)
     {
-        var (x, y) = TransformCoords(node, u, v);
+        var (x, y) = EvalVectorInputOrCoordinates(node, 0, u, v, stack);
+        (x, y) = TransformCoords(node, x, y);
         var halfW = Math.Max(0.001f, node.Width * 0.5f);
         var halfH = Math.Max(0.001f, node.Height * 0.5f);
         var hard = CombinedHardness(node);
@@ -246,9 +252,10 @@ public sealed class BrushTipStampContext : IDisposable
         return Falloff(t, hard) * Math.Clamp(node.Opacity, 0f, 1f);
     }
 
-    private float RoundedRect(BrushTipNode node, float u, float v)
+    private float RoundedRect(BrushTipNode node, float u, float v, HashSet<string> stack)
     {
-        var (x, y) = TransformCoords(node, u, v);
+        var (x, y) = EvalVectorInputOrCoordinates(node, 0, u, v, stack);
+        (x, y) = TransformCoords(node, x, y);
         var halfW = Math.Max(0.001f, node.Width * 0.5f);
         var halfH = Math.Max(0.001f, node.Height * 0.5f);
         var corner = Math.Clamp(node.Radius, 0f, Math.Min(halfW, halfH));
@@ -356,6 +363,48 @@ public sealed class BrushTipStampContext : IDisposable
         var strand = 1f - Math.Clamp(dist / Math.Max(0.001f, width), 0f, 1f);
         var taper = 1f - MathF.Pow(MathF.Abs(lx), 2.6f);
         return Math.Clamp(strand * taper * Math.Clamp(node.Opacity, 0f, 1f), 0f, 1f);
+    }
+
+    private float Perlin(BrushTipNode node, float u, float v, HashSet<string> stack)
+    {
+        var (x, y) = EvalVectorInputOrCoordinates(node, 0, u, v, stack);
+        var scale = Math.Clamp(node.Scale, 0.5f, 32f);
+        var detail = Math.Clamp(node.Density, 0f, 1f);
+        var opacity = Math.Clamp(node.Opacity, 0f, 1f);
+        int octaves = Math.Clamp((int)(detail * 6f + 1f), 1, 7);
+        float val = BrushTipNodeGraphEvaluator.FbmNoise(x * scale, y * scale, octaves);
+        return Math.Clamp((val * 0.5f + 0.5f) * opacity, 0f, 1f);
+    }
+
+    private float Voronoi(BrushTipNode node, float u, float v, HashSet<string> stack)
+    {
+        var (x, y) = EvalVectorInputOrCoordinates(node, 0, u, v, stack);
+        var scale = Math.Clamp(node.Scale, 0.5f, 32f);
+        var density = Math.Clamp(node.Density, 0f, 1f);
+        var opacity = Math.Clamp(node.Opacity, 0f, 1f);
+        float jitter = 0.7f + density * 0.3f;
+        return Math.Clamp(BrushTipNodeGraphEvaluator.VoronoiDistance(x * scale, y * scale, jitter) * opacity, 0f, 1f);
+    }
+
+    private float Remap(BrushTipNode node, float u, float v, HashSet<string> stack)
+    {
+        var input = EvalScalarInput(node, 0, u, v, stack);
+        float inMin = Math.Clamp(node.Threshold, 0f, 1f);
+        float inMax = Math.Clamp(node.Hardness, 0f, 1f);
+        float outMin = Math.Clamp(node.Opacity, 0f, 1f);
+        float outMax = Math.Clamp(node.Scale, 0f, 1f);
+        float inRange = Math.Max(0.0001f, inMax - inMin);
+        float t = (input - inMin) / inRange;
+        return Math.Clamp(outMin + t * (outMax - outMin), 0f, 1f);
+    }
+
+    private (float X, float Y) Transform(BrushTipNode node, float u, float v, HashSet<string> stack)
+    {
+        var (srcX, srcY) = EvalVectorInputOrCoordinates(node, 0, u, v, stack);
+        float s = Math.Max(0.01f, node.Scale);
+        float ox = node.X;
+        float oy = node.Y;
+        return ((srcX - 0.5f) * s + 0.5f + ox, (srcY - 0.5f) * s + 0.5f + oy);
     }
 
     private static float VectorAsScalar(float x, float y)

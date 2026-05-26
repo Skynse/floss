@@ -106,6 +106,9 @@ public static class BrushTipStampFastPath
         if (node?.Kind != BrushTipNodeKind.Circle)
             return false;
 
+        if (node.Inputs.Count > 0)
+            return false;
+
         var rx = Math.Max(0.001f, node.Radius * Math.Max(0.01f, node.Width));
         var ry = Math.Max(0.001f, node.Radius * Math.Max(0.01f, node.Height));
         var hard = Math.Clamp(node.Hardness * brushHardness, 0.001f, 1f);
@@ -136,6 +139,9 @@ public static class BrushTipStampFastPath
         if (node?.Kind != BrushTipNodeKind.Rectangle)
             return false;
 
+        if (node.Inputs.Count > 0)
+            return false;
+
         var halfW = Math.Max(0.001f, node.Width * 0.5f);
         var halfH = Math.Max(0.001f, node.Height * 0.5f);
         var hard = Math.Clamp(node.Hardness * brushHardness, 0.001f, 1f);
@@ -164,6 +170,9 @@ public static class BrushTipStampFastPath
         evaluate = null!;
         var node = graph.Nodes.Find(n => n.Id == nodeId);
         if (node?.Kind != BrushTipNodeKind.RoundedRectangle)
+            return false;
+
+        if (node.Inputs.Count > 0)
             return false;
 
         var halfW = Math.Max(0.001f, node.Width * 0.5f);

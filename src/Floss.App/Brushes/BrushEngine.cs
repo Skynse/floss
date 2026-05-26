@@ -482,19 +482,12 @@ public sealed class BrushEngine : IDisposable
         if (blendModeCanRasterize && !isMultiTipSingle && !usesProceduralStamp)
         {
             var baseColor = stroke.BaseColor;
-            float brushGrain = (float)brush.Grain;
+            float brushGrain = 0f;
             byte* texPx = null;
             int texW = 0, texH = 0, texStride = 0;
-            SKBitmap? texBmp = brushGrain > 0f && brush.Texture != null ? GetOrLoadTexture(brush.Texture) : null;
-            if (texBmp != null)
-            {
-                texPx = (byte*)texBmp.GetPixels().ToPointer();
-                texW = texBmp.Width;
-                texH = texBmp.Height;
-                texStride = texBmp.RowBytes;
-            }
+        var grainTable = PrecomputeGrain(dirty, texPx, texW, texH, texStride, brushGrain);
 
-            var grainTable = PrecomputeGrain(dirty, texPx, texW, texH, texStride, brushGrain);
+        float brushThickness = MathF.Max(0.01f, MathF.Min(4f, (float)brush.TipThickness));
             if (stroke.HasAnyColorTip && _stampColors.Count == 0 &&
                 TryRasterizeCachedColorDabsTileMajor(layer, stroke, brush, brush.BlendMode,
                     brushGrain, texPx, texW, texH, texStride, dirty, grainTable))
@@ -1133,7 +1126,7 @@ public sealed class BrushEngine : IDisposable
         }
 
         // Apply grain to the scratch in canvas space before compositing.
-        float grain = (float)brush.Grain;
+        float grain = 0f;
         if (grain > 0f)
         {
             SKBitmap? texBmp = brush.Texture != null ? GetOrLoadTexture(brush.Texture) : null;
@@ -1518,28 +1511,16 @@ public sealed class BrushEngine : IDisposable
         int brushB = baseColor.Blue, brushG = baseColor.Green, brushR = baseColor.Red;
         float baseAlpha = baseColor.Alpha;
         var blendMode = brush.BlendMode;
-        float brushGrain = (float)brush.Grain;
+        float brushGrain = 0f;
         byte* texPx = null!;
         int texW = 0, texH = 0, texStride = 0;
-        SKBitmap? texBmp = brushGrain > 0f && brush.Texture != null ? GetOrLoadTexture(brush.Texture) : null;
-        if (texBmp != null)
-        {
-            texPx = (byte*)texBmp.GetPixels().ToPointer();
-            texW = texBmp.Width;
-            texH = texBmp.Height;
-            texStride = texBmp.RowBytes;
-        }
+        var grainTable = PrecomputeGrain(dirty, texPx, texW, texH, texStride, brushGrain);
 
         float brushThickness = MathF.Max(0.01f, MathF.Min(4f, (float)brush.TipThickness));
         bool isHorizontal = brush.TipDirection == BrushTipDirection.Horizontal;
         int baseMaskSize = stroke.BaseMaskSize;
         float halfBms = baseMaskSize * 0.5f;
         const int tsz = TiledPixelBuffer.TileSize;
-
-        // Precompute grain noise only for small dirty regions. Large material
-        // tips can produce big dirty rects; allocating a full float table for
-        // those is worse than computing grain inline.
-        var grainTable = PrecomputeGrain(dirty, texPx, texW, texH, texStride, brushGrain);
 
         for (int si = 0; si < _stamps.Count; si++)
         {
@@ -1743,7 +1724,7 @@ public sealed class BrushEngine : IDisposable
                                         byte ttda = tile[offset + 3];
                                         if (ttda == 0) { tile[offset] = (byte)brushB; tile[offset + 1] = (byte)brushG; tile[offset + 2] = (byte)brushR; tile[offset + 3] = (byte)stampA; }
                                         else if (alphaLocked) { int inv = 255 - stampA; tile[offset] = (byte)((brushB * stampA + tile[offset] * inv + 127) / 255); tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * inv + 127) / 255); tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * inv + 127) / 255); }
-                                        else { int invSrcA = 255 - stampA; int outA = stampA + (ttda * invSrcA + 127) / 255; if (outA > 0) { int invDiv = ttda * invSrcA; tile[offset] = (byte)((brushB * stampA + tile[offset] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 3] = (byte)outA; } }
+                                        else { int invSrcA = 255 - stampA; int dstCont = (ttda * invSrcA + 127) / 255; int outA = stampA + dstCont; if (outA > 0) { int half = outA >> 1; tile[offset] = (byte)((brushB * stampA + tile[offset] * dstCont + half) / outA); tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * dstCont + half) / outA); tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * dstCont + half) / outA); tile[offset + 3] = (byte)outA; } }
                                     }
                                     else
                                     {
@@ -2080,7 +2061,7 @@ public sealed class BrushEngine : IDisposable
                     byte ttda = tile[offset + 3];
                     if (ttda == 0) { tile[offset] = srcB; tile[offset + 1] = srcG; tile[offset + 2] = srcR; tile[offset + 3] = (byte)stampA; }
                     else if (alphaLocked) { int inv = 255 - stampA; tile[offset] = (byte)((srcB * stampA + tile[offset] * inv + 127) / 255); tile[offset + 1] = (byte)((srcG * stampA + tile[offset + 1] * inv + 127) / 255); tile[offset + 2] = (byte)((srcR * stampA + tile[offset + 2] * inv + 127) / 255); }
-                    else { int invSrcA = 255 - stampA; int outA = stampA + (ttda * invSrcA + 127) / 255; if (outA > 0) { int invDiv = ttda * invSrcA; tile[offset] = (byte)((srcB * stampA + tile[offset] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 1] = (byte)((srcG * stampA + tile[offset + 1] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 2] = (byte)((srcR * stampA + tile[offset + 2] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 3] = (byte)outA; } }
+                    else { int invSrcA = 255 - stampA; int dstCont = (ttda * invSrcA + 127) / 255; int outA = stampA + dstCont; if (outA > 0) { int half = outA >> 1; tile[offset] = (byte)((srcB * stampA + tile[offset] * dstCont + half) / outA); tile[offset + 1] = (byte)((srcG * stampA + tile[offset + 1] * dstCont + half) / outA); tile[offset + 2] = (byte)((srcR * stampA + tile[offset + 2] * dstCont + half) / outA); tile[offset + 3] = (byte)outA; } }
                 }
                 else
                 {
@@ -2247,7 +2228,7 @@ public sealed class BrushEngine : IDisposable
                     byte ttda = tile[offset + 3];
                     if (ttda == 0) { tile[offset] = (byte)brushB; tile[offset + 1] = (byte)brushG; tile[offset + 2] = (byte)brushR; tile[offset + 3] = (byte)stampA; }
                     else if (alphaLocked) { int inv = 255 - stampA; tile[offset] = (byte)((brushB * stampA + tile[offset] * inv + 127) / 255); tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * inv + 127) / 255); tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * inv + 127) / 255); }
-                    else { int invSrcA = 255 - stampA; int outA = stampA + (ttda * invSrcA + 127) / 255; if (outA > 0) { int invDiv = ttda * invSrcA; tile[offset] = (byte)((brushB * stampA + tile[offset] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * invDiv / 255 + (outA >> 1)) / outA); tile[offset + 3] = (byte)outA; } }
+                    else { int invSrcA = 255 - stampA; int dstCont = (ttda * invSrcA + 127) / 255; int outA = stampA + dstCont; if (outA > 0) { int half = outA >> 1; tile[offset] = (byte)((brushB * stampA + tile[offset] * dstCont + half) / outA); tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * dstCont + half) / outA); tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * dstCont + half) / outA); tile[offset + 3] = (byte)outA; } }
                 }
                 else
                 {

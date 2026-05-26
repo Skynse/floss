@@ -1,3 +1,6 @@
+using System;
+using Avalonia.Controls;
+
 namespace Floss.App;
 
 /// <summary>
@@ -42,4 +45,14 @@ public static class AppColors
     public const string SliderFillActive = "#5a8ef5";
     public const string SliderThumb      = "#88a6d4";
     public const string SliderThumbLine  = "#7aa4ec";
+}
+
+public static class ScrollHelper
+{
+    public static ScrollViewer Create(Action<ScrollViewer>? configure = null)
+    {
+        var sv = new ScrollViewer { Padding = new Avalonia.Thickness(0, 0, 12, 0) };
+        configure?.Invoke(sv);
+        return sv;
+    }
 }

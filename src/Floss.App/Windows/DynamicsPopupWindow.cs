@@ -297,8 +297,6 @@ public sealed class DynamicsPopupWindow : Window
         Grid.SetColumn(val, 2);
         row.Children.Add(slider);
         row.Children.Add(val);
-        slider.Height = 22;
-        slider.MinHeight = 22;
         return row;
     }
 
@@ -340,8 +338,6 @@ public sealed class DynamicsPopupWindow : Window
         Grid.SetColumn(val, 2);
         row.Children.Add(slider);
         row.Children.Add(val);
-        slider.Height = 20;
-        slider.MinHeight = 20;
         return row;
     }
 

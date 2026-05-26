@@ -227,7 +227,7 @@ public sealed class BrushStrokePreview : Control
         }
 
         // Always white on dark — every brush reads cleanly regardless of its color
-        using var colorFilter = SKColorFilter.CreateBlendMode(SKColors.White, SKBlendMode.SrcIn);
+        using var colorFilter = SKColorFilter.CreateBlendMode(new SKColor(brush.Color.R, brush.Color.G, brush.Color.B, 255), SKBlendMode.SrcIn);
         using var paint = new SKPaint
         {
             IsAntialias = true,
@@ -298,8 +298,8 @@ public sealed class BrushStrokePreview : Control
                 var stampSize = (float)Math.Max(0.5, baseSize * sizeM);
                 var opacity = (float)Math.Clamp(brush.Opacity * brush.Flow * brush.TipDensity * tipDensityM * opacM, 0.0, 1.0);
                 var stampAlpha = (byte)(opacity * 255);
-                paint.Color = new SKColor(255, 255, 255, stampAlpha);
-                colorStampPaint.Color = new SKColor(255, 255, 255, stampAlpha);
+                paint.Color = new SKColor(brush.Color.R, brush.Color.G, brush.Color.B, stampAlpha);
+                colorStampPaint.Color = new SKColor(brush.Color.R, brush.Color.G, brush.Color.B, stampAlpha);
 
                 var scale = stampSize / Math.Max(1, stampBitmap.Width);
                 var thickness = Math.Clamp((float)brush.TipThickness * tipThicknessM, 0.01f, 1f);

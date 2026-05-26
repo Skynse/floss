@@ -39,6 +39,7 @@ public sealed class ToolPropertiesWindow : Window
     private readonly BrushStrokePreview _preview = new() { Height = 64 };
     private bool _syncing;
     private int _presetSyncGeneration;
+    private Avalonia.Media.Color _activePaintColor;
 
     // ── Texture / grain ───────────────────────────────────────────────────────
     private TextBlock _textureFileLabel = null!;
@@ -282,10 +283,8 @@ public sealed class ToolPropertiesWindow : Window
 
     private static ScrollViewer WrapContent(Control content) => new()
     {
-        HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-        Padding = new Thickness(8, 6, 8, 8),
-        Content = content
+        Content = content,
+        Padding = new Thickness(0, 0, 12, 0)
     };
 
     // ── Category content ──────────────────────────────────────────────────────
@@ -743,21 +742,11 @@ public sealed class ToolPropertiesWindow : Window
         };
     }
 
-    private static int NodeInputCount(BrushTipNodeKind kind) => kind switch
-    {
-        BrushTipNodeKind.Output => 1,
-        BrushTipNodeKind.Threshold => 1,
-        BrushTipNodeKind.Add or BrushTipNodeKind.Multiply or BrushTipNodeKind.Max
-            or BrushTipNodeKind.Min or BrushTipNodeKind.Subtract => 2,
-        _ => 0
-    };
+    private static int NodeInputCount(BrushTipNodeKind kind)
+        => BrushTipNodeRegistry.InputCount(kind);
 
-    private static string NodeInputLabel(BrushTipNodeKind kind, int index) => kind switch
-    {
-        BrushTipNodeKind.Output => "Input",
-        BrushTipNodeKind.Threshold => "Input",
-        _ => index == 0 ? "A" : "B"
-    };
+    private static string NodeInputLabel(BrushTipNodeKind kind, int index)
+        => BrushTipNodeRegistry.InputLabel(kind, index);
 
     private void AddNodeSlider(StackPanel panel, BrushTipNodeGraph sourceGraph, BrushTipNode sourceNode, string label,
         double min, double max, float value, Action<BrushTipNode, double> setValue, string fmt)
@@ -1997,7 +1986,7 @@ public sealed class ToolPropertiesWindow : Window
         if (_syncing) return;
         var generation = _presetSyncGeneration;
         _brushPreset = update(_brushPreset);
-        _preview.Brush = _brushPreset;
+        _preview.Brush = _brushPreset with { Color = _activePaintColor };
         _preview.InvalidateBitmap();
         _onChange(_toolPreset, _isBrushTool && generation == _presetSyncGeneration ? update : null);
     }
@@ -2038,11 +2027,22 @@ public sealed class ToolPropertiesWindow : Window
         else if (_activeCategory == 3)
             _contentHost.Child = WrapContent(BuildBrushShapeContent());
 
+        _activePaintColor = preset.Color;
         _preview.Brush = preset;
         _preview.InvalidateBitmap();
         Title = $"Edit Brush — {preset.Name}";
 
         _syncing = false;
+    }
+
+    public void UpdatePreviewColor(Color color)
+    {
+        _activePaintColor = color;
+        if (_preview.Brush != null)
+        {
+            _preview.Brush = _preview.Brush with { Color = color };
+            _preview.InvalidateBitmap();
+        }
     }
 
     public void SyncFromToolPreset(ToolPreset preset)
@@ -2081,8 +2081,6 @@ public sealed class ToolPropertiesWindow : Window
             Minimum = min,
             Maximum = max,
             Value = value,
-            Height = 26,
-            MinHeight = 22,
             VerticalAlignment = VerticalAlignment.Center
         };
         ToolTip.SetTip(s, tip);
