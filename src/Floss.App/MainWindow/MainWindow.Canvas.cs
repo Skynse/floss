@@ -122,24 +122,16 @@ public partial class MainWindow
         _resizeOkBtn = new Button
         {
             Content = "Resize",
-            Padding = new Thickness(12, 4),
+            Padding = new Thickness(16, 7),
             FontSize = 11,
-            Background = new SolidColorBrush(Color.Parse("#1e3a78")),
-            Foreground = new SolidColorBrush(Color.Parse("#90baf0")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#2a4a98")),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
+            Classes = { "primary" }
         };
         _resizeCancelBtn = new Button
         {
             Content = "Cancel",
-            Padding = new Thickness(12, 4),
+            Padding = new Thickness(16, 7),
             FontSize = 11,
-            Background = new SolidColorBrush(Color.Parse("#1a1c22")),
-            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
+            Classes = { "outline" }
         };
         _resizeOkBtn.Click += (_, _) => _resizeTcs?.TrySetResult(true);
         _resizeCancelBtn.Click += (_, _) => _resizeTcs?.TrySetResult(false);

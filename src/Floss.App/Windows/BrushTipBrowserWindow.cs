@@ -244,11 +244,7 @@ public sealed class BrushTipBrowserWindow : Window
             FontSize = 10,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
+            Classes = { "outline" }
         };
         return b;
     }

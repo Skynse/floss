@@ -42,4 +42,10 @@ public static class AppColors
     public const string SliderFillActive = "#5a8ef5";
     public const string SliderThumb      = "#88a6d4";
     public const string SliderThumbLine  = "#7aa4ec";
+
+    // ── Corner radii ─────────────────────────────────────────────────────
+    public const int SmRadius      = 4;
+    public const int ControlRadius = 6;
+    public const int CardRadius    = 8;
+    public const int FullRadius    = 999;
 }

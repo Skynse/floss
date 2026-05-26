@@ -38,15 +38,26 @@
     <Color x:Key="SliderThumb">#88a6d4</Color>
     <Color x:Key="SliderThumbLine">#7aa4ec</Color>
 
+    <!-- Corner Radii -->
+    <CornerRadius x:Key="SmRadius">4</CornerRadius>
+    <CornerRadius x:Key="ControlRadius">6</CornerRadius>
+    <CornerRadius x:Key="CardRadius">8</CornerRadius>
+    <CornerRadius x:Key="FullRadius">999</CornerRadius>
+
     <!-- ── Brushes (convenience) ────────────────────────────────────────── -->
-    <SolidColorBrush x:Key="Bg0Brush"         Color="{StaticResource Bg0}"/>
-    <SolidColorBrush x:Key="Bg1Brush"         Color="{StaticResource Bg1}"/>
-    <SolidColorBrush x:Key="Bg2Brush"         Color="{StaticResource Bg2}"/>
-    <SolidColorBrush x:Key="Bg3Brush"         Color="{StaticResource Bg3}"/>
-    <SolidColorBrush x:Key="StrokeBrush"      Color="{StaticResource Stroke}"/>
-    <SolidColorBrush x:Key="TextPrimaryBrush"  Color="{StaticResource TextPrimary}"/>
-    <SolidColorBrush x:Key="TextSecondaryBrush" Color="{StaticResource TextSecondary}"/>
-    <SolidColorBrush x:Key="TextMutedBrush"    Color="{StaticResource TextMuted}"/>
-    <SolidColorBrush x:Key="AccentBrush"       Color="{StaticResource Accent}"/>
-    <SolidColorBrush x:Key="AccentSoftBrush"   Color="{StaticResource AccentSoft}"/>
+    <SolidColorBrush x:Key="Bg0Brush"            Color="{StaticResource Bg0}"/>
+    <SolidColorBrush x:Key="Bg1Brush"            Color="{StaticResource Bg1}"/>
+    <SolidColorBrush x:Key="Bg2Brush"            Color="{StaticResource Bg2}"/>
+    <SolidColorBrush x:Key="Bg3Brush"            Color="{StaticResource Bg3}"/>
+    <SolidColorBrush x:Key="StrokeBrush"         Color="{StaticResource Stroke}"/>
+    <SolidColorBrush x:Key="TextPrimaryBrush"    Color="{StaticResource TextPrimary}"/>
+    <SolidColorBrush x:Key="TextSecondaryBrush"  Color="{StaticResource TextSecondary}"/>
+    <SolidColorBrush x:Key="TextMutedBrush"      Color="{StaticResource TextMuted}"/>
+    <SolidColorBrush x:Key="AccentBrush"         Color="{StaticResource Accent}"/>
+    <SolidColorBrush x:Key="AccentSoftBrush"     Color="{StaticResource AccentSoft}"/>
+    <SolidColorBrush x:Key="AccentWarmBrush"     Color="{StaticResource AccentWarm}"/>
+    <SolidColorBrush x:Key="AccentWarmSoftBrush" Color="{StaticResource AccentWarmSoft}"/>
+    <SolidColorBrush x:Key="DangerBrush"         Color="{StaticResource Danger}"/>
+    <SolidColorBrush x:Key="SuccessBrush"        Color="{StaticResource Success}"/>
+    <SolidColorBrush x:Key="WarningBrush"        Color="{StaticResource Warning}"/>
 </ResourceDictionary>

@@ -64,10 +64,9 @@ public sealed class PenPressureSettingsWindow : Window
         {
             Content = "Reset to Linear",
             FontSize = 10,
-            Padding = new Thickness(12, 6),
-            Background = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground = new SolidColorBrush(Color.Parse(TextPrimary))
+            Padding = new Thickness(16, 7)
         };
+        resetBtn.Classes.Add("outline");
         resetBtn.Click += (_, _) =>
         {
             _working.CurvePoints = [0f, 0f, 1f, 1f];
@@ -78,10 +77,9 @@ public sealed class PenPressureSettingsWindow : Window
         {
             Content = "OK",
             FontSize = 10,
-            Padding = new Thickness(18, 6),
-            Background = new SolidColorBrush(Color.Parse(AccentSoft)),
-            Foreground = new SolidColorBrush(Color.Parse(TextPrimary))
+            Padding = new Thickness(18, 7)
         };
+        okBtn.Classes.Add("primary");
         okBtn.Click += (_, _) =>
         {
             _settings.Enabled = _working.Enabled;
@@ -94,10 +92,9 @@ public sealed class PenPressureSettingsWindow : Window
         {
             Content = "Cancel",
             FontSize = 10,
-            Padding = new Thickness(18, 6),
-            Background = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground = new SolidColorBrush(Color.Parse(TextPrimary))
+            Padding = new Thickness(18, 7)
         };
+        cancelBtn.Classes.Add("outline");
         cancelBtn.Click += (_, _) => Close();
 
         var btnRow = new StackPanel

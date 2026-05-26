@@ -452,12 +452,8 @@ public sealed class ModifierKeySettingsWindow : Window
             FontSize = 10,
             Padding = new Thickness(8, 0),
             Margin = new Thickness(4, 0),
-            Background = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3),
-            IsVisible = current?.Action is ModifierAction.ChangeToolTemporarily or ModifierAction.AlternateInvocation
+            IsVisible = current?.Action is ModifierAction.ChangeToolTemporarily or ModifierAction.AlternateInvocation,
+            Classes = { "outline" }
         };
 
         settingsBtn.Click += (_, _) =>

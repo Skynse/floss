@@ -733,7 +733,8 @@ public sealed class NodeGraphEditorPanel : UserControl
                 Content = "Delete Node",
                 FontSize = 10,
                 MinHeight = 22,
-                Margin = new Thickness(0, 8, 0, 0)
+                Margin = new Thickness(0, 8, 0, 0),
+                Classes = { "destructive" }
             };
             delBtn.Click += (_, _) =>
             {

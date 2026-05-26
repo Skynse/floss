@@ -125,12 +125,14 @@ public sealed class ColorPickerWindow : Window
             HorizontalAlignment = HorizontalAlignment.Right
         };
         var okBtn = new Button { Content = "OK", Width = 60 };
+        okBtn.Classes.Add("primary");
         okBtn.Click += (_, _) =>
         {
             _onChange(ColorFromHsv(_hue, _saturation, _value));
             Close();
         };
         var cancelBtn = new Button { Content = "Cancel", Width = 60 };
+        cancelBtn.Classes.Add("outline");
         cancelBtn.Click += (_, _) => Close();
         btnRow.Children.Add(okBtn);
         btnRow.Children.Add(cancelBtn);

@@ -1343,7 +1343,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         };
         var header = new Border
         {
-            Padding = new Thickness(7, 3, 7, 2),
+            Padding = new Thickness(7, 2, 7, 2),
             Cursor = new Cursor(StandardCursorType.SizeAll),
             Child = headerRow,
             ContextMenu = BuildDockerContextMenu(id)

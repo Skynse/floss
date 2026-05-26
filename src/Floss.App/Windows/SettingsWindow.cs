@@ -115,7 +115,7 @@ public sealed class SettingsWindow : Window
         {
             Content = SidebarItems[index],
             Height = 34,
-            Padding = new Thickness(14, 0),
+            Padding = new Thickness(16, 7),
             FontSize = 11,
             HorizontalContentAlignment = HorizontalAlignment.Left,
             VerticalContentAlignment = VerticalAlignment.Center,
@@ -340,13 +340,9 @@ public sealed class SettingsWindow : Window
             Padding = new Thickness(8, 0),
             FontSize = 10,
             HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
+            VerticalContentAlignment = VerticalAlignment.Center
         };
+        recordBtn.Classes.Add("outline");
 
         var clearBtn = new Button
         {
@@ -355,12 +351,7 @@ public sealed class SettingsWindow : Window
             Height = 22,
             Padding = new Thickness(0),
             HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
+            VerticalContentAlignment = VerticalAlignment.Center
         };
 
         var labelText = new TextBlock
@@ -599,30 +590,22 @@ public sealed class SettingsWindow : Window
         {
             Content = "Reassign",
             Height = 28,
-            Padding = new Thickness(14, 0),
+            Padding = new Thickness(16, 7),
             FontSize = 11,
             HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(AccentSoft)),
-            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Accent)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
+            VerticalContentAlignment = VerticalAlignment.Center
         };
+        yesBtn.Classes.Add("primary");
         var noBtn = new Button
         {
             Content = "Cancel",
             Height = 28,
-            Padding = new Thickness(14, 0),
+            Padding = new Thickness(16, 7),
             FontSize = 11,
             HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
+            VerticalContentAlignment = VerticalAlignment.Center
         };
+        noBtn.Classes.Add("outline");
 
         var buttons = new StackPanel
         {

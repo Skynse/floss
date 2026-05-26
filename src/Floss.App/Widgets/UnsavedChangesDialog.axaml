@@ -4,7 +4,8 @@
         Width="380" SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
-        Background="#202226" Foreground="#d8dbe0">
+        Background="{StaticResource Bg1}"
+        Foreground="{StaticResource TextPrimary}">
 
     <StackPanel Margin="20" Spacing="20">
         <TextBlock x:Name="MessageText"
@@ -12,10 +13,10 @@
                    FontSize="14"
                    TextWrapping="Wrap"/>
 
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-            <Button Content="Cancel" Click="OnCancelClick" Width="80" HorizontalContentAlignment="Center"/>
-            <Button Content="Don't Save" Click="OnDontSaveClick" Width="90" HorizontalContentAlignment="Center"/>
-            <Button Content="Save" Click="OnSaveClick" Width="80" HorizontalContentAlignment="Center" Background="#2f7bff" Foreground="White"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button Content="Cancel"    Click="OnCancelClick"   Classes="outline" Width="80"  HorizontalContentAlignment="Center"/>
+            <Button Content="Don't Save" Click="OnDontSaveClick" Classes="outline" Width="96" HorizontalContentAlignment="Center"/>
+            <Button Content="Save"      Click="OnSaveClick"      Classes="primary" Width="80"  HorizontalContentAlignment="Center"/>
         </StackPanel>
     </StackPanel>
 </Window>

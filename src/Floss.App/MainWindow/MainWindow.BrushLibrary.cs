@@ -647,29 +647,21 @@ public partial class MainWindow : Window
         {
             Content = "Save",
             Height = 28,
-            Padding = new Thickness(14, 0),
+            Padding = new Thickness(16, 7),
             FontSize = 11,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(AccentSoft)),
-            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Accent)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
+            Classes = { "primary" }
         };
         var cancelBtn = new Button
         {
             Content = "Cancel",
             Height = 28,
-            Padding = new Thickness(14, 0),
+            Padding = new Thickness(16, 7),
             FontSize = 11,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
+            Classes = { "outline" }
         };
 
         string? selectedIcon = preset.PresetIcon;
@@ -760,7 +752,7 @@ public partial class MainWindow : Window
             Background = new SolidColorBrush(Color.Parse(Bg0))
         };
         var tb = new TextBox { Margin = new Thickness(12), Text = preset.Name };
-        var ok = new Button { Content = "Rename", Margin = new Thickness(12, 0, 12, 12) };
+        var ok = new Button { Content = "Rename", Margin = new Thickness(12, 0, 12, 12), Classes = { "primary" } };
         ok.Click += (_, _) => { tcs.TrySetResult(tb.Text); dialog.Close(); };
         tb.KeyDown += (_, e) => { if (e.Key == Key.Enter) { tcs.TrySetResult(tb.Text); dialog.Close(); } };
         dialog.Closed += (_, _) => tcs.TrySetResult(null);
@@ -903,7 +895,7 @@ public partial class MainWindow : Window
             Background = new SolidColorBrush(Color.Parse(Bg0))
         };
         var tb = new TextBox { Margin = new Thickness(12), Text = "Custom Tool" };
-        var ok = new Button { Content = "Create", Margin = new Thickness(12, 0, 12, 12) };
+        var ok = new Button { Content = "Create", Margin = new Thickness(12, 0, 12, 12), Classes = { "primary" } };
         ok.Click += (_, _) => { tcs.TrySetResult(tb.Text); dialog.Close(); };
         tb.KeyDown += (_, e) => { if (e.Key == Key.Enter) { tcs.TrySetResult(tb.Text); dialog.Close(); } };
         dialog.Closed += (_, _) => tcs.TrySetResult(null);
@@ -1128,7 +1120,7 @@ public partial class MainWindow : Window
             Background = new SolidColorBrush(Color.Parse(Bg0))
         };
         var tb = new TextBox { Margin = new Thickness(12), PlaceholderText = "Category name" };
-        var ok = new Button { Content = "Create", Margin = new Thickness(12, 0, 12, 12) };
+        var ok = new Button { Content = "Create", Margin = new Thickness(12, 0, 12, 12), Classes = { "primary" } };
         ok.Click += (_, _) => { tcs.TrySetResult(tb.Text); dialog.Close(); };
         tb.KeyDown += (_, e) => { if (e.Key == Key.Enter) { tcs.TrySetResult(tb.Text); dialog.Close(); } };
         dialog.Closed += (_, _) => tcs.TrySetResult(null);
@@ -1149,7 +1141,7 @@ public partial class MainWindow : Window
             Background = new SolidColorBrush(Color.Parse(Bg0))
         };
         var tb = new TextBox { Margin = new Thickness(12), Text = cat.Name };
-        var ok = new Button { Content = "Rename", Margin = new Thickness(12, 0, 12, 12) };
+        var ok = new Button { Content = "Rename", Margin = new Thickness(12, 0, 12, 12), Classes = { "primary" } };
         ok.Click += (_, _) => { tcs.TrySetResult(tb.Text); dialog.Close(); };
         tb.KeyDown += (_, e) => { if (e.Key == Key.Enter) { tcs.TrySetResult(tb.Text); dialog.Close(); } };
         dialog.Closed += (_, _) => tcs.TrySetResult(null);

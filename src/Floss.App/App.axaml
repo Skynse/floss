@@ -21,14 +21,24 @@
             <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
         </Style>
 
+        <!-- ══════════════════════════════════════════════════════════════════
+             Button — base template shared by all variants
+        ══════════════════════════════════════════════════════════════════ -->
         <Style Selector="Button">
-            <Setter Property="Background"    Value="Transparent"/>
-            <Setter Property="BorderBrush"   Value="Transparent"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="CornerRadius"  Value="2"/>
-            <Setter Property="Padding"       Value="7,3"/>
-            <Setter Property="Cursor"        Value="Hand"/>
-            <Setter Property="Foreground"    Value="{StaticResource TextSecondary}"/>
+            <Setter Property="Background"                Value="Transparent"/>
+            <Setter Property="BorderBrush"               Value="Transparent"/>
+            <Setter Property="BorderThickness"           Value="0"/>
+            <Setter Property="CornerRadius"              Value="{StaticResource ControlRadius}"/>
+            <Setter Property="Padding"                   Value="10,4"/>
+            <Setter Property="Cursor"                    Value="Hand"/>
+            <Setter Property="Foreground"                Value="{StaticResource TextSecondary}"/>
+            <Setter Property="RenderTransformOrigin"     Value="50%,50%"/>
+            <Setter Property="RenderTransform"           Value="scale(1)"/>
+            <Setter Property="Transitions">
+                <Transitions>
+                    <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.1"/>
+                </Transitions>
+            </Setter>
             <Setter Property="Template">
                 <ControlTemplate>
                     <Border Background="{TemplateBinding Background}"
@@ -39,7 +49,13 @@
                         <Panel>
                             <Border Name="Overlay" IsHitTestVisible="False"
                                     Background="Transparent"
-                                    CornerRadius="{TemplateBinding CornerRadius}"/>
+                                    CornerRadius="{TemplateBinding CornerRadius}">
+                                <Border.Transitions>
+                                    <Transitions>
+                                        <BrushTransition Property="Background" Duration="0:0:0.15"/>
+                                    </Transitions>
+                                </Border.Transitions>
+                            </Border>
                             <ContentPresenter Padding="{TemplateBinding Padding}"
                                               HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
                                               VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
@@ -57,19 +73,69 @@
         <Style Selector="Button:pressed /template/ Border#Overlay">
             <Setter Property="Background" Value="#24ffffff"/>
         </Style>
+        <Style Selector="Button:pressed">
+            <Setter Property="RenderTransform" Value="scale(0.97)"/>
+        </Style>
         <Style Selector="Button:disabled">
             <Setter Property="Opacity" Value="0.35"/>
         </Style>
 
-        <!-- ── ToggleButton ───────────────────────────────────────────────── -->
+        <!-- .primary — filled accent -->
+        <Style Selector="Button.primary">
+            <Setter Property="Background"  Value="{StaticResource Accent}"/>
+            <Setter Property="Foreground"  Value="#ffffff"/>
+        </Style>
+
+        <!-- .outline — transparent with border -->
+        <Style Selector="Button.outline">
+            <Setter Property="Background"       Value="Transparent"/>
+            <Setter Property="BorderBrush"      Value="{StaticResource Stroke}"/>
+            <Setter Property="BorderThickness"  Value="1"/>
+            <Setter Property="Foreground"       Value="{StaticResource TextSecondary}"/>
+        </Style>
+        <Style Selector="Button.outline:pointerover /template/ Border#Overlay">
+            <Setter Property="Background" Value="{StaticResource Bg2}"/>
+        </Style>
+
+        <!-- .ghost — transparent, no border (explicit alias of base) -->
+        <Style Selector="Button.ghost">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+        </Style>
+
+        <!-- .destructive — danger fill -->
+        <Style Selector="Button.destructive">
+            <Setter Property="Background" Value="{StaticResource Danger}"/>
+            <Setter Property="Foreground" Value="#ffffff"/>
+        </Style>
+
+        <!-- .icon — square, no padding, centered icon -->
+        <Style Selector="Button.icon">
+            <Setter Property="Padding"                     Value="0"/>
+            <Setter Property="Width"                       Value="28"/>
+            <Setter Property="Height"                      Value="28"/>
+            <Setter Property="HorizontalContentAlignment"  Value="Center"/>
+            <Setter Property="VerticalContentAlignment"    Value="Center"/>
+        </Style>
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             ToggleButton
+        ══════════════════════════════════════════════════════════════════ -->
         <Style Selector="ToggleButton">
-            <Setter Property="Background"    Value="Transparent"/>
-            <Setter Property="BorderBrush"   Value="Transparent"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="CornerRadius"  Value="2"/>
-            <Setter Property="Padding"       Value="7,3"/>
-            <Setter Property="Cursor"        Value="Hand"/>
-            <Setter Property="Foreground"    Value="{StaticResource TextSecondary}"/>
+            <Setter Property="Background"            Value="Transparent"/>
+            <Setter Property="BorderBrush"           Value="Transparent"/>
+            <Setter Property="BorderThickness"       Value="0"/>
+            <Setter Property="CornerRadius"          Value="{StaticResource ControlRadius}"/>
+            <Setter Property="Padding"               Value="16,7"/>
+            <Setter Property="Cursor"                Value="Hand"/>
+            <Setter Property="Foreground"            Value="{StaticResource TextSecondary}"/>
+            <Setter Property="RenderTransformOrigin" Value="50%,50%"/>
+            <Setter Property="RenderTransform"       Value="scale(1)"/>
+            <Setter Property="Transitions">
+                <Transitions>
+                    <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.1"/>
+                </Transitions>
+            </Setter>
             <Setter Property="Template">
                 <ControlTemplate>
                     <Border Background="{TemplateBinding Background}"
@@ -80,7 +146,13 @@
                         <Panel>
                             <Border Name="Overlay" IsHitTestVisible="False"
                                     Background="Transparent"
-                                    CornerRadius="{TemplateBinding CornerRadius}"/>
+                                    CornerRadius="{TemplateBinding CornerRadius}">
+                                <Border.Transitions>
+                                    <Transitions>
+                                        <BrushTransition Property="Background" Duration="0:0:0.15"/>
+                                    </Transitions>
+                                </Border.Transitions>
+                            </Border>
                             <ContentPresenter Padding="{TemplateBinding Padding}"
                                               HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
                                               VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
@@ -98,28 +170,44 @@
         <Style Selector="ToggleButton:pressed /template/ Border#Overlay">
             <Setter Property="Background" Value="#24ffffff"/>
         </Style>
+        <Style Selector="ToggleButton:pressed">
+            <Setter Property="RenderTransform" Value="scale(0.97)"/>
+        </Style>
+        <Style Selector="ToggleButton:checked">
+            <Setter Property="Background" Value="{StaticResource AccentSoft}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+        </Style>
+        <Style Selector="ToggleButton:checked:pointerover /template/ Border#Overlay">
+            <Setter Property="Background" Value="#1affffff"/>
+        </Style>
 
+        <!-- ══════════════════════════════════════════════════════════════════
+             TextBox
+        ══════════════════════════════════════════════════════════════════ -->
         <Style Selector="TextBox">
-            <Setter Property="CornerRadius"     Value="2"/>
-            <Setter Property="Foreground"       Value="{StaticResource TextPrimary}"/>
-            <Setter Property="CaretBrush"       Value="{StaticResource TextPrimary}"/>
-            <Setter Property="SelectionBrush"    Value="{StaticResource Accent}"/>
-            <Setter Property="SelectionForegroundBrush" Value="#ffffff"/>
-            <Setter Property="BorderBrush"       Value="{StaticResource Stroke}"/>
-            <Setter Property="BorderThickness"   Value="1"/>
-            <Setter Property="Background"        Value="{StaticResource Bg0}"/>
-            <Setter Property="FontSize"          Value="12"/>
+            <Setter Property="CornerRadius"                Value="{StaticResource ControlRadius}"/>
+            <Setter Property="Foreground"                  Value="{StaticResource TextPrimary}"/>
+            <Setter Property="CaretBrush"                  Value="{StaticResource TextPrimary}"/>
+            <Setter Property="SelectionBrush"              Value="{StaticResource Accent}"/>
+            <Setter Property="SelectionForegroundBrush"    Value="#ffffff"/>
+            <Setter Property="BorderBrush"                 Value="{StaticResource Stroke}"/>
+            <Setter Property="BorderThickness"             Value="1"/>
+            <Setter Property="Background"                  Value="{StaticResource Bg0}"/>
+            <Setter Property="FontSize"                    Value="12"/>
         </Style>
         <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
-            <Setter Property="BorderBrush"   Value="{StaticResource Accent}"/>
+            <Setter Property="BorderBrush"    Value="{StaticResource Accent}"/>
             <Setter Property="BorderThickness" Value="1.5"/>
         </Style>
         <Style Selector="TextBox:pointerover /template/ Border#PART_BorderElement">
             <Setter Property="BorderBrush" Value="{StaticResource TextMuted}"/>
         </Style>
 
+        <!-- ══════════════════════════════════════════════════════════════════
+             ComboBox
+        ══════════════════════════════════════════════════════════════════ -->
         <Style Selector="ComboBox">
-            <Setter Property="CornerRadius"    Value="2"/>
+            <Setter Property="CornerRadius"    Value="{StaticResource ControlRadius}"/>
             <Setter Property="Foreground"      Value="{StaticResource TextSecondary}"/>
             <Setter Property="Background"      Value="{StaticResource Bg0}"/>
             <Setter Property="BorderBrush"     Value="{StaticResource Stroke}"/>
@@ -147,29 +235,49 @@
             <Setter Property="Background" Value="{StaticResource Bg2}"/>
         </Style>
 
-        <!-- ── Menu / MenuItem ────────────────────────────────────────────── -->
+        <!-- ══════════════════════════════════════════════════════════════════
+             CheckBox
+        ══════════════════════════════════════════════════════════════════ -->
+        <Style Selector="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+            <Setter Property="FontSize"   Value="12"/>
+            <Setter Property="Cursor"     Value="Hand"/>
+        </Style>
+        <Style Selector="CheckBox:checked /template/ Border#NormalRectangle">
+            <Setter Property="Background"  Value="{StaticResource Accent}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+        </Style>
+        <Style Selector="CheckBox:pointerover /template/ Border#NormalRectangle">
+            <Setter Property="BorderBrush" Value="{StaticResource TextMuted}"/>
+        </Style>
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             Menu / MenuItem
+        ══════════════════════════════════════════════════════════════════ -->
         <Style Selector="Menu">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
         </Style>
         <Style Selector="MenuItem">
-            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Padding"    Value="8,4"/>
-            <Setter Property="FontSize"   Value="12"/>
-            <Setter Property="CornerRadius" Value="2"/>
+            <Setter Property="Foreground"   Value="{StaticResource TextSecondary}"/>
+            <Setter Property="Background"   Value="Transparent"/>
+            <Setter Property="Padding"      Value="8,4"/>
+            <Setter Property="FontSize"     Value="12"/>
+            <Setter Property="CornerRadius" Value="{StaticResource SmRadius}"/>
         </Style>
         <Style Selector="MenuItem:selected, MenuItem:pointerover">
             <Setter Property="Background" Value="{StaticResource Bg2}"/>
         </Style>
 
-        <!-- ── Horizontal slider — chunky scrub bar ──────────────────────── -->
+        <!-- ══════════════════════════════════════════════════════════════════
+             Horizontal slider — chunky scrub bar
+        ══════════════════════════════════════════════════════════════════ -->
         <Style Selector="Slider:horizontal">
             <Setter Property="Background" Value="{StaticResource SliderTrack}"/>
-            <Setter Property="MinHeight" Value="28"/>
-            <Setter Property="MaxHeight" Value="28"/>
-            <Setter Property="Cursor" Value="SizeWestEast"/>
-            <Setter Property="Padding" Value="0"/>
+            <Setter Property="MinHeight"  Value="28"/>
+            <Setter Property="MaxHeight"  Value="28"/>
+            <Setter Property="Cursor"     Value="SizeWestEast"/>
+            <Setter Property="Padding"    Value="0"/>
             <Setter Property="Template">
                 <ControlTemplate>
                     <Border Background="{TemplateBinding Background}"
@@ -219,16 +327,20 @@
             <Setter Property="Background" Value="{StaticResource SliderFillActive}"/>
         </Style>
 
-        <!-- ── ScrollBar ───────────────────────────────────────────────── -->
+        <!-- ══════════════════════════════════════════════════════════════════
+             ScrollBar
+        ══════════════════════════════════════════════════════════════════ -->
         <Style Selector="ScrollBar">
             <Setter Property="Opacity" Value="0.4"/>
         </Style>
 
-        <!-- ── ListBox / ListBoxItem ───────────────────────────────────── -->
+        <!-- ══════════════════════════════════════════════════════════════════
+             ListBox / ListBoxItem
+        ══════════════════════════════════════════════════════════════════ -->
         <Style Selector="ListBoxItem">
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Padding"    Value="4,2"/>
-            <Setter Property="CornerRadius" Value="2"/>
+            <Setter Property="Background"   Value="Transparent"/>
+            <Setter Property="Padding"      Value="4,2"/>
+            <Setter Property="CornerRadius" Value="{StaticResource SmRadius}"/>
         </Style>
         <Style Selector="ListBoxItem:selected">
             <Setter Property="Background" Value="{StaticResource AccentSoft}"/>
@@ -237,7 +349,9 @@
             <Setter Property="Background" Value="{StaticResource Bg2}"/>
         </Style>
 
-        <!-- ── Section header label ────────────────────────────────────── -->
+        <!-- ══════════════════════════════════════════════════════════════════
+             Utility classes
+        ══════════════════════════════════════════════════════════════════ -->
         <!-- Usage: <TextBlock Classes="section-header" Text="COLOR"/> -->
         <Style Selector="TextBlock.section-header">
             <Setter Property="FontSize"     Value="10"/>
@@ -247,18 +361,17 @@
             <Setter Property="Margin"       Value="0,0,0,5"/>
         </Style>
 
-        <!-- ── Panel separator rule ────────────────────────────────────── -->
         <!-- Usage: <Separator/> or <Border Classes="rule"/> -->
         <Style Selector="Separator">
-            <Setter Property="Background" Value="{StaticResource Stroke}"/>
-            <Setter Property="Height"     Value="1"/>
-            <Setter Property="Margin"     Value="0,6"/>
+            <Setter Property="Background"          Value="{StaticResource Stroke}"/>
+            <Setter Property="Height"              Value="1"/>
+            <Setter Property="Margin"              Value="0,3"/>
             <Setter Property="HorizontalAlignment" Value="Stretch"/>
         </Style>
         <Style Selector="Border.rule">
-            <Setter Property="Background" Value="{StaticResource Stroke}"/>
-            <Setter Property="Height"     Value="1"/>
-            <Setter Property="Margin"     Value="0,6"/>
+            <Setter Property="Background"          Value="{StaticResource Stroke}"/>
+            <Setter Property="Height"              Value="1"/>
+            <Setter Property="Margin"              Value="0,3"/>
             <Setter Property="HorizontalAlignment" Value="Stretch"/>
         </Style>
 

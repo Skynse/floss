@@ -85,13 +85,9 @@ public sealed class SelectToolDialog : Window
             Width = 70,
             Height = 26,
             FontSize = 11,
-            HorizontalContentAlignment = HorizontalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(AccentSoft)),
-            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Accent)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
+            HorizontalContentAlignment = HorizontalAlignment.Center
         };
+        okBtn.Classes.Add("primary");
         okBtn.Click += (_, _) => { SelectedPresetId = _presetButtons.GetValueOrDefault(_selectedButton!); Close(); };
 
         var cancelBtn = new Button
@@ -100,13 +96,9 @@ public sealed class SelectToolDialog : Window
             Width = 70,
             Height = 26,
             FontSize = 11,
-            HorizontalContentAlignment = HorizontalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
+            HorizontalContentAlignment = HorizontalAlignment.Center
         };
+        cancelBtn.Classes.Add("outline");
         cancelBtn.Click += (_, _) => Close();
 
         var footer = new StackPanel

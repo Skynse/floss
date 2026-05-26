@@ -417,20 +417,14 @@ public partial class MainWindow
                             new Button
                             {
                                 Content = "Cancel",
-                                Padding = new Thickness(14, 5), FontSize = 11,
-                                Background = new SolidColorBrush(Color.Parse("#1a1c22")),
-                                Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-                                BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-                                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3)
+                                Padding = new Thickness(16, 7), FontSize = 11,
+                                Classes = { "outline" }
                             },
                             new Button
                             {
                                 Content = "Generate",
-                                Padding = new Thickness(14, 5), FontSize = 11,
-                                Background = new SolidColorBrush(Color.Parse("#1e3a78")),
-                                Foreground = new SolidColorBrush(Color.Parse("#90baf0")),
-                                BorderBrush = new SolidColorBrush(Color.Parse("#2a4a98")),
-                                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3)
+                                Padding = new Thickness(16, 7), FontSize = 11,
+                                Classes = { "primary" }
                             }
                         }
                     }
@@ -824,20 +818,15 @@ public partial class MainWindow
             previewBtn = new Button
             {
                 Content = "Preview",
-                Padding = new Thickness(10, 4),
+                Padding = new Thickness(16, 7),
                 FontSize = 11,
-                Background = new SolidColorBrush(Color.Parse("#1e3050")),
-                Foreground = new SolidColorBrush(Color.Parse("#70a0e8")),
-                BorderBrush = new SolidColorBrush(Color.Parse("#2a4a88")),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(3)
+                Classes = { "outline" }
             };
             previewBtn.Click += (_, _) =>
             {
                 previewOn = !previewOn;
-                previewBtn.Background = new SolidColorBrush(previewOn ? Color.Parse("#1e3050") : Color.Parse("#14161e"));
-                previewBtn.Foreground = new SolidColorBrush(previewOn ? Color.Parse("#70a0e8") : Color.Parse(TextSecondary));
-                previewBtn.BorderBrush = new SolidColorBrush(previewOn ? Color.Parse("#2a4a88") : Color.Parse(Stroke));
+                previewBtn.Background = new SolidColorBrush(previewOn ? Color.Parse(AccentSoft) : Colors.Transparent);
+                previewBtn.Foreground = new SolidColorBrush(Color.Parse(previewOn ? TextPrimary : TextSecondary));
                 if (previewOn) ApplyPreviewNow();
                 else RevertPreview();
             };
@@ -847,28 +836,20 @@ public partial class MainWindow
         var applyBtn = new Button
         {
             Content = applyLabel,
-            Padding = new Thickness(14, 5),
+            Padding = new Thickness(16, 7),
             FontSize = 11,
-            Background = new SolidColorBrush(Color.Parse("#1e3a78")),
-            Foreground = new SolidColorBrush(Color.Parse("#90baf0")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#2a4a98")),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
+            Classes = { "primary" }
         };
         var cancelBtn = new Button
         {
             Content = "Cancel",
-            Padding = new Thickness(14, 5),
+            Padding = new Thickness(16, 7),
             FontSize = 11,
-            Background = new SolidColorBrush(Color.Parse("#1a1c22")),
-            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
+            Classes = { "outline" }
         };
 
         // Preview on left, Cancel+Apply on right
-        var footerGrid = new Grid { Margin = new Thickness(0, 10, 0, 0) };
+        var footerGrid = new Grid { Margin = new Thickness(0, 10, 0, 0), ColumnSpacing = 8 };
         footerGrid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
         footerGrid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
         footerGrid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
@@ -988,10 +969,7 @@ public partial class MainWindow
                     {
                         Content = "OK", Padding = new Thickness(20, 5), FontSize = 11,
                         HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
-                        Background = new SolidColorBrush(Color.Parse("#1e3a78")),
-                        Foreground = new SolidColorBrush(Color.Parse("#90baf0")),
-                        BorderBrush = new SolidColorBrush(Color.Parse("#2a4a98")),
-                        BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3)
+                        Classes = { "primary" }
                     }
                 }
             },

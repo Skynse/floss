@@ -493,13 +493,10 @@ public sealed class ToolPropertiesWindow : Window
         var openEditorBtn = new Button
         {
             Content = "Open Graph Editor",
-            Background = new SolidColorBrush(Color.Parse(AccentSoft)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Accent)),
-            BorderThickness = new Thickness(1),
-            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
             FontSize = 11,
             MinHeight = 26,
             HorizontalAlignment = HorizontalAlignment.Stretch,
+            Classes = { "primary" },
             Margin = new Thickness(0, 0, 0, 4)
         };
         openEditorBtn.Click += (_, _) =>
@@ -587,9 +584,6 @@ public sealed class ToolPropertiesWindow : Window
             FontSize = 11,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
-            Background = new SolidColorBrush(Colors.Transparent),
-            BorderThickness = new Thickness(0),
-            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
             IsVisible = !isOutput
         };
         deleteBtn.Click += (_, _) =>
@@ -1185,12 +1179,7 @@ public sealed class ToolPropertiesWindow : Window
             Padding = new Thickness(0),
             FontSize = 9,
             HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
+            VerticalContentAlignment = VerticalAlignment.Center
         };
         deleteBtn.Click += (_, _) =>
         {
@@ -1546,10 +1535,7 @@ public sealed class ToolPropertiesWindow : Window
             Padding = new Thickness(0),
             FontSize = 10,
             HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-            BorderThickness = new Thickness(0)
+            VerticalContentAlignment = VerticalAlignment.Center
         };
 
         bool visible = App.Config.ToolPropertyDockerVisibility.TryGetValue(toolPropId, out var v) ? v : false;
@@ -1582,11 +1568,6 @@ public sealed class ToolPropertiesWindow : Window
             Padding = new Thickness(0),
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3),
             VerticalAlignment = VerticalAlignment.Center
         };
         ToolTip.SetTip(dynBtn, "Edit dynamics curve");
@@ -1616,11 +1597,6 @@ public sealed class ToolPropertiesWindow : Window
             Padding = new Thickness(0),
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3),
             VerticalAlignment = VerticalAlignment.Center
         };
         ToolTip.SetTip(dynBtn, "Edit dynamics curve");
@@ -1681,11 +1657,7 @@ public sealed class ToolPropertiesWindow : Window
                 FontSize = 10,
                 HorizontalContentAlignment = HorizontalAlignment.Center,
                 VerticalContentAlignment = VerticalAlignment.Center,
-                Background = new SolidColorBrush(Color.Parse(Bg2)),
                 Foreground = new SolidColorBrush(Color.Parse(visible ? Accent : TextMuted)),
-                BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(3),
                 VerticalAlignment = VerticalAlignment.Center
             };
             ToolTip.SetTip(eyeBtn, visible ? "Hide from tool property docker" : "Show in tool property docker");
@@ -2114,11 +2086,7 @@ public sealed class ToolPropertiesWindow : Window
             FontSize = 10,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(Bg2)),
-            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3)
+            Classes = { "outline" }
         };
         return b;
     }
