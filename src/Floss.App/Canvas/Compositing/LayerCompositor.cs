@@ -777,7 +777,7 @@ public sealed class LayerCompositor : IDisposable
         foreach (var (tx, ty) in tileKeys) _tilesToPrune.Add((tx, ty, lod));
         foreach (var (tx, ty) in missingTileKeys) _tilesToPrune.Add((tx, ty, lod));
 
-        PruneTransparentTiles();
+        PruneTransparentTiles(viewportClip);
         TrimCompositeCache(viewportClip);
         LastDirtyTileCount = tileKeys.Count;
         LastMissingTileCount = missingTileKeys.Count;
@@ -1101,11 +1101,21 @@ public sealed class LayerCompositor : IDisposable
         new Span<byte>(ptr, bytes).Clear();
     }
 
-    private void PruneTransparentTiles()
+    private void PruneTransparentTiles(PixelRegion? viewportClip)
     {
         if (_tilesToPrune.Count > 16) return;
         foreach (var key in _tilesToPrune)
         {
+            // Keep tiles overlapping the viewport — empty tiles are still needed
+            // to show alpha/checkerboard through (paperUint=0). Pruning them
+            // would cause a perpetual recomposite on the next frame.
+            if (viewportClip is { } vp)
+            {
+                var stride = CmpTileSize * (1 << key.Lod);
+                var tileRect = new PixelRegion(key.X * stride, key.Y * stride, stride, stride);
+                if (!tileRect.Intersect(vp).IsEmpty) continue;
+            }
+
             if (_compTiles.TryGetValue(key, out var bmp) && IsWriteableBitmapTransparent(bmp))
             {
                 if (_compTiles.TryRemove(key, out var removed))
