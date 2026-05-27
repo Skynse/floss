@@ -86,18 +86,20 @@ internal sealed class LayerProjectionPlane : IDisposable
         return StrokeBelow;
     }
 
-    public void InvalidateGroupCaches(PixelRegion? region, IReadOnlyList<DrawingLayer>? layers, int? layerIndex, bool fullGroupInvalidation = false)
+    public void InvalidateGroupCaches(PixelRegion? region, IReadOnlyList<DrawingLayer>? layers, int? layerIndex,
+        bool fullGroupInvalidation = false, bool invalidateStrokeBelow = true)
     {
         DrawingLayer? changed = null;
         if (layers != null && layerIndex is >= 0 and var idx && idx < layers.Count)
             changed = layers[idx];
-        InvalidateGroupCaches(region, changed, fullGroupInvalidation);
+        InvalidateGroupCaches(region, changed, fullGroupInvalidation, invalidateStrokeBelow);
     }
 
     /// <summary>
     /// Invalidate group projection caches along the parent chain (KisMergeWalker-style).
     /// </summary>
-    public void InvalidateGroupCaches(PixelRegion? region, DrawingLayer? changedLayer, bool fullGroupInvalidation = false)
+    public void InvalidateGroupCaches(PixelRegion? region, DrawingLayer? changedLayer,
+        bool fullGroupInvalidation = false, bool invalidateStrokeBelow = true)
     {
         if (region is null || region.Value.IsEmpty || changedLayer is null)
         {
@@ -106,7 +108,7 @@ internal sealed class LayerProjectionPlane : IDisposable
                 lock (cache.SyncRoot)
                     cache.Invalidate(region);
             }
-            if (StrokeBelow is { } strokeBelow)
+            if (invalidateStrokeBelow && StrokeBelow is { } strokeBelow)
             {
                 lock (strokeBelow.SyncRoot)
                     strokeBelow.Invalidate(region);
@@ -132,7 +134,7 @@ internal sealed class LayerProjectionPlane : IDisposable
 
         // A group that obliges this layer reads its pixels directly — no cache entry, but
         // any cached ancestor above that group still needs invalidation (handled by parent walk).
-        if (StrokeBelow is { } strokeBelowInv)
+        if (invalidateStrokeBelow && StrokeBelow is { } strokeBelowInv)
         {
             lock (strokeBelowInv.SyncRoot)
                 strokeBelowInv.Invalidate(r);

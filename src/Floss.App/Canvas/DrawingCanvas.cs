@@ -181,7 +181,7 @@ public sealed class DrawingCanvas : Control, IDisposable
         };
         _document.LayerRemoved += (_, layer) => _compositor.RemoveGroupCache(layer);
         _document.LayerMetadataChanged += (_, e) => LayerMetadataChanged?.Invoke(this, e);
-        _document.StrokeSuspendBegan += (_, r) => _compositor.BeginStrokeSuspend(r);
+        _document.StrokeSuspendBegan += (_, e) => _compositor.BeginStrokeSuspend(e.Region, e.LayerIndex);
         _document.StrokeSuspendExtended += (_, r) => _compositor.ExtendStrokeSuspend(r);
         _document.StrokeSuspendEnded += (_, _) => _compositor.EndStrokeSuspend();
     }

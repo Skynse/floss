@@ -79,12 +79,12 @@ public sealed class LayerCompositor : IDisposable
     private int _strokePaintLayerIndex = -1;
     public bool StrokeSuspendActive => _strokeSuspendDepth > 0;
 
-    public void BeginStrokeSuspend(PixelRegion _)
+    public void BeginStrokeSuspend(PixelRegion _, int layerIndex = -1)
     {
         lock (CompositeGate)
         {
             _strokeSuspendDepth++;
-            _strokePaintLayerIndex = -1;
+            _strokePaintLayerIndex = layerIndex;
             Projection.ResetStrokeBelow();
         }
     }
@@ -92,11 +92,8 @@ public sealed class LayerCompositor : IDisposable
     public void ExtendStrokeSuspend(PixelRegion region)
     {
         if (region.IsEmpty) return;
-        lock (CompositeGate)
-        {
-            if (_strokeSuspendDepth == 0) return;
-            Projection.InvalidateStrokeBelow(region);
-        }
+        // Active-layer dab dirties do not change the cached projection below
+        // the stroke. Newly touched compositor tiles warm themselves on demand.
     }
 
     public void EndStrokeSuspend()
@@ -396,15 +393,19 @@ public sealed class LayerCompositor : IDisposable
             if (metadataOnly)
                 _metadataOnlyPass = true;
 
-            if (layerIndex is >= 0 && _strokeSuspendDepth > 0)
+            if (layerIndex is >= 0 && _strokeSuspendDepth > 0 && _strokePaintLayerIndex < 0)
                 _strokePaintLayerIndex = layerIndex.Value;
+            var changedStrokeLayer = _strokeSuspendDepth > 0
+                                     && layerIndex.HasValue
+                                     && layerIndex.Value == _strokePaintLayerIndex;
 
             if (region is null || region.Value.IsEmpty)
             {
                 _fullDirty = true;
                 _dirtyRegion = null;
                 ClearAllTiles();
-                Projection.InvalidateStrokeBelow(null);
+                if (!changedStrokeLayer)
+                    Projection.InvalidateStrokeBelow(null);
             }
             else
             {
@@ -427,11 +428,11 @@ public sealed class LayerCompositor : IDisposable
                     QueueDirtyTilesForRegionAtLod(tileRegion, _currentLod);
                 }
 
-                InvalidateGroupCaches(cacheRegion, layers, layerIndex);
+                InvalidateGroupCaches(cacheRegion, layers, layerIndex, invalidateStrokeBelow: !changedStrokeLayer);
                 return;
             }
 
-            InvalidateGroupCaches(region, layers, layerIndex);
+            InvalidateGroupCaches(region, layers, layerIndex, invalidateStrokeBelow: !changedStrokeLayer);
         }
     }
 
@@ -1915,9 +1916,10 @@ public sealed class LayerCompositor : IDisposable
         }
     }
 
-    private void InvalidateGroupCaches(PixelRegion? region, IReadOnlyList<DrawingLayer>? layers, int? layerIndex, bool fullGroupInvalidation = false)
+    private void InvalidateGroupCaches(PixelRegion? region, IReadOnlyList<DrawingLayer>? layers, int? layerIndex,
+        bool fullGroupInvalidation = false, bool invalidateStrokeBelow = true)
     {
-        Projection.InvalidateGroupCaches(region, layers, layerIndex, fullGroupInvalidation);
+        Projection.InvalidateGroupCaches(region, layers, layerIndex, fullGroupInvalidation, invalidateStrokeBelow);
     }
 
     public unsafe SKBitmap AssembleSkBitmap(int outputWidth, int outputHeight, int lod = -1, uint paperColor = 0)

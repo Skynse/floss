@@ -119,7 +119,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         var initialRegion = new PixelRegion(docX - radius, docY - radius, radius * 2, radius * 2)
             .ClipTo(ctx.Document.Width, ctx.Document.Height);
         if (!initialRegion.IsEmpty)
-            ctx.Document.NotifyStrokeSuspendBegin(initialRegion);
+            ctx.Document.NotifyStrokeSuspendBegin(initialRegion, ctx.ActiveLayerIndex);
 
         return tx;
     }

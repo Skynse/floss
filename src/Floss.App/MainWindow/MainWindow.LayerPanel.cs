@@ -11,6 +11,7 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Styling;
 using Floss.App.Canvas;
+using Floss.App.Controls;
 using Floss.App.Document;
 using Avalonia.Controls.Templates;
 
@@ -23,6 +24,15 @@ public partial class MainWindow
 
     private readonly Avalonia.Collections.AvaloniaList<DrawingLayer> _visibleLayers = new();
     private ListBox _layerListBox = null!;
+
+    // Drag-drop insertion line overlay
+    private Avalonia.Controls.Canvas? _dropLineCanvas;
+    private Border? _dropLine;
+    private Grid? _layerMainGrid;
+    private Border? _dropTargetRow;
+    private Thickness _dropTargetOriginalThickness;
+    private IBrush? _dropTargetOriginalBorderBrush;
+    private static readonly IBrush DropIndicatorBrush = new SolidColorBrush(Color.Parse(Accent));
 
     // ── Pre-Allocated Layer Brushes (Performance Optimization) ──────────────
 
@@ -244,6 +254,13 @@ public partial class MainWindow
             })
         };
 
+        // Pointer drag must be reserved for layer reordering, not scrolling.
+        _layerListBox.TemplateApplied += (_, e) =>
+        {
+            if (e.NameScope.Find<ScrollViewer>("PART_ScrollViewer") is { } sv)
+                ScrollHelper.DisablePointerPanScroll(sv);
+        };
+
         // ── Action buttons (bottom bar — like CSP) ───────────────────────────────
         var addBtn = SmIconBtn(Icons.LayerPlus, "Add layer  (Ctrl+Shift+N)");
         var folderBtn = SmIconBtn(Icons.Folder, "Add layer folder");
@@ -290,8 +307,27 @@ public partial class MainWindow
         mainGrid.Children.Add(_layerListBox);
         mainGrid.Children.Add(ctrlRow);
 
-        // Cache layer panel — complex but mostly static between layer changes
-        mainGrid.CacheMode = new Avalonia.Media.BitmapCache();
+        // Drop insertion line overlay — floats above the ListBox to show where dragged
+        // layers will be inserted. Must NOT be cached so it updates live during drag.
+        _dropLine = new Border
+        {
+            Height = 4,
+            Background = DropIndicatorBrush,
+            CornerRadius = new CornerRadius(2),
+            IsVisible = false,
+            IsHitTestVisible = false
+        };
+        _dropLineCanvas = new Avalonia.Controls.Canvas
+        {
+            IsHitTestVisible = false,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
+            Children = { _dropLine }
+        };
+        Grid.SetRow(_dropLineCanvas, 3);
+        mainGrid.Children.Add(_dropLineCanvas);
+
+        _layerMainGrid = mainGrid;
 
         return mainGrid;
     }
@@ -337,8 +373,15 @@ public partial class MainWindow
     {
         var max = _canvas.Layers.Count;
         _selectedLayerIndices.RemoveWhere(i => i < 0 || i >= max);
-        if (max > 0 && _selectedLayerIndices.Count == 0)
-            _selectedLayerIndices.Add(_canvas.ActiveLayerIndex);
+        var active = _canvas.ActiveLayerIndex;
+        // If the active layer isn't in the selection the document changed active
+        // programmatically (new layer, undo/redo, move, etc.). Reset so only the
+        // active row is highlighted — don't leave a stale secondary selection.
+        if (max > 0 && !_selectedLayerIndices.Contains(active))
+        {
+            _selectedLayerIndices.Clear();
+            if (active >= 0) _selectedLayerIndices.Add(active);
+        }
     }
 
     private IReadOnlyList<int> LayerDeleteTargetIndices()
@@ -961,6 +1004,12 @@ public partial class MainWindow
         var dy = pos.Y - _pendingDragStartPos.Y;
         if (dx * dx + dy * dy < LayerDragThreshold * LayerDragThreshold) return;
 
+        // If the button was released before the threshold was reached (fast tap with
+        // touchpad jitter), don't initiate — calling DoDragDropAsync with the button
+        // already up confuses the native XDnD/Wayland state machine and causes it to
+        // get permanently stuck.
+        if (!e.GetCurrentPoint(null).Properties.IsLeftButtonPressed) return;
+
         var index = _pendingDragIndex;
         var args = _pendingDragArgs!;
         _pendingDragIndex = -1;
@@ -975,8 +1024,19 @@ public partial class MainWindow
         var item = new DataTransferItem();
         item.SetText(string.Join(",", draggedIndices));
         data.Add(item);
-        await DragDrop.DoDragDropAsync(args, data, DragDropEffects.Move);
-        _layerDragSourceIndex = -1;
+
+        var pointer = e.Pointer;
+        e.Handled = true;
+        try
+        {
+            await DragDrop.DoDragDropAsync(args, data, DragDropEffects.Move);
+        }
+        finally
+        {
+            _layerDragSourceIndex = -1;
+            ClearDropIndicator();
+            pointer.Capture(null);
+        }
     }
 
     private void LayerRowPointerReleased(object? sender, PointerReleasedEventArgs e)
@@ -1117,21 +1177,28 @@ public partial class MainWindow
         {
             e.DragEffects = DragDropEffects.None;
             e.Handled = true;
+            ClearDropIndicator();
             return;
         }
 
         var sourceIndices = GetDraggedLayerIndices(e.DataTransfer);
         var placement = GetLayerDropPlacement(row, targetIndex, e.GetPosition(row));
 
-        // Allow if every selected layer can move to the target
         e.DragEffects = sourceIndices.Count > 0 && sourceIndices.All(si => _canvas.CanMoveLayer(si, targetIndex, placement))
             ? DragDropEffects.Move
             : DragDropEffects.None;
+
+        if (e.DragEffects == DragDropEffects.Move)
+            UpdateDropIndicator(row, placement);
+        else
+            ClearDropIndicator();
+
         e.Handled = true;
     }
 
     private void LayerRowDrop(object? sender, DragEventArgs e)
     {
+        ClearDropIndicator();
         if (sender is not Border row || row.Tag is not int targetIndex) return;
         var sourceIndices = GetDraggedLayerIndices(e.DataTransfer);
         var placement = GetLayerDropPlacement(row, targetIndex, e.GetPosition(row));
@@ -1178,9 +1245,71 @@ public partial class MainWindow
     {
         var height = Math.Max(1, row.Bounds.Height);
         var target = _canvas.Layers[targetIndex];
-        if (target.IsGroup && position.Y > height * 0.25 && position.Y < height * 0.75)
+
+        // Top 30% → insert above this row; bottom 30% → insert below.
+        // Middle 40% → into group (if it's a group), otherwise split at 50%.
+        if (position.Y < height * 0.30)
+            return LayerDropPlacement.Above;
+        if (position.Y > height * 0.70)
+            return LayerDropPlacement.Below;
+        if (target.IsGroup)
             return LayerDropPlacement.Into;
         return position.Y < height * 0.5 ? LayerDropPlacement.Above : LayerDropPlacement.Below;
+    }
+
+    private void UpdateDropIndicator(Border row, LayerDropPlacement placement)
+    {
+        // Clear previous indicator on a different row
+        if (_dropTargetRow != null && !ReferenceEquals(_dropTargetRow, row))
+            ClearDropIndicator();
+
+        if (placement == LayerDropPlacement.Into)
+        {
+            // Highlight the row border for "into group"
+            if (!ReferenceEquals(_dropTargetRow, row))
+            {
+                _dropTargetRow = row;
+                _dropTargetOriginalThickness = row.BorderThickness;
+                _dropTargetOriginalBorderBrush = row.BorderBrush;
+                row.BorderThickness = new Thickness(2);
+                row.BorderBrush = DropIndicatorBrush;
+            }
+            if (_dropLine is not null)
+                _dropLine.IsVisible = false;
+        }
+        else
+        {
+            // Restore row border if we previously highlighted for Into
+            if (_dropTargetRow != null)
+                ClearDropIndicator();
+
+            // Position floating insertion line based on Above/Below
+            if (_dropLineCanvas == null || _dropLine == null) return;
+
+            var pt = row.TranslatePoint(new Point(0, 0), _dropLineCanvas);
+            if (!pt.HasValue) return;
+
+            var y = placement == LayerDropPlacement.Above
+                ? pt.Value.Y - 1
+                : pt.Value.Y + row.Bounds.Height - 3;
+            Avalonia.Controls.Canvas.SetTop(_dropLine, y);
+            Avalonia.Controls.Canvas.SetLeft(_dropLine, 0);
+            var cw = _dropLineCanvas.Bounds.Width;
+            _dropLine.Width = cw > 0 ? cw : _layerListBox.Bounds.Width;
+            _dropLine.IsVisible = true;
+        }
+    }
+
+    private void ClearDropIndicator()
+    {
+        if (_dropTargetRow != null)
+        {
+            _dropTargetRow.BorderThickness = _dropTargetOriginalThickness;
+            _dropTargetRow.BorderBrush = _dropTargetOriginalBorderBrush;
+            _dropTargetRow = null;
+        }
+        if (_dropLine != null)
+            _dropLine.IsVisible = false;
     }
 
     private static bool TryParseHexColor(string input, out Color color)

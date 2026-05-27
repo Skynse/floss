@@ -9,6 +9,12 @@ namespace Floss.App.Document;
 public enum LayerDropPlacement { Above, Below, Into }
 public enum DocumentHistoryChangeKind { Mutation, Undo, Redo }
 
+public sealed class StrokeSuspendEventArgs(PixelRegion region, int layerIndex) : EventArgs
+{
+    public PixelRegion Region { get; } = region;
+    public int LayerIndex { get; } = layerIndex;
+}
+
 public sealed class DrawingDocument : IDisposable
 {
     public DocumentRenderLock RenderLock { get; } = new();
@@ -60,12 +66,12 @@ public sealed class DrawingDocument : IDisposable
     // compositor can switch into a suspended mode that only updates the stroke
     // region. The PixelRegion is the current stroke bounding box in document
     // coordinates (may be extended via Extend during the stroke).
-    public event EventHandler<PixelRegion>? StrokeSuspendBegan;
+    public event EventHandler<StrokeSuspendEventArgs>? StrokeSuspendBegan;
     public event EventHandler<PixelRegion>? StrokeSuspendExtended;
     public event EventHandler? StrokeSuspendEnded;
 
-    public void NotifyStrokeSuspendBegin(PixelRegion region)
-        => StrokeSuspendBegan?.Invoke(this, region);
+    public void NotifyStrokeSuspendBegin(PixelRegion region, int layerIndex = -1)
+        => StrokeSuspendBegan?.Invoke(this, new StrokeSuspendEventArgs(region, layerIndex));
     public void NotifyStrokeSuspendExtend(PixelRegion region)
         => StrokeSuspendExtended?.Invoke(this, region);
     public void NotifyStrokeSuspendEnd()
