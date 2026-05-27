@@ -72,7 +72,6 @@ public sealed class LayerCompositor : IDisposable
     // acquiring CompositeGate (which the background pass holds for hundreds
     // of ms on large invalidations and would otherwise freeze the UI).
     private readonly ConcurrentDictionary<(int X, int Y, int Lod), byte> _tilesPendingComposite = new();
-    private readonly HashSet<(int X, int Y, int Lod)> _tilesToPrune = [];
     // Tiles removed during a composite pass — disposed lazily on the UI thread
     // so DrawImage(bitmap) on the UI thread never observes a freed bitmap.
     private readonly ConcurrentQueue<WriteableBitmap> _tilesPendingDispose = new();
@@ -416,7 +415,10 @@ public sealed class LayerCompositor : IDisposable
             {
                 _fullDirty = true;
                 _dirtyRegion = null;
-                ClearAllTiles();
+                if (viewportClip is { IsEmpty: false } vp && !_compTiles.IsEmpty)
+                    DropCachedTilesOutside(vp);
+                else
+                    ClearAllTiles();
                 if (!changedStrokeLayer)
                     Projection.InvalidateStrokeBelow(null);
             }
@@ -773,11 +775,6 @@ public sealed class LayerCompositor : IDisposable
             _tilesPendingComposite.TryRemove((tx, ty, lodLocal), out _);
         }
 
-        _tilesToPrune.Clear();
-        foreach (var (tx, ty) in tileKeys) _tilesToPrune.Add((tx, ty, lod));
-        foreach (var (tx, ty) in missingTileKeys) _tilesToPrune.Add((tx, ty, lod));
-
-        PruneTransparentTiles(viewportClip);
         TrimCompositeCache(viewportClip);
         LastDirtyTileCount = tileKeys.Count;
         LastMissingTileCount = missingTileKeys.Count;
@@ -1101,29 +1098,6 @@ public sealed class LayerCompositor : IDisposable
         new Span<byte>(ptr, bytes).Clear();
     }
 
-    private void PruneTransparentTiles(PixelRegion? viewportClip)
-    {
-        if (_tilesToPrune.Count > 16) return;
-        foreach (var key in _tilesToPrune)
-        {
-            // Keep tiles overlapping the viewport — empty tiles are still needed
-            // to show alpha/checkerboard through (paperUint=0). Pruning them
-            // would cause a perpetual recomposite on the next frame.
-            if (viewportClip is { } vp)
-            {
-                var stride = CmpTileSize * (1 << key.Lod);
-                var tileRect = new PixelRegion(key.X * stride, key.Y * stride, stride, stride);
-                if (!tileRect.Intersect(vp).IsEmpty) continue;
-            }
-
-            if (_compTiles.TryGetValue(key, out var bmp) && IsWriteableBitmapTransparent(bmp))
-            {
-                if (_compTiles.TryRemove(key, out var removed))
-                    _tilesPendingDispose.Enqueue(removed);
-            }
-        }
-    }
-
     private void DropCachedTilesOverlapping(PixelRegion region, int? onlyLod = null, int? exceptLod = null)
     {
         if (region.IsEmpty || _compTiles.IsEmpty) return;
@@ -1147,6 +1121,34 @@ public sealed class LayerCompositor : IDisposable
             if (_compTiles.TryRemove(key, out var bmp))
                 _tilesPendingDispose.Enqueue(bmp);
             _pendingDirtyTiles.Remove(key);
+        }
+    }
+
+    private void DropCachedTilesOutside(PixelRegion keepRegion)
+    {
+        if (_compTiles.IsEmpty) return;
+        var keep = keepRegion.ClipTo(_width, _height);
+        if (keep.IsEmpty)
+        {
+            ClearAllTiles();
+            return;
+        }
+
+        var toDrop = new List<(int X, int Y, int Lod)>();
+        foreach (var key in _compTiles.Keys)
+        {
+            var stride = CmpTileSize * (1 << key.Lod);
+            var tileRegion = new PixelRegion(key.X * stride, key.Y * stride, stride, stride).ClipTo(_width, _height);
+            if (tileRegion.Intersect(keep).IsEmpty)
+                toDrop.Add(key);
+        }
+
+        foreach (var key in toDrop)
+        {
+            if (_compTiles.TryRemove(key, out var bmp))
+                _tilesPendingDispose.Enqueue(bmp);
+            _pendingDirtyTiles.Remove(key);
+            _tilesPendingComposite.TryRemove(key, out _);
         }
     }
 
@@ -1988,22 +1990,6 @@ public sealed class LayerCompositor : IDisposable
             else
                 LayerCompositorPixelOps.CompositeLayer(dst, dstStride, width, height, item.Layer, opacityScale, clip, originX, originY);
         }
-    }
-
-    private static unsafe bool IsWriteableBitmapTransparent(WriteableBitmap bmp)
-    {
-        using var frame = bmp.Lock();
-        var ptr = (byte*)frame.Address;
-        var w = bmp.PixelSize.Width;
-        var h = bmp.PixelSize.Height;
-        var stride = frame.RowBytes;
-        for (int y = 0; y < h; y++)
-        {
-            var row = (uint*)(ptr + y * stride);
-            for (int x = 0; x < w; x++)
-                if ((row[x] & 0xFF000000) != 0) return false;
-        }
-        return true;
     }
 
     private static unsafe void ClearTile(byte* dst, int stride, PixelRegion clip, int originX, int originY, uint clearValue = 0)

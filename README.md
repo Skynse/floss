@@ -25,6 +25,8 @@ The first canvas backend is CPU raster into one `WriteableBitmap`. That is not t
 
 # Builds (Windows)
 
+Windows builds require the **Visual C++ Redistributable for Visual Studio 2015–2022**. If you get "side-by-side configuration is incorrect", install [vc_redist.x64.exe](https://aka.ms/vs/17/release/vc_redist.x64.exe).
+
 dotnet publish src/Floss.App/Floss.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:PublishTrimmed=false -o artifacts/floss-win-x64-compact
 
 # Builds (linux)

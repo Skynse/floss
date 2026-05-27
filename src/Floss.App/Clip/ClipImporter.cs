@@ -158,6 +158,7 @@ public static class ClipImporter
                 group.IsOpen = (layer.LayerFolder & 16) == 0;
                 group.BlendMode = MapBlendMode(layer.LayerComposite, isFolder: true);
                 group.IsLocked = layer.LayerLock != 0;
+                group.IsClipping = layer.LayerClip != 0;
                 group.IndentLevel = indent;
                 group.OffsetX = layer.LayerOffsetX + layer.LayerRenderOffscrOffsetX;
                 group.OffsetY = layer.LayerOffsetY + layer.LayerRenderOffscrOffsetY;
@@ -568,9 +569,6 @@ public static class ClipImporter
 
     private static string MapBlendMode(int composite, bool isFolder)
     {
-        if (isFolder)
-            return "PassThrough";
-
         return composite switch
         {
             0 => "Normal",

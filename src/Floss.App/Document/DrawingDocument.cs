@@ -119,7 +119,7 @@ public sealed class DrawingDocument : IDisposable
     }
 
     private static bool IsLayerDeletable(DrawingLayer layer) =>
-        !layer.IsGroup && (!layer.IsLocked || layer.IsPaper);
+        !layer.IsLocked || layer.IsPaper;
 
     private HashSet<DrawingLayer> CollectDeletableLayers(IReadOnlyList<int> indices)
     {
@@ -1060,7 +1060,11 @@ public sealed class DrawingDocument : IDisposable
 
     // --- Helpers / Notifications ---
     public void NotifyChanged(PixelRegion? dirtyRegion = null, int? layerIndex = null, bool metadataOnly = false)
-        => Changed?.Invoke(this, new DocumentChangedEventArgs(dirtyRegion, layerIndex, metadataOnly));
+    {
+        if (!metadataOnly && layerIndex is { } index && index >= 0 && index < _layers.Count)
+            _layers[index].MarkThumbnailDirty();
+        Changed?.Invoke(this, new DocumentChangedEventArgs(dirtyRegion, layerIndex, metadataOnly));
+    }
 
     public PixelRegion GetLayerDirtyRegion(int index) => LayerDirtyRegion(index);
 

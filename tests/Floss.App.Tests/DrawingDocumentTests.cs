@@ -216,6 +216,25 @@ public class DrawingDocumentTests
     }
 
     [Fact]
+    public void DeleteLayers_CanRemoveFolderAndChildren()
+    {
+        var document = new DrawingDocument(4, 4);
+        document.AddLayer();
+        document.AddLayer();
+        document.AddLayer();
+        document.GroupSelectedLayers([0, 1]);
+
+        var groupIndex = document.ActiveLayerIndex;
+        TestAssertions.True(document.ActiveLayer!.IsGroup);
+        TestAssertions.True(document.CanDeleteLayers([groupIndex]));
+
+        document.DeleteLayers([groupIndex]);
+
+        TestAssertions.Equal(1, document.Layers.Count);
+        TestAssertions.False(document.Layers.Any(layer => layer.IsGroup));
+    }
+
+    [Fact]
     public void MergeSelectedLayers_CombinesMultipleLayers()
     {
         var document = new DrawingDocument(4, 4);

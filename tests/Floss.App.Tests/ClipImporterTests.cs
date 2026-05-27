@@ -338,13 +338,16 @@ public class ClipImporterTests
     }
 
     [Fact]
-    public void MapBlendMode_Folder_ReturnsPassThrough()
+    public void MapBlendMode_Folder_RespectsCompositeMode()
     {
         var method = typeof(Floss.App.Clip.ClipImporter)
             .GetMethod("MapBlendMode",
                 System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
         var result = (string)method.Invoke(null, [0, true])!;
-        Assert.Equal("PassThrough", result);
+        Assert.Equal("Normal", result);
+
+        var passThrough = (string)method.Invoke(null, [30, true])!;
+        Assert.Equal("PassThrough", passThrough);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

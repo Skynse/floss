@@ -754,6 +754,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         _rightPanel = rightPanel;
         _statusBar = statusBar;
         _footer = footer;
+        UpdateRightPanelWidth();
 
         Content = shell;
         AddHandler(PointerPressedEvent, WindowPointerPressed, RoutingStrategies.Tunnel);
@@ -1292,7 +1293,10 @@ public partial class MainWindow : Window, Tools.IViewportController
     private Border BuildRightPanel()
     {
         var layout = App.Config.WorkspaceLayout;
-        var columns = layout.RightColumns;
+        var columns = layout.RightColumns
+            .Select((column, index) => (Column: column, Index: index))
+            .Where(entry => HasVisibleDockerRows(entry.Column))
+            .ToList();
         var grid = new Grid { ClipToBounds = true };
         _dockerHostGrid = grid;
 
@@ -1312,7 +1316,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         {
             // Single column — full width, no splitter
             grid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
-            var dock = BuildDockColumn(columns[0], 0);
+            var dock = BuildDockColumn(columns[0].Column, columns[0].Index);
             Grid.SetColumn(dock, 0);
             grid.Children.Add(dock);
             return new Border
@@ -1330,7 +1334,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         {
             grid.ColumnDefinitions.Add(new ColumnDefinition(fraction, GridUnitType.Star));
 
-            var dock = BuildDockColumn(columns[i], i);
+            var dock = BuildDockColumn(columns[i].Column, columns[i].Index);
             Grid.SetColumn(dock, i * 2);
             grid.Children.Add(dock);
 
@@ -1358,6 +1362,10 @@ public partial class MainWindow : Window, Tools.IViewportController
             Child = grid
         };
     }
+
+    private bool HasVisibleDockerRows(DockColumnLayout column)
+        => column.ResolvedRows()
+            .Any(row => row.PanelIds.Any(id => GetDockerInfo(id) != null && !IsDockerFloating(id) && IsDockerVisible(id)));
 
     private Border WrapWithPopupStrip(Border dockContent)
     {
@@ -2156,6 +2164,7 @@ public partial class MainWindow : Window, Tools.IViewportController
             _rightPanel = BuildRightPanel();
             Grid.SetColumn(_rightPanel, rightCol);
             _rootGrid.Children.Add(_rightPanel);
+            UpdateRightPanelWidth();
         }
 
         // Fix popup placement target
@@ -2188,6 +2197,33 @@ public partial class MainWindow : Window, Tools.IViewportController
             _rootGrid.ColumnDefinitions[1].MinWidth = 0;
             _rootGrid.ColumnDefinitions[1].Width = new GridLength(0);
             _leftSplitter!.IsVisible = false;
+        }
+    }
+
+    private void UpdateRightPanelWidth()
+    {
+        if (_rootGrid == null || _rootGrid.ColumnDefinitions.Count < 4) return;
+
+        var hasPanels = App.Config.WorkspaceLayout.RightColumns.Any(HasVisibleDockerRows);
+        var column = _rootGrid.ColumnDefinitions[3];
+
+        if (hasPanels)
+        {
+            column.MinWidth = 260;
+            column.MaxWidth = 520;
+            column.Width = new GridLength(
+                Math.Clamp(App.Config.WorkspaceLayout.RightPanelWidth, 260, 520),
+                GridUnitType.Pixel);
+            if (_rightPanel != null)
+                _rightPanel.IsVisible = true;
+        }
+        else
+        {
+            column.MinWidth = 0;
+            column.MaxWidth = double.PositiveInfinity;
+            column.Width = new GridLength(0);
+            if (_rightPanel != null)
+                _rightPanel.IsVisible = false;
         }
     }
 
@@ -2366,12 +2402,7 @@ public partial class MainWindow : Window, Tools.IViewportController
             window.Close();
         _suppressFloatingDockerClosed = false;
         _floatingDockers.Clear();
-        if (_rootGrid != null && _rootGrid.ColumnDefinitions.Count > 3)
-        {
-            _rootGrid.ColumnDefinitions[3].Width = new GridLength(
-                Math.Clamp(App.Config.WorkspaceLayout.RightPanelWidth, 260, 900),
-                GridUnitType.Pixel);
-        }
+        UpdateRightPanelWidth();
         RebuildDockers();
         OpenFloatingDockersFromConfig();
         RefreshWorkspaceLoadMenu();
@@ -2501,9 +2532,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         cfg.WorkspaceLayout ??= WorkspaceLayout.CreateDefault();
         if (_rootGrid != null && _rootGrid.ColumnDefinitions.Count > 3)
         {
-            _rootGrid.ColumnDefinitions[3].Width = new GridLength(
-                Math.Clamp(cfg.WorkspaceLayout.RightPanelWidth, 260, 1000),
-                GridUnitType.Pixel);
+            UpdateRightPanelWidth();
             CaptureRootColumnWidths();
         }
         if (_sizeSlider != null)

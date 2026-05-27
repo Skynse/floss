@@ -37,7 +37,7 @@ public sealed class WorkspaceLayout
 
     [JsonInclude]
     [JsonPropertyName("HiddenDockers")]
-    public HashSet<string> HiddenPanelIds { get; set; } = ["tools", "tool-properties", "layer-properties", "color-slider"];
+    public HashSet<string> HiddenPanelIds { get; set; } = ["tools", "layer-properties", "color-slider"];
 
     /// <summary>Per-panel content state (scroll position, selected category, etc.).</summary>
     [JsonInclude]
@@ -56,6 +56,7 @@ public sealed class WorkspaceLayout
     {
         // Migrate: brush is now a first-class docked panel, not a popup-only panel
         HiddenPanelIds.Remove("brush");
+        HiddenPanelIds.Remove("tool-properties");
 
         // Migrate the old default inspector stack to the cleaner single-column order.
         // Custom layouts are left alone unless they exactly match the old default.

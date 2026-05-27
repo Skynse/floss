@@ -1643,6 +1643,7 @@ public sealed class ToolPropertiesWindow : Window
             var newVisible = !App.Config.ToolPropertyDockerVisibility.TryGetValue(toolPropId, out var cur) || !cur;
             App.Config.ToolPropertyDockerVisibility[toolPropId] = newVisible;
             App.Config.Save();
+            AppConfig.NotifyToolPropertyVisibilityChanged();
             eyeBtn.Foreground = new SolidColorBrush(Color.Parse(newVisible ? Accent : TextMuted));
         };
 

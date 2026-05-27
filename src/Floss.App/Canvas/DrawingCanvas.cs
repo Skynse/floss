@@ -190,6 +190,8 @@ public sealed class DrawingCanvas : Control, IDisposable
     }
 
     public void InvalidateCompositor() => _projectionScheduler.Invalidate(null);
+    private void InvalidateCompositor(PixelRegion region) =>
+        _projectionScheduler.Invalidate(region.IsEmpty ? null : region);
 
     /// <summary>
     /// Call after replacing the document (open/import). Clears display LOD state so the
@@ -1190,23 +1192,30 @@ public sealed class DrawingCanvas : Control, IDisposable
     public void Undo()
     {
         EnsureStrokeOutputIdle();
-        if (_toolController.HasPendingOperation)
+        if (_toolController.HasPendingOperation && !(_toolController.ActiveTool is TransformTool))
             _toolController.Cancel();
         EnsureStrokeOutputIdle();
         _document.Undo();
-        InvalidateCompositor();
+        InvalidateAfterHistoryReplay();
         InvalidateVisual();
     }
 
     public void Redo()
     {
         EnsureStrokeOutputIdle();
-        if (_toolController.HasPendingOperation)
+        if (_toolController.HasPendingOperation && !(_toolController.ActiveTool is TransformTool))
             _toolController.Cancel();
         EnsureStrokeOutputIdle();
         _document.Redo();
-        InvalidateCompositor();
+        InvalidateAfterHistoryReplay();
         InvalidateVisual();
+    }
+
+    private void InvalidateAfterHistoryReplay()
+    {
+        if (!_document.LastHistoryAffectsVisual)
+            return;
+        InvalidateCompositor(_document.LastHistoryVisualDirtyRegion);
     }
 
     private bool IsStrokeOutputPending()
@@ -1471,6 +1480,8 @@ public sealed class DrawingCanvas : Control, IDisposable
             }
         }
 
+        _transformTool.ViewportFlipX = FlipX == 0 ? 1 : FlipX;
+        _transformTool.ViewportFlipY = FlipY == 0 ? 1 : FlipY;
         _toolController.RenderOverlay(context, CanvasZoom);
 
         if (_isLayerPickDrag)

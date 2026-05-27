@@ -426,7 +426,7 @@ public partial class MainWindow
             return;
         }
 
-        _toolPropertyTitle.Text = ToolDisplayName(_canvas.ActiveTool);
+        _toolPropertyTitle.Text = "Brush Settings";
 
         var props = CurrentToolProperties().Where(p => IsToolPropertyVisible(p)).ToList();
 

@@ -66,6 +66,9 @@ public sealed class TransformTool : ITool
     private SelectionTransformOperation? _operation;
     private ITool? _previousTool;
 
+    public int ViewportFlipX { get; set; } = 1;
+    public int ViewportFlipY { get; set; } = 1;
+
     // Called after commit/cancel/delete so the canvas can restore the previous tool.
     public Action<TransformCompletionKind>? OnCompleted { get; set; }
 
@@ -97,7 +100,8 @@ public sealed class TransformTool : ITool
 
     public void PointerMove(ToolContext ctx, CanvasInputSample s) => _operation?.Update(s);
     public void PointerUp(ToolContext ctx, CanvasInputSample s) => _operation?.PointerUp(s);
-    public void RenderOverlay(DrawingContext dc, ToolContext ctx, double zoom) => _operation?.RenderOverlay(dc, zoom);
+    public void RenderOverlay(DrawingContext dc, ToolContext ctx, double zoom)
+        => _operation?.RenderOverlay(dc, zoom, ViewportFlipX, ViewportFlipY);
     public void Activate(ToolContext ctx) { }
 
     public void Cancel(ToolContext ctx)
@@ -574,6 +578,9 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
     }
 
     public void RenderOverlay(DrawingContext dc, double zoom)
+        => RenderOverlay(dc, zoom, 1, 1);
+
+    public void RenderOverlay(DrawingContext dc, double zoom, int viewportFlipX, int viewportFlipY)
     {
         _lastZoom = zoom;
         EnsureOverlayBitmap();
@@ -619,7 +626,7 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
             }
         }
 
-        DrawButtons(dc, rect, angleRad, center, zoom);
+        DrawButtons(dc, rect, angleRad, center, zoom, viewportFlipX, viewportFlipY);
     }
 
     // ── Per-layer stamp (same rotation applied to each layer's extracted pixels) ──
@@ -696,7 +703,7 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         };
     }
 
-    private void DrawButtons(DrawingContext dc, Rect rect, double angleRad, Point center, double zoom)
+    private void DrawButtons(DrawingContext dc, Rect rect, double angleRad, Point center, double zoom, int viewportFlipX, int viewportFlipY)
     {
         var btnW = 52 / zoom;
         var btnH = 22 / zoom;
@@ -714,20 +721,40 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         var okRect = new Rect(screenBottomCenter.X - totalW / 2, screenBottomCenter.Y, btnW, btnH);
         var cancelRect = new Rect(okRect.Right + gap, screenBottomCenter.Y, btnW, btnH);
 
-        DrawButton(dc, okRect, "OK", AccentBlue, zoom);
-        DrawButton(dc, cancelRect, "✕", AccentRed, zoom);
+        DrawButton(dc, okRect, "OK", AccentBlue, zoom, viewportFlipX, viewportFlipY);
+        DrawButton(dc, cancelRect, "✕", AccentRed, zoom, viewportFlipX, viewportFlipY);
     }
 
-    private static void DrawButton(DrawingContext dc, Rect r, string text, IBrush accent, double zoom)
+    private static void DrawButton(DrawingContext dc, Rect r, string text, IBrush accent, double zoom, int viewportFlipX, int viewportFlipY)
     {
         dc.FillRectangle(BtnBg, r);
         dc.DrawRectangle(new Pen(new SolidColorBrush(Color.Parse("#4a5268")), 1.0 / zoom), r);
 
-        var ft = new FormattedText(text, CultureInfo.InvariantCulture,
-            FlowDirection.LeftToRight, Typeface.Default, 11.0 / zoom, BtnText);
-        dc.DrawText(ft, new Point(
-            r.X + (r.Width - ft.Width) * 0.5,
-            r.Y + (r.Height - ft.Height) * 0.5));
+        void DrawText()
+        {
+            var ft = new FormattedText(text, CultureInfo.InvariantCulture,
+                FlowDirection.LeftToRight, Typeface.Default, 11.0 / zoom, BtnText);
+            dc.DrawText(ft, new Point(
+                r.X + (r.Width - ft.Width) * 0.5,
+                r.Y + (r.Height - ft.Height) * 0.5));
+        }
+
+        var fx = viewportFlipX < 0 ? -1.0 : 1.0;
+        var fy = viewportFlipY < 0 ? -1.0 : 1.0;
+        if (fx == 1.0 && fy == 1.0)
+        {
+            DrawText();
+            return;
+        }
+
+        var center = r.Center;
+        using (dc.PushTransform(
+                   Matrix.CreateTranslation(-center.X, -center.Y)
+                   * Matrix.CreateScale(fx, fy)
+                   * Matrix.CreateTranslation(center.X, center.Y)))
+        {
+            DrawText();
+        }
     }
 
     private OverlayAction HitTestButton(double x, double y)

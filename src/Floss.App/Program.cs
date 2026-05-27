@@ -6,7 +6,6 @@ using System.Runtime;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Threading.Tasks;
-using Velopack;
 
 namespace Floss.App;
 
@@ -39,8 +38,6 @@ class Program
     [STAThread]
     public static void Main(string[] args)
     {
-        VelopackApp.Build().Run();
-
         // ── First-chance exceptions ────────────────────────────────────────
         // Fires for EVERY managed exception at throw-time, before any catch.
         AppDomain.CurrentDomain.FirstChanceException += (_, e) =>

@@ -206,6 +206,8 @@ public static class KraImporter
         layer.IsLocked = element.Attribute("locked")?.Value == "1";
         layer.IsOpen = element.Attribute("collapsed")?.Value != "1";
         layer.BlendMode = KraBlendModes.Map(element.Attribute("compositeop")?.Value);
+        layer.IsClipping = element.Attribute("clippingmask")?.Value == "1"
+            || element.Attribute("clipping")?.Value == "1";
         layer.OffsetX = ParseInt(element.Attribute("x")?.Value, 0);
         layer.OffsetY = ParseInt(element.Attribute("y")?.Value, 0);
         layer.IndentLevel = depth;
