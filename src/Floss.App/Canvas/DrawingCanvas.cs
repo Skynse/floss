@@ -134,6 +134,7 @@ public sealed class DrawingCanvas : Control, IDisposable
         _document.DirtyStateChanged += (_, _) => DirtyStateChanged?.Invoke(this, EventArgs.Empty);
         Focusable = true;
         ClipToBounds = false;
+        Cursor = CursorNone;
         RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);
 
         BrushEngine = new BrushEngine();
@@ -374,6 +375,32 @@ public sealed class DrawingCanvas : Control, IDisposable
             sampleInfo.Source,
             phase);
         _toolController.Dispatch(new ToolInputEvent(kind, sample));
+    }
+
+    public void TrackViewportPointer(PointerPoint point)
+    {
+        if (!_isCursorPreviewLocked)
+        {
+            _prevPointerPos = _pointerPos;
+            _pointerPos = point.Position;
+        }
+
+        _isPointerOver = true;
+        var props = point.Properties;
+        _pointerTiltX = (float)props.XTilt;
+        _pointerTiltY = (float)props.YTilt;
+        _pointerTwist = (float)props.Twist;
+        Cursor = CursorNone;
+        InvalidateVisual();
+    }
+
+    public void ClearViewportPointer()
+    {
+        if (_toolController.HasPendingOperation || _isCursorPreviewLocked)
+            return;
+
+        _isPointerOver = false;
+        InvalidateVisual();
     }
 
     // Viewport tools (Hand, Rotate, Zoom) need viewport coordinates because
@@ -699,17 +726,42 @@ public sealed class DrawingCanvas : Control, IDisposable
 
         var beforeTiles = layer.Pixels.CaptureTiles(layerBounds);
 
-        for (int docY = b.Top; docY < b.Bottom; docY++)
+        const int ts = TiledPixelBuffer.TileSize;
+        var firstTileX = layerBounds.X / ts;
+        var firstTileY = layerBounds.Y / ts;
+        var lastTileX = (layerBounds.Right - 1) / ts;
+        var lastTileY = (layerBounds.Bottom - 1) / ts;
+
+        for (var ty = firstTileY; ty <= lastTileY; ty++)
         {
-            int layY = docY - layer.OffsetY;
-            for (int docX = b.Left; docX < b.Right; docX++)
+            for (var tx = firstTileX; tx <= lastTileX; tx++)
             {
-                if (!_ctx.Selection.IsSelected(docX, docY)) continue;
-                int layX = docX - layer.OffsetX;
-                layer.Pixels.SetPixel(layX, layY, 0, 0, 0, 0);
+                var tile = layer.Pixels.GetTileOrNull(tx, ty);
+                if (tile == null) continue;
+
+                var tx0 = tx * ts;
+                var ty0 = ty * ts;
+                var clipLeft = Math.Max(layerBounds.X, tx0);
+                var clipTop = Math.Max(layerBounds.Y, ty0);
+                var clipRight = Math.Min(layerBounds.Right, tx0 + ts);
+                var clipBottom = Math.Min(layerBounds.Bottom, ty0 + ts);
+
+                for (var ly = clipTop; ly < clipBottom; ly++)
+                {
+                    var docY = ly + layer.OffsetY;
+                    var tileRow = (ly - ty0) * ts * 4;
+                    for (var lx = clipLeft; lx < clipRight; lx++)
+                    {
+                        var docX = lx + layer.OffsetX;
+                        if (!_ctx.Selection.IsSelected(docX, docY)) continue;
+                        var off = tileRow + (lx - tx0) * 4;
+                        tile[off] = tile[off + 1] = tile[off + 2] = tile[off + 3] = 0;
+                    }
+                }
             }
         }
 
+        layer.Pixels.PruneRegion(layerBounds);
         layer.MarkThumbnailDirty();
         _ctx.CommitMutation(_ctx.ActiveLayerIndex, beforeTiles, layerBounds.Translate(layer.OffsetX, layer.OffsetY));
         InvalidateVisual();
@@ -1867,6 +1919,7 @@ public sealed class DrawingCanvas : Control, IDisposable
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
+        Cursor = CursorNone;
         var point = e.GetCurrentPoint(this);
 
         // Ctrl+Shift+Left: start a layer-find drag.
@@ -1892,6 +1945,7 @@ public sealed class DrawingCanvas : Control, IDisposable
     protected override void OnPointerEntered(PointerEventArgs e)
     {
         base.OnPointerEntered(e);
+        Cursor = CursorNone;
         _isPointerOver = true;
         var pt = e.GetCurrentPoint(this);
         _pointerPos = pt.Position;
@@ -1933,16 +1987,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             return;
         }
 
-        // Transform cursor override
-        if (_toolController.ActiveTool is TransformTool tt && tt.HasPendingOperation)
-        {
-            var canvasPos = new Point(
-                point.Position.X / Math.Max(Bounds.Width, 1) * _document.Width,
-                point.Position.Y / Math.Max(Bounds.Height, 1) * _document.Height);
-            var cursor = tt.CursorFor(canvasPos, CanvasZoom);
-            if (cursor.HasValue)
-                Cursor = new Cursor(cursor.Value);
-        }
+        Cursor = CursorNone;
 
         if (PaintInputSuspended && !_toolController.IsAlternateActive)
         {
@@ -1967,6 +2012,7 @@ public sealed class DrawingCanvas : Control, IDisposable
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
+        if (_isPointerOver) Cursor = CursorNone;
         var point = e.GetCurrentPoint(this);
 
         if (_isLayerPickDrag)

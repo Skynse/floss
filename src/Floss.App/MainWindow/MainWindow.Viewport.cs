@@ -90,6 +90,7 @@ public partial class MainWindow : ICanvasInputHost
 
     private void Workspace_OnPointerMoved(object? sender, PointerEventArgs e)
     {
+        _canvas.TrackViewportPointer(e.GetCurrentPoint(_canvas));
         _inputRouter.PointerMoved(e);
     }
 
@@ -97,6 +98,11 @@ public partial class MainWindow : ICanvasInputHost
     {
         ActivateCanvasKeyboardRegion();
         _inputRouter.PointerReleased(e);
+    }
+
+    private void Workspace_OnPointerExited(object? sender, PointerEventArgs e)
+    {
+        _canvas.ClearViewportPointer();
     }
 
     private void Workspace_OnPointerCaptureLost(object? sender, PointerCaptureLostEventArgs e)

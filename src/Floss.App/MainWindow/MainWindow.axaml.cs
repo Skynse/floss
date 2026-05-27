@@ -623,7 +623,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         {
             ClipToBounds = true,
             Background = CheckerboardOverlay.BackgroundBrush,
-            Focusable = true
+            Focusable = true,
+            Cursor = CursorNone
         };
         _checkerboardOverlay = new CheckerboardOverlay(_canvas);
         _workspaceViewport.Children.Add(_checkerboardOverlay);
@@ -2588,6 +2589,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         _workspaceViewport.AddHandler(PointerPressedEvent, Workspace_OnPointerPressed, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         _workspaceViewport.AddHandler(PointerMovedEvent, Workspace_OnPointerMoved, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         _workspaceViewport.AddHandler(PointerReleasedEvent, Workspace_OnPointerReleased, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        _workspaceViewport.PointerExited += Workspace_OnPointerExited;
         _workspaceViewport.PointerCaptureLost += Workspace_OnPointerCaptureLost;
         _workspaceViewport.SizeChanged += (_, _) => SyncCanvasViewport();
 
