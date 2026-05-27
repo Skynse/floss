@@ -27,7 +27,7 @@ public partial class MainWindow
     // ── Pre-Allocated Layer Brushes (Performance Optimization) ──────────────
 
     // Row Backgrounds
-    private static readonly IBrush RowBgActive = new SolidColorBrush(Color.Parse(AccentSoft));
+    private static readonly IBrush RowBgActive = new SolidColorBrush(Color.Parse(Accent));
     private static readonly IBrush RowBgSelected = new SolidColorBrush(Color.Parse("#2f3a48"));
     private static readonly IBrush RowBgDefault = new SolidColorBrush(Color.Parse(Bg2));
 
@@ -111,13 +111,13 @@ public partial class MainWindow
         {
             PlaceholderText = "Layer name",
             FontSize = 11,
-            Height = 22,
-            Background = new SolidColorBrush(Color.Parse(Bg0)),
+            Height = 30,
+            Background = new SolidColorBrush(Color.Parse(Bg3)),
             Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
             CaretBrush = new SolidColorBrush(Color.Parse(TextPrimary)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
-            Padding = new Thickness(5, 0),
+            Padding = new Thickness(8, 0),
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
 
@@ -211,7 +211,7 @@ public partial class MainWindow
         var toggleRow = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
-            Margin = new Thickness(0, 2, 0, 2),
+            Margin = new Thickness(0, 8, 0, 8),
             Children = { _lockLayerBtn, _alphaLockLayerBtn, _clipLayerBtn, _refLayerBtn }
         };
 
@@ -265,14 +265,14 @@ public partial class MainWindow
         var ctrlRow = new WrapPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
-            Margin = new Thickness(0, 2, 0, 0),
+            Margin = new Thickness(0, 8, 0, 0),
             Children = { addBtn, folderBtn, dupBtn, _moveLayerUpButton, _moveLayerDownButton, _deleteLayerButton }
         };
 
         // Grid: name | blend+opacity | toggles | list(*) | actions
         var mainGrid = new Grid
         {
-            Margin = new Thickness(6, 3, 6, 6),
+            Margin = new Thickness(16, 2, 16, 12),
             RowDefinitions = new RowDefinitions("Auto, Auto, Auto, *, Auto")
         };
 
@@ -282,7 +282,7 @@ public partial class MainWindow
         Grid.SetRow(_layerListBox, 3);
         Grid.SetRow(ctrlRow, 4);
 
-        blendOpRow.Margin = new Thickness(0, 3, 0, 0);
+        blendOpRow.Margin = new Thickness(0, 8, 0, 0);
 
         mainGrid.Children.Add(nameRow);
         mainGrid.Children.Add(blendOpRow);
@@ -477,8 +477,8 @@ public partial class MainWindow
             Background = isActive ? RowBgActive : isSelected ? RowBgSelected : RowBgDefault,
             BorderBrush = isActive ? RowBorderActive : isSelected ? RowBorderSelected : RowBorderDefault,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(2),
-            Padding = new Thickness(2, 1),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(4, 3),
             Margin = new Thickness(layer.IndentLevel * 10, 0, 0, 0),
             Tag = i,
             ContextMenu = BuildLayerContextMenu(i)
@@ -494,7 +494,7 @@ public partial class MainWindow
         row.AddHandler(DragDrop.DropEvent, LayerRowDrop);
 
         // cols: clip-strip | disclosure | visibility | thumbnail | name/status
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("3,14,16,50,*") };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("3,16,20,48,*") };
 
         // Thin pink strip on the left edge to signal "clipped to layer below"
         var clipStrip = new Border
@@ -933,25 +933,25 @@ public partial class MainWindow
                 return;
             }
 
-        // Ctrl+click always toggles selection (even on already-selected layers).
-        // For plain click on an already-selected layer, skip SelectLayerWithModifiers
-        // so the multi-selection persists through the pending drag gesture.
-        var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
-        if (ctrl || !alreadySelected)
-            SelectLayerWithModifiers(index, e.KeyModifiers);
+            // Ctrl+click always toggles selection (even on already-selected layers).
+            // For plain click on an already-selected layer, skip SelectLayerWithModifiers
+            // so the multi-selection persists through the pending drag gesture.
+            var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+            if (ctrl || !alreadySelected)
+                SelectLayerWithModifiers(index, e.KeyModifiers);
 
-        // Don't start a drag when modifier keys are held (Ctrl=toggle, Shift=range).
-        if (ctrl || e.KeyModifiers.HasFlag(KeyModifiers.Shift) || e.ClickCount > 1) return;
+            // Don't start a drag when modifier keys are held (Ctrl=toggle, Shift=range).
+            if (ctrl || e.KeyModifiers.HasFlag(KeyModifiers.Shift) || e.ClickCount > 1) return;
 
-        // Store pending drag state; actual drag starts in PointerMoved after threshold exceeded.
-        _pendingDragIndex = index;
-        _pendingDragStartPos = point.Position;
-        _pendingDragArgs = e;
+            // Store pending drag state; actual drag starts in PointerMoved after threshold exceeded.
+            _pendingDragIndex = index;
+            _pendingDragStartPos = point.Position;
+            _pendingDragArgs = e;
         }
         catch (Exception ex) { CrashLog.Write(ex, "MainWindow.LayerRowPointerPressed"); }
     }
 
-    private const double LayerDragThreshold = 6.0;
+    private const double LayerDragThreshold = 20.0;
 
     private async void LayerRowPointerMoved(object? sender, PointerEventArgs e)
     {

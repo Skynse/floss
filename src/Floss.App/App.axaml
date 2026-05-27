@@ -270,19 +270,22 @@
         </Style>
 
         <!-- ══════════════════════════════════════════════════════════════════
-             Horizontal slider — chunky scrub bar
+             Horizontal slider — full-track scrub bar with floating thumb
         ══════════════════════════════════════════════════════════════════ -->
         <Style Selector="Slider:horizontal">
             <Setter Property="Background" Value="{StaticResource SliderTrack}"/>
-            <Setter Property="MinHeight"  Value="28"/>
-            <Setter Property="MaxHeight"  Value="28"/>
+            <Setter Property="MinHeight"  Value="24"/>
+            <Setter Property="MaxHeight"  Value="24"/>
             <Setter Property="Cursor"     Value="SizeWestEast"/>
             <Setter Property="Padding"    Value="0"/>
             <Setter Property="Template">
                 <ControlTemplate>
                     <Border Background="{TemplateBinding Background}"
-                            Height="28" ClipToBounds="True">
+                            Height="24"
+                            CornerRadius="6"
+                            ClipToBounds="False">
                         <Track Name="PART_Track" Orientation="Horizontal"
+                               Height="24"
                                Minimum="{TemplateBinding Minimum}"
                                Maximum="{TemplateBinding Maximum}"
                                Value="{TemplateBinding Value, Mode=TwoWay}">
@@ -290,20 +293,22 @@
                                 <RepeatButton Name="PART_DecreaseButton" Focusable="False">
                                     <RepeatButton.Template>
                                         <ControlTemplate>
-                                            <Border Name="Fill" Background="{StaticResource SliderFill}"/>
+                                            <Border Name="Fill" Background="Transparent"/>
                                         </ControlTemplate>
                                     </RepeatButton.Template>
                                 </RepeatButton>
                             </Track.DecreaseButton>
                             <Track.Thumb>
-                                <Thumb Width="10" Cursor="SizeWestEast">
+                                <Thumb Width="24" Height="24" Cursor="SizeWestEast">
                                     <Thumb.Template>
                                         <ControlTemplate>
-                                            <Border Width="10" Height="10"
-                                                    Background="Transparent"
-                                                    BorderBrush="White"
-                                                    BorderThickness="1.5"
-                                                    VerticalAlignment="Center"/>
+                                            <Border Width="20" Height="20"
+                                                    Background="#402e3035"
+                                                    BorderBrush="{StaticResource SliderThumbLine}"
+                                                    BorderThickness="2"
+                                                    CornerRadius="6"
+                                                    VerticalAlignment="Center"
+                                                    HorizontalAlignment="Center"/>
                                         </ControlTemplate>
                                     </Thumb.Template>
                                 </Thumb>
@@ -323,10 +328,10 @@
             </Setter>
         </Style>
         <Style Selector="Slider:horizontal:pointerover /template/ RepeatButton#PART_DecreaseButton /template/ Border#Fill">
-            <Setter Property="Background" Value="{StaticResource SliderFillHover}"/>
+            <Setter Property="Background" Value="Transparent"/>
         </Style>
         <Style Selector="Slider:horizontal:pressed /template/ RepeatButton#PART_DecreaseButton /template/ Border#Fill">
-            <Setter Property="Background" Value="{StaticResource SliderFillActive}"/>
+            <Setter Property="Background" Value="Transparent"/>
         </Style>
 
         <!-- ══════════════════════════════════════════════════════════════════

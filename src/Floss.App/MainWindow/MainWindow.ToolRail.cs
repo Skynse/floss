@@ -19,9 +19,9 @@ public partial class MainWindow
         _toolRailStack = new WrapPanel
         {
             HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 4),
-            ItemWidth = 34,
-            ItemHeight = 32
+            Margin = new Thickness(0),
+            ItemWidth = 38,
+            ItemHeight = 36
         };
 
         BuildToolRail();
@@ -135,12 +135,12 @@ public partial class MainWindow
         var addBtn = new Button
         {
             Content = Icons.Make(Icons.Plus, 16, new SolidColorBrush(Color.Parse(TextSecondary))),
-            Width = 32,
-            Height = 30,
+            Width = 36,
+            Height = 34,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
             Background = Avalonia.Media.Brushes.Transparent,
-            CornerRadius = new CornerRadius(2),
+            CornerRadius = new CornerRadius(4),
             Padding = new Thickness(0),
         };
         ToolTip.SetTip(addBtn, "Add tool group");
@@ -552,13 +552,13 @@ public partial class MainWindow
         var btn = new Button
         {
             Content = MaterialIcon(icon, 18),
-            Width = 32,
-            Height = 30,
+            Width = 36,
+            Height = 34,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
             Background = Avalonia.Media.Brushes.Transparent,
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            CornerRadius = new CornerRadius(2),
+            CornerRadius = new CornerRadius(4),
             Padding = new Thickness(0)
         };
         ToolTip.SetTip(btn, tip);

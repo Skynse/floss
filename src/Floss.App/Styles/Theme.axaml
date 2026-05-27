@@ -5,23 +5,23 @@
          Mirror of AppColors.cs; keep in sync.
     ═════════════════════════════════════════════════════════════════════ -->
     <!-- Backgrounds -->
-    <Color x:Key="Bg0">#131313</Color>
-    <Color x:Key="Bg1">#1a1a1a</Color>
-    <Color x:Key="Bg2">#212121</Color>
-    <Color x:Key="Bg3">#292929</Color>
-    <Color x:Key="BgSidebar">#171717</Color>
+    <Color x:Key="Bg0">#0b0c0e</Color>
+    <Color x:Key="Bg1">#101113</Color>
+    <Color x:Key="Bg2">#17181b</Color>
+    <Color x:Key="Bg3">#24262b</Color>
+    <Color x:Key="BgSidebar">#111214</Color>
 
     <!-- Borders -->
-    <Color x:Key="Stroke">#2e2e2e</Color>
+    <Color x:Key="Stroke">#2a2c31</Color>
 
     <!-- Text -->
-    <Color x:Key="TextPrimary">#e0e0e0</Color>
-    <Color x:Key="TextSecondary">#aaaaaa</Color>
-    <Color x:Key="TextMuted">#787878</Color>
+    <Color x:Key="TextPrimary">#f0f2f5</Color>
+    <Color x:Key="TextSecondary">#c6c9cf</Color>
+    <Color x:Key="TextMuted">#7f858e</Color>
 
     <!-- Accents -->
-    <Color x:Key="Accent">#4f78b8</Color>
-    <Color x:Key="AccentSoft">#263850</Color>
+    <Color x:Key="Accent">#0078f2</Color>
+    <Color x:Key="AccentSoft">#0a4f9f</Color>
     <Color x:Key="AccentWarm">#d28a45</Color>
     <Color x:Key="AccentWarmSoft">#3d2b1e</Color>
 
@@ -31,12 +31,12 @@
     <Color x:Key="Danger">#da3633</Color>
 
     <!-- Slider -->
-    <Color x:Key="SliderTrack">#0d0d0d</Color>
-    <Color x:Key="SliderFill">#3a6bc9</Color>
-    <Color x:Key="SliderFillHover">#4a7de0</Color>
-    <Color x:Key="SliderFillActive">#5a8ef5</Color>
-    <Color x:Key="SliderThumb">#88a6d4</Color>
-    <Color x:Key="SliderThumbLine">#7aa4ec</Color>
+    <Color x:Key="SliderTrack">#26272a</Color>
+    <Color x:Key="SliderFill">#0078f2</Color>
+    <Color x:Key="SliderFillHover">#1688ff</Color>
+    <Color x:Key="SliderFillActive">#38a0ff</Color>
+    <Color x:Key="SliderThumb">#2e3035</Color>
+    <Color x:Key="SliderThumbLine">#ffffff</Color>
 
     <!-- Corner Radii -->
     <CornerRadius x:Key="SmRadius">4</CornerRadius>

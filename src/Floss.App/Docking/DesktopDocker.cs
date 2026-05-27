@@ -1124,6 +1124,7 @@ public sealed class DesktopDocker
             var primaryId = pids[0];
             var isTab = row.Orientation == DockOrientation.Vertical && pids.Count > 1;
             var isH = row.Orientation == DockOrientation.Horizontal;
+            var sizing = ResolveRowSizing(pids, isTab, isH);
 
             var proportion = Layout.PanelProportions.TryGetValue(
                     isTab ? "tab:" + string.Join("|", pids) : primaryId, out var saved)
@@ -1131,7 +1132,10 @@ public sealed class DesktopDocker
                 : (pids.Min(pid => PanelRegistry.Get(pid)?.Proportion ?? 0.2));
             var minH = pids.Min(pid => PanelRegistry.Get(pid)?.MinHeight ?? 64);
 
-            var rowDef = new RowDefinition(new GridLength(proportion, GridUnitType.Star)) { MinHeight = minH };
+            var height = sizing == DockPanelSizing.Auto
+                ? GridLength.Auto
+                : new GridLength(proportion, GridUnitType.Star);
+            var rowDef = new RowDefinition(height) { MinHeight = minH };
             _rows[primaryId] = rowDef;
             grid.RowDefinitions.Add(rowDef);
 
@@ -1147,8 +1151,25 @@ public sealed class DesktopDocker
             grid.Children.Add(rowContent);
 
             if (i == visible.Count - 1) continue;
+            var next = visible[i + 1];
+            var nextPids = next.PanelIds;
+            var nextIsTab = next.Orientation == DockOrientation.Vertical && nextPids.Count > 1;
+            var nextIsH = next.Orientation == DockOrientation.Horizontal;
+            var nextSizing = ResolveRowSizing(nextPids, nextIsTab, nextIsH);
 
             grid.RowDefinitions.Add(new RowDefinition(SplitterWidth, GridUnitType.Pixel));
+            if (sizing == DockPanelSizing.Auto || nextSizing == DockPanelSizing.Auto)
+            {
+                var sep = new Border
+                {
+                    Height = SplitterWidth,
+                    Background = new SolidColorBrush(Color.Parse(Stroke))
+                };
+                Grid.SetRow(sep, grid.RowDefinitions.Count - 1);
+                grid.Children.Add(sep);
+                continue;
+            }
+
             var sp = new GridSplitter
             {
                 Height = SplitterWidth,
@@ -1161,6 +1182,16 @@ public sealed class DesktopDocker
             Grid.SetRow(sp, grid.RowDefinitions.Count - 1);
             grid.Children.Add(sp);
         }
+    }
+
+    private static DockPanelSizing ResolveRowSizing(IReadOnlyList<string> pids, bool isTab, bool isHorizontal)
+    {
+        if (isTab || isHorizontal)
+            return pids.Any(pid => PanelRegistry.Get(pid)?.Sizing == DockPanelSizing.Fill)
+                ? DockPanelSizing.Fill
+                : DockPanelSizing.Auto;
+
+        return PanelRegistry.Get(pids[0])?.Sizing ?? DockPanelSizing.Fill;
     }
 
     private Grid BuildHorizontalRow(IReadOnlyList<string> pids)

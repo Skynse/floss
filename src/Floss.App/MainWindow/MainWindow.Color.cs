@@ -24,22 +24,22 @@ public partial class MainWindow
         // Color wheel view
         _colorPicker = new HsvColorPicker
         {
-            Height = 150,
-            Margin = new Thickness(8, 3, 8, 6)
+            Height = 188,
+            Margin = new Thickness(16, 4, 16, 14)
         };
         _colorPicker.HsvChanged += OnPickerHsvChanged;
 
         _hexInput = new TextBox
         {
-            Width = 112,
-            Height = 22,
+            Width = 116,
+            Height = 28,
             FontSize = 11,
             FontFamily = new FontFamily("Consolas, Courier New, monospace"),
-            Background = new SolidColorBrush(Color.Parse(Bg0)),
+            Background = new SolidColorBrush(Color.Parse(Bg3)),
             Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
-            Padding = new Thickness(5, 0),
+            Padding = new Thickness(8, 0),
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
             CaretBrush = new SolidColorBrush(Color.Parse(TextPrimary)),
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left
@@ -49,7 +49,7 @@ public partial class MainWindow
 
         _swatchPanel = new WrapPanel
         {
-            Margin = new Thickness(8, 1, 8, 4),
+            Margin = new Thickness(16, 4, 16, 14),
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
             ItemWidth = SwatchSize + 2,
             ItemHeight = SwatchSize + 2
@@ -57,7 +57,7 @@ public partial class MainWindow
 
         _wheelView = new StackPanel
         {
-            Children = { _colorPicker, new Border { Margin = new Thickness(8, 0, 8, 4), Child = _hexInput } }
+            Children = { _colorPicker, new Border { Margin = new Thickness(16, 0, 16, 14), Child = _hexInput } }
         };
 
         // HSV sliders view
@@ -74,12 +74,12 @@ public partial class MainWindow
         var menuBtn = new Button
         {
             Content = Icons.Make(Icons.DotsVertical, 14, new SolidColorBrush(Color.Parse(TextMuted))),
-            Width = 20, Height = 20,
+            Width = 32, Height = 28,
             Background = Avalonia.Media.Brushes.Transparent,
             BorderThickness = new Thickness(0),
             Padding = new Thickness(0),
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
-            Margin = new Thickness(0, 0, 4, 0)
+            Margin = new Thickness(0, 0, 12, 0)
         };
         menuBtn.Click += (_, _) =>
         {
@@ -97,7 +97,7 @@ public partial class MainWindow
         var header = new Grid
         {
             ColumnDefinitions = new ColumnDefinitions("*,Auto"),
-            Margin = new Thickness(0, 0, 0, 2)
+            Margin = new Thickness(0, 0, 0, 4)
         };
         Grid.SetColumn(menuBtn, 1);
         header.Children.Add(menuBtn);
@@ -128,7 +128,7 @@ public partial class MainWindow
 
     private StackPanel BuildRgbSlidersView()
     {
-        var panel = new StackPanel { Spacing = 3, Margin = new Thickness(8, 2, 8, 4) };
+        var panel = new StackPanel { Spacing = 8, Margin = new Thickness(16, 4, 16, 14) };
         _rgbRSlider = CreateRgbSlider(0, 255, Colors.Black, Colors.Red);
         _rgbGSlider = CreateRgbSlider(0, 255, Colors.Black, Colors.Green);
         _rgbBSlider = CreateRgbSlider(0, 255, Colors.Black, Colors.Blue);
@@ -138,7 +138,7 @@ public partial class MainWindow
 
         var preview = new Border
         {
-            Height = 16, Margin = new Thickness(0, 2, 0, 0),
+            Height = 24, Margin = new Thickness(0, 4, 0, 0),
             BorderThickness = new Thickness(1),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             CornerRadius = new CornerRadius(2),

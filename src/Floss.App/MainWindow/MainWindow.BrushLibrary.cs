@@ -39,7 +39,7 @@ public partial class MainWindow : Window
     {
         _brushPresetRowCache.Clear();
 
-        _strokePreview = new BrushStrokePreview { Height = 40 };
+        _strokePreview = new BrushStrokePreview { Height = 58, Margin = new Thickness(16, 2, 16, 8) };
 
         _sizeSlider = MkSlider(1, BrushSizeLimits.FallbackMaxDiameterPx, 20, "Size");
         _maxSizePercentSlider = MkSlider(
@@ -73,7 +73,7 @@ public partial class MainWindow : Window
         editBrushBtn.Click += (_, _) => OpenToolProperties();
 
         // Header: active brush name + action buttons
-        var headerRow = new DockPanel { Margin = new Thickness(6, 2, 4, 2), LastChildFill = true };
+        var headerRow = new DockPanel { Margin = new Thickness(16, 0, 12, 10), LastChildFill = true };
         DockPanel.SetDock(panelMenuBtn, Avalonia.Controls.Dock.Right);
         DockPanel.SetDock(editBrushBtn, Avalonia.Controls.Dock.Right);
         DockPanel.SetDock(duplicateBrushBtn, Avalonia.Controls.Dock.Right);
@@ -91,8 +91,8 @@ public partial class MainWindow : Window
             sv.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
             sv.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
             sv.Content = _brushCategoryPanel;
-            sv.MinWidth = 90;
-            sv.MaxWidth = 130;
+            sv.MinWidth = 88;
+            sv.MaxWidth = 116;
         });
 
         // Right: brush list
@@ -106,7 +106,7 @@ public partial class MainWindow : Window
         _brushPresetScroll = presetScroll;
         presetScroll.CacheMode = new Avalonia.Media.BitmapCache();
 
-        var columns = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
+        var columns = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), Margin = new Thickness(0, 0, 8, 8) };
         Grid.SetColumn(catScroll, 0);
         Grid.SetColumn(presetScroll, 1);
         columns.Children.Add(catScroll);
@@ -152,15 +152,15 @@ public partial class MainWindow : Window
                 Content = new TextBlock
                 {
                     Text = catName,
-                    FontSize = 10,
+                    FontSize = 11,
                     TextWrapping = Avalonia.Media.TextWrapping.Wrap,
                     TextAlignment = Avalonia.Media.TextAlignment.Left,
                 },
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
                 HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Left,
-                Padding = new Thickness(8, 5),
-                MinHeight = 30,
-                Background = new SolidColorBrush(Color.Parse(selected ? AccentSoft : "Transparent")),
+                Padding = new Thickness(12, 7),
+                MinHeight = 34,
+                Background = new SolidColorBrush(Color.Parse(selected ? Accent : "Transparent")),
                 Foreground = new SolidColorBrush(Color.Parse(selected ? TextPrimary : TextSecondary)),
                 BorderBrush = new SolidColorBrush(selected ? Color.Parse(Accent) : Colors.Transparent),
                 BorderThickness = new Thickness(2, 0, 0, 0),
@@ -356,15 +356,15 @@ public partial class MainWindow : Window
 
         var row = new Button
         {
-            Height = 38,
-            Width = 190,
+            Height = 46,
+            MinWidth = 176,
             Padding = new Thickness(0),
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
-            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            Background = new SolidColorBrush(Color.Parse(isActive ? Accent : Bg2)),
             BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke)),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3),
+            CornerRadius = new CornerRadius(4),
             Content = panel,
             Tag = preset.Id,
         };
@@ -401,15 +401,15 @@ public partial class MainWindow : Window
 
         var row = new Button
         {
-            Height = 26,
-            Width = 190,
+            Height = 34,
+            MinWidth = 176,
             Padding = new Thickness(0),
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(isActive ? AccentSoft : Bg2)),
+            Background = new SolidColorBrush(Color.Parse(isActive ? Accent : Bg2)),
             BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke)),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3),
+            CornerRadius = new CornerRadius(4),
             Content = content,
             Tag = preset.Id,
         };

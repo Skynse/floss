@@ -23,7 +23,7 @@ public partial class MainWindow
 
     private StackPanel BuildColorSlidersSection()
     {
-        _colorSlidersPanel = new StackPanel { Spacing = 3, Margin = new Thickness(8, 2, 8, 4) };
+        _colorSlidersPanel = new StackPanel { Spacing = 8, Margin = new Thickness(16, 4, 16, 14) };
 
         _hsvHueSlider = CreateColorSlider(0, 360);
         _hsvSatSlider = CreateColorSlider(0, 100);
@@ -34,8 +34,8 @@ public partial class MainWindow
 
         _colorPreview = new Border
         {
-            Height = 16,
-            Margin = new Thickness(0, 2, 0, 0),
+            Height = 24,
+            Margin = new Thickness(0, 4, 0, 0),
             BorderThickness = new Thickness(1),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             CornerRadius = new CornerRadius(2),
@@ -57,7 +57,7 @@ public partial class MainWindow
         {
             Minimum = min,
             Maximum = max,
-            Height = 18,
+            Height = 26,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
     }

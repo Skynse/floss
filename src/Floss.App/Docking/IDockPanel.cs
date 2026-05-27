@@ -3,10 +3,16 @@ using Avalonia.Controls;
 
 namespace Floss.App.Docking;
 
+public enum DockPanelSizing
+{
+    Fill,
+    Auto
+}
+
 /// <summary>
 /// A panel that can be docked, floated, hidden, and rearranged within the workspace.
 /// Each panel is identified by a unique string id and provides a factory for its content.
-/// Sizing uses proportional values (0-1 share of available space, like Dock library).
+/// Fill sizing uses proportional values; Auto sizing measures content height.
 /// </summary>
 public interface IDockPanel
 {
@@ -21,6 +27,9 @@ public interface IDockPanel
 
     /// <summary>Minimum height in pixels.</summary>
     double MinHeight { get; }
+
+    /// <summary>Whether the panel fills remaining column space or measures to content.</summary>
+    DockPanelSizing Sizing { get; }
 
     /// <summary>
     /// The default docking zone. Used by Normalize to place unplaced panels.
@@ -49,6 +58,7 @@ public sealed record DockPanelDef(
     bool AllowClose = false,
     double Proportion = 0.25,
     double MinHeight = 64,
+    DockPanelSizing Sizing = DockPanelSizing.Fill,
     string DefaultZone = "right-0",
     object? SaveContentState = null,
     object? RestoreContentState = null) : IDockPanel;

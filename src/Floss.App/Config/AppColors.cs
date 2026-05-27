@@ -10,23 +10,23 @@ namespace Floss.App.Config;
 public static class AppColors
 {
     // ── Background hierarchy ─────────────────────────────────────────────
-    public const string Bg0      = "#131313";   // deepest bg (window chrome)
-    public const string Bg1      = "#1a1a1a";   // panel/toolbar bg
-    public const string Bg2      = "#212121";   // elevated surface (dockers, dialogs)
-    public const string Bg3      = "#292929";   // hover/active surface
-    public const string BgSidebar = "#171717";  // sidebar/panel rail
+    public const string Bg0      = "#0b0c0e";   // deepest bg (window chrome)
+    public const string Bg1      = "#101113";   // panel/toolbar bg
+    public const string Bg2      = "#17181b";   // elevated surface (dockers, dialogs)
+    public const string Bg3      = "#24262b";   // hover/active surface
+    public const string BgSidebar = "#111214";  // sidebar/panel rail
 
     // ── Borders ──────────────────────────────────────────────────────────
-    public const string Stroke   = "#2e2e2e";
+    public const string Stroke   = "#2a2c31";
 
     // ── Text ─────────────────────────────────────────────────────────────
-    public const string TextPrimary   = "#e0e0e0";
-    public const string TextSecondary = "#aaaaaa";
-    public const string TextMuted     = "#787878";
+    public const string TextPrimary   = "#f0f2f5";
+    public const string TextSecondary = "#c6c9cf";
+    public const string TextMuted     = "#7f858e";
 
     // ── Accent ───────────────────────────────────────────────────────────
-    public const string Accent     = "#4f78b8";
-    public const string AccentSoft = "#263850";  // muted accent bg
+    public const string Accent     = "#0078f2";
+    public const string AccentSoft = "#0a4f9f";  // muted accent bg
     public const string AccentWarm     = "#d28a45";
     public const string AccentWarmSoft = "#3d2b1e";
 
