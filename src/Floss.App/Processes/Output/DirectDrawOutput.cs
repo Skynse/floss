@@ -121,6 +121,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         if (!initialRegion.IsEmpty)
             ctx.Document.NotifyStrokeSuspendBegin(initialRegion, ctx.ActiveLayerIndex);
 
+        layer.Pixels.LiveStroke = true;
         return tx;
     }
 
@@ -130,14 +131,43 @@ public sealed class DirectDrawOutput : IOutputProcess
         for (var i = start; i < samples.Count; i++)
         {
             var sample = ToLayerSample(layer, samples[i]);
-            AppendBoundedSample(tx, sample);
+            AppendBoundedSample(tx, brush, sample);
             tx.LastQueuedInputIndex = i;
         }
     }
 
-    private static void AppendBoundedSample(StrokeTransaction tx, CanvasInputSample sample)
+    private static void AppendBoundedSample(StrokeTransaction tx, BrushPreset brush, CanvasInputSample sample)
     {
+        if (tx.QueuedSamples.Count > 0)
+        {
+            var lastIndex = tx.QueuedSamples.Count - 1;
+            if (lastIndex >= tx.NextSegmentIndex
+                && ShouldCoalesceQueuedSample(tx.QueuedSamples[lastIndex], sample, brush))
+            {
+                tx.QueuedSamples[lastIndex] = sample;
+                return;
+            }
+        }
+
         tx.QueuedSamples.Add(sample);
+    }
+
+    private static bool ShouldCoalesceQueuedSample(CanvasInputSample previous, CanvasInputSample next, BrushPreset brush)
+    {
+        if (previous.Phase != CanvasInputPhase.Move || next.Phase != CanvasInputPhase.Move)
+            return false;
+
+        // Pressure/tilt/twist changes affect dynamics. Keep those samples even
+        // when the pointer barely moved so large expressive strokes do not flatten.
+        if (Math.Abs(next.Pressure - previous.Pressure) > 0.03) return false;
+        if (Math.Abs(next.TiltX - previous.TiltX) > 0.08) return false;
+        if (Math.Abs(next.TiltY - previous.TiltY) > 0.08) return false;
+        if (Math.Abs(next.Twist - previous.Twist) > 4.0) return false;
+
+        var spacing = BrushSpacing.EstimateDistance(brush);
+        var size = Math.Max(BrushSpacing.MinStampSizePx, (float)brush.Size);
+        var threshold = Math.Clamp(Math.Min(spacing * 0.20f, size * 0.02f), 1f, 24f);
+        return previous.DistanceTo(next) < threshold;
     }
 
     private void EnsureActiveTransaction()
@@ -421,6 +451,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         }
         finally
         {
+            tx.Layer.Pixels.LiveStroke = false;
             // Always release the stroke-suspend on the compositor so deferred
             // invalidations from elsewhere get flushed even if Commit threw.
             tx.Ctx.Document.NotifyStrokeSuspendEnd();
@@ -508,6 +539,7 @@ public sealed class DirectDrawOutput : IOutputProcess
 
     private static void RestoreTransaction(StrokeTransaction tx)
     {
+        tx.Layer.Pixels.LiveStroke = false;
         try
         {
             if (tx.BeforeTiles.Count == 0)

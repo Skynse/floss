@@ -307,6 +307,24 @@ public class DrawingDocumentTests
     }
 
     [Fact]
+    public void FinalizeImport_RebindsNativePaperLayer()
+    {
+        var document = new DrawingDocument(128, 64);
+        document.ClearForImport();
+
+        var paint = document.AddLayerForImport("Paint");
+        var paper = document.AddLayerForImport("Paper");
+        paper.IsPaper = true;
+        paper.IsLocked = true;
+
+        document.FinalizeImport();
+
+        Assert.Same(paper, document.PaperLayer);
+        Assert.True(document.IsPaperBackgroundVisible);
+        Assert.Same(paint, document.ActiveLayer);
+    }
+
+    [Fact]
     public void ToolFactory_EyedropperOptions()
     {
         var document = new DrawingDocument(4, 4);
@@ -361,4 +379,3 @@ public class DrawingDocumentTests
         TestAssertions.Equal("Layer 2", document.ActiveLayer!.Name);
     }
 }
-

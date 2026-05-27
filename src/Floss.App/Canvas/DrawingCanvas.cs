@@ -280,15 +280,17 @@ public sealed class DrawingCanvas : Control, IDisposable
 
     public int ActiveSampleCount => _toolController.ActiveTool.HasPendingOperation ? 1 : 0;
     public int CommittedStrokeCount => _document.CommittedStrokeCount;
+    public bool IsStrokeProcessing => IsStrokeOutputPending();
     public bool CanUndo => !IsStrokeOutputPending() && _document.CanUndo;
     public bool CanRedo => !IsStrokeOutputPending() && _document.CanRedo;
     public bool CanDeleteLayer(IReadOnlyList<int>? indices = null) =>
-        indices is { Count: > 0 }
+        !IsStrokeOutputPending() && (indices is { Count: > 0 }
             ? _document.CanDeleteLayers(indices)
-            : _document.CanDeleteLayer;
+            : _document.CanDeleteLayer);
 
     public void DeleteLayer(IReadOnlyList<int>? indices = null)
     {
+        if (IsStrokeOutputPending()) return;
         if (indices is { Count: > 0 })
             _document.DeleteLayers(indices);
         else
@@ -633,10 +635,23 @@ public sealed class DrawingCanvas : Control, IDisposable
         InvalidateVisual();
     }
 
-    public void MergeSelectedLayers(IReadOnlyList<int> indices) => _document.MergeSelectedLayers(indices, _compositor);
-    public void FlattenGroup(int groupIndex) => _document.FlattenGroup(groupIndex, _compositor);
+    public void MergeSelectedLayers(IReadOnlyList<int> indices)
+    {
+        if (IsStrokeOutputPending()) return;
+        _document.MergeSelectedLayers(indices, _compositor);
+    }
+
+    public void FlattenGroup(int groupIndex)
+    {
+        if (IsStrokeOutputPending()) return;
+        _document.FlattenGroup(groupIndex, _compositor);
+    }
+
     public void ApplyFilter(IReadOnlyList<int> layerIndices, Action<DrawingLayer> apply)
-        => _document.ApplyFilterToLayers(layerIndices, apply);
+    {
+        if (IsStrokeOutputPending()) return;
+        _document.ApplyFilterToLayers(layerIndices, apply);
+    }
 
     public void ResizeCanvas(int newW, int newH, int offsetX, int offsetY)
     {
@@ -1184,31 +1199,31 @@ public sealed class DrawingCanvas : Control, IDisposable
             activeDraw.WaitUntilIdle();
         }
     }
-    public void AddLayer() => _document.AddLayer();
-    public void AddGroupLayer() => _document.AddGroupLayer();
-    public void AddBackgroundLayer() => _document.AddBackgroundLayer();
-    public void AddAdjustmentLayer(AdjustmentKind kind) => _document.AddAdjustmentLayer(kind);
-    public void SetLayerAdjustmentParams(int layerIndex, AdjustmentLayerData newParams) => _document.SetLayerAdjustmentParams(layerIndex, newParams);
-    public void PreviewLayerAdjustmentParams(int layerIndex, AdjustmentLayerData newParams) => _document.PreviewLayerAdjustmentParams(layerIndex, newParams);
-    public void GroupSelectedLayers(IReadOnlyList<int> indices) => _document.GroupSelectedLayers(indices);
-    public void DuplicateLayer() => _document.DuplicateActiveLayer();
-    public void SelectLayer(int index) => _document.SelectLayer(index);
-    public void ToggleLayerVisibility(int index) => _document.ToggleLayerVisibility(index);
-    public void ToggleLayerLock(int index) => _document.ToggleLayerLock(index);
-    public void ToggleLayerAlphaLock(int index) => _document.ToggleLayerAlphaLock(index);
-    public void ToggleLayerReference(int index) => _document.ToggleLayerReference(index);
-    public void ToggleLayerClipping(int index) => _document.ToggleLayerClipping(index);
-    public void ToggleLayerOpen(int index) => _document.ToggleLayerOpen(index);
-    public bool CanMoveLayer(int sourceIndex, int targetIndex, LayerDropPlacement placement) => _document.CanMoveLayer(sourceIndex, targetIndex, placement);
-    public void MoveLayer(int sourceIndex, int targetIndex, LayerDropPlacement placement) => _document.MoveLayer(sourceIndex, targetIndex, placement);
-    public void MoveActiveLayer(int delta) => _document.MoveActiveLayer(delta);
-    public void SetActiveLayerOpacity(double opacity) => _document.SetActiveLayerOpacity(opacity);
-    public void BeginActiveLayerOpacityScrub() => _document.BeginActiveLayerOpacityScrub();
-    public void PreviewActiveLayerOpacity(double opacity) => _document.PreviewActiveLayerOpacity(opacity);
-    public void CommitActiveLayerOpacityScrub() => _document.CommitActiveLayerOpacityScrub();
-    public void SetActiveLayerBlendMode(string blendMode) => _document.SetActiveLayerBlendMode(blendMode);
-    public void SetActiveLayerName(string name) => _document.SetActiveLayerName(name);
-    public void SetActiveLayerColor(Avalonia.Media.Color? color) => _document.SetActiveLayerColor(color);
+    public void AddLayer() { if (!IsStrokeOutputPending()) _document.AddLayer(); }
+    public void AddGroupLayer() { if (!IsStrokeOutputPending()) _document.AddGroupLayer(); }
+    public void AddBackgroundLayer() { if (!IsStrokeOutputPending()) _document.AddBackgroundLayer(); }
+    public void AddAdjustmentLayer(AdjustmentKind kind) { if (!IsStrokeOutputPending()) _document.AddAdjustmentLayer(kind); }
+    public void SetLayerAdjustmentParams(int layerIndex, AdjustmentLayerData newParams) { if (!IsStrokeOutputPending()) _document.SetLayerAdjustmentParams(layerIndex, newParams); }
+    public void PreviewLayerAdjustmentParams(int layerIndex, AdjustmentLayerData newParams) { if (!IsStrokeOutputPending()) _document.PreviewLayerAdjustmentParams(layerIndex, newParams); }
+    public void GroupSelectedLayers(IReadOnlyList<int> indices) { if (!IsStrokeOutputPending()) _document.GroupSelectedLayers(indices); }
+    public void DuplicateLayer() { if (!IsStrokeOutputPending()) _document.DuplicateActiveLayer(); }
+    public void SelectLayer(int index) { if (!IsStrokeOutputPending()) _document.SelectLayer(index); }
+    public void ToggleLayerVisibility(int index) { if (!IsStrokeOutputPending()) _document.ToggleLayerVisibility(index); }
+    public void ToggleLayerLock(int index) { if (!IsStrokeOutputPending()) _document.ToggleLayerLock(index); }
+    public void ToggleLayerAlphaLock(int index) { if (!IsStrokeOutputPending()) _document.ToggleLayerAlphaLock(index); }
+    public void ToggleLayerReference(int index) { if (!IsStrokeOutputPending()) _document.ToggleLayerReference(index); }
+    public void ToggleLayerClipping(int index) { if (!IsStrokeOutputPending()) _document.ToggleLayerClipping(index); }
+    public void ToggleLayerOpen(int index) { if (!IsStrokeOutputPending()) _document.ToggleLayerOpen(index); }
+    public bool CanMoveLayer(int sourceIndex, int targetIndex, LayerDropPlacement placement) => !IsStrokeOutputPending() && _document.CanMoveLayer(sourceIndex, targetIndex, placement);
+    public void MoveLayer(int sourceIndex, int targetIndex, LayerDropPlacement placement) { if (!IsStrokeOutputPending()) _document.MoveLayer(sourceIndex, targetIndex, placement); }
+    public void MoveActiveLayer(int delta) { if (!IsStrokeOutputPending()) _document.MoveActiveLayer(delta); }
+    public void SetActiveLayerOpacity(double opacity) { if (!IsStrokeOutputPending()) _document.SetActiveLayerOpacity(opacity); }
+    public void BeginActiveLayerOpacityScrub() { if (!IsStrokeOutputPending()) _document.BeginActiveLayerOpacityScrub(); }
+    public void PreviewActiveLayerOpacity(double opacity) { if (!IsStrokeOutputPending()) _document.PreviewActiveLayerOpacity(opacity); }
+    public void CommitActiveLayerOpacityScrub() { if (!IsStrokeOutputPending()) _document.CommitActiveLayerOpacityScrub(); }
+    public void SetActiveLayerBlendMode(string blendMode) { if (!IsStrokeOutputPending()) _document.SetActiveLayerBlendMode(blendMode); }
+    public void SetActiveLayerName(string name) { if (!IsStrokeOutputPending()) _document.SetActiveLayerName(name); }
+    public void SetActiveLayerColor(Avalonia.Media.Color? color) { if (!IsStrokeOutputPending()) _document.SetActiveLayerColor(color); }
 
     public void CopyLayer(int index)
     {
@@ -1216,10 +1231,11 @@ public sealed class DrawingCanvas : Control, IDisposable
         _layerClipboard = DrawingDocument.CloneLayerTree(_document.Layers[index]);
     }
 
-    public bool CanPasteLayer => _layerClipboard != null;
+    public bool CanPasteLayer => _layerClipboard != null && !IsStrokeOutputPending();
 
     public void PasteLayer(int targetIndex)
     {
+        if (IsStrokeOutputPending()) return;
         if (_layerClipboard == null) return;
         if (targetIndex < 0 || targetIndex >= _document.Layers.Count) return;
         _document.PasteLayer(_layerClipboard, targetIndex);
@@ -1339,8 +1355,10 @@ public sealed class DrawingCanvas : Control, IDisposable
             // Composite runs on a background thread. UI thread draws the cached
             // tiles (kept visible until recomposited — no tile drops on partial
             // invalidation). First paint is synchronous so the canvas isn't blank.
-            // LOD transitions and zoom ticks with pending work run synchronously
-            // so the viewport doesn't flash fallback tiles for a few frames.
+            // Keep viewport navigation responsive: zoom/LOD changes draw the
+            // previous cached tiles immediately and refresh the new LOD on the
+            // background compositor. First paint still runs synchronously so a
+            // freshly opened canvas is not blank.
             var zoom = CanvasZoom;
             var nextLod = _compositor.SelectLod(_document.Width, _document.Height, zoom);
             var lodTransition = _renderLod >= 0 && nextLod != _renderLod;
@@ -1348,9 +1366,9 @@ public sealed class DrawingCanvas : Control, IDisposable
             _lastRenderZoom = zoom;
 
             bool needSync = !_compositor.HasAnyTiles && !_compositor.IsCompositeActive;
-            bool preferSync = lodTransition
-                || (zoomTick && _compositor.PendingDirtyTileCount > 0 && !_compositor.IsCompositeActive)
-                || (_projectionScheduler.LastApplyWasMetadataOnly
+            bool preferSync = !zoomTick
+                && !lodTransition
+                && (_projectionScheduler.LastApplyWasMetadataOnly
                     && _compositor.PendingDirtyTileCount > 0
                     && !_compositor.IsCompositeActive);
             if ((needSync || preferSync) && !_compositor.IsCompositeActive)

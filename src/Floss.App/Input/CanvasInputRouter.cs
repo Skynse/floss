@@ -174,7 +174,8 @@ public sealed class CanvasInputRouter
         HandlePointerPress(
             action, isPrimaryDown, pt.Pointer.Id, pt.Position,
             e, e.KeyModifiers.HasFlag(KeyModifiers.Control),
-            e.KeyModifiers.HasFlag(KeyModifiers.Shift));
+            e.KeyModifiers.HasFlag(KeyModifiers.Shift),
+            e.KeyModifiers);
     }
 
     public void PointerMoved(PointerEventArgs e)
@@ -212,10 +213,14 @@ public sealed class CanvasInputRouter
         Point viewportPos,
         object? eventArgs,
         bool ctrlHeld,
-        bool shiftHeld)
+        bool shiftHeld,
+        KeyModifiers? currentModifiers = null)
     {
         if (_state == RouterState.Running)
             return;
+
+        if (currentModifiers.HasValue)
+            SyncModifierMask(currentModifiers.Value);
 
         // Resize overlay
         if (_host.TryBeginResizeDrag(viewportPos, isPrimaryDown))
@@ -419,6 +424,16 @@ public sealed class CanvasInputRouter
         _heldModifiers = mods;
         _host.SetCanvasModifiers(mods);
 
+        ReevaluateModifierState();
+    }
+
+    private void SyncModifierMask(KeyModifiers modifiers)
+    {
+        if (_heldModifiers == modifiers)
+            return;
+
+        _heldModifiers = modifiers;
+        _host.SetCanvasModifiers(modifiers);
         ReevaluateModifierState();
     }
 

@@ -57,10 +57,16 @@ public sealed class TiledPixelBuffer : IDisposable
         _pixelLock.Dispose();
     }
 
+    // When true, write locks are skipped so brush rendering never blocks waiting
+    // for the compositor's read locks. The compositor may read partially-written
+    // tile bytes (byte-level data race), but live-stroke preview tearing is
+    // invisible in practice and corrected on the next composite frame.
+    internal bool LiveStroke { get; set; }
+
     internal void EnterPixelReadLock() => _pixelLock.EnterReadLock();
     internal void ExitPixelReadLock() => _pixelLock.ExitReadLock();
-    internal void EnterPixelWriteLock() => _pixelLock.EnterWriteLock();
-    internal void ExitPixelWriteLock() => _pixelLock.ExitWriteLock();
+    internal void EnterPixelWriteLock() { if (!LiveStroke) _pixelLock.EnterWriteLock(); }
+    internal void ExitPixelWriteLock() { if (!LiveStroke) _pixelLock.ExitWriteLock(); }
 
     public int Width => Math.Max(1, MaxX - MinX);
     public int Height => Math.Max(1, MaxY - MinY);
@@ -609,7 +615,7 @@ public sealed class TiledPixelBuffer : IDisposable
     {
         if (region.IsEmpty) return;
 
-        _pixelLock.EnterWriteLock();
+        if (!LiveStroke) _pixelLock.EnterWriteLock();
         try
         {
             ForEachTile(region, (tileX, tileY, tile, tileRegion) =>
@@ -631,7 +637,7 @@ public sealed class TiledPixelBuffer : IDisposable
         }
         finally
         {
-            _pixelLock.ExitWriteLock();
+            if (!LiveStroke) _pixelLock.ExitWriteLock();
         }
 
         PruneTransparentTiles(region);

@@ -4113,14 +4113,17 @@ public sealed class BrushEngine : IDisposable
         {
             ImageBrushTip => true,
             NodeBrushTip { IsDirectImageSampler: true } => true,
-            ProceduralBrushTip => true,
+            ProceduralBrushTip proc => CanDirectEvaluateGraph(proc.Graph, brush),
             // ImageSampler graphs must bake a mask once — per-pixel graph eval re-samples
             // the PNG for every stamp pixel and stalls the UI thread.
             NodeBrushTip node when node.Graph.ContainsImageSampler(BrushMaterialTips.ForPreset(brush)) => false,
-            NodeBrushTip => true,
+            NodeBrushTip node => CanDirectEvaluateGraph(node.Graph, brush),
             _ => false
         };
     }
+
+    private static bool CanDirectEvaluateGraph(BrushTipNodeGraph graph, BrushPreset brush)
+        => BrushTipStampFastPath.TryCreate(graph, (float)brush.Hardness, out _);
 
     private static bool HasMultiTipSelection(BrushPreset brush)
         => brush.TipSelectionMode != BrushTipSelectionMode.Single && brush.Tips.Count > 1;

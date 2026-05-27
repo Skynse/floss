@@ -3,6 +3,7 @@ namespace Floss.App.Tests;
 using Avalonia;
 using Avalonia.Headless;
 using Floss.App.Kra;
+using SkiaSharp;
 
 public class LayerCompositorTests
 {
@@ -128,6 +129,24 @@ public class LayerCompositorTests
         compositor.Composite([background], 64, 64, viewport: new PixelRegion(0, 0, 64, 64), zoom: 0.05);
         TestAssertions.True(compositor.LastLod > 0, "Low zoom should use a coarser display LOD during strokes.");
         compositor.EndStrokeSuspend();
+    }
+
+    [Fact]
+    public void Composite_LodKeepsSubpixelInkCoverage()
+    {
+        EnsureAvalonia();
+        using var ink = new DrawingLayer("Ink", 64, 64);
+        ink.Pixels.SetPixel(0, 0, b: 0, g: 0, r: 0, a: 255);
+
+        using var compositor = new LayerCompositor();
+        compositor.Composite([ink], 64, 64, paperColor: 0,
+            viewport: new PixelRegion(0, 0, 64, 64), zoom: 0.05, forceLod: 2);
+
+        using var bitmap = compositor.AssembleSkBitmap(64, 64, lod: 2);
+        var pixel = bitmap.GetPixel(0, 0);
+
+        TestAssertions.True(pixel.Alpha > 0, "LOD should average source-block coverage instead of dropping thin marks by center sampling.");
+        TestAssertions.True(pixel.Alpha < 255, "A single source pixel should become partial LOD coverage, not a full opaque pixel.");
     }
 
     [Fact]
@@ -549,4 +568,3 @@ public class LayerCompositorTests
             new[] { pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3] });
     }
 }
-

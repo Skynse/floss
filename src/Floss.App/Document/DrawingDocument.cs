@@ -285,6 +285,8 @@ public sealed class DrawingDocument : IDisposable
         _nextStateId = 1;
         CommittedStrokeCount = 0;
         ActiveLayerIndex = -1;
+        PaperLayer = null;
+        PaperColor = new Avalonia.Media.Color(255, 255, 255, 255);
         Selection.Resize(Width, Height);
         Selection.Clear();
     }
@@ -338,7 +340,19 @@ public sealed class DrawingDocument : IDisposable
 
     public void FinalizeImport(int? activeLayerIndex = null)
     {
-        ActiveLayerIndex = _layers.Count > 0 ? Math.Clamp(activeLayerIndex ?? 0, 0, _layers.Count - 1) : -1;
+        PaperLayer = _layers.FirstOrDefault(l => l.IsPaper);
+        if (PaperLayer != null && PaperColor.A == 0)
+            PaperColor = new Avalonia.Media.Color(255, 255, 255, 255);
+
+        var defaultActive = _layers.FindIndex(l => !l.IsPaper && !l.IsGroup);
+        if (defaultActive < 0)
+            defaultActive = _layers.FindIndex(l => !l.IsPaper);
+        if (defaultActive < 0)
+            defaultActive = 0;
+
+        ActiveLayerIndex = _layers.Count > 0
+            ? Math.Clamp(activeLayerIndex ?? defaultActive, 0, _layers.Count - 1)
+            : -1;
         NotifyLayersChanged();
     }
 

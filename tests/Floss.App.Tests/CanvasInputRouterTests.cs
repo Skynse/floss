@@ -271,6 +271,36 @@ public class CanvasInputRouterTests
     }
 
     [Fact]
+    public void PointerPressModifierMaskCanUpgradeAltEyedropperToCtrlAltBrushSize()
+    {
+        var host = new MockHost
+        {
+            ToolTypes = ((int)InputProcessType.Pen, (int)OutputProcessType.DirectDraw),
+            HasActiveToolAlternate = true
+        };
+        typeof(App).GetProperty(nameof(App.ModifierKeys))!.SetValue(null, ModifierKeySettings.CreateDefaults());
+        var router = new CanvasInputRouter(host);
+
+        router.HandleKeyDown(Key.LeftAlt, KeyModifiers.Alt);
+        TestAssertions.True(host.Operations.Contains("SetAlternate:True"), "Alt should initially ready the eyedropper alternate.");
+
+        host.Operations.Clear();
+        router.HandlePointerPress(
+            action: CanvasAction.PrimaryTool,
+            isPrimaryDown: true,
+            pointerId: 1,
+            viewportPos: new Point(100, 100),
+            eventArgs: null,
+            ctrlHeld: true,
+            shiftHeld: false,
+            currentModifiers: KeyModifiers.Control | KeyModifiers.Alt);
+
+        TestAssertions.True(host.Operations.Contains("SetAlternate:False"),
+            "Pointer press should reconcile the actual Ctrl+Alt mask before using stale Alt eyedropper state.");
+        TestAssertions.False(host.IsAlternateActive, "Ctrl+Alt brush-size mode must not leave eyedropper alternate active.");
+    }
+
+    [Fact]
     public void AfterStrokeReleaseHeldSpaceBecomesReadyPan()
     {
         var host = new MockHost { ToolTypes = (1, 1) };

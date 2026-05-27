@@ -1449,6 +1449,45 @@ public class BrushTests
     }
 
     [Fact]
+    public void BrushEngine_ComplexNodeGraphsBakeToCachedDabs()
+    {
+        using var engine = new BrushEngine();
+        using var layer = new DrawingLayer("Layer", 768, 256);
+        var graph = new BrushTipNodeGraph
+        {
+            OutputNodeId = "output",
+            Nodes =
+            [
+                new BrushTipNode { Id = "circle", Kind = BrushTipNodeKind.Circle, Radius = 0.49f, Hardness = 0.61f, Opacity = 0.59f },
+                new BrushTipNode { Id = "noise", Kind = BrushTipNodeKind.Noise, Density = 0.75f, Scale = 1f, Opacity = 1f },
+                new BrushTipNode { Id = "mul", Kind = BrushTipNodeKind.Multiply, Inputs = ["circle", "noise"] },
+                new BrushTipNode { Id = "output", Kind = BrushTipNodeKind.Output, Inputs = ["mul"] }
+            ]
+        };
+        var tip = new NodeBrushTip(graph);
+        var brush = new BrushPreset("Noisy round", 256, 1, 0.75, 0.08, Colors.Black, 0)
+        {
+            Tip = tip,
+            Shape = null,
+            ColorMix = false,
+            Grain = 0,
+            Dynamics = new BrushDynamics()
+        };
+
+        TestAssertions.False(BrushEngine.UsesProceduralStampEvaluation(brush, tip, 0),
+            "Complex node graphs should bake once and use cached dabs instead of per-pixel graph evaluation while painting.");
+
+        var from = Sample(80, 128, 0);
+        var to = Sample(650, 128, 16_000);
+        engine.BeginStroke(brush, from);
+        var dirty = engine.RasterizeSegment(layer, brush, from, to);
+
+        TestAssertions.False(dirty.IsEmpty);
+        TestAssertions.Equal("CachedTileMajor", engine.LastStats.Path);
+        TestAssertions.True(engine.LastStats.CachedDabCount > 0);
+    }
+
+    [Fact]
     public void NodeBrushTip_SupportsCoordinateWarping()
     {
         var plainGraph = new BrushTipNodeGraph
@@ -1752,4 +1791,3 @@ public class BrushTests
         float tiltY = -45f)
         => new(10, 20, pressure, tiltX, tiltY, 90, MathF.PI, speed, 150, 10, random, 0.8f);
 }
-

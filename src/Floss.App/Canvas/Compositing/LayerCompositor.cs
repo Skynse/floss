@@ -27,6 +27,10 @@ public sealed class LayerCompositor : IDisposable
     {
         MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1)
     };
+    private static readonly ParallelOptions _liveStrokeCompositeParallelOptions = new()
+    {
+        MaxDegreeOfParallelism = Math.Max(1, Math.Min(2, Environment.ProcessorCount / 2))
+    };
 
     private LayerProjectionPlane? _projection;
     private LayerProjectionPlane Projection =>
@@ -36,6 +40,8 @@ public sealed class LayerCompositor : IDisposable
     public const int DirtyTileBudget = 32;
     private const int MaxMissingTilesPerFrame = 96;
     private const int MaxCompositeCacheTiles = 768;
+    private static int LiveStrokeDirtyTileBudget => Math.Max(2, Math.Min(8, Environment.ProcessorCount));
+    private static int LiveStrokeMissingTileBudget => Math.Max(8, Math.Min(24, Environment.ProcessorCount * 2));
 
     public void Dispose()
     {
@@ -489,9 +495,9 @@ public sealed class LayerCompositor : IDisposable
         {
             if (viewportClip is { IsEmpty: false } vp)
             {
-                // Remove wrong-LOD fallbacks; refresh active LOD only where edits
-                // landed while another LOD was displayed.
-                DropCachedTilesOverlapping(vp, exceptLod: lod);
+                // Keep older LOD tiles as visual fallbacks until the target LOD
+                // is ready. Dropping them here makes async zoom transitions show
+                // transparent holes for a frame or two.
                 var dirtyInView = (_dirtyRegion ?? PixelRegion.Empty).ClipTo(width, height).Intersect(vp);
                 if (!dirtyInView.IsEmpty)
                 {
@@ -602,16 +608,20 @@ public sealed class LayerCompositor : IDisposable
         // _pendingDirtyTiles; missing tiles are naturally rediscovered next frame.
         // Repopulate every missing viewport tile in one pass when the visible
         // region is known — Krita uploads the full dirty rect, not N tiles/frame.
-        var maxMissing = lodChanged || wasFullDirty || viewportClip is { IsEmpty: false }
-            ? int.MaxValue
-            : MaxMissingTilesPerFrame;
+        var liveStrokePass = _strokeSuspendDepth > 0;
+        var maxMissing = liveStrokePass
+            ? LiveStrokeMissingTileBudget
+            : lodChanged || wasFullDirty || viewportClip is { IsEmpty: false }
+                ? int.MaxValue
+                : MaxMissingTilesPerFrame;
         var deferredMissingTiles = _pendingDirtyTiles.Count > 0;
         // Krita-style: when a viewport clip is known, composite every visible
         // tile in one pass — per-frame caps leave permanent checkerboard grids.
-        var dirtyTileBudget = _metadataOnlyPass || _strokeSuspendDepth > 0 || lodChanged || wasFullDirty
-                              || viewportClip is { IsEmpty: false }
-            ? int.MaxValue
-            : DirtyTileBudget;
+        var dirtyTileBudget = liveStrokePass
+            ? LiveStrokeDirtyTileBudget
+            : _metadataOnlyPass || lodChanged || wasFullDirty || viewportClip is { IsEmpty: false }
+                ? int.MaxValue
+                : DirtyTileBudget;
         _metadataOnlyPass = false;
         if (tileKeys.Count > dirtyTileBudget)
         {
@@ -706,7 +716,15 @@ public sealed class LayerCompositor : IDisposable
             // Projection.StrokeBelow.Buffer (TiledPixelBuffer has internal
             // locks) and ignores TakeDirty's return value, so parallel
             // warming of disjoint tile rects is safe.
-            if (warmList.Length >= 4 && Environment.ProcessorCount > 1)
+            if (liveStrokePass && warmList.Length >= 2 && Environment.ProcessorCount > 1)
+            {
+                Parallel.For(0, warmList.Length, _liveStrokeCompositeParallelOptions, idx =>
+                {
+                    var (_, _, rect) = warmList[idx];
+                    WarmStrokeBelowForTile(renderList, strokeSplit, rect, width, height);
+                });
+            }
+            else if (warmList.Length >= 4 && Environment.ProcessorCount > 1)
             {
                 Parallel.For(0, warmList.Length, _compositeParallelOptions, idx =>
                 {
@@ -741,7 +759,9 @@ public sealed class LayerCompositor : IDisposable
         // (no inter-tile sharing). Stroke-suspend warmth path mutates
         // Projection.StrokeBelow before the parallel loop (above), so it's
         // read-only by the time we get here.
-        if (allTiles.Length >= 4 && Environment.ProcessorCount > 1)
+        if (liveStrokePass && allTiles.Length >= 2 && Environment.ProcessorCount > 1)
+            Parallel.For(0, allTiles.Length, _liveStrokeCompositeParallelOptions, CompositeOne);
+        else if (allTiles.Length >= 4 && Environment.ProcessorCount > 1)
             Parallel.For(0, allTiles.Length, _compositeParallelOptions, CompositeOne);
         else
             for (var i = 0; i < allTiles.Length; i++) CompositeOne(i);
@@ -1345,8 +1365,6 @@ public sealed class LayerCompositor : IDisposable
         if (opacityScale <= 0) return;
 
         var scale = 1 << lod;
-        var halfStep = scale >> 1;
-        const int ts = TiledPixelBuffer.TileSize;
 
         for (var i = 0; i < renderList.Count; i++)
         {
@@ -1423,41 +1441,19 @@ public sealed class LayerCompositor : IDisposable
                 {
                     for (var py = 0; py < dstH; py++)
                     {
-                        var docY = originY + py * scale + halfStep;
-                        var srcY = docY - offsetY;
-                        if (srcY < layer.MinY || srcY >= layer.MaxY) continue;
-
-                        var tileY = FloorDiv(srcY, ts);
-                        var tileLocalY = srcY - tileY * ts;
                         var dstRow = dst + py * dstStride;
-                        int prevTileX = int.MinValue;
-                        byte[]? srcTile = null;
 
                         for (var px = 0; px < dstW; px++)
                         {
-                            var docX = originX + px * scale + halfStep;
-                            var srcX = docX - offsetX;
-                            if (srcX < layer.MinX || srcX >= layer.MaxX) continue;
+                            var srcBlockX = originX + px * scale - offsetX;
+                            var srcBlockY = originY + py * scale - offsetY;
+                            if (!SampleLayerBlockAverage(layer, srcBlockX, srcBlockY, scale,
+                                    out var sb, out var sg, out var sr, out var srcA))
+                                continue;
 
-                            var tileX = FloorDiv(srcX, ts);
-                            if (tileX != prevTileX)
-                            {
-                                srcTile = layer.Pixels.GetTileOrNull(tileX, tileY);
-                                prevTileX = tileX;
-                            }
-                            if (srcTile == null) continue;
-
-                            var localX = srcX - tileX * ts;
-                            var tileOffset = (tileLocalY * ts + localX) * 4;
-                            uint srcA = srcTile[tileOffset + 3];
-                            if (srcA == 0) continue;
                             if (!fullOpacity)
                                 srcA = (srcA * opacityByte + 127) / 255;
                             if (srcA == 0) continue;
-
-                            uint sb = srcTile[tileOffset + 0];
-                            uint sg = srcTile[tileOffset + 1];
-                            uint sr = srcTile[tileOffset + 2];
 
                             var dO = px * 4;
                             if (srcA == 255 && dstRow[dO + 3] == 0)
@@ -1699,7 +1695,6 @@ public sealed class LayerCompositor : IDisposable
         var dst = (byte*)frame.Address;
         var dstStride = frame.RowBytes;
         var scale = 1 << lod;
-        var halfStep = scale >> 1;
         var dstW = tile.PixelSize.Width;
         var dstH = tile.PixelSize.Height;
 
@@ -1710,7 +1705,6 @@ public sealed class LayerCompositor : IDisposable
             for (var x = 0; x < dstW; x++) row[x] = paperColor;
         }
 
-        const int ts = TiledPixelBuffer.TileSize;
         for (var i = 0; i < renderList.Count; i++)
         {
             var layer = renderList[i].Layer;
@@ -1727,39 +1721,17 @@ public sealed class LayerCompositor : IDisposable
             {
                 for (var py = 0; py < dstH; py++)
                 {
-                    var docY = originY + py * scale + halfStep;
-                    var srcY = docY - offsetY;
-                    if (srcY < layer.MinY || srcY >= layer.MaxY) continue;
-
-                    var tileY = FloorDiv(srcY, ts);
-                    var tileLocalY = srcY - tileY * ts;
                     var dstRow = (uint*)(dst + py * dstStride);
-                    int prevTileX = int.MinValue;
-                    byte[]? srcTile = null;
 
                     for (var px = 0; px < dstW; px++)
                     {
-                        var docX = originX + px * scale + halfStep;
-                        var srcX = docX - offsetX;
-                        if (srcX < layer.MinX || srcX >= layer.MaxX) continue;
-
-                        var tileX = FloorDiv(srcX, ts);
-                        if (tileX != prevTileX)
-                        {
-                            srcTile = layer.Pixels.GetTileOrNull(tileX, tileY);
-                            prevTileX = tileX;
-                        }
-                        if (srcTile == null) continue;
-
-                        var localX = srcX - tileX * ts;
-                        var tileOffset = (tileLocalY * ts + localX) * 4;
-                        uint rawA = srcTile[tileOffset + 3];
-                        if (rawA == 0) continue;
+                        var srcBlockX = originX + px * scale - offsetX;
+                        var srcBlockY = originY + py * scale - offsetY;
+                        if (!SampleLayerBlockAverage(layer, srcBlockX, srcBlockY, scale,
+                                out var sb, out var sg, out var sr, out var rawA))
+                            continue;
 
                         uint srcA = fullOpacity ? rawA : (rawA * opacityByte + 127) / 255;
-                        uint sb = srcTile[tileOffset + 0];
-                        uint sg = srcTile[tileOffset + 1];
-                        uint sr = srcTile[tileOffset + 2];
                         if (srcA == 255)
                         {
                             dstRow[px] = sb | (sg << 8) | (sr << 16) | 0xFF000000u;
@@ -1787,6 +1759,99 @@ public sealed class LayerCompositor : IDisposable
                 layer.Pixels.ExitPixelReadLock();
             }
         }
+    }
+
+    private static bool SampleLayerBlockAverage(DrawingLayer layer, int srcBlockX, int srcBlockY, int scale,
+        out uint b, out uint g, out uint r, out uint a)
+    {
+        b = g = r = a = 0;
+
+        var x0 = Math.Max(srcBlockX, layer.MinX);
+        var y0 = Math.Max(srcBlockY, layer.MinY);
+        var x1 = Math.Min(srcBlockX + scale, layer.MaxX);
+        var y1 = Math.Min(srcBlockY + scale, layer.MaxY);
+        if (x0 >= x1 || y0 >= y1) return false;
+
+        const int ts = TiledPixelBuffer.TileSize;
+        ulong sumA = 0;
+        ulong sumPB = 0;
+        ulong sumPG = 0;
+        ulong sumPR = 0;
+
+        var tileX0 = FloorDiv(x0, ts);
+        var tileY0 = FloorDiv(y0, ts);
+        var tileX1 = FloorDiv(x1 - 1, ts);
+        var tileY1 = FloorDiv(y1 - 1, ts);
+        if (tileX0 == tileX1 && tileY0 == tileY1)
+        {
+            var tile = layer.Pixels.GetTileOrNull(tileX0, tileY0);
+            if (tile == null) return false;
+
+            for (var y = y0; y < y1; y++)
+            {
+                var localY = y - tileY0 * ts;
+                for (var x = x0; x < x1; x++)
+                {
+                    var localX = x - tileX0 * ts;
+                    var o = (localY * ts + localX) * 4;
+                    var aa = (uint)tile[o + 3];
+                    if (aa == 0) continue;
+
+                    sumA += aa;
+                    sumPB += (ulong)tile[o + 0] * aa;
+                    sumPG += (ulong)tile[o + 1] * aa;
+                    sumPR += (ulong)tile[o + 2] * aa;
+                }
+            }
+
+            return FinishLayerBlockAverage(sumA, sumPB, sumPG, sumPR, scale, out b, out g, out r, out a);
+        }
+
+        for (var y = y0; y < y1; y++)
+        {
+            var tileY = FloorDiv(y, ts);
+            var localY = y - tileY * ts;
+            int prevTileX = int.MinValue;
+            byte[]? tile = null;
+            for (var x = x0; x < x1; x++)
+            {
+                var tileX = FloorDiv(x, ts);
+                if (tileX != prevTileX)
+                {
+                    tile = layer.Pixels.GetTileOrNull(tileX, tileY);
+                    prevTileX = tileX;
+                }
+                if (tile == null) continue;
+
+                var localX = x - tileX * ts;
+                var o = (localY * ts + localX) * 4;
+                var aa = (uint)tile[o + 3];
+                if (aa == 0) continue;
+
+                sumA += aa;
+                sumPB += (ulong)tile[o + 0] * aa;
+                sumPG += (ulong)tile[o + 1] * aa;
+                sumPR += (ulong)tile[o + 2] * aa;
+            }
+        }
+
+        return FinishLayerBlockAverage(sumA, sumPB, sumPG, sumPR, scale, out b, out g, out r, out a);
+    }
+
+    private static bool FinishLayerBlockAverage(ulong sumA, ulong sumPB, ulong sumPG, ulong sumPR, int scale,
+        out uint b, out uint g, out uint r, out uint a)
+    {
+        b = g = r = a = 0;
+        if (sumA == 0) return false;
+
+        var blockArea = (uint)(scale * scale);
+        a = (uint)((sumA + (blockArea >> 1)) / blockArea);
+        if (a == 0) return false;
+
+        b = (uint)((sumPB + (sumA >> 1)) / sumA);
+        g = (uint)((sumPG + (sumA >> 1)) / sumA);
+        r = (uint)((sumPR + (sumA >> 1)) / sumA);
+        return true;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
