@@ -797,7 +797,7 @@ public partial class MainWindow
                 () => _canvas.MergeSelectedLayers(_selectedLayerIndices.OrderBy(x => x).ToList())));
         }
 
-        var visibleCount = VisibleLayerIndexes().Count();
+        var visibleCount = _visibleLayers.Count;
         items.Add(new() { Header = "-" });
         if (_selectedLayerIndices.Count < visibleCount)
         {
@@ -1204,11 +1204,13 @@ public partial class MainWindow
         var placement = GetLayerDropPlacement(row, targetIndex, e.GetPosition(row));
         if (sourceIndices.Count == 0) return;
 
-        // Move all selected layers to the target position.
-        // We re-resolve layer indices after each move since the flat list shifts.
-        // For "Above" drops iterate descending so each layer lands just above the
-        // target in index order, preserving the original relative ordering.
-        // For "Below"/"Into" ascending order is correct.
+        var layerCount = _canvas.Layers.Count;
+        // Drag data captures indices at drag-start time; by drop time the layer
+        // list may have shifted (undo, auto-documents, etc.). Filter stale indices.
+        sourceIndices = sourceIndices.Where(si => si >= 0 && si < layerCount).ToList();
+        if (sourceIndices.Count == 0) return;
+        if (targetIndex < 0 || targetIndex >= layerCount) return;
+
         var layersToMove = sourceIndices
             .Select(si => _canvas.Layers[si])
             .ToList();

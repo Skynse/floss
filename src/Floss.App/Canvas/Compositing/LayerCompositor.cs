@@ -21,6 +21,13 @@ namespace Floss.App.Canvas.Compositing;
 
 public sealed class LayerCompositor : IDisposable
 {
+    // Leave at least one core free for the UI thread so menus and pointer
+    // interaction stay responsive while the compositor fills background tiles.
+    private static readonly ParallelOptions _compositeParallelOptions = new()
+    {
+        MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1)
+    };
+
     private LayerProjectionPlane? _projection;
     private LayerProjectionPlane Projection =>
         _projection ??= new LayerProjectionPlane(new MergeHost(this));
@@ -701,7 +708,7 @@ public sealed class LayerCompositor : IDisposable
             // warming of disjoint tile rects is safe.
             if (warmList.Length >= 4 && Environment.ProcessorCount > 1)
             {
-                Parallel.For(0, warmList.Length, idx =>
+                Parallel.For(0, warmList.Length, _compositeParallelOptions, idx =>
                 {
                     var (_, _, rect) = warmList[idx];
                     WarmStrokeBelowForTile(renderList, strokeSplit, rect, width, height);
@@ -735,7 +742,7 @@ public sealed class LayerCompositor : IDisposable
         // Projection.StrokeBelow before the parallel loop (above), so it's
         // read-only by the time we get here.
         if (allTiles.Length >= 4 && Environment.ProcessorCount > 1)
-            Parallel.For(0, allTiles.Length, CompositeOne);
+            Parallel.For(0, allTiles.Length, _compositeParallelOptions, CompositeOne);
         else
             for (var i = 0; i < allTiles.Length; i++) CompositeOne(i);
 
@@ -1570,59 +1577,81 @@ public sealed class LayerCompositor : IDisposable
 
         var scale = 1 << lod;
         var halfStep = scale >> 1;
+        var blendMode = layer.BlendMode;
+        var opacityByte = (uint)Math.Round(groupOpacity * 255);
+        const int ts = TiledPixelBuffer.TileSize;
 
-        var fullBytes = clip.Width * clip.Height * 4;
-        var fullTemp = ArrayPool<byte>.Shared.Rent(fullBytes);
+        layer.Pixels.EnterPixelReadLock();
         try
         {
-            fixed (byte* fullPtr = fullTemp)
+            for (var py = 0; py < dstH; py++)
             {
-                var count = clip.Width * clip.Height;
-                var clear = (uint*)fullPtr;
-                for (var c = 0; c < count; c++) clear[c] = 0u;
+                var docY = originY + py * scale + halfStep;
+                var srcY = docY - layer.OffsetY;
+                if (srcY < layer.MinY || srcY >= layer.MaxY) continue;
 
-                LayerCompositorPixelOps.CompositeLayer(
-                    fullPtr, clip.Width * 4, clip.Width, clip.Height,
-                    layer, groupOpacity, clip, clip.X, clip.Y);
+                var tileY = FloorDiv(srcY, ts);
+                var tileLocalY = srcY - tileY * ts;
+                var dstRow = dst + py * dstStride;
+                int prevTileX = int.MinValue;
+                byte[]? srcTile = null;
 
-                for (var py = 0; py < dstH; py++)
+                for (var px = 0; px < dstW; px++)
                 {
-                    var sy = Math.Min(clip.Height - 1, py * scale + halfStep);
-                    var srcRow = fullPtr + sy * clip.Width * 4;
-                    var dstRow = dst + py * dstStride;
+                    var docX = originX + px * scale + halfStep;
+                    var srcX = docX - layer.OffsetX;
+                    if (srcX < layer.MinX || srcX >= layer.MaxX) continue;
 
-                    for (var px = 0; px < dstW; px++)
+                    var tileX = FloorDiv(srcX, ts);
+                    if (tileX != prevTileX)
                     {
-                        var sx = Math.Min(clip.Width - 1, px * scale + halfStep);
-                        var srcIdx = sx * 4;
-                        uint srcA = srcRow[srcIdx + 3];
-                        if (srcA == 0) continue;
-
-                        uint sb = srcRow[srcIdx];
-                        uint sg = srcRow[srcIdx + 1];
-                        uint sr = srcRow[srcIdx + 2];
-
-                        var dO = px * 4;
-                        uint dB = dstRow[dO];
-                        uint dG = dstRow[dO + 1];
-                        uint dR = dstRow[dO + 2];
-                        uint dA = dstRow[dO + 3];
-                        uint invSrcA = 255 - srcA;
-                        uint dstCont = (dA * invSrcA + 127) / 255;
-                        uint outA = srcA + dstCont;
-                        if (outA == 0) continue;
-                        uint half = outA >> 1;
-                        dstRow[dO] = (byte)((sb * srcA + dB * dstCont + half) / outA);
-                        dstRow[dO + 1] = (byte)((sg * srcA + dG * dstCont + half) / outA);
-                        dstRow[dO + 2] = (byte)((sr * srcA + dR * dstCont + half) / outA);
-                        dstRow[dO + 3] = (byte)outA;
+                        srcTile = layer.Pixels.GetTileOrNull(tileX, tileY);
+                        prevTileX = tileX;
                     }
+                    if (srcTile == null) continue;
+
+                    var tax = srcX - tileX * ts;
+                    var srcIdx = (tileLocalY * ts + tax) * 4;
+                    uint rawA = srcTile[srcIdx + 3];
+                    if (rawA == 0) continue;
+
+                    uint srcA = (rawA * opacityByte + 127) / 255;
+                    if (srcA == 0) continue;
+
+                    double sB = srcTile[srcIdx] / 255.0;
+                    double sG = srcTile[srcIdx + 1] / 255.0;
+                    double sR = srcTile[srcIdx + 2] / 255.0;
+
+                    var dO = px * 4;
+                    uint dB = dstRow[dO];
+                    uint dG = dstRow[dO + 1];
+                    uint dR = dstRow[dO + 2];
+                    uint dA = dstRow[dO + 3];
+
+                    double dstR = dR / 255.0;
+                    double dstG = dG / 255.0;
+                    double dstB = dB / 255.0;
+                    double dstA = dA / 255.0;
+                    double normSrcA = srcA / 255.0;
+
+                    var (blendR, blendG, blendB) = LayerCompositorPixelOps.ApplyBlendMode(
+                        sR, sG, sB, normSrcA, dstR, dstG, dstB, dstA, blendMode);
+
+                    double invSrcA = 1.0 - normSrcA;
+                    double dstContA = dstA * invSrcA;
+                    double outA = normSrcA + dstContA;
+                    if (outA <= 0) continue;
+
+                    dstRow[dO]     = (byte)Math.Clamp((blendB * normSrcA + dstB * dstContA) / outA * 255, 0, 255);
+                    dstRow[dO + 1] = (byte)Math.Clamp((blendG * normSrcA + dstG * dstContA) / outA * 255, 0, 255);
+                    dstRow[dO + 2] = (byte)Math.Clamp((blendR * normSrcA + dstR * dstContA) / outA * 255, 0, 255);
+                    dstRow[dO + 3] = (byte)Math.Clamp(outA * 255, 0, 255);
                 }
             }
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(fullTemp);
+            layer.Pixels.ExitPixelReadLock();
         }
     }
 

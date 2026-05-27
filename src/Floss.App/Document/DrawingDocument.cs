@@ -911,9 +911,16 @@ public sealed class DrawingDocument : IDisposable
     {
         if (!CanMoveLayer(sourceIndex, targetIndex, placement)) return;
 
-        BeginDocumentMutation();
         var source = _layers[sourceIndex];
         var target = _layers[targetIndex];
+
+        // Capture structural position before the move (zero pixels copied).
+        var oldParent = source.Parent;
+        var oldSiblings = oldParent?.Children ?? RootLayers();
+        var oldSiblingIndex = oldSiblings.IndexOf(source);
+
+        PushHistoryState(new MoveLayerHistoryState(source, oldParent, oldSiblingIndex, ActiveLayerIndex));
+
         InsertLayerNear(source, target, placement);
         if (placement == LayerDropPlacement.Into) target.IsOpen = true;
         RebuildFlatLayerOrder();
@@ -1315,13 +1322,55 @@ public sealed class DrawingDocument : IDisposable
         public void Restore(DrawingDocument document) { document._layers.Insert(RemovedIndex, document.CreateLayerFromSnapshot(RemovedSnap)); document.ActiveLayerIndex = document._layers.Count > 0 ? Math.Clamp(PreviousActiveIndex, 0, document._layers.Count - 1) : -1; document.NotifyLayersChanged(); }
     }
 
-    private sealed record MoveLayerHistoryState(int FromIndex, int ToIndex) : IHistoryState
+    // Stores the structural position of a layer before a move — no pixels copied.
+    private sealed record MoveLayerHistoryState(
+        DrawingLayer Layer,
+        DrawingLayer? OldParent,
+        int OldSiblingIndex,
+        int OldActiveIndex) : IHistoryState
     {
         public bool AffectsVisual => true;
         public PixelRegion VisualDirtyRegion => PixelRegion.Empty;
 
-        public IHistoryState CaptureRedo(DrawingDocument document) => new MoveLayerHistoryState(ToIndex, FromIndex);
-        public void Restore(DrawingDocument document) { var layer = document._layers[FromIndex]; document._layers.RemoveAt(FromIndex); document._layers.Insert(ToIndex, layer); document.ActiveLayerIndex = ToIndex; document.NotifyLayersChanged(); }
+        public IHistoryState CaptureRedo(DrawingDocument document)
+        {
+            var oldParent = Layer.Parent;
+            var oldSiblings = oldParent?.Children ?? document.RootLayers();
+            var oldSiblingIndex = oldSiblings.IndexOf(Layer);
+            return new MoveLayerHistoryState(Layer, oldParent, oldSiblingIndex, document.ActiveLayerIndex);
+        }
+
+        public void Restore(DrawingDocument document)
+        {
+            // Remove from current parent's children list (leave _layers alone — Rebuild will fix it).
+            if (Layer.Parent != null)
+                Layer.Parent.Children.Remove(Layer);
+            Layer.Parent = null;
+
+            if (OldParent != null)
+            {
+                // Re-insert into the group's children at the exact sibling slot.
+                OldParent.Children.Remove(Layer); // safety
+                Layer.Parent = OldParent;
+                var idx = Math.Clamp(OldSiblingIndex, 0, OldParent.Children.Count);
+                OldParent.Children.Insert(idx, Layer);
+                document.RebuildFlatLayerOrder(); // no override — traverses tree from roots
+            }
+            else
+            {
+                // RootLayers() returns a fresh .ToList() copy ordered by _layers.
+                // Remove the layer from wherever it currently sits in that order,
+                // then insert it at the saved slot, and rebuild from that list.
+                var roots = document.RootLayers();
+                roots.Remove(Layer);
+                var idx = Math.Clamp(OldSiblingIndex, 0, roots.Count);
+                roots.Insert(idx, Layer);
+                document.RebuildFlatLayerOrder(roots); // pass the modified root order
+            }
+
+            document.ActiveLayerIndex = Math.Clamp(OldActiveIndex, 0, document._layers.Count - 1);
+            document.NotifyLayersChanged();
+        }
     }
 
     private sealed record LayerOffsetHistoryState(int LayerIndex, int OldOffsetX, int OldOffsetY, int NewOffsetX, int NewOffsetY, PixelRegion DirtyRegion) : IHistoryState

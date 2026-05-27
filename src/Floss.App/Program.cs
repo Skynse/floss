@@ -2,6 +2,7 @@
 using Avalonia.Skia;
 using System;
 using System.IO;
+using System.Runtime;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Threading.Tasks;
@@ -72,6 +73,7 @@ class Program
         try
         {
             CrashLog.WriteRaw($"Floss {GetVersion()} starting (args: {string.Join(" ", args)})");
+            GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
             BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
         }
         catch (Exception ex)

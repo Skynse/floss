@@ -42,6 +42,8 @@ public sealed class DrawingCanvas : Control, IDisposable
 
     private BrushPreset _brush = BrushPreset.Defaults[0];
     private Color _paintColor = Color.Parse("#111111");
+    private readonly SolidColorBrush _paintColorBrush = new(Color.Parse("#111111"));
+    private SolidColorBrush? _paperColorBrush;
     private long _activePointerId = -1;
     private Point _pointerPos;
     private Point _prevPointerPos;
@@ -459,6 +461,7 @@ public sealed class DrawingCanvas : Control, IDisposable
     public void SetPaintColor(Color color)
     {
         _paintColor = color;
+        _paintColorBrush.Color = color;
         _ctx.PaintColor = color;
         if (!EraserEnabled)
         {
@@ -1315,7 +1318,11 @@ public sealed class DrawingCanvas : Control, IDisposable
             var paper = _document.PaperLayer;
             bool hasSolidPaper = _document.IsPaperBackgroundVisible && _document.PaperColor.A == 255;
             if (hasSolidPaper)
-                context.FillRectangle(new SolidColorBrush(_document.PaperColor), canvasBounds);
+            {
+                if (_paperColorBrush == null || _paperColorBrush.Color != _document.PaperColor)
+                    _paperColorBrush = new SolidColorBrush(_document.PaperColor);
+                context.FillRectangle(_paperColorBrush, canvasBounds);
+            }
             else
             {
                 using (context.PushRenderOptions(new RenderOptions
