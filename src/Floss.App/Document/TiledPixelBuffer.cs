@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Threading;
+using Floss.App.Canvas.Engine;
 using SkiaSharp;
 
 namespace Floss.App.Document;
@@ -54,6 +55,13 @@ public sealed class TiledPixelBuffer : IDisposable
         if (_disposed) return;
         _disposed = true;
         TileSwapManager.UnregisterBuffer(this, _scratchDir);
+        lock (_lock)
+        {
+            foreach (var raw in _tiles.Values)
+                TileMemoryPool.Return(raw);
+            _tiles.Clear();
+            _compressed.Clear();
+        }
         _pixelLock.Dispose();
     }
 
@@ -227,7 +235,7 @@ public sealed class TiledPixelBuffer : IDisposable
             if (SolidTileTemplates.TryGetValue(key, out var template))
                 return template;
 
-            var raw = new byte[TileBytes];
+            var raw = TileMemoryPool.Rent();
             for (var offset = 0; offset < raw.Length; offset += BytesPerPixel)
             {
                 raw[offset + 0] = b;
@@ -263,7 +271,7 @@ public sealed class TiledPixelBuffer : IDisposable
         var raw = EnsureRaw(key);
         if (raw != null) return raw;
 
-        raw = new byte[TileBytes];
+        raw = TileMemoryPool.Rent();
         lock (_lock)
         {
             _tiles[key] = raw;
@@ -357,6 +365,8 @@ public sealed class TiledPixelBuffer : IDisposable
                 {
                     lock (_lock)
                     {
+                        if (_tiles.TryGetValue(key, out var existingRaw))
+                            TileMemoryPool.Return(existingRaw);
                         _tiles.Remove(key);
                         _compressed[key] = fullTileTemplate;
                         InvalidateTileKeyCache();
@@ -368,7 +378,7 @@ public sealed class TiledPixelBuffer : IDisposable
                 var raw = EnsureRaw(key);
                 if (raw == null)
                 {
-                    raw = new byte[TileBytes];
+                    raw = TileMemoryPool.Rent();
                     lock (_lock)
                     {
                         _tiles[key] = raw;
@@ -499,6 +509,8 @@ public sealed class TiledPixelBuffer : IDisposable
         {
             lock (_lock)
             {
+                if (_tiles.TryGetValue(key, out var existingRaw))
+                    TileMemoryPool.Return(existingRaw);
                 _tiles.Remove(key);
                 _compressed.Remove(key);
                 InvalidateTileKeyCache();
@@ -568,7 +580,7 @@ public sealed class TiledPixelBuffer : IDisposable
                 var tileW = Math.Min(TileSize, copyW - tileX);
                 if (!HasAnyAlpha(src, srcWidth, tileX, tileY, tileW, tileH)) continue;
 
-                var tile = new byte[TileBytes];
+                var tile = TileMemoryPool.Rent();
                 for (var y = 0; y < tileH; y++)
                 {
                     var srcOffset = ((tileY + y) * srcWidth + tileX) * BytesPerPixel;
@@ -1010,7 +1022,7 @@ public sealed class TiledPixelBuffer : IDisposable
         var raw = EnsureRaw(key);
         if (raw != null) return raw;
 
-        raw = new byte[TileBytes];
+        raw = TileMemoryPool.Rent();
         lock (_lock)
         {
             _tiles[key] = raw;
@@ -1037,7 +1049,7 @@ public sealed class TiledPixelBuffer : IDisposable
                 if (raw == null)
                 {
                     if (!create) continue;
-                    raw = new byte[TileBytes];
+                    raw = TileMemoryPool.Rent();
                     lock (_lock)
                     {
                         _tiles[key] = raw;
@@ -1069,6 +1081,7 @@ public sealed class TiledPixelBuffer : IDisposable
                 {
                     if (_tiles.TryGetValue(key, out var raw) && IsTransparent(raw))
                     {
+                        TileMemoryPool.Return(raw);
                         _tiles.Remove(key);
                         InvalidateTileKeyCache();
                     }

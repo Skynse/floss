@@ -593,9 +593,15 @@ public sealed class DrawingDocument : IDisposable
         InsertLayerNear(group, topLayer, LayerDropPlacement.Above);
         RebuildFlatLayerOrder();
 
+        // Collect only the top-level selected layers — skip any layer that is
+        // already a descendant of another selected layer (e.g. child of a
+        // selected group). The group brings its children along implicitly.
+        var selectedSet = sorted.Select(i => _layers[i]).ToHashSet();
         var layersToMove = sorted
             .Select(i => _layers[i])
             .Where(l => l != group)
+            .Where(l => selectedSet.Contains(l) &&
+                        !HasAncestorInSet(l, selectedSet))
             .ToList();
         foreach (var layer in layersToMove)
         {
@@ -614,6 +620,7 @@ public sealed class DrawingDocument : IDisposable
         BeginDocumentMutation();
         var copy = CloneLayerTree(clipboard);
         InsertLayerNear(copy, _layers[targetIndex], LayerDropPlacement.Above);
+        RebuildFlatLayerOrder();
         ActiveLayerIndex = _layers.IndexOf(copy);
         NotifyLayersChanged();
     }
@@ -901,14 +908,19 @@ public sealed class DrawingDocument : IDisposable
     // --- Movement & Compositing ---
     public void MoveActiveLayer(int delta)
     {
-        if (ActiveLayerIndex < 0) return;
+        if (ActiveLayerIndex < 0 || ActiveLayer == null) return;
         var visible = VisibleLayerOrder().ToArray();
-        var current = visible.IndexOf(ActiveLayer);
+        var current = Array.IndexOf(visible, ActiveLayer);
         var targetVisibleIndex = current - delta;
         if (current < 0 || targetVisibleIndex < 0 || targetVisibleIndex >= visible.Length) return;
 
         var target = visible[targetVisibleIndex];
-        MoveLayer(ActiveLayerIndex, _layers.IndexOf(target), delta > 0 ? LayerDropPlacement.Above : LayerDropPlacement.Below);
+        // delta > 0 means "move up" (toward top of panel, earlier in visible order).
+        // If the source and target are at different tree levels (e.g. moving a root
+        // layer above a child of a group), use the flat index directly since
+        // Above/Below placement resolves the tree structure correctly.
+        MoveLayer(ActiveLayerIndex, _layers.IndexOf(target),
+            delta > 0 ? LayerDropPlacement.Above : LayerDropPlacement.Below);
     }
 
     public bool CanMoveLayer(int sourceIndex, int targetIndex, LayerDropPlacement placement)
@@ -928,7 +940,6 @@ public sealed class DrawingDocument : IDisposable
         var source = _layers[sourceIndex];
         var target = _layers[targetIndex];
 
-        // Capture structural position before the move (zero pixels copied).
         var oldParent = source.Parent;
         var oldSiblings = oldParent?.Children ?? RootLayers();
         var oldSiblingIndex = oldSiblings.IndexOf(source);
@@ -937,7 +948,12 @@ public sealed class DrawingDocument : IDisposable
 
         InsertLayerNear(source, target, placement);
         if (placement == LayerDropPlacement.Into) target.IsOpen = true;
-        RebuildFlatLayerOrder();
+
+        // InsertLayerNear rebuilds the flat list for root-level moves.
+        // Group moves only mutate parent.Children, so rebuild here as well.
+        if (source.Parent != null || placement == LayerDropPlacement.Into)
+            RebuildFlatLayerOrder();
+
         ActiveLayerIndex = _layers.IndexOf(source);
         NotifyLayersChanged();
     }
@@ -1137,21 +1153,51 @@ public sealed class DrawingDocument : IDisposable
         return false;
     }
 
+    private static bool HasAncestorInSet(DrawingLayer layer, HashSet<DrawingLayer> set)
+    {
+        for (var parent = layer.Parent; parent != null; parent = parent.Parent)
+            if (set.Contains(parent)) return true;
+        return false;
+    }
+
     internal void InsertLayerNear(DrawingLayer layer, DrawingLayer target, LayerDropPlacement placement)
     {
         DetachLayer(layer);
-        var newParent = placement == LayerDropPlacement.Into ? target : target.Parent;
-        var siblings = newParent?.Children ?? RootLayers();
-        siblings.Remove(layer);
-        var targetSiblingIndex = placement == LayerDropPlacement.Into ? siblings.Count : siblings.IndexOf(target);
-        var insertIndex = placement switch { LayerDropPlacement.Above => targetSiblingIndex + 1, _ => targetSiblingIndex };
 
+        if (placement == LayerDropPlacement.Into)
+        {
+            // Move into a group — append to its Children list.
+            layer.Parent = target;
+            target.Children.Add(layer);
+            UpdateIndentTree(layer, target.IndentLevel + 1);
+            return;
+        }
+
+        // Above / Below — make sibling of the target.
+        var newParent = target.Parent;
         layer.Parent = newParent;
-        siblings.Insert(Math.Clamp(insertIndex, 0, siblings.Count), layer);
-        if (newParent != null && !newParent.Children.Contains(layer)) newParent.Children.Add(layer);
 
-        if (newParent == null) RebuildFlatLayerOrder(siblings);
-        UpdateIndentTree(layer, newParent?.IndentLevel + 1 ?? 0);
+        if (newParent != null)
+        {
+            // Sibling insertion inside a group.
+            var idx = newParent.Children.IndexOf(target);
+            var insertIdx = placement == LayerDropPlacement.Above ? idx + 1 : idx;
+            newParent.Children.Insert(Math.Clamp(insertIdx, 0, newParent.Children.Count), layer);
+            UpdateIndentTree(layer, newParent.IndentLevel + 1);
+        }
+        else
+        {
+            // Sibling insertion at root level. Build a clean root list,
+            // insert at the correct sibling position, then pass it to
+            // RebuildFlatLayerOrder so root order sticks.
+            var roots = RootLayers();
+            roots.Remove(layer); // safety
+            var idx = roots.IndexOf(target);
+            var insertIdx = placement == LayerDropPlacement.Above ? idx + 1 : idx;
+            roots.Insert(Math.Clamp(insertIdx, 0, roots.Count), layer);
+            RebuildFlatLayerOrder(roots);
+            UpdateIndentTree(layer, 0);
+        }
     }
 
     private static void DetachLayer(DrawingLayer layer)

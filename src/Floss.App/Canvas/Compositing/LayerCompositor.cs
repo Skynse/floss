@@ -14,6 +14,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using Floss.App;
+using Floss.App.Canvas.Engine;
 using Floss.App.Document;
 using SkiaSharp;
 
@@ -21,16 +22,12 @@ namespace Floss.App.Canvas.Compositing;
 
 public sealed class LayerCompositor : IDisposable
 {
+    private static readonly RenderThreadPool _renderPool = RenderThreadPool.Create("FlossComposite");
+
     // Leave at least one core free for the UI thread so menus and pointer
     // interaction stay responsive while the compositor fills background tiles.
-    private static readonly ParallelOptions _compositeParallelOptions = new()
-    {
-        MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1)
-    };
-    private static readonly ParallelOptions _liveStrokeCompositeParallelOptions = new()
-    {
-        MaxDegreeOfParallelism = Math.Max(1, Math.Min(2, Environment.ProcessorCount / 2))
-    };
+    private static readonly int _compositeParallelism = Math.Max(1, Environment.ProcessorCount - 1);
+    private static readonly int _liveStrokeParallelism = Math.Max(1, Math.Min(2, Environment.ProcessorCount / 2));
 
     private LayerProjectionPlane? _projection;
     private LayerProjectionPlane Projection =>
@@ -40,14 +37,31 @@ public sealed class LayerCompositor : IDisposable
     public const int DirtyTileBudget = 32;
     private const int MaxMissingTilesPerFrame = 96;
     private const int MaxCompositeCacheTiles = 8192;
-    private static int LiveStrokeDirtyTileBudget => Math.Max(2, Math.Min(8, Environment.ProcessorCount));
-    private static int LiveStrokeMissingTileBudget => Math.Max(8, Math.Min(24, Environment.ProcessorCount * 2));
+    // Drawpile has zero budget cap during DP_RENDERER_CONTINUOUS (live stroke) —
+    // all dirty tiles are enqueued and rendered by the background thread pool.
+    // Capping to 2-8 tiles per frame here means TryBuildDisplayFrame never
+    // publishes because one pending tile blocks the entire all-or-nothing frame,
+    // producing the checkerboard/square-tile artifact.
+    private static int LiveStrokeDirtyTileBudget => int.MaxValue;
+    private static int LiveStrokeMissingTileBudget => int.MaxValue;
 
     public void Dispose()
     {
         ClearAllTiles();
         _projection?.Dispose();
         _projection = null;
+    }
+
+    private static void DispatchToPool(int count, Action<int> action)
+    {
+        if (count <= 0) return;
+        using var remaining = new CountdownEvent(count);
+        for (var i = 0; i < count; i++)
+        {
+            var idx = i;
+            _renderPool.Enqueue(() => { action(idx); remaining.Signal(); });
+        }
+        remaining.Wait();
     }
 
     // Drawpile's compositor tile grid is 64x64 (DP_TILE_SIZE). Keep the display
@@ -447,26 +461,29 @@ public sealed class LayerCompositor : IDisposable
             }
             else
             {
-                var tileRegion = region.Value;
-                var cacheRegion = region.Value;
+                var fullRegion = region.Value;
+                var tileRegion = fullRegion;
                 if (viewportClip is { IsEmpty: false } vp)
                 {
-                    tileRegion = tileRegion.Intersect(vp);
-                    if (metadataOnly)
-                        cacheRegion = tileRegion;
+                    tileRegion = fullRegion.Intersect(vp);
                 }
+
+                // Always drop cached tiles for the FULL dirty region — tiles at
+                // the old layer position may be outside the current viewport but
+                // will ghost if the user later pans or zooms out to reveal them.
+                if (!fullRegion.IsEmpty)
+                    DropCachedTilesOverlapping(fullRegion, exceptLod: _currentLod);
 
                 if (!tileRegion.IsEmpty)
                 {
                     if (!_fullDirty)
                         _dirtyRegion = _dirtyRegion is { } existing ? existing.Union(tileRegion) : tileRegion;
-                    // Drop stale fallback LODs only — keep the active LOD bitmap
-                    // visible until Composite overwrites it (avoids white flash).
-                    DropCachedTilesOverlapping(tileRegion, exceptLod: _currentLod);
                     QueueDirtyTilesForRegionAtLod(tileRegion, _currentLod);
                 }
 
-                InvalidateGroupCaches(cacheRegion, layers, layerIndex, invalidateStrokeBelow: !changedStrokeLayer, invalidateStrokeAbove: !changedStrokeLayer);
+                // Group caches need the full region too — a child moving inside
+                // a group shifts the group projection across the full area.
+                InvalidateGroupCaches(fullRegion, layers, layerIndex, invalidateStrokeBelow: !changedStrokeLayer, invalidateStrokeAbove: !changedStrokeLayer);
                 return;
             }
 
@@ -561,9 +578,15 @@ public sealed class LayerCompositor : IDisposable
 
         var wasFullDirty = _fullDirty;
         var dirtyClip = (wasFullDirty ? new PixelRegion(0, 0, width, height) : _dirtyRegion ?? PixelRegion.Empty).ClipTo(width, height);
+
+        // Queue ALL dirty tiles regardless of viewport. Drawpile's two-tier
+        // priority queue avoids pan ghosting: in-viewport tiles render at HIGH
+        // priority, outside-viewport tiles render at LOW priority during idle
+        // background passes so they're already cached when the user pans there.
+        // The viewport only affects which tiles get budget allocation first
+        // (via distance-sort in SelectPendingDirtyTiles), not which tiles get
+        // queued at all.
         var queueDirtyClip = dirtyClip;
-        if (wasFullDirty && viewportClip is { IsEmpty: false } bootstrapViewport)
-            queueDirtyClip = bootstrapViewport;
 
         // Fast path: nothing dirty and viewport not provided — nothing to do.
         if (queueDirtyClip.IsEmpty && viewportClip is null && _pendingDirtyTiles.Count == 0)
@@ -739,19 +762,35 @@ public sealed class LayerCompositor : IDisposable
             // warming of disjoint tile rects is safe.
             if (liveStrokePass && warmList.Length >= 2 && Environment.ProcessorCount > 1)
             {
-                Parallel.For(0, warmList.Length, _liveStrokeCompositeParallelOptions, idx =>
+                var remaining = new CountdownEvent(warmList.Length);
+                for (var wi = 0; wi < warmList.Length; wi++)
                 {
-                    var (_, _, rect) = warmList[idx];
-                    WarmStrokeCachesForTile(renderList, strokeSplit, rect, width, height);
-                });
+                    var idx = wi;
+                    _renderPool.Enqueue(() =>
+                    {
+                        var (_, _, rect) = warmList[idx];
+                        WarmStrokeCachesForTile(renderList, strokeSplit, rect, width, height);
+                        remaining.Signal();
+                    });
+                }
+                remaining.Wait();
+                remaining.Dispose();
             }
             else if (warmList.Length >= 4 && Environment.ProcessorCount > 1)
             {
-                Parallel.For(0, warmList.Length, _compositeParallelOptions, idx =>
+                var remaining = new CountdownEvent(warmList.Length);
+                for (var wi = 0; wi < warmList.Length; wi++)
                 {
-                    var (_, _, rect) = warmList[idx];
-                    WarmStrokeCachesForTile(renderList, strokeSplit, rect, width, height);
-                });
+                    var idx = wi;
+                    _renderPool.Enqueue(() =>
+                    {
+                        var (_, _, rect) = warmList[idx];
+                        WarmStrokeCachesForTile(renderList, strokeSplit, rect, width, height);
+                        remaining.Signal();
+                    });
+                }
+                remaining.Wait();
+                remaining.Dispose();
             }
             else
             {
@@ -799,9 +838,9 @@ public sealed class LayerCompositor : IDisposable
         // Projection.StrokeBelow before the parallel loop (above), so it's
         // read-only by the time we get here.
         if (liveStrokePass && allTiles.Length >= 2 && Environment.ProcessorCount > 1)
-            Parallel.For(0, allTiles.Length, _liveStrokeCompositeParallelOptions, CompositeOne);
+            DispatchToPool(allTiles.Length, CompositeOne);
         else if (allTiles.Length >= 4 && Environment.ProcessorCount > 1)
-            Parallel.For(0, allTiles.Length, _compositeParallelOptions, CompositeOne);
+            DispatchToPool(allTiles.Length, CompositeOne);
         else
             for (var i = 0; i < allTiles.Length; i++) CompositeOne(i);
 

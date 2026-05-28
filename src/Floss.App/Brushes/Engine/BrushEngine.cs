@@ -38,7 +38,10 @@ public sealed class BrushEngine : IDisposable
     private const int MaxPrecomputedGrainPixels = 1024 * 1024;
     private const int MaxColorMixScratchPixels = 2048 * 2048;
 
-    private const int InitialStampCapacity = 256;
+    // Drawpile's brush engine grows dab batches from a 1024-element floor. Keep
+    // the managed stamp/color lists in the same range so normal fast strokes do
+    // not repeatedly resize while input is being coalesced.
+    private const int InitialStampCapacity = 1024;
     private const float MinStretchCarry = 0.02f;
     private const float MaxStretchCarry = 0.88f;
 
@@ -216,6 +219,9 @@ public sealed class BrushEngine : IDisposable
         var stroke = _activeStroke!;
         _stamps.Clear();
         _stampColors.Clear();
+        _stamps.EnsureCapacity(InitialStampCapacity);
+        if (brush.ColorMix)
+            _stampColors.EnsureCapacity(InitialStampCapacity);
 
         var lastSegmentIndex = Math.Min(samples.Count - 1, startSegmentIndex + segmentCount - 1);
         var dirty = PixelRegion.Empty;
@@ -485,9 +491,9 @@ public sealed class BrushEngine : IDisposable
             float brushGrain = 0f;
             byte* texPx = null;
             int texW = 0, texH = 0, texStride = 0;
-        var grainTable = PrecomputeGrain(dirty, texPx, texW, texH, texStride, brushGrain);
+            var grainTable = PrecomputeGrain(dirty, texPx, texW, texH, texStride, brushGrain);
 
-        float brushThickness = MathF.Max(0.01f, MathF.Min(4f, (float)brush.TipThickness));
+            float brushThickness = MathF.Max(0.01f, MathF.Min(4f, (float)brush.TipThickness));
             if (stroke.HasAnyColorTip && _stampColors.Count == 0 &&
                 TryRasterizeCachedColorDabsTileMajor(layer, stroke, brush, brush.BlendMode,
                     brushGrain, texPx, texW, texH, texStride, dirty, grainTable))
@@ -1522,95 +1528,95 @@ public sealed class BrushEngine : IDisposable
         float halfBms = baseMaskSize * 0.5f;
         const int tsz = TiledPixelBuffer.TileSize;
 
-        for (int si = 0; si < _stamps.Count; si++)
+        layer.Pixels.EnterPixelWriteLock();
+        try
         {
-            var stamp = _stamps[si];
-            if (stamp.Opacity <= 0 || stamp.Size <= 0) continue;
-
-            BrushTipStampContext? stampEval = null;
-            if (useGraphEval && stampGraph != null && fastAlpha == null)
-                stampEval = new BrushTipStampContext(stampGraph, stamp.Hardness, BrushMaterialTips.ForPreset(brush));
-            try
+            for (int si = 0; si < _stamps.Count; si++)
             {
+                var stamp = _stamps[si];
+                if (stamp.Opacity <= 0 || stamp.Size <= 0) continue;
 
-                float thickMul = MathF.Max(0.01f, MathF.Min(4f, brushThickness * stamp.TipThicknessMultiplier));
-                float scale = stamp.Size / MathF.Max(1f, baseMaskSize);
-
-                // scaleX/scaleY: pixels per mask-pixel in each axis (used by image tip path)
-                float scaleX = isHorizontal ? scale : scale * thickMul;
-                float scaleY = isHorizontal ? scale * thickMul : scale;
-                if (brush.FlipHorizontal) scaleX = -scaleX;
-                if (brush.FlipVertical) scaleY = -scaleY;
-
-                // rx/ry: physical half-axes in pixels (used by procedural path + bbox)
-                float maxR = (baseMaskSize * 0.5f - 0.5f) * scale;
-                float rxBase = aspect >= 1f ? maxR : maxR * aspect;
-                float ryBase = aspect >= 1f ? maxR / aspect : maxR;
-                float rx = isHorizontal ? rxBase : rxBase * thickMul;
-                float ry = isHorizontal ? ryBase * thickMul : ryBase;
-
-                // For image tips the effective half-extent is the full mask half-size × scale
-                float bboxHalfX = isImageTip ? halfBms * MathF.Abs(scaleX) : rx;
-                float bboxHalfY = isImageTip ? halfBms * MathF.Abs(scaleY) : ry;
-                if (bboxHalfX < 0.5f || bboxHalfY < 0.5f) continue;
-
-                // Always rotate for image tips (texture has directionality); skip for rotationally-symmetric circles
-                bool hasRot = MathF.Abs(stamp.Angle) > 0.1f && (isImageTip || useGraphEval || !isCircle);
-                float cosA = 1f, sinA = 0f;
-                if (hasRot)
-                {
-                    float rad = stamp.Angle * MathF.PI / 180f;
-                    cosA = MathF.Cos(rad);
-                    sinA = MathF.Sin(rad);
-                }
-
-                float stampOpacity255 = StampOpacity255(blendMode, stamp.Opacity, baseAlpha);
-                if (stampOpacity255 <= 0) continue;
-
-                // Procedural-only params
-                float hardness = stamp.Hardness;
-                float hardnessRange = 1f - hardness;
-                float h2 = hardness * hardness;
-                bool hardEdge = !isImageTip && hardness >= 0.999f;
-
-                // Composite strategy — hoist outside pixel loops
-                bool isSrcOver = blendMode == SKBlendMode.SrcOver;
-                bool alphaLocked = layer.IsAlphaLocked;
-
-                // Grain strategy — precompute base value and nullity
-                float grainBase = 1f - brushGrain;
-                bool hasGrainTable = grainTable != null;
-                bool hasProceduralGrain = !hasGrainTable && brushGrain > 0f;
-                bool hasTexGrain = hasProceduralGrain && texPx != null;
-
-                // Image tip: get the cached Alpha8 mask and pin its pixels
+                BrushTipStampContext? stampEval = null;
                 SKBitmap? maskBmp = null;
-                byte* maskPx = null;
-                int maskStride = 0;
-                if (isImageTip)
-                {
-                    maskBmp = stroke.MaskFor(stamp.Hardness);
-                    maskPx = (byte*)maskBmp.GetPixels().ToPointer();
-                    maskStride = maskBmp.RowBytes;
-                }
-
-                // Tight bounding box — for rotated image tips use the rotated-rectangle formula
-                float boxHX = hasRot ? (bboxHalfX * MathF.Abs(cosA) + bboxHalfY * MathF.Abs(sinA)) : bboxHalfX;
-                float boxHY = hasRot ? (bboxHalfX * MathF.Abs(sinA) + bboxHalfY * MathF.Abs(cosA)) : bboxHalfY;
-                float margin = 1.5f;
-                int bLeft = (int)MathF.Floor(stamp.X - boxHX - margin);
-                int bTop = (int)MathF.Floor(stamp.Y - boxHY - margin);
-                int bRight = (int)MathF.Ceiling(stamp.X + boxHX + margin);
-                int bBottom = (int)MathF.Ceiling(stamp.Y + boxHY + margin);
-
-                int firstTx = (int)Math.Floor((double)bLeft / tsz);
-                int firstTy = (int)Math.Floor((double)bTop / tsz);
-                int lastTx = (int)Math.Floor((double)(bRight - 1) / tsz);
-                int lastTy = (int)Math.Floor((double)(bBottom - 1) / tsz);
-
-                layer.Pixels.EnterPixelWriteLock();
+                if (useGraphEval && stampGraph != null && fastAlpha == null)
+                    stampEval = new BrushTipStampContext(stampGraph, stamp.Hardness, BrushMaterialTips.ForPreset(brush));
                 try
                 {
+
+                    float thickMul = MathF.Max(0.01f, MathF.Min(4f, brushThickness * stamp.TipThicknessMultiplier));
+                    float scale = stamp.Size / MathF.Max(1f, baseMaskSize);
+
+                    // scaleX/scaleY: pixels per mask-pixel in each axis (used by image tip path)
+                    float scaleX = isHorizontal ? scale : scale * thickMul;
+                    float scaleY = isHorizontal ? scale * thickMul : scale;
+                    if (brush.FlipHorizontal) scaleX = -scaleX;
+                    if (brush.FlipVertical) scaleY = -scaleY;
+
+                    // rx/ry: physical half-axes in pixels (used by procedural path + bbox)
+                    float maxR = (baseMaskSize * 0.5f - 0.5f) * scale;
+                    float rxBase = aspect >= 1f ? maxR : maxR * aspect;
+                    float ryBase = aspect >= 1f ? maxR / aspect : maxR;
+                    float rx = isHorizontal ? rxBase : rxBase * thickMul;
+                    float ry = isHorizontal ? ryBase * thickMul : ryBase;
+
+                    // For image tips the effective half-extent is the full mask half-size × scale
+                    float bboxHalfX = isImageTip ? halfBms * MathF.Abs(scaleX) : rx;
+                    float bboxHalfY = isImageTip ? halfBms * MathF.Abs(scaleY) : ry;
+                    if (bboxHalfX < 0.5f || bboxHalfY < 0.5f) continue;
+
+                    // Always rotate for image tips (texture has directionality); skip for rotationally-symmetric circles
+                    bool hasRot = MathF.Abs(stamp.Angle) > 0.1f && (isImageTip || useGraphEval || !isCircle);
+                    float cosA = 1f, sinA = 0f;
+                    if (hasRot)
+                    {
+                        float rad = stamp.Angle * MathF.PI / 180f;
+                        cosA = MathF.Cos(rad);
+                        sinA = MathF.Sin(rad);
+                    }
+
+                    float stampOpacity255 = StampOpacity255(blendMode, stamp.Opacity, baseAlpha);
+                    if (stampOpacity255 <= 0) continue;
+
+                    // Procedural-only params
+                    float hardness = stamp.Hardness;
+                    float hardnessRange = 1f - hardness;
+                    float h2 = hardness * hardness;
+                    bool hardEdge = !isImageTip && hardness >= 0.999f;
+
+                    // Composite strategy — hoist outside pixel loops
+                    bool isSrcOver = blendMode == SKBlendMode.SrcOver;
+                    bool alphaLocked = layer.IsAlphaLocked;
+
+                    // Grain strategy — precompute base value and nullity
+                    float grainBase = 1f - brushGrain;
+                    bool hasGrainTable = grainTable != null;
+                    bool hasProceduralGrain = !hasGrainTable && brushGrain > 0f;
+                    bool hasTexGrain = hasProceduralGrain && texPx != null;
+
+                    // Image tip: get the cached Alpha8 mask and pin its pixels
+                    byte* maskPx = null;
+                    int maskStride = 0;
+                    if (isImageTip)
+                    {
+                        maskBmp = stroke.MaskFor(stamp.Hardness);
+                        maskPx = (byte*)maskBmp.GetPixels().ToPointer();
+                        maskStride = maskBmp.RowBytes;
+                    }
+
+                    // Tight bounding box — for rotated image tips use the rotated-rectangle formula
+                    float boxHX = hasRot ? (bboxHalfX * MathF.Abs(cosA) + bboxHalfY * MathF.Abs(sinA)) : bboxHalfX;
+                    float boxHY = hasRot ? (bboxHalfX * MathF.Abs(sinA) + bboxHalfY * MathF.Abs(cosA)) : bboxHalfY;
+                    float margin = 1.5f;
+                    int bLeft = (int)MathF.Floor(stamp.X - boxHX - margin);
+                    int bTop = (int)MathF.Floor(stamp.Y - boxHY - margin);
+                    int bRight = (int)MathF.Ceiling(stamp.X + boxHX + margin);
+                    int bBottom = (int)MathF.Ceiling(stamp.Y + boxHY + margin);
+
+                    int firstTx = (int)Math.Floor((double)bLeft / tsz);
+                    int firstTy = (int)Math.Floor((double)bTop / tsz);
+                    int lastTx = (int)Math.Floor((double)(bRight - 1) / tsz);
+                    int lastTy = (int)Math.Floor((double)(bBottom - 1) / tsz);
+
                     for (int ty = firstTy; ty <= lastTy; ty++)
                     {
                         int tilePixY = ty * tsz;
@@ -1721,10 +1727,9 @@ public sealed class BrushEngine : IDisposable
                                     int offset = rowBase + lx * 4;
                                     if (isSrcOver)
                                     {
-                                        byte ttda = tile[offset + 3];
-                                        if (ttda == 0) { tile[offset] = (byte)brushB; tile[offset + 1] = (byte)brushG; tile[offset + 2] = (byte)brushR; tile[offset + 3] = (byte)stampA; }
-                                        else if (alphaLocked) { int inv = 255 - stampA; tile[offset] = (byte)((brushB * stampA + tile[offset] * inv + 127) / 255); tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * inv + 127) / 255); tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * inv + 127) / 255); }
-                                        else { int invSrcA = 255 - stampA; int dstCont = (ttda * invSrcA + 127) / 255; int outA = stampA + dstCont; if (outA > 0) { int half = outA >> 1; tile[offset] = (byte)((brushB * stampA + tile[offset] * dstCont + half) / outA); tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * dstCont + half) / outA); tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * dstCont + half) / outA); tile[offset + 3] = (byte)outA; } }
+                                        fixed (byte* tp = tile)
+                                            Canvas.Engine.SimdPixelOps.StampSrcOver(tp + offset,
+                                                (byte)brushB, (byte)brushG, (byte)brushR, stampA, alphaLocked);
                                     }
                                     else
                                     {
@@ -1737,15 +1742,17 @@ public sealed class BrushEngine : IDisposable
                         }
                     }
                 }
-                finally { layer.Pixels.ExitPixelWriteLock(); }
-
-                if (maskBmp != null)
-                    stroke.ReleaseMask(maskBmp);
+                finally
+                {
+                    if (maskBmp != null)
+                        stroke.ReleaseMask(maskBmp);
+                    stampEval?.Dispose();
+                }
             }
-            finally
-            {
-                stampEval?.Dispose();
-            }
+        }
+        finally
+        {
+            layer.Pixels.ExitPixelWriteLock();
         }
 
         layer.Pixels.PruneRegion(dirty);
@@ -1774,6 +1781,7 @@ public sealed class BrushEngine : IDisposable
         const int tsz = TiledPixelBuffer.TileSize;
         _dabBuckets.Clear();
         var buckets = _dabBuckets;
+        buckets.EnsureCapacity(Math.Max(16, Math.Min(_stamps.Count * 4, 4096)));
 
         stroke.EnterDabCacheUse();
         try
@@ -1891,6 +1899,7 @@ public sealed class BrushEngine : IDisposable
         const int tsz = TiledPixelBuffer.TileSize;
         _colorDabBuckets.Clear();
         var buckets = _colorDabBuckets;
+        buckets.EnsureCapacity(Math.Max(16, Math.Min(_stamps.Count * 4, 4096)));
 
         stroke.EnterColorDabCacheUse();
         try
@@ -2058,10 +2067,9 @@ public sealed class BrushEngine : IDisposable
                 var offset = rowBase + lx * 4;
                 if (isSrcOver)
                 {
-                    byte ttda = tile[offset + 3];
-                    if (ttda == 0) { tile[offset] = srcB; tile[offset + 1] = srcG; tile[offset + 2] = srcR; tile[offset + 3] = (byte)stampA; }
-                    else if (alphaLocked) { int inv = 255 - stampA; tile[offset] = (byte)((srcB * stampA + tile[offset] * inv + 127) / 255); tile[offset + 1] = (byte)((srcG * stampA + tile[offset + 1] * inv + 127) / 255); tile[offset + 2] = (byte)((srcR * stampA + tile[offset + 2] * inv + 127) / 255); }
-                    else { int invSrcA = 255 - stampA; int dstCont = (ttda * invSrcA + 127) / 255; int outA = stampA + dstCont; if (outA > 0) { int half = outA >> 1; tile[offset] = (byte)((srcB * stampA + tile[offset] * dstCont + half) / outA); tile[offset + 1] = (byte)((srcG * stampA + tile[offset + 1] * dstCont + half) / outA); tile[offset + 2] = (byte)((srcR * stampA + tile[offset + 2] * dstCont + half) / outA); tile[offset + 3] = (byte)outA; } }
+                    fixed (byte* tp = tile)
+                        Canvas.Engine.SimdPixelOps.StampSrcOver(tp + offset,
+                            srcB, srcG, srcR, stampA, alphaLocked);
                 }
                 else
                 {
@@ -2225,10 +2233,9 @@ public sealed class BrushEngine : IDisposable
                 var offset = rowBase + lx * 4;
                 if (isSrcOver)
                 {
-                    byte ttda = tile[offset + 3];
-                    if (ttda == 0) { tile[offset] = (byte)brushB; tile[offset + 1] = (byte)brushG; tile[offset + 2] = (byte)brushR; tile[offset + 3] = (byte)stampA; }
-                    else if (alphaLocked) { int inv = 255 - stampA; tile[offset] = (byte)((brushB * stampA + tile[offset] * inv + 127) / 255); tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * inv + 127) / 255); tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * inv + 127) / 255); }
-                    else { int invSrcA = 255 - stampA; int dstCont = (ttda * invSrcA + 127) / 255; int outA = stampA + dstCont; if (outA > 0) { int half = outA >> 1; tile[offset] = (byte)((brushB * stampA + tile[offset] * dstCont + half) / outA); tile[offset + 1] = (byte)((brushG * stampA + tile[offset + 1] * dstCont + half) / outA); tile[offset + 2] = (byte)((brushR * stampA + tile[offset + 2] * dstCont + half) / outA); tile[offset + 3] = (byte)outA; } }
+                    fixed (byte* tp = tile)
+                        Canvas.Engine.SimdPixelOps.StampSrcOver(tp + offset,
+                            (byte)brushB, (byte)brushG, (byte)brushR, stampA, alphaLocked);
                 }
                 else
                 {
@@ -3577,14 +3584,14 @@ public sealed class BrushEngine : IDisposable
     {
         private readonly BrushPreset _brush;
         private const int MaxCachedMasks = 16;
-        // Bumped from 64 → 128. With pressure→size dynamics each near-integer
-        // size produces a separate key; 64 was too tight, causing every stamp
-        // in a continuous-pressure stroke to miss + allocate a new SKBitmap.
-        private const int MaxCachedDabs = 128;
+        // Match Drawpile's 1024-dab batching floor. Pressure/rotation dynamics
+        // create many nearby keys; trimming below normal batch size turns the
+        // cache into churn during fast strokes.
+        private const int MaxCachedDabs = 1024;
         // Brushes larger than 1024² logical footprint are downscaled into the
         // cache bitmap and bilinear-upsampled at stamp time.
-        private const int MaxCachedDabPixels = 1024 * 1024;
-        private const int MaxCachedColorDabs = 32;
+        private const int MaxCachedDabPixels = 4 * 1024 * 1024;
+        private const int MaxCachedColorDabs = 256;
         private readonly Dictionary<(int TipIndex, int Hardness), SKBitmap> _maskCache = new();
         private readonly Dictionary<CachedDabKey, CachedDab> _dabCache = new();
         private readonly Queue<CachedDabKey> _dabCacheOrder = new();
