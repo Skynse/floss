@@ -39,7 +39,7 @@ public sealed class LayerCompositor : IDisposable
     private const int MaxCompositeLod = 2;
     public const int DirtyTileBudget = 32;
     private const int MaxMissingTilesPerFrame = 96;
-    private const int MaxCompositeCacheTiles = 768;
+    private const int MaxCompositeCacheTiles = 8192;
     private static int LiveStrokeDirtyTileBudget => Math.Max(2, Math.Min(8, Environment.ProcessorCount));
     private static int LiveStrokeMissingTileBudget => Math.Max(8, Math.Min(24, Environment.ProcessorCount * 2));
 
@@ -50,9 +50,10 @@ public sealed class LayerCompositor : IDisposable
         _projection = null;
     }
 
-    // Keep compositor cache tiles close to paint tile granularity. 1024px tiles
-    // made small strokes on large documents recomposite up to 1M pixels.
-    private const int CmpTileSize = 256;
+    // Drawpile's compositor tile grid is 64x64 (DP_TILE_SIZE). Keep the display
+    // compositor on the same granularity: smaller dirty units, predictable edge
+    // tiles, and no giant 256/1024px recomposite blocks during strokes.
+    private const int CmpTileSize = 64;
 
     private int _currentLod;
     // ConcurrentDictionary so DrawTiles (UI thread) can snapshot entries while
@@ -75,6 +76,49 @@ public sealed class LayerCompositor : IDisposable
     // Tiles removed during a composite pass — disposed lazily on the UI thread
     // so DrawImage(bitmap) on the UI thread never observes a freed bitmap.
     private readonly ConcurrentQueue<SKBitmap> _tilesPendingDispose = new();
+    // The UI must never draw directly from the mutable work cache. Composite
+    // passes publish complete DisplayFrame snapshots; DrawTiles only renders the
+    // last committed frame, so LOD changes and dirty-tile work cannot leak as
+    // checkerboard holes or blocky mixed-resolution patches.
+    private sealed class DisplayFrame : IDisposable
+    {
+        public sealed record DisplayTile(SKImage Image, SKData Data) : IDisposable
+        {
+            public void Dispose()
+            {
+                try { Image.Dispose(); }
+                catch { /* best-effort */ }
+                try { Data.Dispose(); }
+                catch { /* best-effort */ }
+            }
+        }
+
+        public DisplayFrame(int lod, int width, int height, PixelRegion coverage, Dictionary<(int X, int Y), DisplayTile> tiles)
+        {
+            Lod = lod;
+            Width = width;
+            Height = height;
+            Coverage = coverage;
+            Tiles = tiles;
+        }
+
+        public int Lod { get; }
+        public int Width { get; }
+        public int Height { get; }
+        public PixelRegion Coverage { get; }
+        public Dictionary<(int X, int Y), DisplayTile> Tiles { get; }
+
+        public void Dispose()
+        {
+            foreach (var tile in Tiles.Values)
+                tile.Dispose();
+            Tiles.Clear();
+        }
+    }
+
+    private DisplayFrame? _currentFrame;
+    private readonly record struct RetiredDisplayFrame(DisplayFrame Frame, int DrainDelay);
+    private readonly ConcurrentQueue<RetiredDisplayFrame> _framesPendingDispose = new();
     // Serialises Composite() vs DrawTiles() — UI render acquires this briefly
     // to atomically observe the tile map. Background composite holds it for
     // the whole pass. Reentrancy avoided by always taking from the outside in.
@@ -83,7 +127,7 @@ public sealed class LayerCompositor : IDisposable
     // to avoid scheduling overlapping passes.
     private int _compositeActive;
     public bool IsCompositeActive => Volatile.Read(ref _compositeActive) != 0;
-    public bool HasAnyTiles => !_compTiles.IsEmpty;
+    public bool HasAnyTiles => Volatile.Read(ref _currentFrame) != null || !_compTiles.IsEmpty;
     // Stroke-suspend mode: active while a brush stroke is in progress. Used to
     // uncap the dirty-tile budget and enable the below-active-layer composite
     // fast path. Reference-counted for overlapping queued strokes.
@@ -140,6 +184,19 @@ public sealed class LayerCompositor : IDisposable
     public void DrainDisposalQueue()
     {
         // Called from UI thread to release bitmaps freed during background composite.
+        var delayedCount = _framesPendingDispose.Count;
+        for (var i = 0; i < delayedCount && _framesPendingDispose.TryDequeue(out var retired); i++)
+        {
+            if (retired.DrainDelay > 0)
+            {
+                _framesPendingDispose.Enqueue(retired with { DrainDelay = retired.DrainDelay - 1 });
+                continue;
+            }
+
+            try { retired.Frame.Dispose(); }
+            catch { /* best-effort */ }
+        }
+
         while (_tilesPendingDispose.TryDequeue(out var bmp))
         {
             try { bmp.Dispose(); }
@@ -169,6 +226,9 @@ public sealed class LayerCompositor : IDisposable
     {
         // Funnel disposal through the queue so any in-flight UI draw of these
         // bitmaps can finish before we free them.
+        var oldFrame = Interlocked.Exchange(ref _currentFrame, null);
+        if (oldFrame != null) RetireDisplayFrame(oldFrame);
+
         foreach (var t in _compTiles.Values) _tilesPendingDispose.Enqueue(t);
         _compTiles.Clear();
         _pendingDirtyTiles.Clear();
@@ -212,140 +272,26 @@ public sealed class LayerCompositor : IDisposable
 
     public void DrawTiles(DrawingContext context, Rect target, PixelRegion? visibleViewport = null)
     {
-        // Lock-free snapshot — both backing stores are concurrent. Holding
-        // CompositeGate here would block the UI for the full duration of any
-        // background composite pass (often 50–300ms on large invalidations),
-        // which is exactly the freeze users notice. Bitmaps removed mid-iter
-        // stay alive via the disposal queue until the next UI tick.
-        var snapshot = _compTiles.ToArray();
-        var displayLod = _currentLod;
-        var pendingCurrentLod = new HashSet<(int X, int Y)>();
-        foreach (var kv in _tilesPendingComposite)
-        {
-            if (kv.Key.Lod == displayLod)
-                pendingCurrentLod.Add((kv.Key.X, kv.Key.Y));
-        }
+        var frame = Volatile.Read(ref _currentFrame);
+        if (frame == null) return;
 
-        if (CurrentLodHasVisibleHoles(visibleViewport, snapshot, pendingCurrentLod, displayLod))
-        {
-            foreach (var lod in CachedFallbackLods(snapshot, displayLod))
-            {
-                for (var i = 0; i < snapshot.Length; i++)
-                {
-                    var ((tx, ty, tileLod), bmp) = snapshot[i];
-                    if (tileLod != lod) continue;
-                    DrawTile(context, bmp, tx, ty, tileLod, visibleViewport);
-                }
-            }
-        }
-
-        // Build snapshot lookup once; used by HasFinerLodFallback for each pending tile.
-        HashSet<(int X, int Y, int Lod)>? snapshotLookup = null;
-        if (displayLod > 0 && pendingCurrentLod.Count > 0)
-        {
-            snapshotLookup = new HashSet<(int X, int Y, int Lod)>(snapshot.Length);
-            for (var i = 0; i < snapshot.Length; i++)
-                snapshotLookup.Add(snapshot[i].Key);
-        }
-
-        for (var i = 0; i < snapshot.Length; i++)
-        {
-            var ((tx, ty, lod), bmp) = snapshot[i];
-            if (lod != displayLod) continue;
-            // Skip not-yet-composited tiles — they are cleared to transparent and
-            // punch through to paper white. Prefer finer-LOD fallback when available.
-            if (pendingCurrentLod.Contains((tx, ty)))
-            {
-                if (displayLod > 0 && snapshotLookup != null && HasFinerLodFallback(snapshotLookup, tx, ty, displayLod))
-                    continue; // finer-LOD covers this tile
-                // No finer fallback — draw stale content instead of transparent hole
-                DrawTile(context, bmp, tx, ty, lod, visibleViewport);
-                continue;
-            }
-            DrawTile(context, bmp, tx, ty, lod, visibleViewport);
-        }
+        foreach (var ((tx, ty), tile) in frame.Tiles)
+            DrawFrameTile(context, tile.Image, tx, ty, frame.Lod, frame.Width, frame.Height, visibleViewport);
     }
 
-    private bool HasFinerLodFallback(
-        HashSet<(int X, int Y, int Lod)> snapshotLookup,
-        int tx, int ty,
-        int displayLod)
-    {
-        var stride = CmpTileSize * (1 << displayLod);
-        var tileLeft = tx * stride;
-        var tileTop = ty * stride;
-        var tileRight = Math.Min(tileLeft + stride, _width);
-        var tileBottom = Math.Min(tileTop + stride, _height);
-
-        // Require a full cover of finer-LOD tiles — a single overlapping tile
-        // is not enough and produced patchwork holes during LOD transitions.
-        for (var finerLod = displayLod - 1; finerLod >= 0; finerLod--)
-        {
-            var fStride = CmpTileSize * (1 << finerLod);
-            var firstTX = FloorDiv(tileLeft, fStride);
-            var firstTY = FloorDiv(tileTop, fStride);
-            var lastTX = FloorDiv(tileRight - 1, fStride);
-            var lastTY = FloorDiv(tileBottom - 1, fStride);
-            var complete = true;
-            for (var fty = firstTY; fty <= lastTY && complete; fty++)
-            {
-                for (var ftx = firstTX; ftx <= lastTX; ftx++)
-                {
-                    if (!snapshotLookup.Contains((ftx, fty, finerLod)))
-                    {
-                        complete = false;
-                        break;
-                    }
-                }
-            }
-
-            if (complete)
-                return true;
-        }
-
-        return false;
-    }
-
-    private static bool SnapshotHasReadyTile(
-        KeyValuePair<(int X, int Y, int Lod), SKBitmap>[] snapshot,
-        int tx, int ty, int lod)
-    {
-        for (var i = 0; i < snapshot.Length; i++)
-        {
-            var key = snapshot[i].Key;
-            if (key.Lod == lod && key.X == tx && key.Y == ty)
-                return true;
-        }
-
-        return false;
-    }
-
-    private IEnumerable<int> CachedFallbackLods(KeyValuePair<(int X, int Y, int Lod), SKBitmap>[] snapshot, int displayLod)
-    {
-        var lods = new HashSet<int>();
-        for (var i = 0; i < snapshot.Length; i++)
-        {
-            var key = snapshot[i].Key;
-            if (key.Lod != displayLod)
-                lods.Add(key.Lod);
-        }
-
-        var ordered = new List<int>(lods);
-        ordered.Sort((a, b) =>
-        {
-            var da = Math.Abs(a - displayLod);
-            var db = Math.Abs(b - displayLod);
-            var cmp = db.CompareTo(da); // farthest first, nearest fallback last
-            return cmp != 0 ? cmp : a.CompareTo(b);
-        });
-        return ordered;
-    }
-
-    private void DrawTile(DrawingContext context, SKBitmap bmp, int tx, int ty, int lod, PixelRegion? visibleViewport)
+    private void DrawFrameTile(
+        DrawingContext context,
+        SKImage image,
+        int tx,
+        int ty,
+        int lod,
+        int frameWidth,
+        int frameHeight,
+        PixelRegion? visibleViewport)
     {
         var stride = CmpTileSize * (1 << lod);
-        var docTileW = Math.Min(stride, _width - tx * stride);
-        var docTileH = Math.Min(stride, _height - ty * stride);
+        var docTileW = Math.Min(stride, frameWidth - tx * stride);
+        var docTileH = Math.Min(stride, frameHeight - ty * stride);
         if (docTileW <= 0 || docTileH <= 0) { docTileW = 1; docTileH = 1; }
         var tileLeft = tx * stride;
         var tileTop = ty * stride;
@@ -359,39 +305,84 @@ public sealed class LayerCompositor : IDisposable
                 return;
         }
 
-        var src = new SKRect(0, 0, bmp.Width, bmp.Height);
+        var src = new SKRect(0, 0, image.Width, image.Height);
         var dest = new Rect(tileLeft, tileTop, docTileW, docTileH);
-        context.Custom(new SkiaTileDrawOp(bmp, src, dest));
+        context.Custom(new SkiaTileDrawOp(image, src, dest));
     }
 
-    private bool CurrentLodHasVisibleHoles(
-        PixelRegion? visibleViewport,
-        KeyValuePair<(int X, int Y, int Lod), SKBitmap>[] snapshot,
-        HashSet<(int X, int Y)> pendingCurrentLod,
-        int displayLod)
+    private void PublishDisplayFrameIfComplete(int lod, PixelRegion? viewportClip)
     {
-        if (snapshot.Length == 0 && pendingCurrentLod.Count == 0) return false;
-        var stride = CmpTileSize * (1 << displayLod);
-        var clip = visibleViewport?.ClipTo(_width, _height) ?? new PixelRegion(0, 0, _width, _height);
-        if (clip.IsEmpty) return false;
+        if (!TryBuildDisplayFrame(lod, viewportClip, out var frame) || frame == null)
+            return;
 
-        var firstTX = FloorDiv(clip.X, stride);
-        var firstTY = FloorDiv(clip.Y, stride);
-        var lastTX = FloorDiv(clip.Right - 1, stride);
-        var lastTY = FloorDiv(clip.Bottom - 1, stride);
+        var old = Interlocked.Exchange(ref _currentFrame, frame);
+        if (old != null) RetireDisplayFrame(old);
+    }
 
-        var have = new HashSet<(int X, int Y)>();
-        for (var i = 0; i < snapshot.Length; i++)
+    private void RetireDisplayFrame(DisplayFrame frame)
+    {
+        // Avalonia stores custom draw operations for the render thread. Keep
+        // replaced frames alive for several UI disposal cycles so a previously
+        // recorded operation cannot render with a disposed native SKImage.
+        _framesPendingDispose.Enqueue(new RetiredDisplayFrame(frame, 8));
+    }
+
+    private bool TryBuildDisplayFrame(int lod, PixelRegion? viewportClip, out DisplayFrame? frame)
+    {
+        frame = null;
+        if (_width <= 0 || _height <= 0) return false;
+
+        var coverage = (viewportClip?.ClipTo(_width, _height) ?? new PixelRegion(0, 0, _width, _height));
+        if (coverage.IsEmpty) return false;
+
+        var stride = CmpTileSize * (1 << lod);
+        var firstTX = FloorDiv(coverage.X, stride);
+        var firstTY = FloorDiv(coverage.Y, stride);
+        var lastTX = FloorDiv(coverage.Right - 1, stride);
+        var lastTY = FloorDiv(coverage.Bottom - 1, stride);
+        var images = new Dictionary<(int X, int Y), DisplayFrame.DisplayTile>();
+
+        try
         {
-            var key = snapshot[i].Key;
-            if (key.Lod == displayLod) have.Add((key.X, key.Y));
-        }
+            for (var ty = firstTY; ty <= lastTY; ty++)
+            {
+                for (var tx = firstTX; tx <= lastTX; tx++)
+                {
+                    var key = (tx, ty, lod);
+                    if (_pendingDirtyTiles.Contains(key)
+                        || _tilesPendingComposite.ContainsKey(key)
+                        || !_compTiles.TryGetValue(key, out var bmp))
+                        return false;
 
-        for (var ty = firstTY; ty <= lastTY; ty++)
-            for (var tx = firstTX; tx <= lastTX; tx++)
-                if (!have.Contains((tx, ty)) || pendingCurrentLod.Contains((tx, ty)))
-                    return true;
-        return false;
+                    var image = CreateOwnedImageCopy(bmp);
+                    if (image == null)
+                        return false;
+                    images[(tx, ty)] = image;
+                }
+            }
+
+            frame = new DisplayFrame(lod, _width, _height, coverage, images);
+            images = null!;
+            return true;
+        }
+        finally
+        {
+            if (images != null)
+            {
+                foreach (var image in images.Values)
+                    image.Dispose();
+            }
+        }
+    }
+
+    private static unsafe DisplayFrame.DisplayTile? CreateOwnedImageCopy(SKBitmap bitmap)
+    {
+        var data = SKData.CreateCopy(bitmap.GetPixels(), bitmap.ByteCount);
+        if (data == null) return null;
+        var image = SKImage.FromPixels(bitmap.Info, data, bitmap.RowBytes);
+        if (image != null) return new DisplayFrame.DisplayTile(image, data);
+        data.Dispose();
+        return null;
     }
 
     public void Invalidate(PixelRegion? region = null)
@@ -554,6 +545,7 @@ public sealed class LayerCompositor : IDisposable
         {
             _fullDirty = false;
             _dirtyRegion = null;
+            PublishDisplayFrameIfComplete(lod, viewportClip);
             RenderTelemetry.RecordComposite(ElapsedMs(started), 0, 0, lod, _pendingDirtyTiles.Count);
             return false;
         }
@@ -664,6 +656,7 @@ public sealed class LayerCompositor : IDisposable
             _dirtyRegion = null;
             LastDirtyTileCount = 0;
             LastMissingTileCount = 0;
+            PublishDisplayFrameIfComplete(lod, viewportClip);
             RenderTelemetry.RecordComposite(ElapsedMs(started), 0, 0, lod, 0);
             return deferredMissingTiles;
         }
@@ -800,6 +793,7 @@ public sealed class LayerCompositor : IDisposable
             _tilesPendingComposite.TryRemove((tx, ty, lodLocal), out _);
         }
 
+        PublishDisplayFrameIfComplete(lod, viewportClip);
         TrimCompositeCache(viewportClip);
         LastDirtyTileCount = tileKeys.Count;
         LastMissingTileCount = missingTileKeys.Count;
@@ -2187,8 +2181,41 @@ public sealed class LayerCompositor : IDisposable
 
     public bool TryReadDisplayPixel(int docX, int docY, out byte b, out byte g, out byte r, out byte a)
     {
-        lock (CompositeGate)
-            return TryReadCachedPixel(docX, docY, _currentLod, out b, out g, out r, out a);
+        b = g = r = a = 0;
+        var frame = Volatile.Read(ref _currentFrame);
+        if (frame == null || (uint)docX >= (uint)frame.Width || (uint)docY >= (uint)frame.Height)
+            return false;
+
+        var stride = CmpTileSize * (1 << frame.Lod);
+        var scale = 1 << frame.Lod;
+        var tx = FloorDiv(docX, stride);
+        var ty = FloorDiv(docY, stride);
+        if (!frame.Tiles.TryGetValue((tx, ty), out var tile))
+            return false;
+
+        var image = tile.Image;
+        var localDocX = docX - tx * stride;
+        var localDocY = docY - ty * stride;
+        var px = localDocX / scale;
+        var py = localDocY / scale;
+        if ((uint)px >= (uint)image.Width || (uint)py >= (uint)image.Height)
+            return false;
+
+        using var bitmap = new SKBitmap(new SKImageInfo(image.Width, image.Height, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+        if (!image.ReadPixels(bitmap.Info, bitmap.GetPixels(), bitmap.RowBytes, 0, 0))
+            return false;
+
+        unsafe
+        {
+            var src = (byte*)bitmap.GetPixels().ToPointer();
+            var ptr = src + py * bitmap.RowBytes + px * 4;
+            b = ptr[0];
+            g = ptr[1];
+            r = ptr[2];
+            a = ptr[3];
+        }
+
+        return true;
     }
 
     public unsafe Color? SampleCompositePixel(IReadOnlyList<DrawingLayer> layers, int width, int height, int x, int y, uint paperColor = 0)
@@ -2292,12 +2319,22 @@ public sealed class LayerCompositor : IDisposable
 internal sealed class SkiaTileDrawOp : Avalonia.Rendering.SceneGraph.ICustomDrawOperation
 {
     private readonly SKImage? _image;
+    private readonly bool _ownsImage;
     private readonly SKRect _src;
     private readonly Rect _dest;
 
     public SkiaTileDrawOp(SKBitmap bmp, SKRect src, Rect dest)
     {
         _image = SKImage.FromBitmap(bmp);
+        _ownsImage = true;
+        _src = src;
+        _dest = dest;
+    }
+
+    public SkiaTileDrawOp(SKImage image, SKRect src, Rect dest)
+    {
+        _image = image;
+        _ownsImage = false;
         _src = src;
         _dest = dest;
     }
@@ -2305,7 +2342,11 @@ internal sealed class SkiaTileDrawOp : Avalonia.Rendering.SceneGraph.ICustomDraw
     public Rect Bounds => _dest;
     public bool HitTest(Point p) => false;
     public bool Equals(Avalonia.Rendering.SceneGraph.ICustomDrawOperation? other) => false;
-    public void Dispose() => _image?.Dispose();
+    public void Dispose()
+    {
+        if (_ownsImage)
+            _image?.Dispose();
+    }
 
     public void Render(ImmediateDrawingContext context)
     {

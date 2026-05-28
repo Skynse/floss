@@ -85,6 +85,38 @@ public class LayerCompositorTests
     }
 
     [Fact]
+    public void Composite_DoesNotPublishPartiallyDirtyDisplayFrame()
+    {
+        EnsureAvalonia();
+        const int size = 2048;
+        using var layer = new DrawingLayer("Ink", size, size);
+        layer.Pixels.SetPixel(0, 0, b: 0, g: 0, r: 255, a: 255);
+
+        using var compositor = new LayerCompositor();
+        compositor.SetSize(size, size);
+        compositor.Invalidate(null);
+        compositor.Composite([layer], size, size, paperColor: 0, viewport: null, zoom: 1.0);
+
+        TestAssertions.True(compositor.TryReadDisplayPixel(0, 0, out var oldB, out var oldG, out var oldR, out var oldA));
+        TestAssertions.SequenceEqual(new[] { (byte)0, (byte)0, (byte)255, (byte)255 }, [oldB, oldG, oldR, oldA]);
+
+        layer.Pixels.SetPixel(0, 0, b: 255, g: 0, r: 0, a: 255);
+        compositor.Invalidate(new PixelRegion(0, 0, size, size));
+        var deferred = compositor.Composite([layer], size, size, paperColor: 0, viewport: null, zoom: 1.0);
+
+        TestAssertions.True(deferred, "The first partial dirty pass should keep work queued.");
+        TestAssertions.True(compositor.TryReadDisplayPixel(0, 0, out var b, out var g, out var r, out var a));
+        TestAssertions.SequenceEqual(new[] { (byte)0, (byte)0, (byte)255, (byte)255 }, [b, g, r, a]);
+
+        for (var i = 0; i < 40 && compositor.Composite([layer], size, size, paperColor: 0, viewport: null, zoom: 1.0); i++)
+        {
+        }
+
+        TestAssertions.True(compositor.TryReadDisplayPixel(0, 0, out b, out g, out r, out a));
+        TestAssertions.SequenceEqual(new[] { (byte)255, (byte)0, (byte)0, (byte)255 }, [b, g, r, a]);
+    }
+
+    [Fact]
     public void SelectLod_UsesKritaLog2FormulaForAllDocumentSizes()
     {
         using var compositor = new LayerCompositor();
