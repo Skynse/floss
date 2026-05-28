@@ -61,7 +61,6 @@ public sealed class DrawingCanvas : Control, IDisposable
     private bool _deferredTileRenderQueued;
     private int _renderLod = -1;
     private double _lastRenderZoom = double.NaN;
-    private PixelRegion? _lastRenderViewport;
     private (IBrushTip? Tip, SKBitmap? Outline) _cursorOutlineCache;
 
     // Ctrl+Shift layer-pick drag state
@@ -1428,29 +1427,13 @@ public sealed class DrawingCanvas : Control, IDisposable
             _lastRenderZoom = zoom;
 
             bool needSync = !_compositor.HasAnyTiles && !_compositor.IsCompositeActive;
-            bool preferSync = !zoomTick
-                && !lodTransition
-                && (_projectionScheduler.LastApplyWasMetadataOnly
-                    && _compositor.PendingDirtyTileCount > 0
-                    && !_compositor.IsCompositeActive);
 
-            // Drawpile blocks the main thread (DP_SEMAPHORE_MUST_WAIT) until
-            // all tiles in the new viewport are rendered after pan/zoom. Without
-            // this, the UI draws the old DisplayFrame which doesn't cover the
-            // new viewport → checkerboard flash until async composite catches up.
-            var viewportShifted = _lastRenderViewport is { } lastVp
-                && viewport is { } newVp
-                && (lastVp.X != newVp.X || lastVp.Y != newVp.Y
-                    || lastVp.Width != newVp.Width || lastVp.Height != newVp.Height);
-            if (viewport is { } curVp)
-                _lastRenderViewport = curVp;
-            bool missingViewportTiles = viewportShifted
-                && _compositor.HasAnyTiles
-                && !_compositor.IsCompositeActive
-                && viewport is { } missingVp
-                && _compositor.IsFrameMissingTiles(missingVp);
-
-            if ((needSync || preferSync || missingViewportTiles) && !_compositor.IsCompositeActive)
+            // Drawpile: UI draws tiles directly from cache (no all-or-nothing
+            // frame), background threads composite continuously. The sync pass
+            // here only fires on first paint — after that, DrawTiles uses LOD
+            // fallback for any not-yet-ready tiles, and the background pass
+            // catches up without blocking the UI thread.
+            if (needSync && !_compositor.IsCompositeActive)
             {
                 using (_document.RenderLock.Read())
                 {
@@ -1461,10 +1444,6 @@ public sealed class DrawingCanvas : Control, IDisposable
                                 paperUint, viewport, zoom))
                             break;
                         passes++;
-                        if (_compositor.PendingDirtyTileCount == 0)
-                            break;
-                        if (!needSync && !lodTransition && !preferSync)
-                            break;
                     }
                 }
                 _renderLod = _compositor.LastLod;

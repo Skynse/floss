@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using SkiaSharp;
 
@@ -15,7 +16,7 @@ public enum BrushTipShape
     Scatter,
 }
 
-public sealed class ProceduralBrushTip : IBrushTip
+public sealed class ProceduralBrushTip : IBrushTip, IDisposable
 {
     private readonly NodeBrushTip _graphTip;
 
@@ -39,9 +40,14 @@ public sealed class ProceduralBrushTip : IBrushTip
     public float AspectRatio { get; }
     public BrushTipNodeGraph Graph { get; }
 
+    public void Dispose() => _graphTip.Dispose();
+
     public void BindMaterialTips(IReadOnlyList<BrushTipData> materialTips)
         => _graphTip.BindMaterialTips(materialTips);
 
     public SKBitmap GenerateMask(int baseSize, float hardness)
         => _graphTip.GenerateMask(baseSize, hardness);
+
+    public SKBitmap? GenerateColorStamp(int baseSize)
+        => _graphTip.GenerateColorStamp(baseSize);
 }

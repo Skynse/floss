@@ -338,21 +338,87 @@ public sealed class LayerCompositor : IDisposable
     public void DrawTiles(DrawingContext context, Rect target, PixelRegion? visibleViewport = null)
     {
         var frame = Volatile.Read(ref _currentFrame);
-        if (frame == null) return;
+        var lod = frame?.Lod ?? _currentLod;
+        var cw = frame?.Width ?? _width;
+        var ch = frame?.Height ?? _height;
 
-        var drawArea = visibleViewport.HasValue
-            ? TileAreaForRegion(visibleViewport.Value.ClipTo(frame.Width, frame.Height), frame.Lod)
-            : frame.Area;
-        drawArea = IntersectTileAreas(drawArea, frame.Area);
-        if (drawArea.IsEmpty) return;
+        // Drawpile paints directly from the TileCache — each tile is
+        // independently available. If a tile isn't ready, the next-best LOD
+        // serves as a fallback so the UI never blocks waiting for all tiles.
+        var coverage = visibleViewport?.ClipTo(cw, ch)
+            ?? new PixelRegion(0, 0, cw, ch);
+        if (coverage.IsEmpty) return;
 
-        for (var ty = drawArea.Top; ty <= drawArea.Bottom; ty++)
+        var area = TileAreaForRegion(coverage, lod);
+        if (area.IsEmpty) return;
+
+        for (var ty = area.Top; ty <= area.Bottom; ty++)
         {
-            for (var tx = drawArea.Left; tx <= drawArea.Right; tx++)
+            for (var tx = area.Left; tx <= area.Right; tx++)
             {
-                var tile = frame.Tiles[FrameTileIndex(frame, tx, ty)];
-                if (tile != null)
-                    DrawFrameTile(context, tile.Image, tx, ty, frame.Lod, frame.Width, frame.Height, visibleViewport);
+                var key = (tx, ty, lod);
+                SKBitmap? bmp = null;
+                int fallbackLod = -1;
+
+                // Try the frame snapshot first (best quality, immutable SKImage).
+                var frameTileIdx = frame != null ? FrameTileIndex(frame, tx, ty) : -1;
+                if (frameTileIdx >= 0)
+                {
+                    var frameTile = frame!.Tiles[frameTileIdx];
+                    if (frameTile != null)
+                    {
+                        DrawFrameTile(context, frameTile.Image, tx, ty, lod, cw, ch, visibleViewport);
+                        continue;
+                    }
+                }
+
+                // Frame missing — try _compTiles directly at current LOD.
+                if (_compTiles.TryGetValue(key, out bmp))
+                {
+                    var snapshot = CreateOwnedImageCopy(bmp);
+                    if (snapshot != null)
+                    {
+                        DrawFrameTile(context, snapshot.Image, tx, ty, lod, cw, ch, visibleViewport);
+                        snapshot.Dispose();
+                        continue;
+                    }
+                }
+
+                // Tile not ready — search coarser LODs for a fallback so the
+                // user sees a blocky version instead of a checkerboard hole.
+                for (var fl = lod + 1; fl <= MaxCompositeLod; fl++)
+                {
+                    var coarseKey = (tx >> (fl - lod), ty >> (fl - lod), fl);
+                    if (_compTiles.TryGetValue(coarseKey, out bmp))
+                    {
+                        fallbackLod = fl;
+                        break;
+                    }
+                }
+
+                if (bmp != null)
+                {
+                    var snapshot = CreateOwnedImageCopy(bmp);
+                    if (snapshot != null)
+                    {
+                        var stride = CmpTileSize * (1 << lod);
+                        var docTileW = Math.Min(stride, cw - tx * stride);
+                        var docTileH = Math.Min(stride, ch - ty * stride);
+                        if (docTileW <= 0 || docTileH <= 0) { docTileW = 1; docTileH = 1; }
+                        var srcRect = new SKRect(0, 0, bmp.Width, bmp.Height);
+                        var destRect = new Rect(tx * stride, ty * stride, docTileW, docTileH);
+                        context.Custom(new SkiaTileDrawOp(snapshot.Image, srcRect, destRect));
+                        snapshot.Dispose();
+                    }
+                }
+                else
+                {
+                    // No tile at any LOD — this position has never been
+                    // composited. Queue it now so the background composite picks
+                    // it up in the next pass, matching Drawpile's renderer
+                    // threads continuously filling in unrendered tiles.
+                    _pendingDirtyTiles.Add((tx, ty, lod));
+                }
             }
         }
     }
@@ -463,7 +529,13 @@ public sealed class LayerCompositor : IDisposable
     }
 
     private static int FrameTileIndex(DisplayFrame frame, int tx, int ty)
-        => (ty - frame.Area.Top) * frame.Columns + (tx - frame.Area.Left);
+    {
+        var col = tx - frame.Area.Left;
+        var row = ty - frame.Area.Top;
+        if ((uint)col >= (uint)frame.Columns || (uint)row >= (uint)(frame.Tiles.Length / frame.Columns))
+            return -1;
+        return row * frame.Columns + col;
+    }
 
     private static TileArea IntersectTileAreas(TileArea a, TileArea b)
         => new(Math.Max(a.Left, b.Left), Math.Max(a.Top, b.Top), Math.Min(a.Right, b.Right), Math.Min(a.Bottom, b.Bottom));

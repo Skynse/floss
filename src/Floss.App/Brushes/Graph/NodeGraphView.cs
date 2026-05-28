@@ -27,8 +27,8 @@ public sealed class NodeGraphView : Control
     private const float SliderValueWidth = 36f;
     private const float SliderBarGap = 4f;
     private const float ImageSelectorRowHeight = 26f;
-    private const float PreviewBarHeight = 38f;
-    private const float ImageTipPreviewSize = 72f;
+    private const float PreviewBarHeight = 56f;
+    private const float ImageTipPreviewSize = 80f;
     private const float BodyPadding = 4f;
     private const float BottomPadding = 4f;
     private const float CornerRadius = 6f;
@@ -73,12 +73,13 @@ public sealed class NodeGraphView : Control
     private static readonly SolidColorBrush SliderBgBrush = new(SliderBg);
     private static readonly SolidColorBrush SliderFillBrush = new(SliderFill);
     private static readonly SolidColorBrush PreviewBgBrush = new(PreviewBg);
+    private static readonly SolidColorBrush ShadowBrush = new(Color.FromArgb(40, 0, 0, 0));
 
     private BrushTipNodeGraph _graph = null!;
-    private Dictionary<string, Point> _positions = null!;
-
-    private double _panX;
-    private double _panY;
+    private Dictionary<string, BrushTipNode> _nodeById = [];
+    private Dictionary<string, Point> _positions = [];
+    private string? _selectedNodeId;
+    private double _panX, _panY;
     private double _zoom = 1.2;
 
     private enum DragAction { None, Pan, Zoom, MoveNode, Connect, ConnectFromInput, DisconnectWire, ScrubParam }
@@ -99,7 +100,6 @@ public sealed class NodeGraphView : Control
     private string _scrubNodeId = null!;
     private int _scrubParamIdx;
 
-    private string? _selectedNodeId;
     private static readonly Typeface SemiBoldTypeface = new(FontFamily.Default, FontStyle.Normal, FontWeight.SemiBold);
     private static readonly Typeface DefaultTypeface = Typeface.Default;
 
@@ -111,6 +111,9 @@ public sealed class NodeGraphView : Control
     // Preview cache
     private readonly Dictionary<string, IImage> _previewCache = new();
     private List<ImageSamplerOption> _imageSamplers = [];
+    // Cached wire StreamGeometry — keyed by (srcId, tgtId, tgtInputIdx).
+    // Invalidated when nodes move or graph structure changes.
+    private readonly Dictionary<(string, string, int), StreamGeometry> _wireCache = new();
     private IReadOnlyList<BrushTipData> _materialTips = [];
 
     private Popup? _paramEditPopup;
@@ -140,11 +143,23 @@ public sealed class NodeGraphView : Control
         _graph = graph.DeepClone();
         _positions = new Dictionary<string, Point>(positions);
         _selectedNodeId = null;
+        RebuildNodeIndex();
         _history.Clear();
         _history.Add(new HistoryEntry(_graph.DeepClone(), new(_positions)));
         _historyIndex = 0;
         InvalidatePreviews();
         InvalidateVisual();
+        WireCacheInvalidate();
+    }
+
+    private void RebuildNodeIndex()
+    {
+        _nodeById = _graph.Nodes.ToDictionary(n => n.Id);
+    }
+
+    private void WireCacheInvalidate()
+    {
+        _wireCache.Clear();
     }
 
     public void SetImageSamplerOptions(IReadOnlyList<BrushTipData>? tips)
@@ -157,18 +172,32 @@ public sealed class NodeGraphView : Control
 
     public IReadOnlyList<ImageSamplerOption> AvailableImageSamplers => _imageSamplers;
 
-    private void PushHistory()
+    private void PushHistory(string? changedNodeId = null)
     {
         if (_historyIndex < _history.Count - 1)
             _history.RemoveRange(_historyIndex + 1, _history.Count - _historyIndex - 1);
         _history.Add(new HistoryEntry(_graph.DeepClone(), new(_positions)));
         _historyIndex = _history.Count - 1;
-        if (_history.Count > 300)
+        if (_history.Count > 500)
         {
             _history.RemoveAt(0);
             _historyIndex--;
         }
-        InvalidatePreviews();
+        // Only invalidate the preview for the node that actually changed —
+        // full-graph evaluation for 40+ nodes on every slider tick is the
+        // single biggest source of UI jank in the editor.
+        if (changedNodeId != null)
+        {
+            if (_previewCache.TryGetValue(changedNodeId, out var old))
+            {
+                if (old is IDisposable d) d.Dispose();
+                _previewCache.Remove(changedNodeId);
+            }
+        }
+        else
+        {
+            InvalidatePreviews();
+        }
     }
 
     private void InvalidatePreviews()
@@ -193,7 +222,7 @@ public sealed class NodeGraphView : Control
         if (_previewCache.TryGetValue(node.Id, out var cached))
             return cached;
 
-        const int prevSize = 32;
+        const int prevSize = 80;
 
         if (node.Kind == BrushTipNodeKind.ImageSampler)
         {
@@ -283,12 +312,13 @@ public sealed class NodeGraphView : Control
         _graph = entry.Graph.DeepClone();
         _positions = new Dictionary<string, Point>(entry.Positions);
         _selectedNodeId = null;
+        RebuildNodeIndex();
+        WireCacheInvalidate();
         NodeSelected?.Invoke(null);
-        InvalidatePreviews();
+        InvalidatePreviews(); // graph structure may have changed — full rebuild
         InvalidateVisual();
         GraphModified?.Invoke();
     }
-
     public BrushTipNode? AddNode(BrushTipNodeKind kind, Point? worldPosition = null)
     {
         var id = $"{kind.ToString().ToLowerInvariant()}-{Guid.NewGuid().ToString("N").AsSpan(0, 6)}";
@@ -304,7 +334,8 @@ public sealed class NodeGraphView : Control
             _graph.Nodes.Add(node);
 
         _selectedNodeId = id;
-        PushHistory();
+        RebuildNodeIndex();
+        PushHistory(id);
         InvalidateVisual();
         NodeSelected?.Invoke(node);
         GraphModified?.Invoke();
@@ -319,6 +350,8 @@ public sealed class NodeGraphView : Control
         _positions.Remove(nodeId);
         foreach (var other in _graph.Nodes)
             other.Inputs.RemoveAll(id => id == nodeId);
+        RebuildNodeIndex();
+        WireCacheInvalidate();
         if (_selectedNodeId == nodeId)
         {
             _selectedNodeId = null;
@@ -354,7 +387,8 @@ public sealed class NodeGraphView : Control
 
         node.Inputs[inputIndex] = sourceNodeId;
         TrimTrailingEmptyInputs(node);
-        PushHistory();
+        WireCacheInvalidate();
+        PushHistory(nodeId);
         InvalidateVisual();
         if (notify)
             GraphModified?.Invoke();
@@ -366,9 +400,13 @@ public sealed class NodeGraphView : Control
         var node = _graph.Nodes.FirstOrDefault(n => n.Id == nodeId);
         if (node == null) return false;
         update(node);
-        InvalidatePreviews();
+        if (_previewCache.TryGetValue(nodeId, out var oldImg))
+        {
+            if (oldImg is IDisposable d) d.Dispose();
+            _previewCache.Remove(nodeId);
+        }
         if (pushHistory)
-            PushHistory();
+            PushHistory(nodeId);
         InvalidateVisual();
         if (notify)
             GraphModified?.Invoke();
@@ -748,8 +786,7 @@ public sealed class NodeGraphView : Control
         if (changed)
         {
             param.Set(node, parsed);
-            PushHistory();
-            InvalidatePreviews();
+            PushHistory(node.Id);
             InvalidateVisual();
             GraphModified?.Invoke();
         }
@@ -830,22 +867,32 @@ public sealed class NodeGraphView : Control
                     continue;
 
                 if (!_positions.TryGetValue(srcId, out var srcPos)) continue;
-                var srcNode = _graph.Nodes.FirstOrDefault(n => n.Id == srcId);
-                if (srcNode == null) continue;
+                if (!_nodeById.TryGetValue(srcId, out var srcNode)) continue;
 
-                var start = GetOutputPortPos(srcNode, srcPos);
-                var end = GetInputPortPos(node, nodePos, i);
-                DrawBezier(context, start, end, WirePen);
+                var key = (srcId, node.Id, i);
+                if (!_wireCache.TryGetValue(key, out var geo))
+                {
+                    var start = GetOutputPortPos(srcNode, srcPos);
+                    var end = GetInputPortPos(node, nodePos, i);
+                    geo = BuildBezier(start, end);
+                    _wireCache[key] = geo;
+                }
+                context.DrawGeometry(null, WirePen, geo);
             }
         }
     }
 
     private static void DrawBezier(DrawingContext context, Point start, Point end, Pen pen)
     {
+        var geo = BuildBezier(start, end);
+        context.DrawGeometry(null, pen, geo);
+    }
+
+    private static StreamGeometry BuildBezier(Point start, Point end)
+    {
         var dx = Math.Max(Math.Abs(end.X - start.X) * 0.5f, 30f);
         var cp1 = new Point(start.X + dx, start.Y);
         var cp2 = new Point(end.X - dx, end.Y);
-
         var geo = new StreamGeometry();
         using (var gctx = geo.Open())
         {
@@ -853,7 +900,7 @@ public sealed class NodeGraphView : Control
             gctx.CubicBezierTo(cp1, cp2, end);
             gctx.EndFigure(false);
         }
-        context.DrawGeometry(null, pen, geo);
+        return geo;
     }
 
     private void DrawPendingWire(DrawingContext context)
@@ -895,8 +942,7 @@ public sealed class NodeGraphView : Control
         var headerColor = HeaderBrush(node.Kind);
         var isSelected = node.Id == _selectedNodeId;
 
-        var shadowBrush = new SolidColorBrush(Color.FromArgb(40, 0, 0, 0));
-        context.DrawRectangle(shadowBrush, null,
+        context.DrawRectangle(ShadowBrush, null,
             new Rect(pos.X + 3, pos.Y + 3, NodeWidth, height), CornerRadius, CornerRadius);
 
         context.DrawRectangle(
@@ -1067,32 +1113,44 @@ public sealed class NodeGraphView : Control
         if (outputNode != null)
             AssignDepth(outputNode.Id, 0, new HashSet<string>(), depths);
 
+        var maxDepth = depths.Count > 0 ? depths.Values.Max() : 0;
+        var normalized = depths.ToDictionary(kv => kv.Key, kv => maxDepth - kv.Value);
+
         var unvisited = _graph.Nodes
             .Where(n => !depths.ContainsKey(n.Id))
             .Select(n => n.Id)
             .ToList();
-
-        var maxDepth = depths.Count > 0 ? depths.Values.Max() : 0;
-        var normalized = depths.ToDictionary(kv => kv.Key, kv => maxDepth - kv.Value);
-
         foreach (var uid in unvisited)
             normalized[uid] = -1;
 
-        var byDepth = normalized.GroupBy(kv => kv.Value)
+        var byDepth = normalized
+            .GroupBy(kv => kv.Value)
+            .OrderBy(g => g.Key)
             .ToDictionary(g => g.Key, g => g.Select(kv => kv.Key).ToList());
 
-        var xSpacing = NodeWidth + 60f;
-        var ySpacing = 100f;
+        var nodeMap = _graph.Nodes.ToDictionary(n => n.Id);
+        const float xSpacing = NodeWidth + 80f;
+        const float verticalGap = 16f;
 
         _positions.Clear();
-        foreach (var (depth, nodeIds) in byDepth.OrderBy(kv => kv.Key))
+
+        float xBase = 50f;
+        foreach (var (depth, nodeIds) in byDepth)
         {
-            var yStart = -(nodeIds.Count - 1) * ySpacing / 2f;
+            var heights = nodeIds
+                .Select(nid => nodeMap.TryGetValue(nid, out var n) ? GetNodeHeight(n) : 80f)
+                .ToList();
+
+            var totalHeight = heights.Sum() + verticalGap * (nodeIds.Count - 1);
+            var yStart = -totalHeight / 2f;
+            float yCursor = 50f + yStart;
+
             for (var i = 0; i < nodeIds.Count; i++)
             {
                 _positions[nodeIds[i]] = new Point(
-                    50 + (depth + 1) * xSpacing,
-                    50 + yStart + i * ySpacing);
+                    xBase + depth * xSpacing,
+                    yCursor);
+                yCursor += heights[i] + verticalGap;
             }
         }
 
@@ -1236,6 +1294,9 @@ public sealed class NodeGraphView : Control
                     var bar = SliderBarRect(np, node, pi);
                     if (bar.Contains(worldPos))
                     {
+                        // Snapshot pre-scrub state NOW so undo can restore it
+                        // even if the app crashes mid-scrub.
+                        PushHistory(node.Id);
                         _dragAction = DragAction.ScrubParam;
                         _scrubNodeId = node.Id;
                         _scrubParamIdx = pi;
@@ -1472,7 +1533,8 @@ public sealed class NodeGraphView : Control
                 var nodeParams = GetNodeParams(node.Kind);
                 if (_scrubParamIdx < nodeParams.Length)
                 {
-                    PushHistory();
+                    // History was already pushed on mousedown. Just signal
+                    // that the graph changed so the editor panel refreshes.
                     InvalidatePreviews();
                     InvalidateVisual();
                     GraphModified?.Invoke();
@@ -1481,7 +1543,8 @@ public sealed class NodeGraphView : Control
         }
         else if (_dragAction == DragAction.MoveNode && _dragNodeId != null)
         {
-            PushHistory();
+            PushHistory(_dragNodeId);
+            WireCacheInvalidate();
         }
 
         if (_dragAction != DragAction.None)
@@ -1695,7 +1758,7 @@ public sealed class NodeGraphView : Control
             return;
 
         if (pushHistory)
-            PushHistory();
+            PushHistory(nodeId);
         UpdateNode(nodeId, n =>
         {
             n.MaterialTipId = materialTipId;

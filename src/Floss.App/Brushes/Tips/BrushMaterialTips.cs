@@ -234,12 +234,14 @@ public static class BrushMaterialTips
             var graph = removed != null
                 ? ClearRemovedTipReferences(nodeTip.Graph, removed, normalized)
                 : BindGraphToLibrary(nodeTip.Graph, normalized);
+            nodeTip.Dispose();
             tip = new NodeBrushTip(graph);
             ((NodeBrushTip)tip).BindMaterialTips(normalized);
         }
         else if (tip is ProceduralBrushTip procTip)
         {
             var bound = BindGraphToLibrary(procTip.Graph, normalized);
+            procTip.Dispose();
             tip = new ProceduralBrushTip(bound);
             ((ProceduralBrushTip)tip).BindMaterialTips(normalized);
         }

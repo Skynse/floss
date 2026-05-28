@@ -445,7 +445,17 @@ public sealed class NodeBrushTip : IBrushTip, IDisposable
 
     public NodeBrushTip(BrushTipNodeGraph graph)
     {
-        Graph = graph.Validate().Count == 0 ? graph.DeepClone() : new BrushTipNodeGraph();
+        var errors = graph.Validate();
+        if (errors.Count == 0)
+        {
+            Graph = graph.DeepClone();
+        }
+        else
+        {
+            var msg = $"Node graph validation failed with {errors.Count} error(s):\n{string.Join("\n", errors)}";
+            CrashLog.WriteRaw(msg);
+            Graph = new BrushTipNodeGraph();
+        }
         _graphCacheKey = Graph.CacheKey();
     }
 
@@ -924,7 +934,7 @@ public static class BrushTipNodeGraphEvaluator
                 return result;
 
             using var tip = new ImageBrushTip(png);
-            var mask = tip.GenerateMask(size, CombinedHardness(node, brushHardness));
+            using var mask = tip.GenerateMask(size, CombinedHardness(node, brushHardness));
             var opacity = Math.Clamp(node.Opacity, 0f, 1f);
             var ptr = (byte*)mask.GetPixels().ToPointer();
             if (ptr == null)
@@ -999,7 +1009,7 @@ public static class BrushTipNodeGraphEvaluator
             var png = BrushMaterialTips.ResolveSamplerPng(node, tips);
             if (png.Length == 0) return new float[size * size];
             using var tip = new ImageBrushTip(png);
-            var stamp = tip.GenerateMask(size, 1f); // always full-res, scaling handled later
+            using var stamp = tip.GenerateMask(size, 1f);
             var scale = Math.Clamp(node.Scale, 0.05f, 8f);
             var density = Math.Clamp(node.Density, 0f, 1f);
             var result = new float[size * size];
@@ -1557,10 +1567,10 @@ public static class BrushTipNodeGraphEvaluator
                 return new ColorField(r, g, b, a, false);
 
             using var tip = new ImageBrushTip(png);
-            var mask = tip.GenerateMask(size, CombinedHardness(node, brushHardness));
+            using var mask = tip.GenerateMask(size, CombinedHardness(node, brushHardness));
             var opacity = Math.Clamp(node.Opacity, 0f, 1f);
             var hasColor = tip.HasColor;
-            var stamp = hasColor ? tip.GenerateColorStamp(size) : null;
+            using var stamp = hasColor ? tip.GenerateColorStamp(size) : null;
             unsafe
             {
                 var maskPtr = (byte*)mask.GetPixels().ToPointer();
