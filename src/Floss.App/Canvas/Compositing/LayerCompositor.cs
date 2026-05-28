@@ -76,6 +76,12 @@ public sealed class LayerCompositor : IDisposable
     // Tiles removed during a composite pass — disposed lazily on the UI thread
     // so DrawImage(bitmap) on the UI thread never observes a freed bitmap.
     private readonly ConcurrentQueue<SKBitmap> _tilesPendingDispose = new();
+
+    private readonly record struct TileArea(int Left, int Top, int Right, int Bottom)
+    {
+        public bool IsEmpty => Right < Left || Bottom < Top;
+    }
+
     // The UI must never draw directly from the mutable work cache. Composite
     // passes publish complete DisplayFrame snapshots; DrawTiles only renders the
     // last committed frame, so LOD changes and dirty-tile work cannot leak as
@@ -93,12 +99,13 @@ public sealed class LayerCompositor : IDisposable
             }
         }
 
-        public DisplayFrame(int lod, int width, int height, PixelRegion coverage, Dictionary<(int X, int Y), DisplayTile> tiles)
+        public DisplayFrame(int lod, int width, int height, PixelRegion coverage, TileArea area, DisplayTile?[] tiles)
         {
             Lod = lod;
             Width = width;
             Height = height;
             Coverage = coverage;
+            Area = area;
             Tiles = tiles;
         }
 
@@ -106,13 +113,16 @@ public sealed class LayerCompositor : IDisposable
         public int Width { get; }
         public int Height { get; }
         public PixelRegion Coverage { get; }
-        public Dictionary<(int X, int Y), DisplayTile> Tiles { get; }
+        public TileArea Area { get; }
+        public DisplayTile?[] Tiles { get; }
+
+        public int Columns => Area.IsEmpty ? 0 : Area.Right - Area.Left + 1;
 
         public void Dispose()
         {
-            foreach (var tile in Tiles.Values)
-                tile.Dispose();
-            Tiles.Clear();
+            foreach (var tile in Tiles)
+                tile?.Dispose();
+            Array.Clear(Tiles);
         }
     }
 
@@ -275,8 +285,21 @@ public sealed class LayerCompositor : IDisposable
         var frame = Volatile.Read(ref _currentFrame);
         if (frame == null) return;
 
-        foreach (var ((tx, ty), tile) in frame.Tiles)
-            DrawFrameTile(context, tile.Image, tx, ty, frame.Lod, frame.Width, frame.Height, visibleViewport);
+        var drawArea = visibleViewport.HasValue
+            ? TileAreaForRegion(visibleViewport.Value.ClipTo(frame.Width, frame.Height), frame.Lod)
+            : frame.Area;
+        drawArea = IntersectTileAreas(drawArea, frame.Area);
+        if (drawArea.IsEmpty) return;
+
+        for (var ty = drawArea.Top; ty <= drawArea.Bottom; ty++)
+        {
+            for (var tx = drawArea.Left; tx <= drawArea.Right; tx++)
+            {
+                var tile = frame.Tiles[FrameTileIndex(frame, tx, ty)];
+                if (tile != null)
+                    DrawFrameTile(context, tile.Image, tx, ty, frame.Lod, frame.Width, frame.Height, visibleViewport);
+            }
+        }
     }
 
     private void DrawFrameTile(
@@ -335,18 +358,17 @@ public sealed class LayerCompositor : IDisposable
         var coverage = (viewportClip?.ClipTo(_width, _height) ?? new PixelRegion(0, 0, _width, _height));
         if (coverage.IsEmpty) return false;
 
-        var stride = CmpTileSize * (1 << lod);
-        var firstTX = FloorDiv(coverage.X, stride);
-        var firstTY = FloorDiv(coverage.Y, stride);
-        var lastTX = FloorDiv(coverage.Right - 1, stride);
-        var lastTY = FloorDiv(coverage.Bottom - 1, stride);
-        var images = new Dictionary<(int X, int Y), DisplayFrame.DisplayTile>();
+        var area = TileAreaForRegion(coverage, lod);
+        if (area.IsEmpty) return false;
+        var columns = area.Right - area.Left + 1;
+        var rows = area.Bottom - area.Top + 1;
+        var images = new DisplayFrame.DisplayTile?[columns * rows];
 
         try
         {
-            for (var ty = firstTY; ty <= lastTY; ty++)
+            for (var ty = area.Top; ty <= area.Bottom; ty++)
             {
-                for (var tx = firstTX; tx <= lastTX; tx++)
+                for (var tx = area.Left; tx <= area.Right; tx++)
                 {
                     var key = (tx, ty, lod);
                     if (_pendingDirtyTiles.Contains(key)
@@ -357,11 +379,11 @@ public sealed class LayerCompositor : IDisposable
                     var image = CreateOwnedImageCopy(bmp);
                     if (image == null)
                         return false;
-                    images[(tx, ty)] = image;
+                    images[(ty - area.Top) * columns + (tx - area.Left)] = image;
                 }
             }
 
-            frame = new DisplayFrame(lod, _width, _height, coverage, images);
+            frame = new DisplayFrame(lod, _width, _height, coverage, area, images);
             images = null!;
             return true;
         }
@@ -369,8 +391,8 @@ public sealed class LayerCompositor : IDisposable
         {
             if (images != null)
             {
-                foreach (var image in images.Values)
-                    image.Dispose();
+                foreach (var image in images)
+                    image?.Dispose();
             }
         }
     }
@@ -384,6 +406,12 @@ public sealed class LayerCompositor : IDisposable
         data.Dispose();
         return null;
     }
+
+    private static int FrameTileIndex(DisplayFrame frame, int tx, int ty)
+        => (ty - frame.Area.Top) * frame.Columns + (tx - frame.Area.Left);
+
+    private static TileArea IntersectTileAreas(TileArea a, TileArea b)
+        => new(Math.Max(a.Left, b.Left), Math.Max(a.Top, b.Top), Math.Min(a.Right, b.Right), Math.Min(a.Bottom, b.Bottom));
 
     public void Invalidate(PixelRegion? region = null)
         => Invalidate(region, null, null);
@@ -520,12 +548,9 @@ public sealed class LayerCompositor : IDisposable
                     var region = new PixelRegion(key.X * oldTileStride, key.Y * oldTileStride,
                         oldTileStride, oldTileStride).ClipTo(width, height);
                     if (region.IsEmpty) continue;
-                    var firstTX = FloorDiv(region.X, stride);
-                    var firstTY = FloorDiv(region.Y, stride);
-                    var lastTX = FloorDiv(region.Right - 1, stride);
-                    var lastTY = FloorDiv(region.Bottom - 1, stride);
-                    for (var ty = firstTY; ty <= lastTY; ty++)
-                        for (var tx = firstTX; tx <= lastTX; tx++)
+                    var area = TileAreaForRegion(region, lod);
+                    for (var ty = area.Top; ty <= area.Bottom; ty++)
+                        for (var tx = area.Left; tx <= area.Right; tx++)
                             _pendingDirtyTiles.Add((tx, ty, lod));
                 }
             }
@@ -556,15 +581,12 @@ public sealed class LayerCompositor : IDisposable
         // 1. Dirty tiles.
         if (!queueDirtyClip.IsEmpty)
         {
-            var firstDirtyTX = FloorDiv(queueDirtyClip.X, stride);
-            var firstDirtyTY = FloorDiv(queueDirtyClip.Y, stride);
-            var lastDirtyTX = FloorDiv(queueDirtyClip.Right - 1, stride);
-            var lastDirtyTY = FloorDiv(queueDirtyClip.Bottom - 1, stride);
+            var dirtyArea = TileAreaForRegion(queueDirtyClip, lod);
 
-            for (var ty = firstDirtyTY; ty <= lastDirtyTY; ty++)
-                for (var tx = firstDirtyTX; tx <= lastDirtyTX; tx++)
+            for (var ty = dirtyArea.Top; ty <= dirtyArea.Bottom; ty++)
+                for (var tx = dirtyArea.Left; tx <= dirtyArea.Right; tx++)
                 {
-                    var tileRect = new PixelRegion(tx * stride, ty * stride, stride, stride).Intersect(queueDirtyClip);
+                    var tileRect = TileRect(tx, ty, lod, width, height).Intersect(queueDirtyClip);
                     if (!tileRect.IsEmpty)
                         _pendingDirtyTiles.Add((tx, ty, lod));
                 }
@@ -573,13 +595,10 @@ public sealed class LayerCompositor : IDisposable
         // 2. Missing tiles in viewport (pan / zoom reveals new area).
         if (viewportClip is { } visibleViewport && !visibleViewport.IsEmpty)
         {
-            var firstVisibleTX = FloorDiv(visibleViewport.X, stride);
-            var firstVisibleTY = FloorDiv(visibleViewport.Y, stride);
-            var lastVisibleTX = FloorDiv(visibleViewport.Right - 1, stride);
-            var lastVisibleTY = FloorDiv(visibleViewport.Bottom - 1, stride);
+            var visibleArea = TileAreaForRegion(visibleViewport, lod);
 
-            for (var ty = firstVisibleTY; ty <= lastVisibleTY; ty++)
-                for (var tx = firstVisibleTX; tx <= lastVisibleTX; tx++)
+            for (var ty = visibleArea.Top; ty <= visibleArea.Bottom; ty++)
+                for (var tx = visibleArea.Left; tx <= visibleArea.Right; tx++)
                 {
                     if (_compTiles.ContainsKey((tx, ty, lod))) continue;
                     missingTileKeys.Add((tx, ty));
@@ -707,7 +726,7 @@ public sealed class LayerCompositor : IDisposable
                 var i = 0;
                 foreach (var (tx, ty) in warmSet)
                 {
-                    var tileRect = new PixelRegion(tx * stride, ty * stride, stride, stride).ClipTo(width, height);
+                    var tileRect = TileRect(tx, ty, lod, width, height);
                     if (tileRect.IsEmpty) continue;
                     warmList[i++] = (tx, ty, tileRect);
                 }
@@ -750,7 +769,7 @@ public sealed class LayerCompositor : IDisposable
         {
             var (tx, ty) = allTiles[idx];
             var key = (tx, ty, lodLocal);
-            var tileRect = new PixelRegion(tx * strideLocal, ty * strideLocal, strideLocal, strideLocal).ClipTo(widthLocal, heightLocal);
+            var tileRect = TileRect(tx, ty, lodLocal, widthLocal, heightLocal);
             if (tileRect.IsEmpty) tileRect = new PixelRegion(tx * strideLocal, ty * strideLocal, 1, 1);
 
             if (_tilesPendingComposite.ContainsKey(key))
@@ -846,13 +865,9 @@ public sealed class LayerCompositor : IDisposable
 
     private void QueueDirtyTilesForRegionAtLod(PixelRegion clipped, int lod)
     {
-        var stride = CmpTileSize * (1 << lod);
-        var firstTX = FloorDiv(clipped.X, stride);
-        var firstTY = FloorDiv(clipped.Y, stride);
-        var lastTX = FloorDiv(clipped.Right - 1, stride);
-        var lastTY = FloorDiv(clipped.Bottom - 1, stride);
-        for (var ty = firstTY; ty <= lastTY; ty++)
-            for (var tx = firstTX; tx <= lastTX; tx++)
+        var area = TileAreaForRegion(clipped, lod);
+        for (var ty = area.Top; ty <= area.Bottom; ty++)
+            for (var tx = area.Left; tx <= area.Right; tx++)
                 _pendingDirtyTiles.Add((tx, ty, lod));
     }
 
@@ -883,14 +898,11 @@ public sealed class LayerCompositor : IDisposable
     private bool SourceTilesReadyForBootstrap(int docLeft, int docTop, int docW, int docH, int sourceLod)
     {
         var sourceStride = CmpTileSize * (1 << sourceLod);
-        var srcFirstTX = FloorDiv(docLeft, sourceStride);
-        var srcFirstTY = FloorDiv(docTop, sourceStride);
-        var srcLastTX = FloorDiv(docLeft + docW - 1, sourceStride);
-        var srcLastTY = FloorDiv(docTop + docH - 1, sourceStride);
+        var area = TileAreaForRegion(new PixelRegion(docLeft, docTop, docW, docH), sourceLod);
 
-        for (var sty = srcFirstTY; sty <= srcLastTY; sty++)
+        for (var sty = area.Top; sty <= area.Bottom; sty++)
         {
-            for (var stx = srcFirstTX; stx <= srcLastTX; stx++)
+            for (var stx = area.Left; stx <= area.Right; stx++)
             {
                 var key = (stx, sty, sourceLod);
                 if (!_compTiles.ContainsKey(key) || _tilesPendingComposite.ContainsKey(key))
@@ -1063,12 +1075,25 @@ public sealed class LayerCompositor : IDisposable
     public static int CountTilesForRegion(PixelRegion region, int lod)
     {
         if (region.IsEmpty) return 0;
+        var area = TileAreaForRegion(region, lod);
+        return area.IsEmpty ? 0 : (area.Right - area.Left + 1) * (area.Bottom - area.Top + 1);
+    }
+
+    private static TileArea TileAreaForRegion(PixelRegion region, int lod)
+    {
+        if (region.IsEmpty) return new TileArea(0, 0, -1, -1);
         var stride = CmpTileSize * (1 << Math.Clamp(lod, 0, 8));
-        var firstX = FloorDiv(region.X, stride);
-        var firstY = FloorDiv(region.Y, stride);
-        var lastX = FloorDiv(region.Right - 1, stride);
-        var lastY = FloorDiv(region.Bottom - 1, stride);
-        return (lastX - firstX + 1) * (lastY - firstY + 1);
+        return new TileArea(
+            FloorDiv(region.X, stride),
+            FloorDiv(region.Y, stride),
+            FloorDiv(region.Right - 1, stride),
+            FloorDiv(region.Bottom - 1, stride));
+    }
+
+    private static PixelRegion TileRect(int tx, int ty, int lod, int width, int height)
+    {
+        var stride = CmpTileSize * (1 << lod);
+        return new PixelRegion(tx * stride, ty * stride, stride, stride).ClipTo(width, height);
     }
 
     private static double ElapsedMs(long started)
@@ -1122,8 +1147,7 @@ public sealed class LayerCompositor : IDisposable
             if (onlyLod.HasValue && key.Lod != onlyLod.Value) continue;
             if (exceptLod.HasValue && key.Lod == exceptLod.Value) continue;
 
-            var stride = CmpTileSize * (1 << key.Lod);
-            var tileRegion = new PixelRegion(key.X * stride, key.Y * stride, stride, stride).ClipTo(_width, _height);
+            var tileRegion = TileRect(key.X, key.Y, key.Lod, _width, _height);
             if (!tileRegion.Intersect(clipped).IsEmpty)
                 toDrop.Add(key);
         }
@@ -1149,8 +1173,7 @@ public sealed class LayerCompositor : IDisposable
         var toDrop = new List<(int X, int Y, int Lod)>();
         foreach (var key in _compTiles.Keys)
         {
-            var stride = CmpTileSize * (1 << key.Lod);
-            var tileRegion = new PixelRegion(key.X * stride, key.Y * stride, stride, stride).ClipTo(_width, _height);
+            var tileRegion = TileRect(key.X, key.Y, key.Lod, _width, _height);
             if (tileRegion.Intersect(keep).IsEmpty)
                 toDrop.Add(key);
         }
@@ -1176,13 +1199,15 @@ public sealed class LayerCompositor : IDisposable
         var viewportProtected = new HashSet<(int X, int Y, int Lod)>();
         if (viewportClip is { IsEmpty: false } vpRegion)
         {
-            foreach (var k in _compTiles.Keys)
-            {
-                var vs = CmpTileSize * (1 << k.Lod);
-                var vr = new PixelRegion(k.X * vs, k.Y * vs, vs, vs).ClipTo(_width, _height);
-                if (!vr.Intersect(vpRegion).IsEmpty)
-                    viewportProtected.Add(k);
-            }
+            AddProtectedTilesForRegion(viewportProtected, vpRegion, _currentLod);
+        }
+
+        var frame = Volatile.Read(ref _currentFrame);
+        if (frame != null)
+        {
+            for (var ty = frame.Area.Top; ty <= frame.Area.Bottom; ty++)
+                for (var tx = frame.Area.Left; tx <= frame.Area.Right; tx++)
+                    viewportProtected.Add((tx, ty, frame.Lod));
         }
 
         var keys = new List<(int X, int Y, int Lod)>(_compTiles.Keys);
@@ -1207,7 +1232,7 @@ public sealed class LayerCompositor : IDisposable
             {
                 _tilesPendingDispose.Enqueue(bmp);
                 _pendingDirtyTiles.Remove(key);
-                if (key.Lod == _currentLod)
+                if (viewportClip is null && key.Lod == _currentLod)
                     _pendingDirtyTiles.Add(key);
             }
         }
@@ -1220,6 +1245,15 @@ public sealed class LayerCompositor : IDisposable
             var lodPenalty = key.Lod == _currentLod ? 0.0 : stride;
             return Math.Abs(tileCenterX - centerX) + Math.Abs(tileCenterY - centerY) + lodPenalty;
         }
+    }
+
+    private void AddProtectedTilesForRegion(HashSet<(int X, int Y, int Lod)> protectedTiles, PixelRegion region, int lod)
+    {
+        var area = TileAreaForRegion(region.ClipTo(_width, _height), lod);
+        if (area.IsEmpty) return;
+        for (var ty = area.Top; ty <= area.Bottom; ty++)
+            for (var tx = area.Left; tx <= area.Right; tx++)
+                protectedTiles.Add((tx, ty, lod));
     }
 
     private static int FindRenderSplit(IReadOnlyList<ProjectionSiblingItem> renderList, DrawingLayer paintLayer)
@@ -2190,8 +2224,11 @@ public sealed class LayerCompositor : IDisposable
         var scale = 1 << frame.Lod;
         var tx = FloorDiv(docX, stride);
         var ty = FloorDiv(docY, stride);
-        if (!frame.Tiles.TryGetValue((tx, ty), out var tile))
+        if (tx < frame.Area.Left || tx > frame.Area.Right || ty < frame.Area.Top || ty > frame.Area.Bottom)
             return false;
+
+        var tile = frame.Tiles[FrameTileIndex(frame, tx, ty)];
+        if (tile == null) return false;
 
         var image = tile.Image;
         var localDocX = docX - tx * stride;
