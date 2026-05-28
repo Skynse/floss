@@ -203,6 +203,47 @@ public sealed class LayerCompositor : IDisposable
     public int LastDirtyTileCount { get; private set; }
     public int LastMissingTileCount { get; private set; }
     public int LastLod => _currentLod;
+
+    /// <summary>
+    /// True when the viewport contains tile positions that are either missing
+    /// from the compositor cache, pending a dirty recomposite, or the current
+    /// published DisplayFrame doesn't cover the viewport at all (pan/zoom
+    /// revealed completely new area).
+    /// </summary>
+    public bool IsFrameMissingTiles(PixelRegion viewport)
+    {
+        var frame = Volatile.Read(ref _currentFrame);
+        if (frame == null)
+            return true;
+
+        var coverage = viewport.ClipTo(_width, _height);
+        if (coverage.IsEmpty)
+            return false;
+
+        // Current published frame doesn't cover this viewport at all —
+        // pan/zoom revealed a completely new area. Force sync.
+        var frameCoverage = frame.Coverage;
+        if (frameCoverage.X > coverage.X || frameCoverage.Y > coverage.Y
+            || frameCoverage.Right < coverage.Right || frameCoverage.Bottom < coverage.Bottom)
+            return true;
+
+        var area = TileAreaForRegion(coverage, frame.Lod);
+        if (area.IsEmpty)
+            return false;
+
+        for (var ty = area.Top; ty <= area.Bottom; ty++)
+        {
+            for (var tx = area.Left; tx <= area.Right; tx++)
+            {
+                var key = (tx, ty, frame.Lod);
+                if (_pendingDirtyTiles.Contains(key)
+                    || _tilesPendingComposite.ContainsKey(key)
+                    || !_compTiles.ContainsKey(key))
+                    return true;
+            }
+        }
+        return false;
+    }
     public int PendingDirtyTileCount => _pendingDirtyTiles.Count;
 
     public void DrainDisposalQueue()
