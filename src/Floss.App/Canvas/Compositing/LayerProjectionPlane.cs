@@ -24,6 +24,9 @@ internal sealed class LayerProjectionPlane : IDisposable
     /// <summary>Cached composite of layers below the active stroke layer (stroke fast path).</summary>
     public GroupProjectionCache? StrokeBelow { get; private set; }
 
+    /// <summary>Cached composite of layers above the active stroke layer (stroke fast path).</summary>
+    public GroupProjectionCache? StrokeAbove { get; private set; }
+
     /// <summary>
     /// When true, non–pass-through groups merge children directly into a temp
     /// buffer instead of the group projection cache. Avoids clear-and-refill
@@ -39,9 +42,11 @@ internal sealed class LayerProjectionPlane : IDisposable
     public void Dispose()
     {
         ResetStrokeBelow();
+        ResetStrokeAbove();
         foreach (var cache in _groupCaches.Values)
             cache.Buffer.Dispose();
         _groupCaches.Clear();
+        ClearRangeCaches();
     }
 
     public void SetSize(int width, int height)
@@ -50,9 +55,11 @@ internal sealed class LayerProjectionPlane : IDisposable
         _width = width;
         _height = height;
         ResetStrokeBelow();
+        ResetStrokeAbove();
         foreach (var cache in _groupCaches.Values)
             cache.Buffer.Dispose();
         _groupCaches.Clear();
+        ClearRangeCaches();
     }
 
     public void RemoveGroupCache(DrawingLayer group)
@@ -86,20 +93,45 @@ internal sealed class LayerProjectionPlane : IDisposable
         return StrokeBelow;
     }
 
+    public void ResetStrokeAbove()
+    {
+        StrokeAbove?.Buffer.Dispose();
+        StrokeAbove = null;
+    }
+
+    public void InvalidateStrokeAbove(PixelRegion? region)
+    {
+        if (StrokeAbove is not { } strokeAbove) return;
+        lock (strokeAbove.SyncRoot)
+            strokeAbove.Invalidate(region);
+    }
+
+    public GroupProjectionCache GetOrCreateStrokeAbove(int width, int height)
+    {
+        if (StrokeAbove == null)
+        {
+            StrokeAbove = new GroupProjectionCache(width, height);
+            StrokeAbove.Invalidate(null);
+        }
+        else
+            StrokeAbove.EnsureSize(width, height);
+        return StrokeAbove;
+    }
+
     public void InvalidateGroupCaches(PixelRegion? region, IReadOnlyList<DrawingLayer>? layers, int? layerIndex,
-        bool fullGroupInvalidation = false, bool invalidateStrokeBelow = true)
+        bool fullGroupInvalidation = false, bool invalidateStrokeBelow = true, bool invalidateStrokeAbove = true)
     {
         DrawingLayer? changed = null;
         if (layers != null && layerIndex is >= 0 and var idx && idx < layers.Count)
             changed = layers[idx];
-        InvalidateGroupCaches(region, changed, fullGroupInvalidation, invalidateStrokeBelow);
+        InvalidateGroupCaches(region, changed, fullGroupInvalidation, invalidateStrokeBelow, invalidateStrokeAbove);
     }
 
     /// <summary>
     /// Invalidate group projection caches along the parent chain (KisMergeWalker-style).
     /// </summary>
     public void InvalidateGroupCaches(PixelRegion? region, DrawingLayer? changedLayer,
-        bool fullGroupInvalidation = false, bool invalidateStrokeBelow = true)
+        bool fullGroupInvalidation = false, bool invalidateStrokeBelow = true, bool invalidateStrokeAbove = true)
     {
         if (region is null || region.Value.IsEmpty || changedLayer is null)
         {
@@ -112,6 +144,11 @@ internal sealed class LayerProjectionPlane : IDisposable
             {
                 lock (strokeBelow.SyncRoot)
                     strokeBelow.Invalidate(region);
+            }
+            if (invalidateStrokeAbove && StrokeAbove is { } strokeAbove)
+            {
+                lock (strokeAbove.SyncRoot)
+                    strokeAbove.Invalidate(region);
             }
             return;
         }
@@ -132,13 +169,108 @@ internal sealed class LayerProjectionPlane : IDisposable
             }
         }
 
-        // A group that obliges this layer reads its pixels directly — no cache entry, but
-        // any cached ancestor above that group still needs invalidation (handled by parent walk).
         if (invalidateStrokeBelow && StrokeBelow is { } strokeBelowInv)
         {
             lock (strokeBelowInv.SyncRoot)
                 strokeBelowInv.Invalidate(r);
         }
+        if (invalidateStrokeAbove && StrokeAbove is { } strokeAboveInv)
+        {
+            lock (strokeAboveInv.SyncRoot)
+                strokeAboveInv.Invalidate(r);
+        }
+    }
+
+    public void ClearRangeCaches()
+    {
+        foreach (var cache in _rangeCache.Values)
+            cache.Buffer.Dispose();
+        _rangeCache.Clear();
+    }
+
+    /// <summary>
+    /// Composite renderList[first..first+count) into dst using pre-baked power-of-2-aligned
+    /// range caches where possible (O(log N) buffer composites instead of O(N) layer passes).
+    /// Only Normal/PassThrough/Copy-blend ranges are cached; mixed-blend slices fall back to direct.
+    /// </summary>
+    public unsafe void CompositeRenderListViaRangeCache(
+        byte* dst, int dstStride, int width, int height,
+        IReadOnlyList<ProjectionSiblingItem> renderList,
+        int first, int count,
+        double opacityScale, PixelRegion clip, int originX, int originY)
+    {
+        if (count <= 0 || opacityScale <= 0) return;
+        var last = first + count - 1;
+        var i = first;
+        while (i <= last)
+        {
+            var blockSize = FindAlignedBlockSize(i, last - i + 1);
+            var blockEnd = i + blockSize - 1;
+            if (blockSize >= RangeCacheMinBlock && CanCacheRange(renderList, i, blockEnd))
+            {
+                var buf = GetOrBuildRangeBuffer(renderList, i, blockEnd, clip);
+                LayerCompositorPixelOps.CompositeProjectionBuffer(dst, dstStride, buf, "Normal", opacityScale, clip, originX, originY);
+            }
+            else
+            {
+                CompositeSiblingStackSlice(dst, dstStride, width, height, renderList, i, blockEnd + 1, opacityScale, clip, originX, originY);
+            }
+            i = blockEnd + 1;
+        }
+    }
+
+    private static int FindAlignedBlockSize(int start, int maxCount)
+    {
+        var size = 1;
+        while (size * 2 <= maxCount && (start & (size * 2 - 1)) == 0)
+            size *= 2;
+        return size;
+    }
+
+    private static bool CanCacheRange(IReadOnlyList<ProjectionSiblingItem> list, int first, int last)
+    {
+        for (var i = first; i <= last; i++)
+        {
+            var blend = list[i].Layer.BlendMode;
+            if (blend != "Normal" && blend != "PassThrough" && blend != "Copy")
+                return false;
+        }
+        return true;
+    }
+
+    private unsafe TiledPixelBuffer GetOrBuildRangeBuffer(
+        IReadOnlyList<ProjectionSiblingItem> renderList, int first, int last, PixelRegion clip)
+    {
+        var key = (renderList[first].Layer, renderList[last].Layer);
+        if (!_rangeCache.TryGetValue(key, out var cache))
+        {
+            lock (_rangeCacheLock)
+                cache = _rangeCache.GetOrAdd(key, _ => new GroupProjectionCache(_width, _height));
+        }
+
+        lock (cache.SyncRoot)
+        {
+            cache.EnsureSize(_width, _height);
+            var clipToCanvas = clip.ClipTo(_width, _height);
+            if (clipToCanvas.IsEmpty) return cache.Buffer;
+
+            if (!cache.Buffer.HasContentTiles(clipToCanvas))
+            {
+                cache.Buffer.Clear(clipToCanvas);
+                var tempLen = clipToCanvas.Width * clipToCanvas.Height * 4;
+                var temp = System.Buffers.ArrayPool<byte>.Shared.Rent(tempLen);
+                try
+                {
+                    Array.Clear(temp, 0, tempLen);
+                    fixed (byte* tempPtr = temp)
+                        CompositeSiblingStackSlice(tempPtr, clipToCanvas.Width * 4, clipToCanvas.Width, clipToCanvas.Height,
+                            renderList, first, last + 1, 1.0, clipToCanvas, clipToCanvas.X, clipToCanvas.Y);
+                    cache.Buffer.CopyFromBgra(clipToCanvas, temp, clipToCanvas.Width * 4);
+                }
+                finally { System.Buffers.ArrayPool<byte>.Shared.Return(temp); }
+            }
+        }
+        return cache.Buffer;
     }
 
     /// <summary>
@@ -214,6 +346,38 @@ internal sealed class LayerProjectionPlane : IDisposable
             {
                 _host.CompositePaintLayer(dst, dstStride, width, height, item.Layer, opacityScale, clip, originX, originY);
             }
+        }
+    }
+
+    private unsafe void CompositeSiblingStackSlice(
+        byte* dst, int dstStride, int width, int height,
+        IReadOnlyList<ProjectionSiblingItem> stack,
+        int startIndex, int endIndex,
+        double opacityScale, PixelRegion clip, int originX, int originY)
+    {
+        if (opacityScale <= 0) return;
+        for (var i = startIndex; i < endIndex; i++)
+        {
+            var item = stack[i];
+            if (!item.Layer.IsVisible) continue;
+
+            if (item.IsClipped && item.BaseLayerIndex >= 0)
+            {
+                var baseLayer = stack[item.BaseLayerIndex].Layer;
+                if (!baseLayer.IsVisible) continue;
+                if (item.Layer.IsGroup)
+                    _host.CompositeClippedGroupIntoBuffer(dst, dstStride, width, height, item.Layer, baseLayer, opacityScale, clip, originX, originY);
+                else if (item.Layer.Adjustment != null)
+                    AdjustmentLayerProcessor.ApplyClipped(dst, dstStride, width, height, item.Layer.Adjustment, item.Layer.Opacity * opacityScale, baseLayer, clip, originX, originY);
+                else
+                    _host.CompositeClippedPaintLayer(dst, dstStride, width, height, item.Layer, baseLayer, opacityScale, clip, originX, originY);
+            }
+            else if (item.Layer.IsGroup)
+                CompositeGroupNode(dst, dstStride, width, height, item.Layer, opacityScale, clip, originX, originY);
+            else if (item.Layer.Adjustment != null)
+                AdjustmentLayerProcessor.Apply(dst, dstStride, width, height, item.Layer.Adjustment, item.Layer.Opacity * opacityScale, clip, originX, originY);
+            else
+                _host.CompositePaintLayer(dst, dstStride, width, height, item.Layer, opacityScale, clip, originX, originY);
         }
     }
 
@@ -369,6 +533,13 @@ internal sealed class LayerProjectionPlane : IDisposable
     }
 
     private readonly object _groupCacheCreateLock = new();
+
+    // Range cache: pre-composited buffers for power-of-2-aligned contiguous slices of the
+    // flat render list, keyed by (first layer identity, last layer identity).
+    // Used to rebuild StrokeBelow/StrokeAbove in O(log N) buffer composites instead of O(N) layer iterates.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(DrawingLayer First, DrawingLayer Last), GroupProjectionCache> _rangeCache = new();
+    private readonly object _rangeCacheLock = new();
+    private const int RangeCacheMinBlock = 4;
 
     private unsafe TiledPixelBuffer GetGroupProjection(DrawingLayer group, PixelRegion requestedClip)
     {

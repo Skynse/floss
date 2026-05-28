@@ -58,8 +58,8 @@ public sealed class LayerCompositor : IDisposable
     // ConcurrentDictionary so DrawTiles (UI thread) can snapshot entries while
     // Composite (background thread) adds new tiles. Removal of disposed tiles
     // is funneled through _tilesPendingDispose -> UI thread to avoid disposing
-    // a WriteableBitmap that's mid-draw on the UI thread.
-    private readonly ConcurrentDictionary<(int X, int Y, int Lod), WriteableBitmap> _compTiles = new();
+    // an SKBitmap that's mid-draw on the UI thread.
+    private readonly ConcurrentDictionary<(int X, int Y, int Lod), SKBitmap> _compTiles = new();
     private int _width;
     private int _height;
     private bool _fullDirty = true;
@@ -74,7 +74,7 @@ public sealed class LayerCompositor : IDisposable
     private readonly ConcurrentDictionary<(int X, int Y, int Lod), byte> _tilesPendingComposite = new();
     // Tiles removed during a composite pass — disposed lazily on the UI thread
     // so DrawImage(bitmap) on the UI thread never observes a freed bitmap.
-    private readonly ConcurrentQueue<WriteableBitmap> _tilesPendingDispose = new();
+    private readonly ConcurrentQueue<SKBitmap> _tilesPendingDispose = new();
     // Serialises Composite() vs DrawTiles() — UI render acquires this briefly
     // to atomically observe the tile map. Background composite holds it for
     // the whole pass. Reentrancy avoided by always taking from the outside in.
@@ -98,6 +98,7 @@ public sealed class LayerCompositor : IDisposable
             _strokeSuspendDepth++;
             _strokePaintLayerIndex = layerIndex;
             Projection.ResetStrokeBelow();
+            Projection.ResetStrokeAbove();
         }
     }
 
@@ -116,6 +117,7 @@ public sealed class LayerCompositor : IDisposable
             if (_strokeSuspendDepth > 0) return;
             _strokePaintLayerIndex = -1;
             Projection.ResetStrokeBelow();
+            Projection.ResetStrokeAbove();
         }
     }
 
@@ -127,6 +129,7 @@ public sealed class LayerCompositor : IDisposable
             _strokeSuspendDepth = 0;
             _strokePaintLayerIndex = -1;
             Projection.ResetStrokeBelow();
+            Projection.ResetStrokeAbove();
         }
     }
     public int LastDirtyTileCount { get; private set; }
@@ -190,16 +193,15 @@ public sealed class LayerCompositor : IDisposable
             foreach (var ((tx, ty, lod), srcBmp) in _compTiles)
             {
                 var stride = CmpTileSize;
-                int tw = srcBmp.PixelSize.Width;
-                int th = srcBmp.PixelSize.Height;
+                int tw = srcBmp.Width;
+                int th = srcBmp.Height;
                 int dx = tx * stride;
                 int dy = ty * stride;
 
                 if (tw <= 0 || th <= 0) { tw = 1; th = 1; }
 
-                using var srcFrame = srcBmp.Lock();
-                var src = (byte*)srcFrame.Address;
-                var rowBytes = srcFrame.RowBytes;
+                var src = (byte*)srcBmp.GetPixels().ToPointer();
+                var rowBytes = srcBmp.RowBytes;
 
                 for (int y = 0; y < th; y++)
                     Buffer.MemoryCopy(src + y * rowBytes, dst + (dy + y) * dstFrame.RowBytes + dx * 4, tw * 4, tw * 4);
@@ -305,7 +307,7 @@ public sealed class LayerCompositor : IDisposable
     }
 
     private static bool SnapshotHasReadyTile(
-        KeyValuePair<(int X, int Y, int Lod), WriteableBitmap>[] snapshot,
+        KeyValuePair<(int X, int Y, int Lod), SKBitmap>[] snapshot,
         int tx, int ty, int lod)
     {
         for (var i = 0; i < snapshot.Length; i++)
@@ -318,7 +320,7 @@ public sealed class LayerCompositor : IDisposable
         return false;
     }
 
-    private IEnumerable<int> CachedFallbackLods(KeyValuePair<(int X, int Y, int Lod), WriteableBitmap>[] snapshot, int displayLod)
+    private IEnumerable<int> CachedFallbackLods(KeyValuePair<(int X, int Y, int Lod), SKBitmap>[] snapshot, int displayLod)
     {
         var lods = new HashSet<int>();
         for (var i = 0; i < snapshot.Length; i++)
@@ -339,7 +341,7 @@ public sealed class LayerCompositor : IDisposable
         return ordered;
     }
 
-    private void DrawTile(DrawingContext context, WriteableBitmap bmp, int tx, int ty, int lod, PixelRegion? visibleViewport)
+    private void DrawTile(DrawingContext context, SKBitmap bmp, int tx, int ty, int lod, PixelRegion? visibleViewport)
     {
         var stride = CmpTileSize * (1 << lod);
         var docTileW = Math.Min(stride, _width - tx * stride);
@@ -357,14 +359,14 @@ public sealed class LayerCompositor : IDisposable
                 return;
         }
 
-        var src = new Rect(0, 0, bmp.PixelSize.Width, bmp.PixelSize.Height);
+        var src = new SKRect(0, 0, bmp.Width, bmp.Height);
         var dest = new Rect(tileLeft, tileTop, docTileW, docTileH);
-        context.DrawImage(bmp, src, dest);
+        context.Custom(new SkiaTileDrawOp(bmp, src, dest));
     }
 
     private bool CurrentLodHasVisibleHoles(
         PixelRegion? visibleViewport,
-        KeyValuePair<(int X, int Y, int Lod), WriteableBitmap>[] snapshot,
+        KeyValuePair<(int X, int Y, int Lod), SKBitmap>[] snapshot,
         HashSet<(int X, int Y)> pendingCurrentLod,
         int displayLod)
     {
@@ -445,11 +447,11 @@ public sealed class LayerCompositor : IDisposable
                     QueueDirtyTilesForRegionAtLod(tileRegion, _currentLod);
                 }
 
-                InvalidateGroupCaches(cacheRegion, layers, layerIndex, invalidateStrokeBelow: !changedStrokeLayer);
+                InvalidateGroupCaches(cacheRegion, layers, layerIndex, invalidateStrokeBelow: !changedStrokeLayer, invalidateStrokeAbove: !changedStrokeLayer);
                 return;
             }
 
-            InvalidateGroupCaches(region, layers, layerIndex, invalidateStrokeBelow: !changedStrokeLayer);
+            InvalidateGroupCaches(region, layers, layerIndex, invalidateStrokeBelow: !changedStrokeLayer, invalidateStrokeAbove: !changedStrokeLayer);
         }
     }
 
@@ -719,8 +721,8 @@ public sealed class LayerCompositor : IDisposable
                 if (i < warmList.Length) Array.Resize(ref warmList, i);
             }
 
-            // WarmStrokeBelowForTile only touches disjoint regions of
-            // Projection.StrokeBelow.Buffer (TiledPixelBuffer has internal
+            // WarmStrokeCachesForTile only touches disjoint regions of
+            // StrokeBelow/StrokeAbove buffers (TiledPixelBuffer has internal
             // locks) and ignores TakeDirty's return value, so parallel
             // warming of disjoint tile rects is safe.
             if (liveStrokePass && warmList.Length >= 2 && Environment.ProcessorCount > 1)
@@ -728,7 +730,7 @@ public sealed class LayerCompositor : IDisposable
                 Parallel.For(0, warmList.Length, _liveStrokeCompositeParallelOptions, idx =>
                 {
                     var (_, _, rect) = warmList[idx];
-                    WarmStrokeBelowForTile(renderList, strokeSplit, rect, width, height);
+                    WarmStrokeCachesForTile(renderList, strokeSplit, rect, width, height);
                 });
             }
             else if (warmList.Length >= 4 && Environment.ProcessorCount > 1)
@@ -736,7 +738,7 @@ public sealed class LayerCompositor : IDisposable
                 Parallel.For(0, warmList.Length, _compositeParallelOptions, idx =>
                 {
                     var (_, _, rect) = warmList[idx];
-                    WarmStrokeBelowForTile(renderList, strokeSplit, rect, width, height);
+                    WarmStrokeCachesForTile(renderList, strokeSplit, rect, width, height);
                 });
             }
             else
@@ -744,7 +746,7 @@ public sealed class LayerCompositor : IDisposable
                 for (var i = 0; i < warmList.Length; i++)
                 {
                     var (_, _, rect) = warmList[i];
-                    WarmStrokeBelowForTile(renderList, strokeSplit, rect, width, height);
+                    WarmStrokeCachesForTile(renderList, strokeSplit, rect, width, height);
                 }
             }
         }
@@ -771,7 +773,7 @@ public sealed class LayerCompositor : IDisposable
                 // torn reads (row-by-row in-place write vs concurrent render read).
                 var fresh = AllocTileBitmap(tx, ty, lodLocal, widthLocal, heightLocal);
                 CompositeTileCpu(fresh, tileRect, renderListLocal, tx * strideLocal, ty * strideLocal, lodLocal, paperLocal, strokeSplitLocal);
-                WriteableBitmap? old = null;
+                SKBitmap? old = null;
                 compTilesLocal.AddOrUpdate(key, fresh, (_, existing) => { old = existing; return fresh; });
                 if (old != null) _tilesPendingDispose.Enqueue(old);
             }
@@ -941,9 +943,8 @@ public sealed class LayerCompositor : IDisposable
 
         unsafe
         {
-            using var frame = bmp.Lock();
-            var src = (byte*)frame.Address;
-            var ptr = src + by * frame.RowBytes + bx * 4;
+            var src = (byte*)bmp.GetPixels().ToPointer();
+            var ptr = src + by * bmp.RowBytes + bx * 4;
             b = ptr[0];
             g = ptr[1];
             r = ptr[2];
@@ -981,37 +982,32 @@ public sealed class LayerCompositor : IDisposable
 
         var target = EnsureTile(tx, ty, targetLod);
 
-        // Lock each source tile once rather than per output pixel.
-        var frames = new ILockedFramebuffer?[srcTileCount];
+        // Snapshot pixel pointers for each source tile once rather than per output pixel.
         var ptrs = new byte*[srcTileCount];
         var rowBytesArr = new int[srcTileCount];
         var bmpWArr = new int[srcTileCount];
         var bmpHArr = new int[srcTileCount];
 
-        try
+        for (var sty = styFirst; sty <= styLast; sty++)
         {
-            for (var sty = styFirst; sty <= styLast; sty++)
+            for (var stx = stxFirst; stx <= stxLast; stx++)
             {
-                for (var stx = stxFirst; stx <= stxLast; stx++)
-                {
-                    var idx = (sty - styFirst) * srcCols + (stx - stxFirst);
-                    if (!_compTiles.TryGetValue((stx, sty, sourceLod), out var bmp)) continue;
-                    var tileDocW = Math.Min(srcStride, _width - stx * srcStride);
-                    var tileDocH = Math.Min(srcStride, _height - sty * srcStride);
-                    bmpWArr[idx] = Math.Max(1, (tileDocW + srcScale - 1) / srcScale);
-                    bmpHArr[idx] = Math.Max(1, (tileDocH + srcScale - 1) / srcScale);
-                    var frame = bmp.Lock();
-                    frames[idx] = frame;
-                    ptrs[idx] = (byte*)frame.Address;
-                    rowBytesArr[idx] = frame.RowBytes;
-                }
+                var idx = (sty - styFirst) * srcCols + (stx - stxFirst);
+                if (!_compTiles.TryGetValue((stx, sty, sourceLod), out var bmp)) continue;
+                var tileDocW = Math.Min(srcStride, _width - stx * srcStride);
+                var tileDocH = Math.Min(srcStride, _height - sty * srcStride);
+                bmpWArr[idx] = Math.Max(1, (tileDocW + srcScale - 1) / srcScale);
+                bmpHArr[idx] = Math.Max(1, (tileDocH + srcScale - 1) / srcScale);
+                ptrs[idx] = (byte*)bmp.GetPixels().ToPointer();
+                rowBytesArr[idx] = bmp.RowBytes;
             }
+        }
 
-            using var dstFrame = target.Lock();
-            var dst = (byte*)dstFrame.Address;
-            var dstStride = dstFrame.RowBytes;
-            var outW = target.PixelSize.Width;
-            var outH = target.PixelSize.Height;
+        {
+            var dst = (byte*)target.GetPixels().ToPointer();
+            var dstStride = target.RowBytes;
+            var outW = target.Width;
+            var outH = target.Height;
 
             for (var oy = 0; oy < outH; oy++)
             {
@@ -1055,11 +1051,6 @@ public sealed class LayerCompositor : IDisposable
                 }
             }
         }
-        finally
-        {
-            for (var i = 0; i < srcTileCount; i++)
-                frames[i]?.Dispose();
-        }
 
         _tilesPendingComposite.TryRemove((tx, ty, targetLod), out _);
         return true;
@@ -1089,7 +1080,7 @@ public sealed class LayerCompositor : IDisposable
     private static double ElapsedMs(long started)
         => (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
 
-    private WriteableBitmap AllocTileBitmap(int tx, int ty, int lod, int width, int height)
+    private static SKBitmap AllocTileBitmap(int tx, int ty, int lod, int width, int height)
     {
         var scale = 1 << lod;
         var docStride = CmpTileSize * scale;
@@ -1098,10 +1089,10 @@ public sealed class LayerCompositor : IDisposable
         if (docW <= 0 || docH <= 0) docW = docH = 1;
         var tileW = Math.Max(1, (docW + scale - 1) / scale);
         var tileH = Math.Max(1, (docH + scale - 1) / scale);
-        return new WriteableBitmap(new PixelSize(tileW, tileH), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Unpremul);
+        return new SKBitmap(new SKImageInfo(tileW, tileH, SKColorType.Bgra8888, SKAlphaType.Unpremul));
     }
 
-    private WriteableBitmap EnsureTile(int tx, int ty, int lod)
+    private SKBitmap EnsureTile(int tx, int ty, int lod)
     {
         var key = (tx, ty, lod);
         if (_compTiles.TryGetValue(key, out var existing))
@@ -1113,8 +1104,8 @@ public sealed class LayerCompositor : IDisposable
         if (docW <= 0 || docH <= 0) docW = docH = 1;
         var tileW = Math.Max(1, (docW + scale - 1) / scale);
         var tileH = Math.Max(1, (docH + scale - 1) / scale);
-        var fresh = new WriteableBitmap(new PixelSize(tileW, tileH), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Unpremul);
-        ClearWriteableBitmap(fresh);
+        var fresh = new SKBitmap(new SKImageInfo(tileW, tileH, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+        fresh.Erase(SKColors.Transparent);
         // GetOrAdd here protects against a racy duplicate create. The wasted
         // bitmap is enqueued for UI-thread disposal.
         var t = _compTiles.GetOrAdd(key, fresh);
@@ -1123,14 +1114,6 @@ public sealed class LayerCompositor : IDisposable
         else
             _tilesPendingComposite.TryAdd(key, 0);
         return t;
-    }
-
-    private static unsafe void ClearWriteableBitmap(WriteableBitmap bmp)
-    {
-        using var frame = bmp.Lock();
-        var ptr = (byte*)frame.Address;
-        var bytes = frame.RowBytes * bmp.PixelSize.Height;
-        new Span<byte>(ptr, bytes).Clear();
     }
 
     private void DropCachedTilesOverlapping(PixelRegion region, int? onlyLod = null, int? exceptLod = null)
@@ -1253,33 +1236,45 @@ public sealed class LayerCompositor : IDisposable
         return -1;
     }
 
-    private unsafe void WarmStrokeBelowForTile(
+    private unsafe void WarmStrokeCachesForTile(
         IReadOnlyList<ProjectionSiblingItem> renderList, int split, PixelRegion tileRect, int width, int height)
     {
-        var strokeBelow = Projection.GetOrCreateStrokeBelow(width, height);
-
         // Always warm the full compositor tile. Partial warms (from TakeDirty
         // intersecting the stroke-invalidation bbox) left tile edges empty while
         // CompositeTileStrokeCpu composites the whole WriteableBitmap — checkerboard
         // holes in a stair-step tile pattern during live strokes.
         var dirty = tileRect;
-
-        strokeBelow.Buffer.Clear(dirty);
         var tempLen = dirty.Width * dirty.Height * 4;
-        var temp = ArrayPool<byte>.Shared.Rent(tempLen);
-        Array.Clear(temp, 0, tempLen);
-        fixed (byte* tempPtr = temp)
+
+        if (split > 0)
         {
-            CompositeRenderListRange(tempPtr, dirty.Width * 4, dirty.Width, dirty.Height,
-                renderList, 0, split, 1.0, dirty, dirty.X, dirty.Y);
+            var strokeBelow = Projection.GetOrCreateStrokeBelow(width, height);
+            strokeBelow.Buffer.Clear(dirty);
+            var temp = ArrayPool<byte>.Shared.Rent(tempLen);
+            Array.Clear(temp, 0, tempLen);
+            fixed (byte* tempPtr = temp)
+                Projection.CompositeRenderListViaRangeCache(tempPtr, dirty.Width * 4, dirty.Width, dirty.Height,
+                    renderList, 0, split, 1.0, dirty, dirty.X, dirty.Y);
+            strokeBelow.Buffer.CopyFromBgra(dirty, temp, dirty.Width * 4);
+            ArrayPool<byte>.Shared.Return(temp);
         }
-        strokeBelow.Buffer.CopyFromBgra(dirty, temp, dirty.Width * 4);
-        // Compression is for memory-pressure relief, not correctness; skip on
-        // the stroke hot path so warming a tile is just composite + copy.
-        ArrayPool<byte>.Shared.Return(temp);
+
+        var aboveStart = split + 1;
+        if (aboveStart < renderList.Count)
+        {
+            var strokeAbove = Projection.GetOrCreateStrokeAbove(width, height);
+            strokeAbove.Buffer.Clear(dirty);
+            var temp = ArrayPool<byte>.Shared.Rent(tempLen);
+            Array.Clear(temp, 0, tempLen);
+            fixed (byte* tempPtr = temp)
+                Projection.CompositeRenderListViaRangeCache(tempPtr, dirty.Width * 4, dirty.Width, dirty.Height,
+                    renderList, aboveStart, renderList.Count - aboveStart, 1.0, dirty, dirty.X, dirty.Y);
+            strokeAbove.Buffer.CopyFromBgra(dirty, temp, dirty.Width * 4);
+            ArrayPool<byte>.Shared.Return(temp);
+        }
     }
 
-    private unsafe void CompositeTileCpu(WriteableBitmap tile, PixelRegion tileRect,
+    private unsafe void CompositeTileCpu(SKBitmap tile, PixelRegion tileRect,
         IReadOnlyList<ProjectionSiblingItem> renderList, int originX, int originY, int lod, uint paperColor = 0,
         int strokeSplit = -1)
     {
@@ -1290,35 +1285,39 @@ public sealed class LayerCompositor : IDisposable
         }
 
         if (strokeSplit >= 0 && Projection.StrokeBelow != null
-            && (strokeSplit == 0 || Projection.StrokeBelow.Buffer.HasContentTiles(tileRect)))
+            && (strokeSplit == 0 || Projection.StrokeBelow.Buffer.HasContentTiles(tileRect))
+            && (strokeSplit + 1 >= renderList.Count || (Projection.StrokeAbove != null && Projection.StrokeAbove.Buffer.HasContentTiles(tileRect))))
         {
             CompositeTileStrokeCpu(tile, tileRect, renderList, strokeSplit, originX, originY, paperColor);
             return;
         }
 
-        var tw = tile.PixelSize.Width;
-        var th = tile.PixelSize.Height;
-        using var frame = tile.Lock();
-        var dst = (byte*)frame.Address;
-        var dstStride = frame.RowBytes;
+        var tw = tile.Width;
+        var th = tile.Height;
+        var dst = (byte*)tile.GetPixels().ToPointer();
+        var dstStride = tile.RowBytes;
         ClearTile(dst, dstStride, tileRect, originX, originY, paperColor);
         CompositeRenderList(dst, dstStride, tw, th, renderList, 1.0, tileRect, originX, originY);
     }
 
-    private unsafe void CompositeTileStrokeCpu(WriteableBitmap tile, PixelRegion tileRect,
+    private unsafe void CompositeTileStrokeCpu(SKBitmap tile, PixelRegion tileRect,
         IReadOnlyList<ProjectionSiblingItem> renderList, int split, int originX, int originY, uint paperColor)
     {
-        var tw = tile.PixelSize.Width;
-        var th = tile.PixelSize.Height;
-        using var frame = tile.Lock();
-        var dst = (byte*)frame.Address;
-        var dstStride = frame.RowBytes;
+        var tw = tile.Width;
+        var th = tile.Height;
+        var dst = (byte*)tile.GetPixels().ToPointer();
+        var dstStride = tile.RowBytes;
         ClearTile(dst, dstStride, tileRect, originX, originY, paperColor);
+        // 1. Pre-baked below cache
         LayerCompositorPixelOps.CompositeProjectionBuffer(dst, dstStride, Projection.StrokeBelow!.Buffer, "Normal", 1.0, tileRect, originX, originY);
-        CompositeRenderListRange(dst, dstStride, tw, th, renderList, split, renderList.Count, 1.0, tileRect, originX, originY);
+        // 2. Active stroke layer only
+        CompositeRenderListRange(dst, dstStride, tw, th, renderList, split, split + 1, 1.0, tileRect, originX, originY);
+        // 3. Pre-baked above cache (null when active layer is topmost)
+        if (Projection.StrokeAbove != null)
+            LayerCompositorPixelOps.CompositeProjectionBuffer(dst, dstStride, Projection.StrokeAbove.Buffer, "Normal", 1.0, tileRect, originX, originY);
     }
 
-    private unsafe void CompositeTileLodCpu(WriteableBitmap tile, PixelRegion tileRect,
+    private unsafe void CompositeTileLodCpu(SKBitmap tile, PixelRegion tileRect,
         IReadOnlyList<ProjectionSiblingItem> renderList, int originX, int originY, int lod, uint paperColor)
     {
         // FAST PATH: if every layer is Normal-blend with no fancy color, no
@@ -1348,11 +1347,10 @@ public sealed class LayerCompositor : IDisposable
                     for (var c = 0; c < count; c++) clear[c] = paperColor;
                     CompositeRenderList(tp, tileRect.Width * 4, tileRect.Width, tileRect.Height,
                         renderList, 1.0, tileRect, originX, originY);
-                    using var f = tile.Lock();
-                    var fd = (byte*)f.Address;
-                    var fds = f.RowBytes;
+                    var fd = (byte*)tile.GetPixels().ToPointer();
+                    var fds = tile.RowBytes;
                     var scl = 1 << lod;
-                    for (var y = 0; y < tile.PixelSize.Height; y++)
+                    for (var y = 0; y < tile.Height; y++)
                     {
                         var sy = Math.Min(tileRect.Height - 1.0f, (y + 0.5f) * scl - 0.5f);
                         var sy0 = Math.Clamp((int)MathF.Floor(sy), 0, tileRect.Height - 1);
@@ -1361,7 +1359,7 @@ public sealed class LayerCompositor : IDisposable
                         var srcRow0 = tp + sy0 * tileRect.Width * 4;
                         var srcRow1 = tp + sy1 * tileRect.Width * 4;
                         var dstRow = fd + y * fds;
-                        for (var x = 0; x < tile.PixelSize.Width; x++)
+                        for (var x = 0; x < tile.Width; x++)
                         {
                             var sx = Math.Min(tileRect.Width - 1.0f, (x + 0.5f) * scl - 0.5f);
                             var sx0 = Math.Clamp((int)MathF.Floor(sx), 0, tileRect.Width - 1);
@@ -1386,11 +1384,10 @@ public sealed class LayerCompositor : IDisposable
             return;
         }
 
-        using var frame = tile.Lock();
-        var dst = (byte*)frame.Address;
-        var dstStride = frame.RowBytes;
-        var dstW = tile.PixelSize.Width;
-        var dstH = tile.PixelSize.Height;
+        var dst = (byte*)tile.GetPixels().ToPointer();
+        var dstStride = tile.RowBytes;
+        var dstW = tile.Width;
+        var dstH = tile.Height;
 
         for (var y = 0; y < dstH; y++)
         {
@@ -1773,15 +1770,14 @@ public sealed class LayerCompositor : IDisposable
         return false;
     }
 
-    private unsafe void CompositeTileLodFastCpu(WriteableBitmap tile, PixelRegion tileRect,
+    private unsafe void CompositeTileLodFastCpu(SKBitmap tile, PixelRegion tileRect,
         IReadOnlyList<ProjectionSiblingItem> renderList, int originX, int originY, int lod, uint paperColor)
     {
-        using var frame = tile.Lock();
-        var dst = (byte*)frame.Address;
-        var dstStride = frame.RowBytes;
+        var dst = (byte*)tile.GetPixels().ToPointer();
+        var dstStride = tile.RowBytes;
         var scale = 1 << lod;
-        var dstW = tile.PixelSize.Width;
-        var dstH = tile.PixelSize.Height;
+        var dstW = tile.Width;
+        var dstH = tile.Height;
 
         for (var y = 0; y < dstH; y++)
         {
@@ -2097,9 +2093,13 @@ public sealed class LayerCompositor : IDisposable
     }
 
     private void InvalidateGroupCaches(PixelRegion? region, IReadOnlyList<DrawingLayer>? layers, int? layerIndex,
-        bool fullGroupInvalidation = false, bool invalidateStrokeBelow = true)
+        bool fullGroupInvalidation = false, bool invalidateStrokeBelow = true, bool invalidateStrokeAbove = true)
     {
-        Projection.InvalidateGroupCaches(region, layers, layerIndex, fullGroupInvalidation, invalidateStrokeBelow);
+        // Range caches are safe when ONLY the stroke layer changed (it's excluded from both ranges).
+        // Clear them when any other layer changes so stale sub-range composites don't bleed through.
+        if (invalidateStrokeBelow || invalidateStrokeAbove)
+            Projection.ClearRangeCaches();
+        Projection.InvalidateGroupCaches(region, layers, layerIndex, fullGroupInvalidation, invalidateStrokeBelow, invalidateStrokeAbove);
     }
 
     public unsafe SKBitmap AssembleSkBitmap(int outputWidth, int outputHeight, int lod = -1, uint paperColor = 0)
@@ -2139,10 +2139,9 @@ public sealed class LayerCompositor : IDisposable
                 if (dx >= outputWidth || dy >= outputHeight)
                     continue;
 
-                using var srcFrame = srcBmp.Lock();
-                var src = (byte*)srcFrame.Address;
-                var tw = Math.Min(srcBmp.PixelSize.Width, outputWidth - dx);
-                var th = Math.Min(srcBmp.PixelSize.Height, outputHeight - dy);
+                var src = (byte*)srcBmp.GetPixels().ToPointer();
+                var tw = Math.Min(srcBmp.Width, outputWidth - dx);
+                var th = Math.Min(srcBmp.Height, outputHeight - dy);
                 if (tw <= 0 || th <= 0)
                     continue;
 
@@ -2150,7 +2149,7 @@ public sealed class LayerCompositor : IDisposable
                 for (var y = 0; y < th; y++)
                 {
                     Buffer.MemoryCopy(
-                        src + y * srcFrame.RowBytes,
+                        src + y * srcBmp.RowBytes,
                         dstPtr + (dy + y) * dstStride + dx * 4,
                         rowBytes,
                         rowBytes);
@@ -2282,5 +2281,44 @@ public sealed class LayerCompositor : IDisposable
             DrawingLayer group, DrawingLayer baseLayer, double opacityScale,
             PixelRegion clip, int originX, int originY)
             => owner.CompositeClippedGroup(dst, dstStride, width, height, group, baseLayer, opacityScale, clip, originX, originY);
+    }
+}
+
+/// <summary>
+/// Draws a single compositor tile via the Skia GPU path, bypassing Avalonia's
+/// software WriteableBitmap route. The draw op snapshots an SKImage so the
+/// render thread never touches a compositor tile after it has been replaced.
+/// </summary>
+internal sealed class SkiaTileDrawOp : Avalonia.Rendering.SceneGraph.ICustomDrawOperation
+{
+    private readonly SKImage? _image;
+    private readonly SKRect _src;
+    private readonly Rect _dest;
+
+    public SkiaTileDrawOp(SKBitmap bmp, SKRect src, Rect dest)
+    {
+        _image = SKImage.FromBitmap(bmp);
+        _src = src;
+        _dest = dest;
+    }
+
+    public Rect Bounds => _dest;
+    public bool HitTest(Point p) => false;
+    public bool Equals(Avalonia.Rendering.SceneGraph.ICustomDrawOperation? other) => false;
+    public void Dispose() => _image?.Dispose();
+
+    public void Render(ImmediateDrawingContext context)
+    {
+        if (_image == null) return;
+        var lease = context.TryGetFeature<Avalonia.Skia.ISkiaSharpApiLeaseFeature>()?.Lease();
+        if (lease == null) return;
+        using (lease)
+        {
+            var dstRect = new SKRect(
+                (float)_dest.X, (float)_dest.Y,
+                (float)_dest.Right, (float)_dest.Bottom);
+            var sampling = new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None);
+            lease.SkCanvas.DrawImage(_image, _src, dstRect, sampling);
+        }
     }
 }
