@@ -1769,6 +1769,16 @@ public partial class MainWindow : Window
             _lastCapturedBrushByPresetId[activeToolPreset.Id] = BuildBrushCaptureSignature(updated);
             App.ToolGroups.Save();
         }
+        else if (activeToolPreset?.OutputProcess is OutputProcessType.ClosedAreaFill
+            or OutputProcessType.FloodFill
+            or OutputProcessType.Gradient
+            or OutputProcessType.Stroke)
+        {
+            activeToolPreset.BrushOverride ??= new BrushPresetOverrideDocument();
+            activeToolPreset.BrushOverride.Opacity = updated.Opacity;
+            activeToolPreset.BrushOverride.BlendMode = updated.BlendMode;
+            App.ToolGroups.Save();
+        }
         ScheduleBrushPresetAutosave();
         ApplyBrushSettings(updated, syncSliders: false);
         RefreshGroupPresets();
@@ -1787,6 +1797,16 @@ public partial class MainWindow : Window
         {
             activeToolPreset.CaptureFromBrushPreset(updated);
             _lastCapturedBrushByPresetId[activeToolPreset.Id] = BuildBrushCaptureSignature(updated);
+            App.ToolGroups.Save();
+        }
+        else if (activeToolPreset?.OutputProcess is OutputProcessType.ClosedAreaFill
+            or OutputProcessType.FloodFill
+            or OutputProcessType.Gradient
+            or OutputProcessType.Stroke)
+        {
+            activeToolPreset.BrushOverride ??= new BrushPresetOverrideDocument();
+            activeToolPreset.BrushOverride.Opacity = updated.Opacity;
+            activeToolPreset.BrushOverride.BlendMode = updated.BlendMode;
             App.ToolGroups.Save();
         }
         ScheduleBrushPresetAutosave();

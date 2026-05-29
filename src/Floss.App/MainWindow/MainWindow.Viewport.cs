@@ -113,7 +113,10 @@ public partial class MainWindow : ICanvasInputHost
     private void Workspace_OnPointerWheelChanged(object? sender, PointerWheelEventArgs e)
     {
         var f = App.Shortcuts.ZoomScrollFactor;
-        var factor = e.Delta.Y > 0 ? f : 1.0 / f;
+        var dy = e.Delta.Y;
+        var dx = e.Delta.X;
+        var delta = Math.Abs(dy) >= Math.Abs(dx) ? dy : dx;
+        var factor = delta > 0 ? f : 1.0 / f;
         SetZoom(_zoom * factor, e.GetPosition(_workspaceViewport));
         e.Handled = true;
     }

@@ -48,6 +48,7 @@ public partial class MainWindow
 
     private readonly List<DocumentTab> _tabs = new();
     private DocumentTab? _activeTab;
+    private bool _pendingLayerRebuild;
     private StackPanel _tabBar = null!;
     private ScrollViewer _tabBarContainer = null!;
     private Action? _canvasUnwire;
@@ -442,11 +443,21 @@ public partial class MainWindow
         _canvas.DirtyStateChanged -= OnCanvasDirtyStateChanged;
     }
 
-    private void OnCanvasStatsChanged(object? s, EventArgs e) => UpdateStatus();
+    private void OnCanvasStatsChanged(object? s, EventArgs e)
+    {
+        // Dispatch at Background priority — `NotifyChanged` fires during
+        // brush stroke preview flushes and we must not add ~30 UI property
+        // writes to the render-path hot loop.
+        Avalonia.Threading.Dispatcher.UIThread.Post(UpdateStatus, Avalonia.Threading.DispatcherPriority.Background);
+    }
+
     private void OnCanvasHistoryChanged(object? s, EventArgs e)
     {
-        UpdateStatus();
-        CaptureTimelapseFrameAfterHistory();
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            UpdateStatus();
+            CaptureTimelapseFrameAfterHistory();
+        }, Avalonia.Threading.DispatcherPriority.Background);
     }
     private void OnCanvasSelectionChanged(object? s, EventArgs e) => UpdateSelectionActionBar();
 
@@ -455,7 +466,16 @@ public partial class MainWindow
         PruneLayerSelection();
         SyncCanvasFrameToDocument(fitToViewport: false);
         _rulerOverlay?.InvalidateVisual();
-        BuildLayerList();
+        // Throttle — only rebuild layer list once per render frame.
+        // NotifyLayersChanged fires on every layer add/delete/toggle and
+        // BuildLayerList allocates ~10 new controls per layer.
+        if (_pendingLayerRebuild) return;
+        _pendingLayerRebuild = true;
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            _pendingLayerRebuild = false;
+            BuildLayerList();
+        }, Avalonia.Threading.DispatcherPriority.Background);
         UpdateStatus();
         UpdateSelectionActionBar();
     }
@@ -463,7 +483,7 @@ public partial class MainWindow
     private void OnCanvasLayerMetadataChanged(object? s, LayerMetadataChangedEventArgs e)
     {
         UpdateLayerRow(e.LayerIndex);
-        UpdateStatus();
+        Avalonia.Threading.Dispatcher.UIThread.Post(UpdateStatus, Avalonia.Threading.DispatcherPriority.Background);
     }
 
     private void OnCanvasColorSampled(object? s, Avalonia.Media.Color c) => SetColor(c);

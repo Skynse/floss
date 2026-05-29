@@ -12,6 +12,8 @@ public sealed class FloodFillOutput : IOutputProcess
     public bool Antialiasing { get; set; } = false;
     public double Tolerance { get; set; } = 0.05;
     public FillReferenceMode FillReference { get; set; } = FillReferenceMode.CurrentLayer;
+    public double Opacity { get; set; } = 1.0;
+    public SKBlendMode BlendMode { get; set; } = SKBlendMode.SrcOver;
 
     public void Preview(ToolContext ctx, IProcessedInput input) { }
 
@@ -50,9 +52,8 @@ public sealed class FloodFillOutput : IOutputProcess
         }
 
         var fillColor = ctx.PaintColor;
-        var brushOpacity = ctx.Brush != null ? Math.Clamp(ctx.Brush.Opacity, 0.0, 1.0) : 1.0;
-        var blendMode = ctx.Brush?.BlendMode ?? SKBlendMode.SrcOver;
-        var effectiveA = (byte)Math.Round(fillColor.A * brushOpacity);
+        var blendMode = BlendMode;
+        var effectiveA = (byte)Math.Round(fillColor.A * Math.Clamp(Opacity, 0.0, 1.0));
         var toleranceSq = (int)(Tolerance * 255 * Tolerance * 255 * 4);
 
         var beforeTiles = layer.Pixels.CaptureTiles(layer.Pixels.Bounds);

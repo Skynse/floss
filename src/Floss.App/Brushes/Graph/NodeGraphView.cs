@@ -1414,11 +1414,10 @@ public sealed class NodeGraphView : Control
 
             case DragAction.Zoom:
                 var zoomDx = screenPos.X - _lastZoomScreen.X;
-                var zoomDy = screenPos.Y - _lastZoomScreen.Y;
-                var zoomDelta = Math.Sqrt(zoomDx * zoomDx + zoomDy * zoomDy) * Math.Sign(zoomDy);
+                var zoomDelta = zoomDx;
                 if (Math.Abs(zoomDelta) > 0.001)
                 {
-                    SetZoomAround(_zoom * Math.Pow(1.012, -zoomDelta * _zoomDirection), _zoomAnchorScreen);
+                    SetZoomAround(_zoom * Math.Pow(App.Shortcuts.ZoomDragSensitivity, zoomDelta * _zoomDirection), _zoomAnchorScreen);
                     _lastZoomScreen = screenPos;
                 }
                 break;
@@ -1561,7 +1560,11 @@ public sealed class NodeGraphView : Control
         if (_graph == null) return;
 
         var pos = e.GetPosition(this);
-        var zoomDelta = e.Delta.Y > 0 ? 1.1 : 1.0 / 1.1;
+        var f = App.Shortcuts.ZoomScrollFactor;
+        var dy = e.Delta.Y;
+        var dx = e.Delta.X;
+        var delta = Math.Abs(dy) >= Math.Abs(dx) ? dy : dx;
+        var zoomDelta = delta > 0 ? f : 1.0 / f;
         SetZoomAround(_zoom * zoomDelta, pos);
         e.Handled = true;
     }

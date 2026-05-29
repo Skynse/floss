@@ -18,6 +18,8 @@ public sealed class StrokeOutput : IOutputProcess
     public bool ClosePath { get; set; }
     public ShapeKind ShapeKind { get; set; } = ShapeKind.Rectangle;
     public ShapeDrawMode ShapeDrawMode { get; set; } = ShapeDrawMode.Fill;
+    public double Opacity { get; set; } = 1.0;
+    public SKBlendMode BlendMode { get; set; } = SKBlendMode.SrcOver;
 
     public void Preview(ToolContext ctx, IProcessedInput input) { }
 
@@ -27,9 +29,8 @@ public sealed class StrokeOutput : IOutputProcess
         if (layer == null || layer.IsGroup || layer.IsLocked) return;
 
         var color = ctx.PaintColor;
-        var brushOpacity = ctx.Brush != null ? Math.Clamp(ctx.Brush.Opacity, 0.0, 1.0) : 1.0;
-        var blendMode = ctx.Brush?.BlendMode ?? SKBlendMode.SrcOver;
-        var effectiveA = (byte)Math.Round(color.A * brushOpacity);
+        var blendMode = BlendMode;
+        var effectiveA = (byte)Math.Round(color.A * Math.Clamp(Opacity, 0.0, 1.0));
         var points = new System.Collections.Generic.List<CanvasInputSample>();
 
         switch (input)

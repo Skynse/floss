@@ -3,6 +3,7 @@ using Floss.App.Document;
 using Floss.App.Processes.Input;
 using Floss.App.Processes.Output;
 using Floss.App.Tools;
+using SkiaSharp;
 
 namespace Floss.App.Processes;
 
@@ -64,6 +65,9 @@ public sealed class ToolFactory
 
     private IOutputProcess CreateOutput(ToolPreset preset)
     {
+        var opacity = preset.BrushOverride?.Opacity ?? 1.0;
+        var blendMode = preset.BrushOverride?.BlendMode ?? SKBlendMode.SrcOver;
+
         return preset.OutputProcess switch
         {
             OutputProcessType.DirectDraw => new DirectDrawOutput(_brushEngine, _document)
@@ -72,7 +76,9 @@ public sealed class ToolFactory
             },
             OutputProcessType.ClosedAreaFill => new ClosedAreaFillOutput
             {
-                Antialiasing = preset.AntialiasingQuality != AntialiasingQuality.None
+                Antialiasing = preset.AntialiasingQuality != AntialiasingQuality.None,
+                Opacity = opacity,
+                BlendMode = blendMode
             },
             OutputProcessType.SelectionArea => new SelectionAreaOutput
             {
@@ -82,12 +88,16 @@ public sealed class ToolFactory
             OutputProcessType.FloodFill => new FloodFillOutput
             {
                 Tolerance = preset.Tolerance,
-                FillReference = preset.FillReference
+                FillReference = preset.FillReference,
+                Opacity = opacity,
+                BlendMode = blendMode
             },
             OutputProcessType.Gradient => new GradientOutput
             {
                 Antialiasing = preset.Antialiasing,
-                GradientType = preset.GradientType
+                GradientType = preset.GradientType,
+                Opacity = opacity,
+                BlendMode = blendMode
             },
             OutputProcessType.Eyedropper => new EyedropperOutput
             {
@@ -108,11 +118,13 @@ public sealed class ToolFactory
                 StrokeWidth = preset.PolylineStrokeWidth,
                 ClosePath = preset.PolylineClosePath,
                 ShapeKind = preset.ShapeKind,
-                ShapeDrawMode = preset.ShapeDrawMode
+                ShapeDrawMode = preset.ShapeDrawMode,
+                Opacity = opacity,
+                BlendMode = blendMode
             },
             OutputProcessType.Liquify => new LiquifyOutput(),
             OutputProcessType.Hand => new HandOutput(),
-            OutputProcessType.Zoom => new ZoomOutput { ZoomSensitivity = 1.012, Direction = preset.ZoomDirection },
+            OutputProcessType.Zoom => new ZoomOutput { Direction = preset.ZoomDirection },
             OutputProcessType.Rotate => new RotateOutput(),
             OutputProcessType.SelectLayer => new SelectLayerOutput(),
             _ => new DirectDrawOutput(_brushEngine, _document)

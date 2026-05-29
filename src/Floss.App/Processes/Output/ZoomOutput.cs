@@ -7,7 +7,7 @@ namespace Floss.App.Processes.Output;
 public sealed class ZoomOutput : IOutputProcess
 {
     public bool Antialiasing { get; set; }
-    public double ZoomSensitivity { get; set; } = 1.012;
+    public double ZoomSensitivity { get; set; } = App.Shortcuts.ZoomDragSensitivity;
     public double Direction { get; set; } = 1;
 
     private Point? _lastVpPos;
@@ -36,8 +36,7 @@ public sealed class ZoomOutput : IOutputProcess
         if (_lastVpPos.HasValue)
         {
             var dx = drag.Current.X - _lastVpPos.Value.X;
-            var dy = drag.Current.Y - _lastVpPos.Value.Y;
-            delta = Math.Sqrt(dx * dx + dy * dy) * Math.Sign(dy);
+            delta = dx;
         }
         else
         {
@@ -48,7 +47,7 @@ public sealed class ZoomOutput : IOutputProcess
 
         if (Math.Abs(delta) < 0.001) return;
 
-        vp.ZoomBy(Math.Pow(ZoomSensitivity, -delta * Direction),
+        vp.ZoomBy(Math.Pow(ZoomSensitivity, delta * Direction),
             new Point(drag.Start.X, drag.Start.Y));
     }
 }

@@ -18,6 +18,9 @@ public sealed class ShortcutsConfig
     /// Zoom multiplier per scroll-wheel tick (default 1.12 ≈ 12 % per click).
     public double ZoomScrollFactor { get; set; } = 1.12;
 
+    /// Zoom drag sensitivity — base for exponential drag zoom (default 1.012).
+    public double ZoomDragSensitivity { get; set; } = 1.012;
+
     /// Zoom multiplier for Zoom In / Zoom Out keys.
     public double ZoomKeyFactor { get; set; } = 1.20;
 

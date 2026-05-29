@@ -12,6 +12,8 @@ public sealed class ClosedAreaFillOutput : IOutputProcess
 {
     public bool IsPaintOutput => true;
     public bool Antialiasing { get; set; } = true;
+    public double Opacity { get; set; } = 1.0;
+    public SKBlendMode BlendMode { get; set; } = SKBlendMode.SrcOver;
 
     public void Preview(ToolContext ctx, IProcessedInput input) { }
 
@@ -25,9 +27,8 @@ public sealed class ClosedAreaFillOutput : IOutputProcess
 
         var points = poly.SmoothedPoints;
         var color = ctx.PaintColor;
-        var brushOpacity = ctx.Brush != null ? Math.Clamp(ctx.Brush.Opacity, 0.0, 1.0) : 1.0;
-        var blendMode = ctx.Brush?.BlendMode ?? SKBlendMode.SrcOver;
-        var effectiveA = (byte)Math.Round(color.A * brushOpacity);
+        var blendMode = BlendMode;
+        var effectiveA = (byte)Math.Round(color.A * Math.Clamp(Opacity, 0.0, 1.0));
 
         using var skPath = new SKPath();
         skPath.MoveTo((float)points[0].X, (float)points[0].Y);

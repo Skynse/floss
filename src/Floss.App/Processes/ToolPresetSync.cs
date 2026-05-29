@@ -39,6 +39,9 @@ internal static class ToolPresetSync
 
     private static void ApplyOutput(IOutputProcess output, ToolPreset preset)
     {
+        var opacity = preset.BrushOverride?.Opacity ?? 1.0;
+        var blendMode = preset.BrushOverride?.BlendMode ?? SkiaSharp.SKBlendMode.SrcOver;
+
         switch (output)
         {
             case DirectDrawOutput directDraw:
@@ -56,13 +59,19 @@ internal static class ToolPresetSync
             case FloodFillOutput fill:
                 fill.Tolerance = preset.Tolerance;
                 fill.FillReference = preset.FillReference;
+                fill.Opacity = opacity;
+                fill.BlendMode = blendMode;
                 break;
             case ClosedAreaFillOutput closedFill:
                 closedFill.Antialiasing = preset.AntialiasingQuality != AntialiasingQuality.None;
+                closedFill.Opacity = opacity;
+                closedFill.BlendMode = blendMode;
                 break;
             case GradientOutput gradient:
                 gradient.Antialiasing = preset.Antialiasing;
                 gradient.GradientType = preset.GradientType;
+                gradient.Opacity = opacity;
+                gradient.BlendMode = blendMode;
                 break;
             case StrokeOutput stroke:
                 stroke.Antialiasing = preset.Antialiasing;
@@ -70,6 +79,8 @@ internal static class ToolPresetSync
                 stroke.ClosePath = preset.PolylineClosePath;
                 stroke.ShapeKind = preset.ShapeKind;
                 stroke.ShapeDrawMode = preset.ShapeDrawMode;
+                stroke.Opacity = opacity;
+                stroke.BlendMode = blendMode;
                 break;
             case EyedropperOutput eyedropper:
                 eyedropper.SampleMode = preset.EyedropperSampleMode;
