@@ -63,7 +63,7 @@ public sealed class LayerCompositor : IDisposable
     private int _strokePaintLayerIndex = -1;
     public bool StrokeSuspendActive => _strokeSuspendDepth > 0;
 
-    public void Dispose() { ClearAll(); _projection?.Dispose(); _projection = null; }
+    public void Dispose() { ClearAll(); }
 
     private static void DispatchToPool(int count, Action<int> action)
     {
@@ -104,13 +104,13 @@ public sealed class LayerCompositor : IDisposable
         }
     }
 
-    public void RemoveGroupCache(DrawingLayer g) { lock (CompositeGate) Projection.RemoveGroupCache(g); }
+    public void RemoveGroupCache(DrawingLayer g) { }
 
     public void SetSize(int w, int h)
     {
         if (_width == w && _height == h) return;
         _width = w; _height = h; _fullDirty = true; _dirtyRegion = null;
-        _pendingComposite.Clear(); InvalidateCells(); Projection.SetSize(w, h);
+        _pendingComposite.Clear(); InvalidateCells();
     }
 
     private void InvalidateCells()
@@ -450,7 +450,7 @@ public sealed class LayerCompositor : IDisposable
     public void EndStrokeSuspend()
     { lock (CompositeGate) { if (_strokeSuspendDepth > 0) _strokeSuspendDepth--; if (_strokeSuspendDepth > 0) return; _strokePaintLayerIndex = -1; } }
     public void ResetStrokeSuspend() { lock (CompositeGate) { _strokeSuspendDepth = 0; _strokePaintLayerIndex = -1; } }
-    private void InvalidateGroupCaches(PixelRegion? r, IReadOnlyList<DrawingLayer>? l, int? li) => Projection.InvalidateGroupCaches(r, l, li);
+    private void InvalidateGroupCaches(PixelRegion? r, IReadOnlyList<DrawingLayer>? l, int? li) { }
 
     // ═══ Test/export helpers ══════════════════════════════════════════════════
 
