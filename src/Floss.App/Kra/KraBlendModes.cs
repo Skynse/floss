@@ -15,6 +15,7 @@ internal static class KraBlendModes
         "lighten" => "Lighten",
         "screen" => "Screen",
         "dodge" or "dodge_hdr" => "ColorDodge",
+        "easy_dodge" or "easy dodge" => "EasyDodge",
         "linear_dodge" => "LinearDodge",
         "lighter color" => "LighterColor",
         "overlay" => "Overlay",

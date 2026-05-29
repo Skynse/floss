@@ -483,6 +483,9 @@ public sealed class SettingsWindow : Window
 
     private Control RowBrushCursorPicker(string label, BrushCursorMode current, Action<BrushCursorMode> setter)
     {
+        var allBtns = new List<Button>();
+        var allModes = new List<BrushCursorMode>();
+
         Button MkBtn(BrushCursorMode mode, string text)
         {
             var active = current == mode;
@@ -500,10 +503,18 @@ public sealed class SettingsWindow : Window
                 Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted)),
                 CornerRadius = new CornerRadius(3)
             };
+            allBtns.Add(btn);
+            allModes.Add(mode);
             btn.Click += (_, _) =>
             {
                 setter(mode);
-                SelectPage(0);
+                for (var i = 0; i < allBtns.Count; i++)
+                {
+                    var sel = allModes[i] == mode;
+                    allBtns[i].Background = new SolidColorBrush(Color.Parse(sel ? AccentSoft : Bg2));
+                    allBtns[i].BorderBrush = new SolidColorBrush(Color.Parse(sel ? Accent : Stroke));
+                    allBtns[i].Foreground = new SolidColorBrush(Color.Parse(sel ? TextPrimary : TextMuted));
+                }
             };
             return btn;
         }

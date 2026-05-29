@@ -2201,13 +2201,24 @@ public sealed class BrushEngine : IDisposable
             var localY = py - placed.Top;
             var ly = py - tilePixY;
             var rowBase = ly * tsz * 4;
-            var maskRow = useFastPath ? maskPtr + localY * maskStride : null;
+
+            // Drawpile fast path: row-level premultiplied stamp blend, no per-pixel call overhead
+            if (useFastPath && isSrcOver)
+            {
+                var maskRow = maskPtr + localY * maskStride;
+                var dstOffset = rowBase + (pxMinX - tilePixX) * 4;
+                var maskOffset = pxMinX - placed.Left;
+                var opacity255 = (int)(stampOpacity255 + 0.5f);
+                fixed (byte* tp = tile)
+                    Canvas.Engine.SimdPixelOps.StampSrcOverMaskedRow(
+                        tp + dstOffset, maskRow + maskOffset,
+                        pxMaxX - pxMinX, brushB, brushG, brushR, opacity255, alphaLocked);
+                continue;
+            }
 
             for (int px = pxMinX; px < pxMaxX; px++)
             {
-                int maskA = useFastPath
-                    ? maskRow![px - placed.Left]
-                    : SampleMaskAlpha(placed.Dab, px - placed.Left, localY);
+                int maskA = SampleMaskAlpha(placed.Dab, px - placed.Left, localY);
                 if (maskA == 0) continue;
 
                 float alpha = maskA / 255f;

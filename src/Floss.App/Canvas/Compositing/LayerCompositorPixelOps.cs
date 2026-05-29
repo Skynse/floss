@@ -679,9 +679,9 @@ internal static class LayerCompositorPixelOps
     }
 
     /// <summary>
-    /// Drawpile DP_blend_mode_clip: blend layer color into dst using src
-    /// alpha, preserve dst alpha. Clipping layers contribute color only;
-    /// the base layer's alpha stays as the mask.
+    /// Drawpile DP_blend_mode_clip: alpha-preserving blend for any blend mode.
+    /// Applies the layer's actual blend mode to colors, gates by src alpha,
+    /// and preserves dst alpha. Clipping layers contribute color only.
     /// </summary>
     internal static unsafe void CompositeLayerAlphaPreserving(
         byte* dst, int dstStride, int width, int height,
@@ -700,6 +700,12 @@ internal static class LayerCompositorPixelOps
         if (docLeft >= docRight || docTop >= docBottom) return;
         var sourceRegion = new PixelRegion(docLeft - offsetX, docTop - offsetY, docRight - docLeft, docBottom - docTop);
         if (!layer.Pixels.HasContentTiles(sourceRegion)) return;
+
+        var blendMode = layer.BlendMode;
+        var isNormal = blendMode == "Normal";
+        var hasLut = HasLut(blendMode);
+        var lut = hasLut ? GetLut(blendMode) : null;
+
         layer.Pixels.EnterPixelReadLock();
         try
         {
@@ -709,6 +715,7 @@ internal static class LayerCompositorPixelOps
             var firstTileY = FloorDiv(sourceRegion.Y, ts);
             var lastTileX = FloorDiv(sourceRegion.Right - 1, ts);
             var lastTileY = FloorDiv(sourceRegion.Bottom - 1, ts);
+
             for (var ty = firstTileY; ty <= lastTileY; ty++)
             for (var tx = firstTileX; tx <= lastTileX; tx++)
             {
@@ -718,21 +725,77 @@ internal static class LayerCompositorPixelOps
                 var tileTop = Math.Max(sourceRegion.Y, ty * ts);
                 var tileRight = Math.Min(sourceRegion.Right, tx * ts + ts);
                 var tileBottom = Math.Min(sourceRegion.Bottom, ty * ts + ts);
+
                 for (var srcY = tileTop; srcY < tileBottom; srcY++)
                 {
                     var tileLocalY = srcY - ty * ts;
-                    var tileRowBase = (tileLocalY * ts + (tileLeft - tx * ts)) * 4;
                     var docY = srcY + offsetY;
                     var dstRow = dst + (docY - originY) * dstStride;
-                    var dstX = tileLeft + offsetX - originX;
-                    fixed (byte* tileFix = tile)
-                        CompositeNormalRowManaged.CompositeAlphaPreserving(
-                            dstRow + dstX * 4, tileFix + tileRowBase,
-                            tileRight - tileLeft, opacityByte);
+
+                    for (var srcX = tileLeft; srcX < tileRight; srcX++)
+                    {
+                        var tileLocalX = srcX - tx * ts;
+                        var tileOff = (tileLocalY * ts + tileLocalX) * 4;
+                        uint rawA = tile[tileOff + 3];
+                        if (rawA == 0) continue;
+                        var docX = srcX + offsetX;
+                        var dstOff = (docX - originX) * 4;
+                        var dstPtr = dstRow + dstOff;
+                        uint srcA = (rawA * opacityByte + 127) / 255;
+                        if (srcA == 0) continue;
+
+                        // Alpha-preserving blend: apply blend mode, gate by src alpha, keep dst alpha
+                        if (isNormal)
+                        {
+                            // Normal: blend source color * sa into dst, keep dst alpha
+                            BlendColorOnly(dstPtr, tile[tileOff], tile[tileOff + 1], tile[tileOff + 2], srcA);
+                        }
+                        else if (hasLut)
+                        {
+                            // LUT blend: compute blend result, mix with dst based on sa
+                            uint db = dstPtr[0], dg = dstPtr[1], dr = dstPtr[2];
+                            uint blendedR = lut![((uint)tile[tileOff + 2] << 8) | dr];
+                            uint blendedG = lut![((uint)tile[tileOff + 1] << 8) | dg];
+                            uint blendedB = lut![((uint)tile[tileOff] << 8) | db];
+                            BlendColorOnly(dstPtr, (byte)blendedB, (byte)blendedG, (byte)blendedR, srcA);
+                        }
+                        else
+                        {
+                            // Double path: compute blend via double math
+                            double sB = tile[tileOff]     / 255.0;
+                            double sG = tile[tileOff + 1] / 255.0;
+                            double sR = tile[tileOff + 2] / 255.0;
+                            double sA = srcA / 255.0;
+                            double dB = dstPtr[0] / 255.0;
+                            double dG = dstPtr[1] / 255.0;
+                            double dR = dstPtr[2] / 255.0;
+                            double dA = dstPtr[3] / 255.0;
+                            var (blendR, blendG, blendB) = ApplyBlendMode(sR, sG, sB, sA, dR, dG, dB, dA, blendMode);
+                            // Gate by sA: mix blend result with dst color
+                            double outR = blendR * sA + dR * (1.0 - sA);
+                            double outG = blendG * sA + dG * (1.0 - sA);
+                            double outB = blendB * sA + dB * (1.0 - sA);
+                            dstPtr[0] = (byte)Math.Clamp((int)(outB * 255.0 + 0.5), 0, 255);
+                            dstPtr[1] = (byte)Math.Clamp((int)(outG * 255.0 + 0.5), 0, 255);
+                            dstPtr[2] = (byte)Math.Clamp((int)(outR * 255.0 + 0.5), 0, 255);
+                            // dst[3] preserved
+                        }
+                    }
                 }
             }
         }
         finally { layer.Pixels.ExitPixelReadLock(); }
+    }
+
+    /// <summary>Blend src_color * sa into dst_color, preserve dst_alpha.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe void BlendColorOnly(byte* dst, byte sb, byte sg, byte sr, uint sa)
+    {
+        if (sa >= 255) { dst[0] = sb; dst[1] = sg; dst[2] = sr; return; }
+        uint inv = 255 - sa;
+        dst[0] = (byte)((sb * sa + dst[0] * inv + 127) / 255);
+        dst[1] = (byte)((sg * sa + dst[1] * inv + 127) / 255);
+        dst[2] = (byte)((sr * sa + dst[2] * inv + 127) / 255);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -863,7 +926,8 @@ internal static class LayerCompositorPixelOps
             "Overlay" => (Overlay(dstR, srcR), Overlay(dstG, srcG), Overlay(dstB, srcB)),
             "SoftLight" => (SoftLight(dstR, srcR), SoftLight(dstG, srcG), SoftLight(dstB, srcB)),
             "HardLight" => (HardLight(dstR, srcR), HardLight(dstG, srcG), HardLight(dstB, srcB)),
-            "ColorDodge" => (ColorDodge(dstR, srcR), ColorDodge(dstG, srcG), ColorDodge(dstB, srcB)),
+             "ColorDodge" => (ColorDodge(dstR, srcR), ColorDodge(dstG, srcG), ColorDodge(dstB, srcB)),
+            "EasyDodge" => (EasyDodge(dstR, srcR), EasyDodge(dstG, srcG), EasyDodge(dstB, srcB)),
             "ColorBurn" => (ColorBurn(dstR, srcR), ColorBurn(dstG, srcG), ColorBurn(dstB, srcB)),
             "Darken" => (Math.Min(dstR, srcR), Math.Min(dstG, srcG), Math.Min(dstB, srcB)),
             "Lighten" => (Math.Max(dstR, srcR), Math.Max(dstG, srcG), Math.Max(dstB, srcB)),
@@ -928,6 +992,18 @@ internal static class LayerCompositorPixelOps
         if (dst == 0.0) return 0.0;
         if (src == 1.0) return 1.0;
         return Math.Min(1.0, dst / (1.0 - src));
+    }
+
+    /// <summary>
+    /// Krita cfEasyDodge: CSP "Glow Dodge" — stronger than Color Dodge.
+    /// Uses pow(dst, 1.04/(1-src)) instead of dst/(1-src).
+    /// The 1.04 factor can be adjusted to taste.
+    /// </summary>
+    internal static double EasyDodge(double dst, double src)
+    {
+        if (dst == 0.0) return 0.0;
+        if (src >= 1.0) return 1.0;
+        return Math.Pow(dst, 1.04 / (1.0 - src));
     }
 
     internal static double ColorBurn(double dst, double src)

@@ -583,7 +583,7 @@ public static class ClipImporter
             9 => "Divide",           // div → ColorDodge? Actually mapped to "div " in PSD
             10 => "LinearDodge",     // "Add(Glow)"
             11 => "LinearDodge",
-            12 => "LinearDodge",     // "Glow Dodge"
+            12 => "EasyDodge",       // "Glow Dodge"
             13 => "LighterColor",
             14 => "Overlay",
             15 => "SoftLight",

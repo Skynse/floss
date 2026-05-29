@@ -109,6 +109,9 @@ public sealed class LayerCompositor : IDisposable
     public void SetSize(int w, int h)
     {
         if (_width == w && _height == h) return;
+        // Drawpile GlCanvasImpl.resizeImpl: zero the display buffer on resize.
+        // All tiles need recompositing with correct current dimensions.
+        for (var i = 0; i < _tileScratch.Length; i++) { var t = _tileScratch[i]; if (t != null) { _delayedDispose.Enqueue((t, 8)); _tileScratch[i] = null; } }
         _width = w; _height = h; _fullDirty = true; _dirtyRegion = null;
         _pendingComposite.Clear(); InvalidateCells();
     }
@@ -118,6 +121,17 @@ public sealed class LayerCompositor : IDisposable
         for (var i = 0; i < _cellImages.Length; i++) { var img = _cellImages[i]; if (img != null) { _delayedDispose.Enqueue((img, 8)); _cellImages[i] = null; } }
         for (var i = 0; i < _cellBitmaps.Length; i++) { var b = _cellBitmaps[i]; if (b != null) { _delayedDispose.Enqueue((b, 8)); _cellBitmaps[i] = null; } }
         _cellBitmaps = []; _cellImages = []; _cellDirty = []; _cellCols = 0; _cellRows = 0;
+    }
+
+    private void MarkAllCellsDirty()
+    {
+        for (var i = 0; i < _cellDirty.Length; i++)
+        {
+            _cellDirty[i] = true;
+            // Drawpile GlCanvasImpl.resizeImpl: zero the buffer so stale
+            // content doesn't persist when tiles are missing post-delete/resize.
+            _cellBitmaps[i]?.Erase(SKColors.Transparent);
+        }
     }
 
     private void ClearAll()
@@ -275,12 +289,20 @@ public sealed class LayerCompositor : IDisposable
         {
             if (layerIndex is >= 0 && _strokeSuspendDepth > 0 && _strokePaintLayerIndex < 0)
                 _strokePaintLayerIndex = layerIndex.Value;
-            if (region is null || region.Value.IsEmpty) { _fullDirty = true; _dirtyRegion = null; InvalidateCells(); }
+            if (region is null || region.Value.IsEmpty) { _fullDirty = true; _dirtyRegion = null; MarkAllCellsDirty(); }
             else
             {
-                var tr = viewportClip is { IsEmpty: false } v2 ? region.Value.Intersect(v2) : region.Value;
-                if (!tr.IsEmpty) { if (!_fullDirty) _dirtyRegion = _dirtyRegion is { } e ? e.Union(tr) : tr; QueueDirtyTilesForRegion(tr); }
-                InvalidateGroupCaches(region.Value, layers, layerIndex);
+                // Drawpile: track the FULL dirty region for eventual compositing,
+                // but only queue viewport-overlapping tiles for the current frame.
+                var fullDirty = region.Value;
+                if (!_fullDirty)
+                    _dirtyRegion = _dirtyRegion is { } e ? e.Union(fullDirty) : fullDirty;
+
+                var tileRegion = viewportClip is { IsEmpty: false } v2 ? fullDirty.Intersect(v2) : fullDirty;
+                if (!tileRegion.IsEmpty)
+                    QueueDirtyTilesForRegion(tileRegion);
+
+                InvalidateGroupCaches(fullDirty, layers, layerIndex);
             }
         }
     }
@@ -374,13 +396,12 @@ public sealed class LayerCompositor : IDisposable
         var nyt = (_height + CmpTileSize - 1) / CmpTileSize; if (nyt <= 0) nyt = 1;
         var nt = nxt * nyt;
         if (nt == _tileTotal && _tileScratch.Length == _tileTotal) return;
-        var ot = _tileScratch; var oxt = _xtiles; var oyt = _ytiles;
+        // Drawpile GlCanvasImpl.resizeImpl: zero the flat buffer, don't preserve
+        // old tile data — stale dimensions would cause buffer overruns.
+        var old = _tileScratch;
         _xtiles = nxt; _ytiles = nyt; _tileTotal = nt;
         _tileScratch = new SKBitmap?[nt];
-        for (var oy = 0; oy < Math.Min(oyt, nyt); oy++)
-        for (var ox = 0; ox < Math.Min(oxt, nxt); ox++) { var on = oy * oxt + ox; if (on < ot.Length) _tileScratch[oy * nxt + ox] = ot[on]; }
-        for (var oy = Math.Min(oyt, nyt); oy < oyt; oy++) for (var ox = 0; ox < oxt; ox++) { var on = oy * oxt + ox; if (on < ot.Length && ot[on] != null) _delayedDispose.Enqueue((ot[on]!, 8)); }
-        for (var oy = 0; oy < Math.Min(oyt, nyt); oy++) for (var ox = Math.Min(oxt, nxt); ox < oxt; ox++) { var on = oy * oxt + ox; if (on < ot.Length && ot[on] != null) _delayedDispose.Enqueue((ot[on]!, 8)); }
+        for (var i = 0; i < old.Length; i++) { var t = old[i]; if (t != null) _delayedDispose.Enqueue((t, 8)); }
     }
 
     private int tileIndex(int tx, int ty) => (uint)tx >= (uint)_xtiles || (uint)ty >= (uint)_ytiles ? -1 : ty * _xtiles + tx;

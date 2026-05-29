@@ -87,7 +87,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     [
         "Normal", "PassThrough", "Dissolve",
         "Multiply", "Screen", "Overlay", "SoftLight", "HardLight",
-        "ColorDodge", "ColorBurn", "LinearDodge", "LinearBurn",
+        "ColorDodge", "Glow Dodge", "ColorBurn", "LinearDodge", "LinearBurn",
         "Darken", "Lighten", "DarkerColor", "LighterColor",
         "Difference", "Exclusion", "Subtract", "Divide",
         "Hue", "Saturation", "Color", "Luminosity",
@@ -104,6 +104,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         "SoftLight" => "SL",
         "HardLight" => "HL",
         "ColorDodge" => "CDg",
+        "EasyDodge" => "EDg",
         "ColorBurn" => "CBn",
         "LinearDodge" => "LDg",
         "LinearBurn" => "LBn",

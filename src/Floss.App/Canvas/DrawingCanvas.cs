@@ -562,8 +562,6 @@ public sealed class DrawingCanvas : Control, IDisposable
     public void UnlockCursorPreview()
     {
         if (!_isCursorPreviewLocked) return;
-        _prevPointerPos = _lockedPointerPos;
-        _pointerPos = _lockedPointerPos;
         _isCursorPreviewLocked = false;
         _forceBrushOutlineCursor = false;
         InvalidateVisual();
