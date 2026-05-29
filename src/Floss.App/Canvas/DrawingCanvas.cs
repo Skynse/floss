@@ -1543,7 +1543,7 @@ public sealed class DrawingCanvas : Control, IDisposable
 
         var text =
             $"brush {s.BrushMs:0.0}ms {s.BrushPath} dabs {s.BrushCachedDabs}/{s.BrushStamps}\n" +
-            $"comp {s.CompositeMs:0.0}ms dirty {s.CompositeDirtyTiles} miss {s.CompositeMissingTiles} lod {s.Lod} q {s.PendingProjectionUpdates}";
+            $"comp {s.CompositeMs:0.0}ms dirty {s.CompositeDirtyTiles} miss {s.CompositeMissingTiles} q {s.PendingProjectionUpdates}";
         var ft = new FormattedText(text, CultureInfo.InvariantCulture,
             FlowDirection.LeftToRight, Typeface.Default, 11, TelemetryTextBrush);
         var rect = new Rect(8, 8, ft.Width + 12, ft.Height + 8);

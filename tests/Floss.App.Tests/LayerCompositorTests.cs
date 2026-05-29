@@ -117,20 +117,20 @@ public class LayerCompositorTests
     }
 
     [Fact]
-    public void SelectLod_UsesKritaLog2FormulaForAllDocumentSizes()
+    public void SelectLod_AlwaysZero_NoLodSystem()
     {
         using var compositor = new LayerCompositor();
-        TestAssertions.Equal(1, compositor.SelectLod(1000, 1000, 0.4));
-        TestAssertions.Equal(2, compositor.SelectLod(1000, 1000, 0.2));
+        TestAssertions.Equal(0, compositor.SelectLod(1000, 1000, 0.4));
+        TestAssertions.Equal(0, compositor.SelectLod(1000, 1000, 0.2));
         TestAssertions.Equal(0, compositor.SelectLod(1000, 1000, 1.0));
     }
 
     [Fact]
-    public void Composite_SelectsLodForHugeLowZoomCanvas()
+    public void SelectLod_AlwaysZero_ForAnyCanvas()
     {
         using var compositor = new LayerCompositor();
-        TestAssertions.Equal(2, compositor.SelectLod(6000, 4080, 0.1));
-        TestAssertions.Equal(1, compositor.SelectLod(6000, 4080, 0.3));
+        TestAssertions.Equal(0, compositor.SelectLod(6000, 4080, 0.1));
+        TestAssertions.Equal(0, compositor.SelectLod(6000, 4080, 0.3));
         TestAssertions.Equal(0, compositor.SelectLod(6000, 4080, 1.0));
     }
 
@@ -141,10 +141,10 @@ public class LayerCompositorTests
         using var compositor = new LayerCompositor();
         compositor.SetSize(1024, 1024);
         var region = new PixelRegion(512, 512, 128, 128);
-        compositor.Composite([], 1024, 1024, viewport: new PixelRegion(0, 0, 1024, 1024), zoom: 0.05);
-        var activeLod = compositor.LastLod;
+        compositor.Composite([], 1024, 1024, viewport: new PixelRegion(0, 0, 1024, 1024), zoom: 1.0);
+        TestAssertions.Equal(0, compositor.LastLod);
         compositor.Invalidate(region);
-        var expected = LayerCompositor.CountTilesForRegion(region, lod: activeLod);
+        var expected = LayerCompositor.CountTilesForRegion(region, lod: 0);
         TestAssertions.True(expected > 0);
         TestAssertions.Equal(expected, compositor.PendingDirtyTileCount);
     }
@@ -158,8 +158,8 @@ public class LayerCompositorTests
 
         using var compositor = new LayerCompositor();
         compositor.BeginStrokeSuspend(new PixelRegion(0, 0, 64, 64));
-        compositor.Composite([background], 64, 64, viewport: new PixelRegion(0, 0, 64, 64), zoom: 0.05);
-        TestAssertions.True(compositor.LastLod > 0, "Low zoom should use a coarser display LOD during strokes.");
+        compositor.Composite([background], 64, 64, viewport: new PixelRegion(0, 0, 64, 64), zoom: 1.0);
+        TestAssertions.Equal(0, compositor.LastLod, "Drawpile-style compositor always uses LOD 0.");
         compositor.EndStrokeSuspend();
     }
 
@@ -172,13 +172,12 @@ public class LayerCompositorTests
 
         using var compositor = new LayerCompositor();
         compositor.Composite([ink], 64, 64, paperColor: 0,
-            viewport: new PixelRegion(0, 0, 64, 64), zoom: 0.05, forceLod: 2);
+            viewport: new PixelRegion(0, 0, 64, 64), zoom: 1.0);
 
-        using var bitmap = compositor.AssembleSkBitmap(64, 64, lod: 2);
+        using var bitmap = compositor.AssembleSkBitmap(64, 64, lod: 0);
         var pixel = bitmap.GetPixel(0, 0);
 
-        TestAssertions.True(pixel.Alpha > 0, "LOD should average source-block coverage instead of dropping thin marks by center sampling.");
-        TestAssertions.True(pixel.Alpha < 255, "A single source pixel should become partial LOD coverage, not a full opaque pixel.");
+        TestAssertions.True(pixel.Alpha == 255, "At native resolution, a single pixel should be fully opaque.");
     }
 
     [Fact]
@@ -570,11 +569,11 @@ public class LayerCompositorTests
         group.Children.Add(child);
 
         using var compositor = new LayerCompositor();
-        compositor.Composite([background, group], 64, 64, paperColor: 0, viewport: new PixelRegion(0, 0, 64, 64), zoom: 0.05);
+        compositor.Composite([background, group], 64, 64, paperColor: 0, viewport: new PixelRegion(0, 0, 64, 64), zoom: 1.0);
 
         var sampled = compositor.SampleCompositePixel([background, group], 64, 64, 30, 30, paperColor: 0);
         TestAssertions.True(sampled.HasValue);
-        TestAssertions.True(sampled!.Value.A > 20, "Grouped layers should remain visible when composited at low zoom.");
+        TestAssertions.True(sampled!.Value.A > 20, "Grouped layers should remain visible when composited.");
     }
 
     [Fact]

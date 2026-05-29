@@ -314,6 +314,8 @@ public sealed class TimelapseSession : IDisposable
             Math.Max(1, (int)Math.Round(docHeight * scale)));
     }
 
+    private const int MaxCompositeLod = 2;
+
     public static int ChooseAssembleLod(int docWidth, int docHeight)
     {
         for (var lod = 0; lod <= MaxCompositeLod; lod++)
@@ -325,8 +327,6 @@ public sealed class TimelapseSession : IDisposable
         }
         return MaxCompositeLod;
     }
-
-    private const int MaxCompositeLod = 2;
 
     private bool CapturePreparedFrameCore()
     {

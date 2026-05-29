@@ -13,7 +13,6 @@ public readonly record struct RenderTelemetrySnapshot(
     double CompositeMs,
     int CompositeDirtyTiles,
     int CompositeMissingTiles,
-    int Lod,
     int PendingProjectionUpdates);
 
 public readonly struct TelemetryScope : IDisposable
@@ -67,7 +66,7 @@ public static class RenderTelemetry
         MaybeLog();
     }
 
-    public static void RecordComposite(double elapsedMs, int dirtyTiles, int missingTiles, int lod, int pendingProjectionUpdates)
+    public static void RecordComposite(double elapsedMs, int dirtyTiles, int missingTiles, int pendingProjectionUpdates)
     {
         lock (Lock)
         {
@@ -76,7 +75,6 @@ public static class RenderTelemetry
                 CompositeMs = elapsedMs,
                 CompositeDirtyTiles = dirtyTiles,
                 CompositeMissingTiles = missingTiles,
-                Lod = lod,
                 PendingProjectionUpdates = pendingProjectionUpdates
             };
         }
@@ -95,7 +93,7 @@ public static class RenderTelemetry
             Directory.CreateDirectory(AppPaths.AppDirectory);
             var s = Snapshot;
             File.AppendAllText(LogPath,
-                $"{DateTime.UtcNow:O} brush={s.BrushMs:0.###}ms path={s.BrushPath} stamps={s.BrushStamps} cached={s.BrushCachedDabs} composite={s.CompositeMs:0.###}ms dirtyTiles={s.CompositeDirtyTiles} missingTiles={s.CompositeMissingTiles} lod={s.Lod} pendingProjection={s.PendingProjectionUpdates}{Environment.NewLine}");
+                $"{DateTime.UtcNow:O} brush={s.BrushMs:0.###}ms path={s.BrushPath} stamps={s.BrushStamps} cached={s.BrushCachedDabs} composite={s.CompositeMs:0.###}ms dirtyTiles={s.CompositeDirtyTiles} missingTiles={s.CompositeMissingTiles} pendingProjection={s.PendingProjectionUpdates}{Environment.NewLine}");
         }
         catch
         {
