@@ -203,7 +203,7 @@ public sealed class LayerCompositor : IDisposable
             var oi = oy * oc + ox; var ni = oy * nc + ox;
             if (oi < oldBmps.Length) { _cellBitmaps[ni] = oldBmps[oi]; _cellImages[ni] = oldImgs[oi]; _cellDirty[ni] = oldDirty[oi]; }
         }
-        for (var i = 0; i < oldBmps.Length; i++) { var oy = i / oc; var ox = i % oc; if (oy >= nr || ox >= nc) { if (oldImgs[i] != null) _delayedDispose.Enqueue((oldImgs[i], 8)); if (oldBmps[i] != null) _delayedDispose.Enqueue((oldBmps[i], 8)); } }
+        for (var i = 0; i < oldBmps.Length; i++) { var oy = i / oc; var ox = i % oc; if (oy >= nr || ox >= nc) { var img = oldImgs[i]; if (img != null) _delayedDispose.Enqueue(((object)img, 8)); var bmp = oldBmps[i]; if (bmp != null) _delayedDispose.Enqueue(((object)bmp, 8)); } }
 
         for (var ci = 0; ci < nt; ci++)
         {

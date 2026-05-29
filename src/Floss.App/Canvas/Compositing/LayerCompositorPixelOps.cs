@@ -678,6 +678,63 @@ internal static class LayerCompositorPixelOps
         finally { layer.Pixels.ExitPixelReadLock(); }
     }
 
+    /// <summary>
+    /// Drawpile DP_blend_mode_clip: blend layer color into dst using src
+    /// alpha, preserve dst alpha. Clipping layers contribute color only;
+    /// the base layer's alpha stays as the mask.
+    /// </summary>
+    internal static unsafe void CompositeLayerAlphaPreserving(
+        byte* dst, int dstStride, int width, int height,
+        DrawingLayer layer, double opacityScale, PixelRegion clip, int originX, int originY)
+    {
+        var opacity = layer.Opacity * opacityScale;
+        if (opacity <= 0) return;
+        var offsetX = layer.OffsetX;
+        var offsetY = layer.OffsetY;
+        var content = layer.DocumentContentBounds;
+        if (content.IsEmpty) return;
+        var docLeft = Math.Max(Math.Max(clip.X, content.X), originX);
+        var docTop = Math.Max(Math.Max(clip.Y, content.Y), originY);
+        var docRight = Math.Min(Math.Min(clip.Right, content.Right), originX + width);
+        var docBottom = Math.Min(Math.Min(clip.Bottom, content.Bottom), originY + height);
+        if (docLeft >= docRight || docTop >= docBottom) return;
+        var sourceRegion = new PixelRegion(docLeft - offsetX, docTop - offsetY, docRight - docLeft, docBottom - docTop);
+        if (!layer.Pixels.HasContentTiles(sourceRegion)) return;
+        layer.Pixels.EnterPixelReadLock();
+        try
+        {
+            var opacityByte = (uint)Math.Round(opacity * 255);
+            const int ts = TiledPixelBuffer.TileSize;
+            var firstTileX = FloorDiv(sourceRegion.X, ts);
+            var firstTileY = FloorDiv(sourceRegion.Y, ts);
+            var lastTileX = FloorDiv(sourceRegion.Right - 1, ts);
+            var lastTileY = FloorDiv(sourceRegion.Bottom - 1, ts);
+            for (var ty = firstTileY; ty <= lastTileY; ty++)
+            for (var tx = firstTileX; tx <= lastTileX; tx++)
+            {
+                var tile = layer.Pixels.GetTileOrNull(tx, ty);
+                if (tile == null) continue;
+                var tileLeft = Math.Max(sourceRegion.X, tx * ts);
+                var tileTop = Math.Max(sourceRegion.Y, ty * ts);
+                var tileRight = Math.Min(sourceRegion.Right, tx * ts + ts);
+                var tileBottom = Math.Min(sourceRegion.Bottom, ty * ts + ts);
+                for (var srcY = tileTop; srcY < tileBottom; srcY++)
+                {
+                    var tileLocalY = srcY - ty * ts;
+                    var tileRowBase = (tileLocalY * ts + (tileLeft - tx * ts)) * 4;
+                    var docY = srcY + offsetY;
+                    var dstRow = dst + (docY - originY) * dstStride;
+                    var dstX = tileLeft + offsetX - originX;
+                    fixed (byte* tileFix = tile)
+                        CompositeNormalRowManaged.CompositeAlphaPreserving(
+                            dstRow + dstX * 4, tileFix + tileRowBase,
+                            tileRight - tileLeft, opacityByte);
+                }
+            }
+        }
+        finally { layer.Pixels.ExitPixelReadLock(); }
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static void ApplyLayerColor(ref byte b, ref byte g, ref byte r, byte layerB, byte layerG, byte layerR)
     {

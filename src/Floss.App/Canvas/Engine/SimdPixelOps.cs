@@ -42,6 +42,30 @@ public static unsafe class SimdPixelOps
         }
     }
 
+    /// <summary>
+    /// Drawpile DP_BLEND_MODE_ALPHA_PRESERVING: blend src colors into dst
+    /// colors using src alpha, but keep dst alpha unchanged. Used for
+    /// clipping layers (base layer alpha is the mask, clipping layers
+    /// only contribute color).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void SrcOverColorOnlyRow(byte* dst, byte* src, int pixelCount, uint opacity = 255)
+    {
+        if (opacity == 0) return;
+        bool fullOpac = opacity == 255;
+        for (var i = 0; i < pixelCount; i++)
+        {
+            var off = i * 4;
+            var sa = fullOpac ? src[off + 3] : (src[off + 3] * (int)opacity + 127) / 255;
+            if (sa <= 0) continue;
+            if (sa >= 255) { dst[off] = src[off]; dst[off + 1] = src[off + 1]; dst[off + 2] = src[off + 2]; continue; }
+            var inv = 255 - sa;
+            dst[off]     = (byte)((src[off]     * sa + dst[off]     * inv + 127) / 255);
+            dst[off + 1] = (byte)((src[off + 1] * sa + dst[off + 1] * inv + 127) / 255);
+            dst[off + 2] = (byte)((src[off + 2] * sa + dst[off + 2] * inv + 127) / 255);
+        }
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void StampSrcOver(
         byte* tilePixel, byte srcB, byte srcG, byte srcR,
