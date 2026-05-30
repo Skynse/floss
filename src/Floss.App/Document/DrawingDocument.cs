@@ -492,6 +492,7 @@ public sealed class DrawingDocument : IDisposable
         {
             Adjustment = new AdjustmentLayerData { Kind = kind }
         };
+        layer.CreateMask();
         if (ActiveLayerIndex >= 0 && ActiveLayerIndex < _layers.Count)
             InsertLayerNear(layer, ActiveLayer!, LayerDropPlacement.Above);
         else
@@ -761,6 +762,52 @@ public sealed class DrawingDocument : IDisposable
         PushHistoryState(new LayerPropertyHistoryState<bool>(index, oldValue, newValue, (layer, value) => layer.IsClipping = value, true, dirtyRegion));
         _layers[index].IsClipping = newValue;
         NotifyLayerMetadataChanged(dirtyRegion, index);
+    }
+
+    public void CreateLayerMask(int index)
+    {
+        if (index < 0 || index >= _layers.Count) return;
+        var layer = _layers[index];
+        if (layer.HasMask) return;
+        layer.CreateMask();
+        NotifyLayerMetadataChanged(null, index);
+    }
+
+    public void DeleteLayerMask(int index)
+    {
+        if (index < 0 || index >= _layers.Count) return;
+        var layer = _layers[index];
+        if (!layer.HasMask) return;
+        layer.DeleteMask();
+        NotifyLayerMetadataChanged(null, index);
+    }
+
+    public void ToggleLayerMask(int index)
+    {
+        if (index < 0 || index >= _layers.Count) return;
+        var layer = _layers[index];
+        if (!layer.HasMask) { CreateLayerMask(index); return; }
+        layer.ToggleMaskVisibility();
+        NotifyLayerMetadataChanged(null, index);
+    }
+
+    public void ToggleLayerMaskEditing(int index)
+    {
+        if (index < 0 || index >= _layers.Count) return;
+        var layer = _layers[index];
+        layer.IsMaskEditing = !layer.IsMaskEditing;
+        NotifyLayerMetadataChanged(null, index);
+    }
+
+    public void ApplyLayerMask(int index)
+    {
+        if (index < 0 || index >= _layers.Count) return;
+        var layer = _layers[index];
+        if (!layer.HasMask) return;
+        var dirtyRegion = LayerDirtyRegion(index);
+        PushHistoryState(new LayerApplyMaskHistoryState(index, CaptureLayerSnapshot(layer), dirtyRegion));
+        layer.ApplyMask();
+        NotifyChanged(dirtyRegion, index);
     }
 
     public void ToggleLayerOpen(int index)
@@ -1246,6 +1293,12 @@ public sealed class DrawingDocument : IDisposable
             Adjustment = source.Adjustment?.Clone()
         };
         copy.RestoreTiles(source.CaptureTiles());
+        if (source.MaskPixels != null)
+        {
+            copy.MaskPixels = new TiledPixelBuffer(source.Width, source.Height);
+            copy.MaskPixels.RestoreTiles(source.MaskPixels.CaptureTiles());
+            copy.IsMaskVisible = source.IsMaskVisible;
+        }
         foreach (var child in source.Children) { var childCopy = CloneLayerTree(child); childCopy.Parent = copy; copy.Children.Add(childCopy); }
         return copy;
     }
@@ -1276,12 +1329,17 @@ public sealed class DrawingDocument : IDisposable
         return a.Mask.AsSpan().SequenceEqual(b.Mask);
     }
 
-    private LayerSnapshot CaptureLayerSnapshot(DrawingLayer layer) => new(layer.Name, layer.IsVisible, layer.IsLocked, layer.IsAlphaLocked, layer.IsReference, layer.IsPaper, layer.Opacity, layer.BlendMode, layer.OffsetX, layer.OffsetY, layer.IsGroup, layer.IsOpen, layer.IsClipping, layer.IndentLevel, layer.Parent is null ? -1 : _layers.IndexOf(layer.Parent), layer.Width, layer.Height, layer.CaptureTiles(), layer.Adjustment?.Clone());
+    private LayerSnapshot CaptureLayerSnapshot(DrawingLayer layer) => new(layer.Name, layer.IsVisible, layer.IsLocked, layer.IsAlphaLocked, layer.IsReference, layer.IsPaper, layer.Opacity, layer.BlendMode, layer.OffsetX, layer.OffsetY, layer.IsGroup, layer.IsOpen, layer.IsClipping, layer.IndentLevel, layer.Parent is null ? -1 : _layers.IndexOf(layer.Parent), layer.Width, layer.Height, layer.CaptureTiles(), layer.Adjustment?.Clone(), layer.MaskPixels?.CaptureTiles(), layer.IsMaskVisible);
 
     private DrawingLayer CreateLayerFromSnapshot(LayerSnapshot snap)
     {
-        var layer = new DrawingLayer(snap.Name, snap.BitmapWidth, snap.BitmapHeight) { IsVisible = snap.IsVisible, IsLocked = snap.IsLocked, IsAlphaLocked = snap.IsAlphaLocked, IsReference = snap.IsReference, IsPaper = snap.IsPaper, Opacity = snap.Opacity, BlendMode = snap.BlendMode, OffsetX = snap.OffsetX, OffsetY = snap.OffsetY, IsGroup = snap.IsGroup, IsOpen = snap.IsOpen, IsClipping = snap.IsClipping, IndentLevel = snap.IndentLevel, Adjustment = snap.Adjustment?.Clone() };
+        var layer = new DrawingLayer(snap.Name, snap.BitmapWidth, snap.BitmapHeight) { IsVisible = snap.IsVisible, IsLocked = snap.IsLocked, IsAlphaLocked = snap.IsAlphaLocked, IsReference = snap.IsReference, IsPaper = snap.IsPaper, Opacity = snap.Opacity, BlendMode = snap.BlendMode, OffsetX = snap.OffsetX, OffsetY = snap.OffsetY, IsGroup = snap.IsGroup, IsOpen = snap.IsOpen, IsClipping = snap.IsClipping, IndentLevel = snap.IndentLevel, Adjustment = snap.Adjustment?.Clone(), IsMaskVisible = snap.IsMaskVisible };
         layer.RestoreTiles(snap.Tiles);
+        if (snap.MaskTiles != null && snap.MaskTiles.Count > 0)
+        {
+            layer.MaskPixels = new TiledPixelBuffer(snap.BitmapWidth, snap.BitmapHeight);
+            layer.MaskPixels.RestoreTiles(snap.MaskTiles);
+        }
         return layer;
     }
 
@@ -1311,7 +1369,7 @@ public sealed class DrawingDocument : IDisposable
 
     // --- Records and State Classes ---
     private sealed record DocumentSnapshot(int Width, int Height, int ActiveLayerIndex, LayerSnapshot[] Layers, SelectionMask.Snapshot Selection);
-    private sealed record LayerSnapshot(string Name, bool IsVisible, bool IsLocked, bool IsAlphaLocked, bool IsReference, bool IsPaper, double Opacity, string BlendMode, int OffsetX, int OffsetY, bool IsGroup, bool IsOpen, bool IsClipping, int IndentLevel, int ParentIndex, int BitmapWidth, int BitmapHeight, Dictionary<(int X, int Y), byte[]> Tiles, AdjustmentLayerData? Adjustment = null);
+    private sealed record LayerSnapshot(string Name, bool IsVisible, bool IsLocked, bool IsAlphaLocked, bool IsReference, bool IsPaper, double Opacity, string BlendMode, int OffsetX, int OffsetY, bool IsGroup, bool IsOpen, bool IsClipping, int IndentLevel, int ParentIndex, int BitmapWidth, int BitmapHeight, Dictionary<(int X, int Y), byte[]> Tiles, AdjustmentLayerData? Adjustment = null, Dictionary<(int X, int Y), byte[]>? MaskTiles = null, bool IsMaskVisible = true);
 
     private interface IHistoryState
     {
@@ -1519,6 +1577,28 @@ public sealed class DrawingDocument : IDisposable
             if (layer.Adjustment == null) return;
             layer.Adjustment = OldParams.Clone();
             document.NotifyLayerMetadataChanged(DirtyRegion, LayerIndex);
+        }
+    }
+
+    private sealed record LayerApplyMaskHistoryState(int LayerIndex, LayerSnapshot BeforeSnapshot, PixelRegion DirtyRegion) : IHistoryState
+    {
+        public bool AffectsVisual => true;
+        public PixelRegion VisualDirtyRegion => DirtyRegion;
+
+        public IHistoryState CaptureRedo(DrawingDocument document) => new LayerApplyMaskHistoryState(LayerIndex, document.CaptureLayerSnapshot(document._layers[LayerIndex]), DirtyRegion);
+        public void Restore(DrawingDocument document)
+        {
+            if (LayerIndex < 0 || LayerIndex >= document._layers.Count) return;
+            var layer = document.Layers[LayerIndex];
+            layer.RestoreTiles(BeforeSnapshot.Tiles);
+            layer.DeleteMask();
+            if (BeforeSnapshot.MaskTiles != null)
+            {
+                layer.MaskPixels = new TiledPixelBuffer(BeforeSnapshot.BitmapWidth, BeforeSnapshot.BitmapHeight);
+                layer.MaskPixels.RestoreTiles(BeforeSnapshot.MaskTiles);
+                layer.IsMaskVisible = BeforeSnapshot.IsMaskVisible;
+            }
+            document.NotifyChanged(DirtyRegion, LayerIndex);
         }
     }
 }

@@ -45,7 +45,10 @@ public sealed class DirectDrawOutput : IOutputProcess
         if (input is not StrokeInput stroke || stroke.SmoothedSamples.Count == 0) return;
 
         var layer = ctx.ActiveLayer;
-        if (layer == null || layer.IsGroup || layer.IsLocked) return;
+        if (layer == null || layer.IsGroup) return;
+        if (!layer.IsMaskEditing && layer.IsLocked) return;
+        if (layer.IsMaskEditing && layer.MaskPixels == null)
+            layer.CreateMask();
 
         var samples = stroke.SmoothedSamples;
         var tx = _accepting is { FinalizeRequested: false }
@@ -73,11 +76,18 @@ public sealed class DirectDrawOutput : IOutputProcess
         }
 
         var layer = ctx.ActiveLayer;
-        if (layer == null || layer.IsGroup || layer.IsLocked)
+        if (layer == null || layer.IsGroup)
         {
             _accepting = null;
             return;
         }
+        if (!layer.IsMaskEditing && layer.IsLocked)
+        {
+            _accepting = null;
+            return;
+        }
+        if (layer.IsMaskEditing && layer.MaskPixels == null)
+            layer.CreateMask();
 
         Preview(ctx, input);
         if (_accepting != null)
@@ -359,12 +369,18 @@ public sealed class DirectDrawOutput : IOutputProcess
 
     private PixelRegion ProcessSegmentBatch(StrokeTransaction tx, CanvasInputSample[] samples, int startSegmentIndex, int segmentCount)
     {
-        // Do NOT take DocumentRenderLock.Write here. This method runs on a
-        // background thread (Task.Run). Holding the document write lock for the
-        // entire rasterize blocks DrawingCanvas.Render on the UI thread at
-        // RenderLock.Read — the app freezes with no crash log. Tile mutations
-        // are already serialized via TiledPixelBuffer's pixel read/write locks.
         using var telemetry = RenderTelemetry.ScopeNow();
+
+        var savedPixels = tx.Layer.Pixels;
+        var savedAlphaLocked = tx.Layer.IsAlphaLocked;
+        var isMaskEditing = tx.Layer.IsMaskEditing && tx.Layer.MaskPixels != null;
+        try
+        {
+        if (isMaskEditing)
+        {
+            tx.Layer.Pixels = tx.Layer.MaskPixels!;
+            tx.Layer.IsAlphaLocked = false;
+        }
 
         var region = EstimateSegmentBatchRegion(tx, samples, startSegmentIndex, segmentCount);
         if (!region.IsEmpty)
@@ -407,6 +423,15 @@ public sealed class DirectDrawOutput : IOutputProcess
         }
 
         return PixelRegion.Empty;
+        }
+        finally
+        {
+            if (isMaskEditing)
+            {
+                tx.Layer.Pixels = savedPixels;
+                tx.Layer.IsAlphaLocked = savedAlphaLocked;
+            }
+        }
     }
 
     private PixelRegion EstimateSegmentBatchRegion(StrokeTransaction tx, CanvasInputSample[] samples, int startSegmentIndex, int segmentCount)

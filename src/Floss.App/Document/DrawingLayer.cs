@@ -41,6 +41,12 @@ public sealed class DrawingLayer : IDisposable
     public int IndentLevel { get; set; }
     public DrawingLayer? Parent { get; set; }
     public List<DrawingLayer> Children { get; } = [];
+
+    public TiledPixelBuffer? MaskPixels { get; set; }
+    public bool HasMask => MaskPixels != null;
+    public bool IsMaskVisible { get; set; } = true;
+    public bool IsMaskEditing { get; set; }
+
     public TiledPixelBuffer Pixels { get; internal set; }
     public int Width => Pixels.Width;
     public int Height => Pixels.Height;
@@ -53,10 +59,67 @@ public sealed class DrawingLayer : IDisposable
             ? Children.Aggregate(PixelRegion.Empty, (bounds, child) => bounds.Union(child.DocumentContentBounds))
             : Pixels.ContentTileBounds.Translate(OffsetX, OffsetY);
 
+    public void CreateMask()
+    {
+        if (MaskPixels != null) return;
+        MaskPixels = new TiledPixelBuffer(Width, Height);
+        MaskPixels.FillSolid(MaskPixels.Bounds, 255, 255, 255, 255);
+    }
+
+    public void DeleteMask()
+    {
+        MaskPixels?.Dispose();
+        MaskPixels = null;
+        IsMaskEditing = false;
+    }
+
+    public void ApplyMask()
+    {
+        if (MaskPixels == null) return;
+        Pixels.EnterPixelWriteLock();
+        try
+        {
+            var tiles = Pixels.CaptureTiles();
+            foreach (var (key, tile) in tiles)
+            {
+                if (tile == null) continue;
+                var tx = key.X; var ty = key.Y;
+                var tileLeft = tx * TiledPixelBuffer.TileSize;
+                var tileTop = ty * TiledPixelBuffer.TileSize;
+                for (var py = 0; py < TiledPixelBuffer.TileSize; py++)
+                {
+                    var docY = tileTop + py;
+                    if (docY >= Height) break;
+                    var maskTile = MaskPixels.GetTileOrNull(tx, ty);
+                    var maskRow = maskTile != null ? maskTile.AsSpan((py * TiledPixelBuffer.TileSize + 0) * 4, TiledPixelBuffer.TileSize * 4) : default;
+                    for (var px = 0; px < TiledPixelBuffer.TileSize; px++)
+                    {
+                        var docX = tileLeft + px;
+                        if (docX >= Width) break;
+                        var off = (py * TiledPixelBuffer.TileSize + px) * 4;
+                        var maskAlpha = maskRow.Length > 0 ? maskRow[px * 4 + 3] : (byte)255;
+                        if (maskAlpha == 0) { tile[off + 3] = 0; tile[off + 0] = tile[off + 1] = tile[off + 2] = 0; continue; }
+                        tile[off + 3] = (byte)(tile[off + 3] * maskAlpha / 255);
+                    }
+                }
+            }
+            Pixels.RestoreTiles(tiles);
+        }
+        finally { Pixels.ExitPixelWriteLock(); }
+        DeleteMask();
+    }
+
+    public void ToggleMaskVisibility()
+    {
+        if (MaskPixels == null) return;
+        IsMaskVisible = !IsMaskVisible;
+    }
+
     public void Dispose()
     {
         _thumbnail?.Dispose();
         Pixels?.Dispose();
+        MaskPixels?.Dispose();
     }
 
     public static (int Width, int Height) ComputeThumbnailPixelSize(int documentWidth, int documentHeight)

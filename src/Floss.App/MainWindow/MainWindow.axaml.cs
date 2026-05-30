@@ -166,6 +166,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private Button _lockLayerBtn = null!;
     private Button _alphaLockLayerBtn = null!;
     private Button _clipLayerBtn = null!;
+    private Button _maskLayerBtn = null!;
     private Button _refLayerBtn = null!;
     private TextBlock _toolStatusText = null!;
     private TextBlock _footerStatusText = null!;

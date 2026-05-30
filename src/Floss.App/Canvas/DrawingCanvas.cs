@@ -1272,6 +1272,10 @@ public sealed class DrawingCanvas : Control, IDisposable
     public void ToggleLayerAlphaLock(int index) { if (!IsStrokeOutputPending()) _document.ToggleLayerAlphaLock(index); }
     public void ToggleLayerReference(int index) { if (!IsStrokeOutputPending()) _document.ToggleLayerReference(index); }
     public void ToggleLayerClipping(int index) { if (!IsStrokeOutputPending()) _document.ToggleLayerClipping(index); }
+    public void ToggleLayerMask(int index) { if (!IsStrokeOutputPending()) _document.ToggleLayerMask(index); }
+    public void ToggleLayerMaskEditing(int index) { if (!IsStrokeOutputPending()) _document.ToggleLayerMaskEditing(index); }
+    public void DeleteLayerMask(int index) { if (!IsStrokeOutputPending()) _document.DeleteLayerMask(index); }
+    public void ApplyLayerMask(int index) { if (!IsStrokeOutputPending()) _document.ApplyLayerMask(index); }
     public void ToggleLayerOpen(int index) { if (!IsStrokeOutputPending()) _document.ToggleLayerOpen(index); }
     public bool CanMoveLayer(int sourceIndex, int targetIndex, LayerDropPlacement placement) => !IsStrokeOutputPending() && _document.CanMoveLayer(sourceIndex, targetIndex, placement);
     public void MoveLayer(int sourceIndex, int targetIndex, LayerDropPlacement placement) { if (!IsStrokeOutputPending()) _document.MoveLayer(sourceIndex, targetIndex, placement); }

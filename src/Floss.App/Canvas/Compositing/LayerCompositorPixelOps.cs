@@ -520,6 +520,7 @@ internal static class LayerCompositorPixelOps
         var layerColor = layer.LayerColor;
         var hasLayerColor = layerColor.HasValue;
         var expressionColor = layer.ExpressionColor;
+        var hasMask = layer.HasMask && layer.IsMaskVisible;
         byte lcR = 255, lcG = 255, lcB = 255;
         if (layerColor is { } lc) { lcR = lc.R; lcG = lc.G; lcB = lc.B; }
         const int ts = TiledPixelBuffer.TileSize;
@@ -552,7 +553,7 @@ internal static class LayerCompositorPixelOps
                         var dstRow = dst + (docY - originY) * dstStride;
                         var rowWidth = clipRight - clipLeft;
 
-                        if (!hasLayerColor && !applyExpr)
+                        if (!hasLayerColor && !applyExpr && !hasMask)
                         {
                             var docX0 = clipLeft + offsetX;
                             var dstPtr = dstRow + (docX0 - originX) * 4;
@@ -567,6 +568,16 @@ internal static class LayerCompositorPixelOps
                             uint rawA = tile[tileOffset + 3];
                             if (rawA == 0) continue;
                             var docX = clipLeft + j + offsetX;
+                            if (hasMask)
+                            {
+                                var maskTile = layer.MaskPixels!.GetTileOrNull(tx, ty);
+                                if (maskTile == null) continue;
+                                var maskOff = (tileLocalY * ts + (clipLeft - tx * ts + j)) * 4;
+                                uint ma = maskTile[maskOff + 3];
+                                if (ma == 0) continue;
+                                rawA = (rawA * ma + 127) / 255;
+                                if (rawA == 0) continue;
+                            }
                             var dstPtr = dstRow + (docX - originX) * 4;
                             byte srcB = tile[tileOffset + 0], srcG = tile[tileOffset + 1], srcR = tile[tileOffset + 2];
                             if (hasLayerColor)
@@ -617,6 +628,16 @@ internal static class LayerCompositorPixelOps
                             uint rawA = tile[tileOffset + 3];
                             if (rawA == 0) continue;
                             var docX = srcX + offsetX;
+                            if (hasMask)
+                            {
+                                var maskTile = layer.MaskPixels!.GetTileOrNull(tx, ty);
+                                if (maskTile == null) continue;
+                                var maskOff = (tileLocalY * ts + (srcX - tx * ts)) * 4;
+                                uint ma = maskTile[maskOff + 3];
+                                if (ma == 0) continue;
+                                rawA = (rawA * ma + 127) / 255;
+                                if (rawA == 0) continue;
+                            }
                             var dstPtr = dstRow + (docX - originX) * 4;
                             byte sb = tile[tileOffset + 0], sg = tile[tileOffset + 1], sr = tile[tileOffset + 2];
                             // layer color & expression
@@ -659,6 +680,16 @@ internal static class LayerCompositorPixelOps
                         uint rawA = tile[tileOffset + 3];
                         if (rawA == 0) continue;
                         var docX = srcX + offsetX;
+                        if (hasMask)
+                        {
+                            var maskTile = layer.MaskPixels!.GetTileOrNull(tx, ty);
+                            if (maskTile == null) continue;
+                            var maskOff = (tileLocalY * ts + (srcX - tx * ts)) * 4;
+                            uint ma = maskTile[maskOff + 3];
+                            if (ma == 0) continue;
+                            rawA = (rawA * ma + 127) / 255;
+                            if (rawA == 0) continue;
+                        }
                         var dstIdx = (docX - originX) * 4;
                         byte tintedB, tintedG, tintedR;
                         if (hasLayerColor) { tintedB = tile[tileOffset + 0]; tintedG = tile[tileOffset + 1]; tintedR = tile[tileOffset + 2]; ApplyLayerColor(ref tintedB, ref tintedG, ref tintedR, lcB, lcG, lcR); }

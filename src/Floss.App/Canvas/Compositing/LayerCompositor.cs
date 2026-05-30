@@ -178,20 +178,28 @@ public sealed class LayerCompositor : IDisposable
         var vp = visibleViewport?.ClipTo(_width, _height) ?? new PixelRegion(0, 0, _width, _height);
         if (vp.IsEmpty) return;
 
-        FlushDirtyCellImages();
-
-        for (var ci = 0; ci < _cellBitmaps.Length; ci++)
+        // Drawpile: TileCache access (dirty tile iter, resize reset, texture upload)
+        // is all protected by cacheMutex. Floss equivalent: hold CompositeGate
+        // through the entire draw pass so SetSize/InvalidateCells cannot replace
+        // cell arrays mid-iteration.
+        lock (CompositeGate)
         {
-            var bmp = _cellBitmaps[ci]; if (bmp == null) continue;
-            var cx = ci % _cellCols; var cy = ci / _cellCols;
-            var x = cx * MaxCellDim; var y = cy * MaxCellDim;
-            var w = Math.Min(MaxCellDim, _width - x);
-            var h = Math.Min(MaxCellDim, _height - y);
-            if (x + w <= vp.X || y + h <= vp.Y || x >= vp.Right || y >= vp.Bottom) continue;
+            if (_cellBitmaps.Length == 0 || _cellCols <= 0) return;
+            FlushDirtyCellImages();
 
-            var img = _cellImages[ci];
-            if (img == null) { img = SKImage.FromBitmap(bmp); _cellImages[ci] = img; }
-            context.Custom(new SkiaTileDrawOp(img, new SKRect(0, 0, bmp.Width, bmp.Height), new Rect(x, y, w, h)));
+            for (var ci = 0; ci < _cellBitmaps.Length; ci++)
+            {
+                var bmp = _cellBitmaps[ci]; if (bmp == null) continue;
+                var cx = ci % _cellCols; var cy = ci / _cellCols;
+                var x = cx * MaxCellDim; var y = cy * MaxCellDim;
+                var w = Math.Min(MaxCellDim, _width - x);
+                var h = Math.Min(MaxCellDim, _height - y);
+                if (x + w <= vp.X || y + h <= vp.Y || x >= vp.Right || y >= vp.Bottom) continue;
+
+                var img = _cellImages[ci];
+                if (img == null) { img = SKImage.FromBitmap(bmp); _cellImages[ci] = img; }
+                context.Custom(new SkiaTileDrawOp(img, new SKRect(0, 0, bmp.Width, bmp.Height), new Rect(x, y, w, h)));
+            }
         }
     }
 

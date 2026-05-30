@@ -29,6 +29,15 @@
 
 **File:** `src/Floss.App/Canvas/Compositing/LayerCompositor.cs:126-135`
 
+### Compositor Crash on Canvas Resize
+**Root cause:** `DrawTiles` held `CompositeGate` only for `EnsureCells()`, then called `FlushDirtyCellImages()` and the draw loop outside the lock. Meanwhile `CompositeCore` (on a background thread via `ScheduleBackgroundComposite`) could call `SetSize()` → `InvalidateCells()` → `_cellBitmaps = []`, replacing the cell arrays mid-iteration. This produced `IndexOutOfRangeException` at `_cellDirty[ci]` when `FlushDirtyCellImages` read a cached length `n` but `_cellDirty` was replaced with `[]`.
+
+**Fix:** Hold `CompositeGate` for the entire `DrawTiles` method (through `FlushDirtyCellImages` + draw loop). Matches Drawpile's `cacheMutex` pattern where the entire tile iter/upload sequence is protected.
+
+**Drawpile reference:** Drawpile's `handle_blocking_job` runs resize under barrier synchronization (all render threads paused), and the UI thread's `renderCanvasDirty` loops checking `getResizeReset()` before drawing. No interleaving possible.
+
+**File:** `src/Floss.App/Canvas/Compositing/LayerCompositor.cs:173-203`
+
 ## Architecture
 
 ### Layer compositing (Krita-aligned)

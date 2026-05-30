@@ -110,6 +110,9 @@ public partial class MainWindow
     // Clipping strip
     private static readonly IBrush ClipIndicatorBrush = new SolidColorBrush(Color.Parse("#e8527a"));
 
+    // Mask editing indicator
+    private static readonly IBrush MaskEditBorderBrush = new SolidColorBrush(Color.Parse("#38a169"));
+
     // Fonts
     private static readonly FontFamily MonospaceFont = new FontFamily("Consolas, Courier New, monospace");
 
@@ -208,21 +211,23 @@ public partial class MainWindow
         _lockLayerBtn = SmIconBtn(Icons.LockOutline, "Lock layer");
         _alphaLockLayerBtn = SmIconBtn(Icons.AlphaLock, "Alpha lock");
         _clipLayerBtn = SmIconBtn(Icons.ClipToBelow, "Clipping mask");
+        _maskLayerBtn = SmIconBtn(Icons.RectangleOutline, "Layer mask");
         _refLayerBtn = SmIconBtn(Icons.Eye, "Reference layer");
 
         _lockLayerBtn.Click += (_, _) => { _canvas.ToggleLayerLock(_canvas.ActiveLayerIndex); BuildLayerList(); };
         _alphaLockLayerBtn.Click += (_, _) => { _canvas.ToggleLayerAlphaLock(_canvas.ActiveLayerIndex); BuildLayerList(); };
         _clipLayerBtn.Click += (_, _) => { _canvas.ToggleLayerClipping(_canvas.ActiveLayerIndex); BuildLayerList(); };
+        _maskLayerBtn.Click += (_, _) => { _canvas.ToggleLayerMaskEditing(_canvas.ActiveLayerIndex); BuildLayerList(); };
         _refLayerBtn.Click += (_, _) => { _canvas.ToggleLayerReference(_canvas.ActiveLayerIndex); BuildLayerList(); };
 
-        foreach (var btn in new[] { _lockLayerBtn, _alphaLockLayerBtn, _clipLayerBtn, _refLayerBtn })
+        foreach (var btn in new[] { _lockLayerBtn, _alphaLockLayerBtn, _clipLayerBtn, _maskLayerBtn, _refLayerBtn })
             btn.Margin = new Thickness(0, 0, 2, 0);
 
         var toggleRow = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
             Margin = new Thickness(0, 8, 0, 8),
-            Children = { _lockLayerBtn, _alphaLockLayerBtn, _clipLayerBtn, _refLayerBtn }
+            Children = { _lockLayerBtn, _alphaLockLayerBtn, _clipLayerBtn, _maskLayerBtn, _refLayerBtn }
         };
 
         // 1. Initialize the Virtualized ListBox
@@ -460,6 +465,7 @@ public partial class MainWindow
         SetToggleActive(_lockLayerBtn, layer.IsLocked);
         SetToggleActive(_alphaLockLayerBtn, layer.IsAlphaLocked);
         SetToggleActive(_clipLayerBtn, layer.IsClipping);
+        SetToggleActive(_maskLayerBtn, layer.IsMaskEditing);
         SetToggleActive(_refLayerBtn, layer.IsReference);
     }
 
@@ -518,8 +524,9 @@ public partial class MainWindow
         var row = new Border
         {
             Background = isActive ? RowBgActive : isSelected ? RowBgSelected : RowBgDefault,
-            BorderBrush = isActive ? RowBorderActive : isSelected ? RowBorderSelected : RowBorderDefault,
-            BorderThickness = new Thickness(1),
+            BorderBrush = layer.IsMaskEditing ? MaskEditBorderBrush
+                : isActive ? RowBorderActive : isSelected ? RowBorderSelected : RowBorderDefault,
+            BorderThickness = layer.IsMaskEditing ? new Thickness(2) : new Thickness(1),
             CornerRadius = new CornerRadius(4),
             Padding = new Thickness(4, 3),
             Margin = new Thickness(layer.IndentLevel * 10, 0, 0, 0),
@@ -764,7 +771,11 @@ public partial class MainWindow
             MakeLockItem(layer, index),
             Item(layer.IsAlphaLocked ? "Disable Alpha Lock" : "Enable Alpha Lock", () => _canvas.ToggleLayerAlphaLock(index)),
             Item(layer.IsReference ? "Disable Reference Layer" : "Enable Reference Layer", () => _canvas.ToggleLayerReference(index)),
-            Item(layer.IsClipping ? "Disable Clipping Mask" : "Enable Clipping Mask", () => _canvas.ToggleLayerClipping(index))
+            Item(layer.IsClipping ? "Disable Clipping Mask" : "Enable Clipping Mask", () => _canvas.ToggleLayerClipping(index)),
+            Item(layer.HasMask ? (layer.IsMaskEditing ? "Exit Mask Edit" : "Edit Mask") : "Create Mask", () => _canvas.ToggleLayerMaskEditing(index)),
+            Item(layer.IsMaskVisible ? "Disable Mask" : "Enable Mask", () => _canvas.ToggleLayerMask(index)),
+            Item("Delete Mask", () => _canvas.DeleteLayerMask(index)),
+            Item("Apply Mask", () => _canvas.ApplyLayerMask(index))
         };
 
         if (layer.IsPaper)
@@ -1342,7 +1353,9 @@ public partial class MainWindow
         var fgBrush = isActive ? TextFgActive : TextFgDefault;
 
         refs.Row.Background = isActive ? RowBgActive : isSelected ? RowBgSelected : RowBgDefault;
-        refs.Row.BorderBrush = isActive ? RowBorderActive : isSelected ? RowBorderSelected : RowBorderDefault;
+        refs.Row.BorderBrush = layer.IsMaskEditing ? MaskEditBorderBrush
+            : isActive ? RowBorderActive : isSelected ? RowBorderSelected : RowBorderDefault;
+        refs.Row.BorderThickness = layer.IsMaskEditing ? new Thickness(2) : new Thickness(1);
         refs.ClipStrip.Background = layer.IsClipping ? ClipIndicatorBrush : Avalonia.Media.Brushes.Transparent;
 
         SetLayerIconBtnIcon(refs.VisibilityButton,
