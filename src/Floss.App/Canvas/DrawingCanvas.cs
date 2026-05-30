@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Threading;
@@ -21,6 +22,7 @@ using Floss.App.Processes;
 using Floss.App.Processes.Input;
 using Floss.App.Processes.Output;
 using Floss.App.Tools;
+using Floss.App.Canvas.Compositing;
 using SkiaSharp;
 
 namespace Floss.App.Canvas;
@@ -372,7 +374,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             props.XTilt,
             props.YTilt,
             props.Twist,
-            Environment.TickCount64 * 1000,
+            Stopwatch.GetTimestamp() * 1_000_000 / Stopwatch.Frequency,
             point.Pointer.Id,
             sampleInfo.Source,
             phase);
@@ -1284,7 +1286,7 @@ public sealed class DrawingCanvas : Control, IDisposable
     public void BeginActiveLayerOpacityScrub() { if (!IsStrokeOutputPending()) _document.BeginActiveLayerOpacityScrub(); }
     public void PreviewActiveLayerOpacity(double opacity) { if (!IsStrokeOutputPending()) _document.PreviewActiveLayerOpacity(opacity); }
     public void CommitActiveLayerOpacityScrub() { if (!IsStrokeOutputPending()) _document.CommitActiveLayerOpacityScrub(); }
-    public void SetActiveLayerBlendMode(string blendMode) { if (!IsStrokeOutputPending()) _document.SetActiveLayerBlendMode(blendMode); }
+    public void SetActiveLayerBlendMode(BlendMode blendMode) { if (!IsStrokeOutputPending()) _document.SetActiveLayerBlendMode(blendMode); }
     public void SetActiveLayerName(string name) { if (!IsStrokeOutputPending()) _document.SetActiveLayerName(name); }
     public void SetActiveLayerColor(Avalonia.Media.Color? color) { if (!IsStrokeOutputPending()) _document.SetActiveLayerColor(color); }
 

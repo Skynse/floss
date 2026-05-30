@@ -62,7 +62,8 @@ internal static unsafe class AdjustmentLayerProcessor
             const int ts = TiledPixelBuffer.TileSize;
             var op = (float)Math.Clamp(opacityScale, 0.0, 1.0);
 
-            baseLayer.Pixels.EnterPixelReadLock();
+            var basePixels = baseLayer.Pixels;
+            basePixels.EnterPixelReadLock();
             try
             {
                 for (var y = clip.Y; y < clip.Bottom; y++)
@@ -80,7 +81,7 @@ internal static unsafe class AdjustmentLayerProcessor
 
                         var tileX = LayerCompositorPixelOps.FloorDiv(bx, ts);
                         var tileY = LayerCompositorPixelOps.FloorDiv(by, ts);
-                        var tile = baseLayer.Pixels.GetTileOrNull(tileX, tileY);
+                        var tile = basePixels.GetTileOrNull(tileX, tileY);
                         if (tile == null) continue;
 
                         var localX = bx - tileX * ts;
@@ -95,7 +96,7 @@ internal static unsafe class AdjustmentLayerProcessor
             }
             finally
             {
-                baseLayer.Pixels.ExitPixelReadLock();
+                basePixels.ExitPixelReadLock();
             }
         }
     }

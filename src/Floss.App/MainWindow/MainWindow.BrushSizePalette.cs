@@ -13,7 +13,7 @@ using static Floss.App.Config.AppColors;
 
 public partial class MainWindow
 {
-    private const double SizePaletteItemSize = 27;
+    private const double SizePaletteItemSize = 22;
     private static readonly double[] SizePaletteValues =
     [
         0.7, 1, 1.5, 2, 2.5, 3, 4,

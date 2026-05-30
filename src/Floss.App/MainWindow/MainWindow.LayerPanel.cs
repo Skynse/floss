@@ -11,6 +11,7 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Styling;
 using Floss.App.Canvas;
+using Floss.App.Canvas.Compositing;
 using Floss.App.Controls;
 using Floss.App.Document;
 using Avalonia.Controls.Templates;
@@ -113,6 +114,11 @@ public partial class MainWindow
     // Mask editing indicator
     private static readonly IBrush MaskEditBorderBrush = new SolidColorBrush(Color.Parse("#38a169"));
 
+    // Mask thumbnail badge
+    private static readonly IBrush MaskThumbBg = new SolidColorBrush(Color.Parse("#1e1e2e"));
+    private static readonly IBrush MaskThumbBorder = new SolidColorBrush(Color.Parse("#45475a"));
+    private static readonly IBrush MaskThumbText = new SolidColorBrush(Color.Parse("#a6adc8"));
+
     // Fonts
     private static readonly FontFamily MonospaceFont = new FontFamily("Consolas, Courier New, monospace");
 
@@ -124,7 +130,7 @@ public partial class MainWindow
         {
             PlaceholderText = "Layer name",
             FontSize = 11,
-            Height = 30,
+            Height = 26,
             Background = new SolidColorBrush(Color.Parse(Bg3)),
             Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
             CaretBrush = new SolidColorBrush(Color.Parse(TextPrimary)),
@@ -148,7 +154,7 @@ public partial class MainWindow
         _blendModeComboBox = new ComboBox
         {
             ItemsSource = BlendModes,
-            SelectedItem = "Normal",
+            SelectedItem = BlendMode.Normal,
             FontSize = 11,
             Padding = new Thickness(5, 0),
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
@@ -157,7 +163,7 @@ public partial class MainWindow
         _blendModeComboBox.SelectionChanged += (_, _) =>
         {
             if (_syncingLayerUi) return;
-            if (_blendModeComboBox.SelectedItem is string mode)
+            if (_blendModeComboBox.SelectedItem is BlendMode mode)
                 _canvas.SetActiveLayerBlendMode(mode);
         };
 
@@ -226,7 +232,7 @@ public partial class MainWindow
         var toggleRow = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
-            Margin = new Thickness(0, 8, 0, 8),
+            Margin = new Thickness(0, 4, 0, 4),
             Children = { _lockLayerBtn, _alphaLockLayerBtn, _clipLayerBtn, _maskLayerBtn, _refLayerBtn }
         };
 
@@ -294,7 +300,7 @@ public partial class MainWindow
         // Grid: name | blend+opacity | toggles | list(*) | actions
         var mainGrid = new Grid
         {
-            Margin = new Thickness(16, 2, 16, 12),
+            Margin = new Thickness(4, 1, 4, 3),
             RowDefinitions = new RowDefinitions("Auto, Auto, Auto, *, Auto")
         };
 
@@ -528,8 +534,8 @@ public partial class MainWindow
                 : isActive ? RowBorderActive : isSelected ? RowBorderSelected : RowBorderDefault,
             BorderThickness = layer.IsMaskEditing ? new Thickness(2) : new Thickness(1),
             CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(4, 3),
-            Margin = new Thickness(layer.IndentLevel * 10, 0, 0, 0),
+            Padding = new Thickness(3, 2),
+            Margin = new Thickness(layer.IndentLevel * 8, 0, 0, 0),
             Tag = i,
             ContextMenu = BuildLayerContextMenu(i)
         };
@@ -575,6 +581,35 @@ public partial class MainWindow
             preview.DoubleTapped += (_, _) => ShowPaperColorPicker();
         }
 
+        // Mask indicator overlay on the preview
+        var previewHost = new Grid();
+        previewHost.Children.Add(preview);
+        if (layer.HasMask)
+        {
+            var maskBadge = new Border
+            {
+                Width = 14,
+                Height = 14,
+                Background = layer.IsMaskEditing ? MaskEditBorderBrush : MaskThumbBg,
+                BorderBrush = layer.IsMaskEditing ? MaskEditBorderBrush : MaskThumbBorder,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(3),
+                Child = new TextBlock
+                {
+                    Text = "M",
+                    FontSize = 8,
+                    FontWeight = FontWeight.Bold,
+                    Foreground = layer.IsMaskEditing ? Avalonia.Media.Brushes.White : MaskThumbText,
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+                },
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom,
+                Margin = new Thickness(0, 0, 1, 1)
+            };
+            previewHost.Children.Add(maskBadge);
+        }
+
         var nameText = new TextBlock
         {
             Text = layer.Name,
@@ -612,12 +647,12 @@ public partial class MainWindow
         Grid.SetColumn(clipStrip, 0);
         Grid.SetColumn(disclosureBtn, 1);
         Grid.SetColumn(visBtn, 2);
-        Grid.SetColumn(preview, 3);
+        Grid.SetColumn(previewHost, 3);
         Grid.SetColumn(nameHost, 4);
         grid.Children.Add(clipStrip);
         grid.Children.Add(disclosureBtn);
         grid.Children.Add(visBtn);
-        grid.Children.Add(preview);
+        grid.Children.Add(previewHost);
         grid.Children.Add(nameHost);
         row.Child = grid;
         return (row, new LayerRowRefs(row, disclosureBtn, visBtn, nameHost, previewImage, clipStrip));

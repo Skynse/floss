@@ -1,5 +1,7 @@
 namespace Floss.App.Tests;
 
+using Floss.App.Canvas.Compositing;
+
 public class DrawingDocumentTests
 {
     [Fact]
@@ -63,17 +65,17 @@ public class DrawingDocumentTests
         document.MarkAsSaved();
         document.SetActiveLayerName("Ink");
         document.SetActiveLayerOpacity(2);
-        document.SetActiveLayerBlendMode("Multiply");
+        document.SetActiveLayerBlendMode(BlendMode.Multiply);
 
         TestAssertions.Equal("Ink", document.ActiveLayer.Name);
         TestAssertions.Equal(1.0, document.ActiveLayer.Opacity);
-        TestAssertions.Equal("Multiply", document.ActiveLayer.BlendMode);
+        TestAssertions.Equal(BlendMode.Multiply, document.ActiveLayer.BlendMode);
         TestAssertions.True(document.IsDirty);
 
         document.Undo();
-        TestAssertions.Equal("Normal", document.ActiveLayer.BlendMode);
+        TestAssertions.Equal(BlendMode.Normal, document.ActiveLayer.BlendMode);
         document.Redo();
-        TestAssertions.Equal("Multiply", document.ActiveLayer.BlendMode);
+        TestAssertions.Equal(BlendMode.Multiply, document.ActiveLayer.BlendMode);
     }
 
     [Fact]

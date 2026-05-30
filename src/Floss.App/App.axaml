@@ -16,7 +16,7 @@
 
         <Style Selector="Window">
             <Setter Property="FontFamily" Value="Inter, Segoe UI, Noto Sans, Ubuntu, Cantarell, Arial"/>
-            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontSize" Value="11"/>
             <Setter Property="Background" Value="{StaticResource Bg0}"/>
             <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
         </Style>
@@ -29,7 +29,7 @@
             <Setter Property="BorderBrush"               Value="Transparent"/>
             <Setter Property="BorderThickness"           Value="0"/>
             <Setter Property="CornerRadius"              Value="{StaticResource ControlRadius}"/>
-            <Setter Property="Padding"                   Value="10,4"/>
+            <Setter Property="Padding"                   Value="8,3"/>
             <Setter Property="Cursor"                    Value="Hand"/>
             <Setter Property="Foreground"                Value="{StaticResource TextSecondary}"/>
             <Setter Property="RenderTransformOrigin"     Value="50%,50%"/>
@@ -112,8 +112,8 @@
         <!-- .icon — square, no padding, centered icon -->
         <Style Selector="Button.icon">
             <Setter Property="Padding"                     Value="0"/>
-            <Setter Property="Width"                       Value="28"/>
-            <Setter Property="Height"                      Value="28"/>
+            <Setter Property="Width"                       Value="24"/>
+            <Setter Property="Height"                      Value="24"/>
             <Setter Property="HorizontalContentAlignment"  Value="Center"/>
             <Setter Property="VerticalContentAlignment"    Value="Center"/>
         </Style>
@@ -126,7 +126,7 @@
             <Setter Property="BorderBrush"           Value="Transparent"/>
             <Setter Property="BorderThickness"       Value="0"/>
             <Setter Property="CornerRadius"          Value="{StaticResource ControlRadius}"/>
-            <Setter Property="Padding"               Value="16,7"/>
+            <Setter Property="Padding"               Value="12,5"/>
             <Setter Property="Cursor"                Value="Hand"/>
             <Setter Property="Foreground"            Value="{StaticResource TextSecondary}"/>
             <Setter Property="RenderTransformOrigin" Value="50%,50%"/>
@@ -274,18 +274,18 @@
         ══════════════════════════════════════════════════════════════════ -->
         <Style Selector="Slider:horizontal">
             <Setter Property="Background" Value="{StaticResource SliderTrack}"/>
-            <Setter Property="MinHeight"  Value="24"/>
-            <Setter Property="MaxHeight"  Value="24"/>
+            <Setter Property="MinHeight"  Value="16"/>
+            <Setter Property="MaxHeight"  Value="16"/>
             <Setter Property="Cursor"     Value="SizeWestEast"/>
             <Setter Property="Padding"    Value="0"/>
             <Setter Property="Template">
                 <ControlTemplate>
                     <Border Background="{TemplateBinding Background}"
-                            Height="24"
-                            CornerRadius="6"
+                            Height="16"
+                            CornerRadius="4"
                             ClipToBounds="False">
                         <Track Name="PART_Track" Orientation="Horizontal"
-                               Height="24"
+                               Height="16"
                                Minimum="{TemplateBinding Minimum}"
                                Maximum="{TemplateBinding Maximum}"
                                Value="{TemplateBinding Value, Mode=TwoWay}">
@@ -299,14 +299,14 @@
                                 </RepeatButton>
                             </Track.DecreaseButton>
                             <Track.Thumb>
-                                <Thumb Width="24" Height="24" Cursor="SizeWestEast">
+                                <Thumb Width="16" Height="16" Cursor="SizeWestEast">
                                     <Thumb.Template>
                                         <ControlTemplate>
-                                            <Border Width="20" Height="20"
+                                            <Border Width="14" Height="14"
                                                     Background="#402e3035"
                                                     BorderBrush="{StaticResource SliderThumbLine}"
                                                     BorderThickness="2"
-                                                    CornerRadius="6"
+                                                    CornerRadius="4"
                                                     VerticalAlignment="Center"
                                                     HorizontalAlignment="Center"/>
                                         </ControlTemplate>

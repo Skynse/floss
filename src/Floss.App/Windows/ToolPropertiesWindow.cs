@@ -389,8 +389,8 @@ public sealed class ToolPropertiesWindow : Window
             DynSliderRow("Flow",    _flowSlider,    "%", () => OpenFlowDynamics(), "brush.flow"),
             BuildBlendModeRow(),
             SectionHeader("COLOR MIXING"),
-            BuildMixToggleRow(),
-            BuildSmudgeModeRow(),
+            BuildMixToggleRow("brush.colorMix"),
+            BuildSmudgeModeRow("brush.smudgeMode"),
             PlainSliderRow("Amount of paint", _amountOfPaintSlider, "%", "brush.amountOfPaint"),
             PlainSliderRow("Density of paint", _densityOfPaintSlider, "%", "brush.densityOfPaint"),
             PlainSliderRow("Color stretch", _colorStretchSlider, "%", "brush.colorStretch"),
@@ -402,7 +402,7 @@ public sealed class ToolPropertiesWindow : Window
     private Control BuildAntiAliasingContent() => new StackPanel
     {
         Spacing = 0,
-        Children = { BuildAntialiasingLevelRow() }
+        Children = { BuildAntialiasingLevelRow("brush.quality") }
     };
 
     private Control BuildBrushTipContent()
@@ -552,7 +552,7 @@ public sealed class ToolPropertiesWindow : Window
         WireSlider(thicknessSlider, v => Commit(p => p with { TipThickness = v }));
         result.Children.Add(DynSliderRow("Thickness", thicknessSlider, "%", () => OpenTipThicknessDynamics(), "brush.tipThickness"));
 
-        result.Children.Add(BuildTipDirectionRow());
+        result.Children.Add(BuildTipDirectionRow("brush.tipDirection"));
         result.Children.Add(BuildFlipRow());
 
         var localAngle = MkSlider(0, 360, Math.Clamp(_brushPreset.Angle, 0, 360), "Brush tip angle");
@@ -895,7 +895,7 @@ public sealed class ToolPropertiesWindow : Window
         return btn;
     }
 
-    private Control BuildTipDirectionRow()
+    private Control BuildTipDirectionRow(string? toolPropId = null)
     {
         Button horizontal = null!;
         Button vertical = null!;
@@ -913,7 +913,7 @@ public sealed class ToolPropertiesWindow : Window
         panel.Children.Add(horizontal);
         panel.Children.Add(vertical);
 
-        return new DockPanel
+        var row = new DockPanel
         {
             LastChildFill = true,
             Margin = new Thickness(0, 2, 0, 2),
@@ -923,6 +923,8 @@ public sealed class ToolPropertiesWindow : Window
                 panel
             }
         };
+        if (toolPropId != null) return AddEyeButton(row, toolPropId);
+        return row;
     }
 
     private Control BuildTipSelectionModeRow()
@@ -1635,7 +1637,7 @@ public sealed class ToolPropertiesWindow : Window
             VerticalContentAlignment = VerticalAlignment.Center
         };
 
-        bool visible = App.Config.ToolPropertyDockerVisibility.TryGetValue(toolPropId, out var v) ? v : false;
+        bool visible = App.Config.IsToolPropertyDockerVisible(toolPropId);
         eyeBtn.Foreground = new SolidColorBrush(Color.Parse(visible ? Accent : TextMuted));
 
         eyeBtn.Click += (_, _) =>
@@ -1743,7 +1745,7 @@ public sealed class ToolPropertiesWindow : Window
         // Eye toggle for tool property docker visibility
         if (toolPropId != null)
         {
-            bool visible = App.Config.ToolPropertyDockerVisibility.TryGetValue(toolPropId, out var v) ? v : false;
+            bool visible = App.Config.IsToolPropertyDockerVisible(toolPropId);
             var eyeBtn = new Button
             {
                 Content = visible ? "◉" : "○",
@@ -1759,7 +1761,7 @@ public sealed class ToolPropertiesWindow : Window
             ToolTip.SetTip(eyeBtn, visible ? "Hide from tool property docker" : "Show in tool property docker");
             eyeBtn.Click += (_, _) =>
             {
-                var newVisible = !App.Config.ToolPropertyDockerVisibility.TryGetValue(toolPropId, out var cur) || !cur;
+                var newVisible = !App.Config.IsToolPropertyDockerVisible(toolPropId);
                 App.Config.ToolPropertyDockerVisibility[toolPropId] = newVisible;
                 App.Config.Save();
                 AppConfig.NotifyToolPropertyVisibilityChanged();
@@ -2292,7 +2294,7 @@ public sealed class ToolPropertiesWindow : Window
         return row;
     }
 
-    private Control BuildMixToggleRow()
+    private Control BuildMixToggleRow(string? toolPropId = null)
     {
         _mixToggle = MkToggleBtn("Color mixing", _brushPreset.ColorMix, () =>
         {
@@ -2301,7 +2303,7 @@ public sealed class ToolPropertiesWindow : Window
             Commit(p => p with { ColorMix = enabled });
             StylizeToggle(_mixToggle, enabled);
         });
-        return new DockPanel
+        var row = new DockPanel
         {
             LastChildFill = false,
             Margin = new Thickness(0, 0, 0, 10),
@@ -2311,9 +2313,11 @@ public sealed class ToolPropertiesWindow : Window
                 _mixToggle
             }
         };
+        if (toolPropId != null) return AddEyeButton(row, toolPropId);
+        return row;
     }
 
-    private Control BuildSmudgeModeRow()
+    private Control BuildSmudgeModeRow(string? toolPropId = null)
     {
         _blendBtn = MkToggleBtn("Blend", _brushPreset.SmudgeMode == SmudgeMode.Blend, () => SetSmudgeMode(SmudgeMode.Blend));
         _smearBtn = MkToggleBtn("Smear", _brushPreset.SmudgeMode == SmudgeMode.Smear, () => SetSmudgeMode(SmudgeMode.Smear));
@@ -2322,7 +2326,7 @@ public sealed class ToolPropertiesWindow : Window
         panel.Children.Add(_blendBtn);
         panel.Children.Add(_smearBtn);
         panel.Children.Add(_smudgeBtn);
-        return new DockPanel
+        var row = new DockPanel
         {
             LastChildFill = true,
             Margin = new Thickness(0, 0, 0, 10),
@@ -2331,6 +2335,8 @@ public sealed class ToolPropertiesWindow : Window
                 panel
             }
         };
+        if (toolPropId != null) return AddEyeButton(row, toolPropId);
+        return row;
     }
 
     private void SetSmudgeMode(SmudgeMode mode)
@@ -2358,7 +2364,7 @@ public sealed class ToolPropertiesWindow : Window
     // ── Antialiasing level row ────────────────────────────────────────────────
     private ComboBox? _aaLevelCombo;
 
-    private Control BuildAntialiasingLevelRow()
+    private Control BuildAntialiasingLevelRow(string? toolPropId = null)
     {
         var levels = new[] { "Pixel Art", "Low", "Medium", "High" };
         _aaLevelCombo = new ComboBox
@@ -2390,6 +2396,7 @@ public sealed class ToolPropertiesWindow : Window
         DockPanel.SetDock(lbl, Dock.Left);
         row.Children.Add(lbl);
         row.Children.Add(_aaLevelCombo);
+        if (toolPropId != null) return AddEyeButton(row, toolPropId);
         return row;
     }
 

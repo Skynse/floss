@@ -489,11 +489,12 @@ public partial class MainWindow
     }
 
     private static bool IsToolPropertyVisible(ToolPropertyDescriptor prop)
-        => App.Config.ToolPropertyDockerVisibility.TryGetValue(prop.Id, out var visible) ? visible : prop.DefaultVisible;
+        => App.Config.IsToolPropertyDockerVisible(prop.Id);
 
     private static void SetToolPropertyVisible(ToolPropertyDescriptor prop, bool visible)
     {
         App.Config.ToolPropertyDockerVisibility[prop.Id] = visible;
         App.Config.Save();
+        AppConfig.NotifyToolPropertyVisibilityChanged();
     }
 }

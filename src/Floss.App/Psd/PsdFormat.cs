@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using Floss.App.Canvas;
+using Floss.App.Canvas.Compositing;
 using Floss.App.Document;
 
 namespace Floss.App.Psd;
@@ -299,36 +300,36 @@ public static class PsdExporter
         w.WriteAscii(blendMode);
     }
 
-    private static string BlendModeKey(string blendMode) => blendMode switch
+    private static string BlendModeKey(BlendMode blendMode) => blendMode switch
     {
-        "Normal" => "norm",
-        "Dissolve" => "diss",
-        "Darken" => "dark",
-        "Multiply" => "mul ",
-        "ColorBurn" => "idiv",
-        "LinearBurn" => "lbrn",
-        "DarkerColor" => "dkCl",
-        "Lighten" => "lite",
-        "Screen" => "scrn",
-        "ColorDodge" => "div ",
-        "LinearDodge" => "lddg",
-        "LighterColor" => "lgCl",
-        "Overlay" => "over",
-        "SoftLight" => "sLit",
-        "HardLight" => "hLit",
-        "VividLight" => "vLit",
-        "LinearLight" => "lLit",
-        "PinLight" => "pLit",
-        "HardMix" => "hMix",
-        "Difference" => "diff",
-        "Exclusion" => "smud",
-        "Subtract" => "fsub",
-        "Divide" => "fdiv",
-        "Hue" => "hue ",
-        "Saturation" => "sat ",
-        "Color" => "colr",
-        "Luminosity" => "lum ",
-        "PassThrough" => "pass",
+        BlendMode.Normal => "norm",
+        BlendMode.Dissolve => "diss",
+        BlendMode.Darken => "dark",
+        BlendMode.Multiply => "mul ",
+        BlendMode.ColorBurn => "idiv",
+        BlendMode.LinearBurn => "lbrn",
+        BlendMode.DarkerColor => "dkCl",
+        BlendMode.Lighten => "lite",
+        BlendMode.Screen => "scrn",
+        BlendMode.ColorDodge => "div ",
+        BlendMode.LinearDodge => "lddg",
+        BlendMode.LighterColor => "lgCl",
+        BlendMode.Overlay => "over",
+        BlendMode.SoftLight => "sLit",
+        BlendMode.HardLight => "hLit",
+        BlendMode.VividLight => "vLit",
+        BlendMode.LinearLight => "lLit",
+        BlendMode.PinLight => "pLit",
+        BlendMode.HardMix => "hMix",
+        BlendMode.Difference => "diff",
+        BlendMode.Exclusion => "smud",
+        BlendMode.Subtract => "fsub",
+        BlendMode.Divide => "fdiv",
+        BlendMode.Hue => "hue ",
+        BlendMode.Saturation => "sat ",
+        BlendMode.Color => "colr",
+        BlendMode.Luminosity => "lum ",
+        BlendMode.PassThrough => "pass",
         _ => "norm"
     };
 

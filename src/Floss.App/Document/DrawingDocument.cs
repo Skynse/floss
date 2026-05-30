@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Avalonia.Media;
+using Floss.App.Canvas.Compositing;
 using Floss.App.Tools;
 
 namespace Floss.App.Document;
@@ -769,6 +770,7 @@ public sealed class DrawingDocument : IDisposable
         if (index < 0 || index >= _layers.Count) return;
         var layer = _layers[index];
         if (layer.HasMask) return;
+        using var w = RenderLock.Write();
         layer.CreateMask();
         NotifyLayerMetadataChanged(null, index);
     }
@@ -778,6 +780,7 @@ public sealed class DrawingDocument : IDisposable
         if (index < 0 || index >= _layers.Count) return;
         var layer = _layers[index];
         if (!layer.HasMask) return;
+        using var w = RenderLock.Write();
         layer.DeleteMask();
         NotifyLayerMetadataChanged(null, index);
     }
@@ -882,14 +885,14 @@ public sealed class DrawingDocument : IDisposable
         NotifyLayerMetadataChanged(dirtyRegion, ActiveLayerIndex);
     }
 
-    public void SetActiveLayerBlendMode(string blendMode)
+    public void SetActiveLayerBlendMode(BlendMode blendMode)
     {
         var layer = ActiveLayer;
         if (layer == null) return;
         if (layer.BlendMode == blendMode) return;
         var oldMode = layer.BlendMode;
         var dirtyRegion = LayerDirtyRegion(ActiveLayerIndex);
-        PushHistoryState(new LayerPropertyHistoryState<string>(ActiveLayerIndex, oldMode, blendMode, (l, value) => l.BlendMode = value, true, dirtyRegion));
+        PushHistoryState(new LayerPropertyHistoryState<BlendMode>(ActiveLayerIndex, oldMode, blendMode, (l, value) => l.BlendMode = value, true, dirtyRegion));
         layer.BlendMode = blendMode;
         NotifyLayerMetadataChanged(dirtyRegion, ActiveLayerIndex);
     }
@@ -1369,7 +1372,7 @@ public sealed class DrawingDocument : IDisposable
 
     // --- Records and State Classes ---
     private sealed record DocumentSnapshot(int Width, int Height, int ActiveLayerIndex, LayerSnapshot[] Layers, SelectionMask.Snapshot Selection);
-    private sealed record LayerSnapshot(string Name, bool IsVisible, bool IsLocked, bool IsAlphaLocked, bool IsReference, bool IsPaper, double Opacity, string BlendMode, int OffsetX, int OffsetY, bool IsGroup, bool IsOpen, bool IsClipping, int IndentLevel, int ParentIndex, int BitmapWidth, int BitmapHeight, Dictionary<(int X, int Y), byte[]> Tiles, AdjustmentLayerData? Adjustment = null, Dictionary<(int X, int Y), byte[]>? MaskTiles = null, bool IsMaskVisible = true);
+    private sealed record LayerSnapshot(string Name, bool IsVisible, bool IsLocked, bool IsAlphaLocked, bool IsReference, bool IsPaper, double Opacity, BlendMode BlendMode, int OffsetX, int OffsetY, bool IsGroup, bool IsOpen, bool IsClipping, int IndentLevel, int ParentIndex, int BitmapWidth, int BitmapHeight, Dictionary<(int X, int Y), byte[]> Tiles, AdjustmentLayerData? Adjustment = null, Dictionary<(int X, int Y), byte[]>? MaskTiles = null, bool IsMaskVisible = true);
 
     private interface IHistoryState
     {

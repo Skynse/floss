@@ -99,6 +99,7 @@ public sealed class DesktopDocker
 
         LeftRail = BuildLeftColumn();
         Grid.SetColumn(LeftRail, 0);
+        LeftRail.IsVisible = Layout.LeftColumn.PanelIds.Any(id => IsVisible(id) && !IsFloating(id));
         _rootGrid.Children.Add(LeftRail);
 
         // Replace the old right-panel placeholder with our own

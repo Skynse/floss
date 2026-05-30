@@ -2,6 +2,7 @@ namespace Floss.App.Tests;
 
 using Avalonia;
 using Avalonia.Headless;
+using Floss.App.Canvas.Compositing;
 using Floss.App.Kra;
 using SkiaSharp;
 
@@ -61,7 +62,7 @@ public class LayerCompositorTests
     {
         using var layer = new DrawingLayer("Multiply red", 1, 1)
         {
-            BlendMode = "Multiply"
+            BlendMode = BlendMode.Multiply
         };
         layer.Pixels.SetPixel(0, 0, b: 0, g: 0, r: 255, a: 255);
 

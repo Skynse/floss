@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using Floss.App.Canvas.Compositing;
 using Floss.App.Document;
 using Floss.App.ImageFiles;
 
@@ -187,7 +188,7 @@ public static class KraImporter
         ApplyCommonLayerMetadata(element, group, parent, depth);
 
         if (element.Attribute("passthrough")?.Value is "1")
-            group.BlendMode = "PassThrough";
+            group.BlendMode = BlendMode.PassThrough;
 
         foreach (var childLayers in element.Elements(ns + "layers"))
             ImportLayers(archiveRoot, childLayers, ns, document, group, depth + 1, pendingJobs, ref importedPaintLayers);

@@ -45,6 +45,8 @@ internal sealed class LayerProjectionPlane
             var item = stack[i];
             if (!item.Layer.IsVisible) continue;
 
+            if (item.HasClippingChildren) continue;
+
             if (item.IsClipped && item.BaseLayerIndex >= 0)
             {
                 var baseLayer = stack[item.BaseLayerIndex].Layer;
@@ -56,49 +58,57 @@ internal sealed class LayerProjectionPlane
                 // 3. Merge temp onto dst with base layer's blend/opacity
                 var tempLen = clip.Width * clip.Height * 4;
                 var temp = ArrayPool<byte>.Shared.Rent(tempLen);
-                Array.Clear(temp, 0, tempLen);
-                fixed (byte* tp = temp)
+                try
                 {
-                    _host.CompositePaintLayer(tp, clip.Width * 4, width, height,
-                        baseLayer, 1.0, clip, originX, originY);
-
-                    // Process this clip item and all consecutive clip items
-                    // with the same base layer
-                    var end = i;
-                    while (end + 1 < stack.Count
-                           && stack[end + 1].IsClipped
-                           && stack[end + 1].BaseLayerIndex == item.BaseLayerIndex)
-                        end++;
-
-                    for (var j = i; j <= end; j++)
+                    Array.Clear(temp, 0, tempLen);
+                    fixed (byte* tp = temp)
                     {
-                        var clipItem = stack[j];
-                        if (clipItem.Layer.IsGroup)
-                            // Groups as clip layers: composite children into temp
-                            // with alpha-preserving blend
-                            CompositeGroupIntoBufferAlphaPreserving(tp, clip.Width * 4,
-                                clip.Width, clip.Height, clipItem.Layer,
-                                clip, originX, originY);
-                        else if (clipItem.Layer.Adjustment != null)
-                            AdjustmentLayerProcessor.Apply(
-                                tp, clip.Width * 4, clip.Width, clip.Height,
-                                clipItem.Layer.Adjustment,
-                                clipItem.Layer.Opacity, clip, originX, originY);
-                        else
-                            LayerCompositorPixelOps.CompositeLayerAlphaPreserving(
-                                tp, clip.Width * 4, clip.Width, clip.Height,
-                                clipItem.Layer, 1.0, clip, originX, originY);
-                    }
+                        // Drawpile: base must be composited into temp with Normal
+                        // blend, 100% opacity — its real blend/opacity are deferred
+                        // to the final merge of the entire clip group.
+                        _host.CompositePaintLayer(tp, clip.Width * 4, width, height,
+                            baseLayer, 1.0, clip, originX, originY,
+                            blendModeOverride: BlendMode.Normal, opacityOverride: 1.0);
 
-                    // Step 3: merge temp onto dst with base layer blend + opacity
-                    var baseBlend = baseLayer.BlendMode;
-                    var baseOp = baseLayer.Opacity * opacityScale;
-                    LayerCompositorPixelOps.CompositeBgraBuffer(
-                        dst, dstStride, tp, clip.Width * 4,
-                        baseBlend, baseOp, clip, originX, originY);
-                    i = end;
+                        // Process this clip item and all consecutive clip items
+                        // with the same base layer
+                        var end = i;
+                        while (end + 1 < stack.Count
+                               && stack[end + 1].IsClipped
+                               && stack[end + 1].BaseLayerIndex == item.BaseLayerIndex)
+                            end++;
+
+                        for (var j = i; j <= end; j++)
+                        {
+                            var clipItem = stack[j];
+                            if (!clipItem.Layer.IsVisible) continue;
+                            if (clipItem.Layer.IsGroup)
+                                // Groups as clip layers: composite children into temp
+                                // with alpha-preserving blend
+                                CompositeGroupIntoBufferAlphaPreserving(tp, clip.Width * 4,
+                                    clip.Width, clip.Height, clipItem.Layer,
+                                    clip, originX, originY);
+                            else if (clipItem.Layer.Adjustment != null)
+                                AdjustmentLayerProcessor.Apply(
+                                    tp, clip.Width * 4, clip.Width, clip.Height,
+                                    clipItem.Layer.Adjustment,
+                                    clipItem.Layer.Opacity, clip, originX, originY);
+                            else
+                                LayerCompositorPixelOps.CompositeLayerAlphaPreserving(
+                                    tp, clip.Width * 4, clip.Width, clip.Height,
+                                    clipItem.Layer, 1.0, clip, originX, originY);
+                        }
+
+                        // Step 3: merge temp onto dst with base layer blend + opacity
+                        var baseBlend = baseLayer.BlendMode;
+                        var baseOp = baseLayer.Opacity * opacityScale;
+                        LayerCompositorPixelOps.CompositeBgraBuffer(
+                            dst, dstStride, tp, clip.Width * 4,
+                            baseBlend, baseOp, clip, originX, originY);
+                        i = end;
+                    }
                 }
-                ArrayPool<byte>.Shared.Return(temp);
+                finally { ArrayPool<byte>.Shared.Return(temp); }
             }
             else if (item.Layer.IsGroup)
             {
@@ -129,7 +139,7 @@ internal sealed class LayerProjectionPlane
         DrawingLayer group, PixelRegion clip, int originX, int originY)
     {
         if (group.Children.Count == 0) return;
-        if (group.BlendMode == "PassThrough")
+        if (group.BlendMode == BlendMode.PassThrough)
         {
             var stack = BuildSiblingStack(group.Children);
             for (var i = 0; i < stack.Count; i++)
@@ -157,36 +167,34 @@ internal sealed class LayerProjectionPlane
             // DP_transient_tile_merge with DP_blend_mode_clip → alpha-preserving).
             var tempLen = clip.Width * clip.Height * 4;
             var temp = ArrayPool<byte>.Shared.Rent(tempLen);
-            Array.Clear(temp, 0, tempLen);
-            fixed (byte* tp = temp)
+            try
             {
-                var stack = BuildSiblingStack(group.Children);
-                for (var i = 0; i < stack.Count; i++)
+                Array.Clear(temp, 0, tempLen);
+                fixed (byte* tp = temp)
                 {
-                    var item = stack[i];
-                    if (!item.Layer.IsVisible) continue;
-                    if (item.Layer.IsGroup)
-                        CompositeGroupNode(tp, clip.Width * 4, clip.Width, clip.Height,
-                            item.Layer, 1.0, clip, clip.X, clip.Y);
-                    else if (item.Layer.Adjustment != null)
-                        AdjustmentLayerProcessor.Apply(tp, clip.Width * 4, clip.Width, clip.Height,
-                            item.Layer.Adjustment, item.Layer.Opacity,
-                            clip, clip.X, clip.Y);
-                    else
-                        _host.CompositePaintLayer(tp, clip.Width * 4, clip.Width, clip.Height,
-                            item.Layer, 1.0, clip, clip.X, clip.Y);
-                }
-                // Merge onto dst preserving dst alpha
-                var opacityByte = (uint)Math.Round(group.Opacity * 255);
-                for (var y = 0; y < clip.Height; y++)
-                {
-                    var srcRow = tp + y * clip.Width * 4;
-                    var dstRow = dst + (y + clip.Y - originY) * dstStride + (clip.X - originX) * 4;
-                    CompositeNormalRowManaged.CompositeAlphaPreserving(
-                        dstRow, srcRow, clip.Width, opacityByte);
+                    var stack = BuildSiblingStack(group.Children);
+                    for (var i = 0; i < stack.Count; i++)
+                    {
+                        var item = stack[i];
+                        if (!item.Layer.IsVisible) continue;
+                        if (item.Layer.IsGroup)
+                            CompositeGroupNode(tp, clip.Width * 4, clip.Width, clip.Height,
+                                item.Layer, 1.0, clip, clip.X, clip.Y);
+                        else if (item.Layer.Adjustment != null)
+                            AdjustmentLayerProcessor.Apply(tp, clip.Width * 4, clip.Width, clip.Height,
+                                item.Layer.Adjustment, item.Layer.Opacity,
+                                clip, clip.X, clip.Y);
+                        else
+                            _host.CompositePaintLayer(tp, clip.Width * 4, clip.Width, clip.Height,
+                                item.Layer, 1.0, clip, clip.X, clip.Y);
+                    }
+                    // Merge onto dst using group's alpha-preserving blend mode
+                    LayerCompositorPixelOps.CompositeBgraBufferAlphaPreserving(
+                        dst, dstStride, tp, clip.Width * 4,
+                        group.BlendMode, group.Opacity, clip, originX, originY);
                 }
             }
-            ArrayPool<byte>.Shared.Return(temp);
+            finally { ArrayPool<byte>.Shared.Return(temp); }
         }
     }
 
@@ -198,7 +206,11 @@ internal sealed class LayerProjectionPlane
         {
             var layer = siblings[i];
             if (layer.IsClipping && lastNonClipping.HasValue)
-                result.Add(new ProjectionSiblingItem(layer, true, lastNonClipping.Value));
+            {
+                var baseIdx = lastNonClipping.Value;
+                result[baseIdx] = result[baseIdx] with { HasClippingChildren = true };
+                result.Add(new ProjectionSiblingItem(layer, true, baseIdx));
+            }
             else
             {
                 result.Add(new ProjectionSiblingItem(layer, false, -1));
@@ -225,7 +237,7 @@ internal sealed class LayerProjectionPlane
         if (groupOpacity <= 0) return;
 
         // Drawpile: pass-through → recurse with accumulated opacity
-        if (group.BlendMode == "PassThrough")
+        if (group.BlendMode == BlendMode.PassThrough)
         {
             CompositeSiblingList(dst, dstStride, width, height,
                 group.Children, groupOpacity, clip, originX, originY);
@@ -248,4 +260,4 @@ internal sealed class LayerProjectionPlane
     }
 }
 
-internal readonly record struct ProjectionSiblingItem(DrawingLayer Layer, bool IsClipped, int BaseLayerIndex);
+internal readonly record struct ProjectionSiblingItem(DrawingLayer Layer, bool IsClipped, int BaseLayerIndex, bool HasClippingChildren = false);

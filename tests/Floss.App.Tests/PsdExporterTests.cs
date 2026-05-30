@@ -1,5 +1,7 @@
 namespace Floss.App.Tests;
 
+using Floss.App.Canvas.Compositing;
+
 public class PsdExporterTests
 {
     [Fact]
@@ -120,7 +122,7 @@ public class PsdExporterTests
         document.ActiveLayer.Pixels.SetPixel(1, 1, 4, 5, 6, 255);
         document.GroupSelectedLayers([1]);
         document.ActiveLayer.Name = "Folder A";
-        document.ActiveLayer.BlendMode = "PassThrough";
+        document.ActiveLayer.BlendMode = BlendMode.PassThrough;
         document.ActiveLayer.IsOpen = false;
 
         using var stream = new MemoryStream();
@@ -148,7 +150,7 @@ public class PsdExporterTests
         var imported = PsdImporter.Load(stream);
         var importedGroup = imported.Layers.Single(layer => layer.IsGroup);
         TestAssertions.Equal("Folder A", importedGroup.Name);
-        TestAssertions.Equal("PassThrough", importedGroup.BlendMode);
+        TestAssertions.Equal(BlendMode.PassThrough, importedGroup.BlendMode);
         TestAssertions.False(importedGroup.IsOpen);
         TestAssertions.Equal(1, importedGroup.Children.Count);
         TestAssertions.Equal("Ink", importedGroup.Children[0].Name);
@@ -162,7 +164,7 @@ public class PsdExporterTests
         var layer = document.ActiveLayer;
         layer.Name = "Ink";
         layer.Opacity = 0.5;
-        layer.BlendMode = "Multiply";
+        layer.BlendMode = BlendMode.Multiply;
         layer.IsVisible = false;
         layer.Pixels.SetPixel(0, 0, 10, 20, 30, 40);
         layer.Pixels.SetPixel(1, 0, 50, 60, 70, 80);

@@ -253,7 +253,10 @@ public sealed class ToolPreset
         => BrushOverride?.ApplyTo(preset) ?? preset;
 
     public void CaptureFromBrushPreset(BrushPreset preset)
-        => BrushOverride = BrushPresetOverrideDocument.FromPreset(preset);
+    {
+        BrushOverride = BrushPresetOverrideDocument.FromPreset(preset);
+        Stabilization = preset.Smoothing;
+    }
 
     public void ClearBrushOverrides()
     {

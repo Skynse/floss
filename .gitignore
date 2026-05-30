@@ -4,6 +4,7 @@ obj/
 artifacts/
 TestResults/
 target/
+Drawpile/
 
 # .NET user state
 *.user

@@ -138,7 +138,6 @@ public sealed class CanvasInputRouter
     private Point _brushSizeGestureStartCanvasPoint;
     private Point _brushSizeGestureCenterCanvasPoint;
     private double _brushSizeGestureStartSize;
-    private bool _brushSizeGestureHasCenter;
     private double _brushSizeLastDirX;
     private double _brushSizeLastDirY;
     private bool _brushSizeHasLastDir;
@@ -460,7 +459,6 @@ public sealed class CanvasInputRouter
         _heldBaseKeys.Clear();
         _heldModifiers = KeyModifiers.None;
         _brushSizeActive = false;
-        _brushSizeGestureHasCenter = false;
         _brushSizeHasLastDir = false;
         _hadAlternateBeforeBrushSize = false;
         ClearModifierState();
@@ -506,18 +504,20 @@ public sealed class CanvasInputRouter
         _brushSizeGestureStartCanvasPoint = _host.GetCanvasPosition(e);
         _brushSizeGestureStartSize = _host.GetActiveToolSize();
 
+        var startRadius = _brushSizeGestureStartSize * 0.5;
         if (_brushSizeHasLastDir)
         {
-            var startRadius = _brushSizeGestureStartSize * 0.5;
             _brushSizeGestureCenterCanvasPoint = new Point(
                 _brushSizeGestureStartCanvasPoint.X - _brushSizeLastDirX * startRadius,
                 _brushSizeGestureStartCanvasPoint.Y - _brushSizeLastDirY * startRadius);
-            _brushSizeGestureHasCenter = true;
         }
         else
         {
-            _brushSizeGestureCenterCanvasPoint = _brushSizeGestureStartCanvasPoint;
-            _brushSizeGestureHasCenter = false;
+            // Default direction: center is to the right so dragging rightward
+            // increases size and leftward decreases (matches CSP convention).
+            _brushSizeGestureCenterCanvasPoint = new Point(
+                _brushSizeGestureStartCanvasPoint.X - startRadius,
+                _brushSizeGestureStartCanvasPoint.Y);
         }
 
         _host.LockCursorPreview(_brushSizeGestureCenterCanvasPoint, forceBrushOutline: true);
@@ -529,28 +529,6 @@ public sealed class CanvasInputRouter
     private void UpdateBrushSizeGesture(PointerEventArgs e, Point viewportPt)
     {
         var canvasPoint = _host.GetCanvasPosition(e);
-        if (!_brushSizeGestureHasCenter)
-        {
-            var startDx = canvasPoint.X - _brushSizeGestureStartCanvasPoint.X;
-            var startDy = canvasPoint.Y - _brushSizeGestureStartCanvasPoint.Y;
-            var startDistance = Math.Sqrt(startDx * startDx + startDy * startDy);
-            if (startDistance > 10.0 / _host.Zoom)
-            {
-                var startRadius = _brushSizeGestureStartSize * 0.5;
-                _brushSizeGestureCenterCanvasPoint = new Point(
-                    _brushSizeGestureStartCanvasPoint.X - startDx / startDistance * startRadius,
-                    _brushSizeGestureStartCanvasPoint.Y - startDy / startDistance * startRadius);
-                _brushSizeGestureHasCenter = true;
-            }
-            else
-            {
-                _lastViewportPos = viewportPt;
-                _host.LockCursorPreview(_brushSizeGestureCenterCanvasPoint, forceBrushOutline: true);
-                e.Handled = true;
-                return;
-            }
-        }
-
         var dx = canvasPoint.X - _brushSizeGestureCenterCanvasPoint.X;
         var dy = canvasPoint.Y - _brushSizeGestureCenterCanvasPoint.Y;
         var radiusDistance = Math.Sqrt(dx * dx + dy * dy);

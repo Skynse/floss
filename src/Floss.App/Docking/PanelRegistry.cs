@@ -47,7 +47,7 @@ public static class PanelRegistry
             buildContent("tool-properties"),
             Proportion: 0.15, MinHeight: 64, DefaultZone: "right-0"));
 
-        Register(new DockPanelDef("layer-properties", "Layer",
+        Register(new DockPanelDef("layer-properties", "Layer Color",
             buildContent("layer-properties"),
             Proportion: 0.10, MinHeight: 64, DefaultZone: "right-0"));
 

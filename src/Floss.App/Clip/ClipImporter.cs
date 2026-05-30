@@ -5,6 +5,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Text;
+using Floss.App.Canvas.Compositing;
 using Floss.App.Document;
 using Microsoft.Data.Sqlite;
 
@@ -567,40 +568,40 @@ public static class ClipImporter
     // Blend mode mapping
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private static string MapBlendMode(int composite, bool isFolder)
+    private static BlendMode MapBlendMode(int composite, bool isFolder)
     {
         return composite switch
         {
-            0 => "Normal",
-            1 => "Darken",
-            2 => "Multiply",
-            3 => "ColorDodge",      // CSP "Divide"? idiv -> ColorDodge
-            4 => "LinearBurn",
-            5 => "Subtract",         // fsub
-            6 => "DarkerColor",
-            7 => "Lighten",
-            8 => "Screen",
-            9 => "Divide",           // div → ColorDodge? Actually mapped to "div " in PSD
-            10 => "LinearDodge",     // "Add(Glow)"
-            11 => "LinearDodge",
-            12 => "EasyDodge",       // "Glow Dodge"
-            13 => "LighterColor",
-            14 => "Overlay",
-            15 => "SoftLight",
-            16 => "HardLight",
-            17 => "VividLight",
-            18 => "LinearLight",
-            19 => "PinLight",
-            20 => "HardMix",
-            21 => "Difference",
-            22 => "Dissolve",        // "smud" → exclude?
-            23 => "Hue",
-            24 => "Saturation",
-            25 => "Color",
-            26 => "Luminosity",
-            30 => "PassThrough",
-            36 => "Subtract",        // fdiv
-            _ => "Normal"
+            0 => BlendMode.Normal,
+            1 => BlendMode.Darken,
+            2 => BlendMode.Multiply,
+            3 => BlendMode.ColorDodge,
+            4 => BlendMode.LinearBurn,
+            5 => BlendMode.Subtract,
+            6 => BlendMode.DarkerColor,
+            7 => BlendMode.Lighten,
+            8 => BlendMode.Screen,
+            9 => BlendMode.Divide,
+            10 => BlendMode.LinearDodge,
+            11 => BlendMode.LinearDodge,
+            12 => BlendMode.EasyDodge,
+            13 => BlendMode.LighterColor,
+            14 => BlendMode.Overlay,
+            15 => BlendMode.SoftLight,
+            16 => BlendMode.HardLight,
+            17 => BlendMode.VividLight,
+            18 => BlendMode.LinearLight,
+            19 => BlendMode.PinLight,
+            20 => BlendMode.HardMix,
+            21 => BlendMode.Difference,
+            22 => BlendMode.Dissolve,
+            23 => BlendMode.Hue,
+            24 => BlendMode.Saturation,
+            25 => BlendMode.Color,
+            26 => BlendMode.Luminosity,
+            30 => BlendMode.PassThrough,
+            36 => BlendMode.Subtract,
+            _ => BlendMode.Normal
         };
     }
 

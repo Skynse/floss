@@ -39,6 +39,20 @@ public sealed class AppConfig
     public BrushCursorMode SmudgeCursorMode { get; set; } = BrushCursorMode.Outline;
     public bool ShowRulers { get; set; }
     public Dictionary<string, bool> ToolPropertyDockerVisibility { get; set; } = new();
+
+    /// <summary>Shared default visibility for tool properties in the docker. Used by both the docker panel and ToolPropertiesWindow.</summary>
+    public static bool GetToolPropertyDockerDefault(string propertyId) => propertyId switch
+    {
+        "brush.size" => true,
+        "brush.hardness" => true,
+        "brush.smoothing" => true,
+        "paint.opacity" or "brush.opacity" => true,
+        _ => false
+    };
+
+    /// <summary>Check whether a tool property should be visible in the docker. Considers both user override and defaults.</summary>
+    public bool IsToolPropertyDockerVisible(string propertyId)
+        => ToolPropertyDockerVisibility.TryGetValue(propertyId, out var v) ? v : GetToolPropertyDockerDefault(propertyId);
     public WorkspaceLayout WorkspaceLayout { get; set; } = WorkspaceLayout.CreateDefault();
     public Dictionary<string, WorkspaceLayout> WorkspacePresets { get; set; } = new();
     public static event Action? ToolPropertyVisibilityChanged;
@@ -57,11 +71,33 @@ public sealed class AppConfig
                 var json = File.ReadAllText(AppPaths.ConfigPath);
                 var cfg = JsonSerializer.Deserialize<AppConfig>(json) ?? new AppConfig();
                 ValidateOrResetLayout(cfg);
+                cfg.RepairToolPropertyVisibility();
                 return cfg;
             }
         }
         catch (Exception ex) { CrashLog.Write(ex, "AppConfig.Load"); }
         return new AppConfig();
+    }
+
+    /// <summary>
+    /// Clean up stale tool property visibility entries that were written by the old buggy eye button.
+    /// Also remove entries that match the default — let the default logic handle them.
+    /// </summary>
+    private void RepairToolPropertyVisibility()
+    {
+        if (ToolPropertyDockerVisibility == null || ToolPropertyDockerVisibility.Count == 0) return;
+        var toRemove = new List<string>();
+        foreach (var (key, val) in ToolPropertyDockerVisibility)
+        {
+            // If the stored value matches the default, remove it — let the default logic apply.
+            // This fixes stale "true" entries that were no-ops under the old logic, and
+            // stale "false" entries that were silently ignored.
+            var def = GetToolPropertyDockerDefault(key);
+            if (val == def)
+                toRemove.Add(key);
+        }
+        foreach (var k in toRemove)
+            ToolPropertyDockerVisibility.Remove(k);
     }
 
     /// <summary>

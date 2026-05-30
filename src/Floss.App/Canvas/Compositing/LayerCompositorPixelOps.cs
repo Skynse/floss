@@ -16,7 +16,7 @@ internal static class LayerCompositorPixelOps
         int dstStride,
         byte* src,
         int srcStride,
-        string blendMode,
+        BlendMode blendMode,
         double opacity,
         PixelRegion clip,
         int originX,
@@ -24,7 +24,7 @@ internal static class LayerCompositorPixelOps
     {
         if (opacity <= 0) return;
 
-        if (blendMode == "Normal")
+        if (blendMode == BlendMode.Normal)
         {
             var opacityByte = (uint)Math.Round(opacity * 255);
             for (var docY = clip.Y; docY < clip.Bottom; docY++)
@@ -66,11 +66,79 @@ internal static class LayerCompositorPixelOps
         }
     }
 
+    /// <summary>
+    /// Alpha-preserving merge of a BGRA buffer onto dst. Used when a clip group
+    /// (isolated group as clip layer) must be merged without altering dst alpha.
+    /// </summary>
+    internal static unsafe void CompositeBgraBufferAlphaPreserving(
+        byte* dst, int dstStride, byte* src, int srcStride,
+        BlendMode blendMode, double opacity, PixelRegion clip, int originX, int originY)
+    {
+        if (opacity <= 0) return;
+        var isNormal = blendMode == BlendMode.Normal;
+        var hasLut = HasLut(blendMode);
+        var lut = hasLut ? GetLut(blendMode) : null;
+        var opacityByte = (uint)Math.Round(opacity * 255);
+
+        for (var docY = clip.Y; docY < clip.Bottom; docY++)
+        {
+            var srcRow = src + (docY - clip.Y) * srcStride;
+            var dstRow = dst + (docY - originY) * dstStride;
+
+            for (var docX = clip.X; docX < clip.Right; docX++)
+            {
+                var srcIdx = (docX - clip.X) * 4;
+                uint rawA = srcRow[srcIdx + 3];
+                if (rawA == 0) continue;
+
+                uint srcA = (rawA * opacityByte + 127) / 255;
+                if (srcA == 0) continue;
+
+                var dstIdx = (docX - originX) * 4;
+                byte srcB = srcRow[srcIdx + 0];
+                byte srcG = srcRow[srcIdx + 1];
+                byte srcR = srcRow[srcIdx + 2];
+
+                if (isNormal)
+                {
+                    BlendColorOnly(dstRow + dstIdx, srcB, srcG, srcR, srcA);
+                }
+                else if (hasLut)
+                {
+                    uint db = dstRow[dstIdx + 0], dg = dstRow[dstIdx + 1], dr = dstRow[dstIdx + 2];
+                    uint blendedR = lut![((uint)srcR << 8) | dr];
+                    uint blendedG = lut![((uint)srcG << 8) | dg];
+                    uint blendedB = lut![((uint)srcB << 8) | db];
+                    BlendColorOnly(dstRow + dstIdx, (byte)blendedB, (byte)blendedG, (byte)blendedR, srcA);
+                }
+                else
+                {
+                    double sB = srcB / 255.0;
+                    double sG = srcG / 255.0;
+                    double sR = srcR / 255.0;
+                    double sA = srcA / 255.0;
+                    double dB = dstRow[dstIdx + 0] / 255.0;
+                    double dG = dstRow[dstIdx + 1] / 255.0;
+                    double dR = dstRow[dstIdx + 2] / 255.0;
+                    double dA = dstRow[dstIdx + 3] / 255.0;
+                    var (blendR, blendG, blendB) = ApplyBlendMode(sR, sG, sB, sA, dR, dG, dB, dA, blendMode);
+                    double outR = blendR * sA + dR * (1.0 - sA);
+                    double outG = blendG * sA + dG * (1.0 - sA);
+                    double outB = blendB * sA + dB * (1.0 - sA);
+                    dstRow[dstIdx + 0] = (byte)Math.Clamp((int)(outB * 255.0 + 0.5), 0, 255);
+                    dstRow[dstIdx + 1] = (byte)Math.Clamp((int)(outG * 255.0 + 0.5), 0, 255);
+                    dstRow[dstIdx + 2] = (byte)Math.Clamp((int)(outR * 255.0 + 0.5), 0, 255);
+                    // dst alpha preserved
+                }
+            }
+        }
+    }
+
     internal static unsafe void CompositeProjectionBuffer(
         byte* dst,
         int dstStride,
         TiledPixelBuffer projection,
-        string blendMode,
+        BlendMode blendMode,
         double opacity,
         PixelRegion clip,
         int originX,
@@ -84,7 +152,7 @@ internal static class LayerCompositorPixelOps
         var lastTileX = FloorDiv(clip.Right - 1, ts);
         var lastTileY = FloorDiv(clip.Bottom - 1, ts);
 
-        if (blendMode == "Normal")
+        if (blendMode == BlendMode.Normal)
         {
             var opacityByte = (uint)Math.Round(opacity * 255);
 
@@ -191,10 +259,12 @@ internal static class LayerCompositorPixelOps
         if (docLeft >= docRight || docTop >= docBottom) return;
 
         var sourceRegion = new PixelRegion(docLeft - offsetX, docTop - offsetY, docRight - docLeft, docBottom - docTop);
-        if (!layer.Pixels.HasContentTiles(sourceRegion)) return;
+        var pixels = layer.Pixels;
+        var basePixels = baseLayer.Pixels;
+        if (!pixels.HasContentTiles(sourceRegion)) return;
 
-        layer.Pixels.EnterPixelReadLock();
-        baseLayer.Pixels.EnterPixelReadLock();
+        pixels.EnterPixelReadLock();
+        basePixels.EnterPixelReadLock();
         try
         {
 
@@ -216,7 +286,7 @@ internal static class LayerCompositorPixelOps
         {
             for (var tx = firstTileX; tx <= lastTileX; tx++)
             {
-                var tile = layer.Pixels.GetTileOrNull(tx, ty);
+                var tile = pixels.GetTileOrNull(tx, ty);
                 if (tile == null) continue;
 
                 var clipLeft = Math.Max(sourceRegion.X, tx * ts);
@@ -224,7 +294,7 @@ internal static class LayerCompositorPixelOps
                 var clipRight = Math.Min(sourceRegion.Right, tx * ts + ts);
                 var clipBottom = Math.Min(sourceRegion.Bottom, ty * ts + ts);
 
-                var isNormal = blendMode == "Normal";
+                var isNormal = blendMode == BlendMode.Normal;
                 var opacityInt = (uint)Math.Round(opacity * 255);
 
                 for (int srcY = clipTop; srcY < clipBottom; srcY++)
@@ -257,7 +327,7 @@ internal static class LayerCompositorPixelOps
                         var baseTileX = FloorDiv(baseX, ts);
                         if (baseTileX != prevBaseTileX)
                         {
-                            baseTile = baseLayer.Pixels.GetTileOrNull(baseTileX, baseTileY);
+                            baseTile = basePixels.GetTileOrNull(baseTileX, baseTileY);
                             prevBaseTileX = baseTileX;
                         }
 
@@ -334,8 +404,8 @@ internal static class LayerCompositorPixelOps
         }
         finally
         {
-            baseLayer.Pixels.ExitPixelReadLock();
-            layer.Pixels.ExitPixelReadLock();
+            basePixels.ExitPixelReadLock();
+            pixels.ExitPixelReadLock();
         }
     }
 
@@ -347,7 +417,7 @@ internal static class LayerCompositorPixelOps
         byte* src,
         int srcStride,
         DrawingLayer baseLayer,
-        string blendMode,
+        BlendMode blendMode,
         PixelRegion clip,
         int originX,
         int originY)
@@ -361,7 +431,8 @@ internal static class LayerCompositorPixelOps
 
         const int ts = TiledPixelBuffer.TileSize;
 
-        baseLayer.Pixels.EnterPixelReadLock();
+        var basePixels = baseLayer.Pixels;
+        basePixels.EnterPixelReadLock();
         try
         {
         for (int docY = clip.Y; docY < clip.Bottom; docY++)
@@ -389,7 +460,7 @@ internal static class LayerCompositorPixelOps
                 var baseTileX = FloorDiv(baseX, ts);
                 if (baseTileX != prevBaseTileX)
                 {
-                    baseTile = baseLayer.Pixels.GetTileOrNull(baseTileX, baseTileY);
+                    baseTile = basePixels.GetTileOrNull(baseTileX, baseTileY);
                     prevBaseTileX = baseTileX;
                 }
 
@@ -418,11 +489,13 @@ internal static class LayerCompositorPixelOps
             }
         }
         }
-        finally { baseLayer.Pixels.ExitPixelReadLock(); }
+        finally { basePixels.ExitPixelReadLock(); }
     }
 
     // ── Blend LUTs ─────────────────────────────────────────────────────────--
     internal static readonly byte[] LUT_Overlay = BuildLUT((s, d) => Overlay(s, d));
+    internal static readonly byte[] LUT_Multiply = BuildLUT((s, d) => s * d);
+    internal static readonly byte[] LUT_Screen = BuildLUT((s, d) => 1.0 - (1.0 - s) * (1.0 - d));
     internal static readonly byte[] LUT_SoftLight = BuildLUT((s, d) => SoftLight(s, d));
     internal static readonly byte[] LUT_HardLight = BuildLUT((s, d) => HardLight(s, d));
     internal static readonly byte[] LUT_ColorDodge = BuildLUT((s, d) => ColorDodge(s, d));
@@ -445,31 +518,27 @@ internal static class LayerCompositorPixelOps
         return lut;
     }
 
-    internal static byte[] GetLut(string mode) => mode switch
+    internal static byte[] GetLut(BlendMode mode) => mode switch
     {
-        "Overlay" => LUT_Overlay,
-        "SoftLight" => LUT_SoftLight,
-        "HardLight" => LUT_HardLight,
-        "ColorDodge" => LUT_ColorDodge,
-        "ColorBurn" => LUT_ColorBurn,
-        "LinearBurn" => LUT_LinearBurn,
-        "LinearDodge" => LUT_LinearDodge,
-        "VividLight" => LUT_VividLight,
-        "LinearLight" => LUT_LinearLight,
-        "PinLight" => LUT_PinLight,
-        "HardMix" => LUT_HardMix,
-        "Subtract" => LUT_Subtract,
-        "Divide" => LUT_Divide,
+        BlendMode.Multiply => LUT_Multiply,
+        BlendMode.Screen => LUT_Screen,
+        BlendMode.Overlay => LUT_Overlay,
+        BlendMode.SoftLight => LUT_SoftLight,
+        BlendMode.HardLight => LUT_HardLight,
+        BlendMode.ColorDodge => LUT_ColorDodge,
+        BlendMode.ColorBurn => LUT_ColorBurn,
+        BlendMode.LinearBurn => LUT_LinearBurn,
+        BlendMode.LinearDodge => LUT_LinearDodge,
+        BlendMode.VividLight => LUT_VividLight,
+        BlendMode.LinearLight => LUT_LinearLight,
+        BlendMode.PinLight => LUT_PinLight,
+        BlendMode.HardMix => LUT_HardMix,
+        BlendMode.Subtract => LUT_Subtract,
+        BlendMode.Divide => LUT_Divide,
         _ => null!
     };
 
-    internal static bool HasLut(string mode) => mode switch
-    {
-        "Overlay" or "SoftLight" or "HardLight" or "ColorDodge" or "ColorBurn"
-        or "LinearBurn" or "LinearDodge" or "VividLight" or "LinearLight"
-        or "PinLight" or "HardMix" or "Subtract" or "Divide" => true,
-        _ => false
-    };
+    internal static bool HasLut(BlendMode mode) => mode.HasLut();
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static unsafe void BlendPixelInt(byte* dst,
@@ -496,9 +565,10 @@ internal static class LayerCompositorPixelOps
     }
 
     internal static unsafe void CompositeLayer(byte* dst, int dstStride, int width, int height,
-        DrawingLayer layer, double opacityScale, PixelRegion clip, int originX, int originY)
+        DrawingLayer layer, double opacityScale, PixelRegion clip, int originX, int originY,
+        BlendMode? blendModeOverride = null, double? opacityOverride = null)
     {
-        var opacity = layer.Opacity * opacityScale;
+        var opacity = opacityOverride ?? (layer.Opacity * opacityScale);
         if (opacity <= 0) return;
         var offsetX = layer.OffsetX;
         var offsetY = layer.OffsetY;
@@ -510,17 +580,19 @@ internal static class LayerCompositorPixelOps
         var docBottom = Math.Min(Math.Min(clip.Bottom, content.Bottom), originY + height);
         if (docLeft >= docRight || docTop >= docBottom) return;
         var sourceRegion = new PixelRegion(docLeft - offsetX, docTop - offsetY, docRight - docLeft, docBottom - docTop);
-        if (!layer.Pixels.HasContentTiles(sourceRegion)) return;
+        var pixels = layer.Pixels;
+        if (!pixels.HasContentTiles(sourceRegion)) return;
 
-        layer.Pixels.EnterPixelReadLock();
+        pixels.EnterPixelReadLock();
         try
         {
 
-        var blendMode = layer.BlendMode;
+        var blendMode = blendModeOverride ?? layer.BlendMode;
         var layerColor = layer.LayerColor;
         var hasLayerColor = layerColor.HasValue;
         var expressionColor = layer.ExpressionColor;
         var hasMask = layer.HasMask && layer.IsMaskVisible;
+        var applyExpr = expressionColor != ExpressionColorMode.Color;
         byte lcR = 255, lcG = 255, lcB = 255;
         if (layerColor is { } lc) { lcR = lc.R; lcG = lc.G; lcB = lc.B; }
         const int ts = TiledPixelBuffer.TileSize;
@@ -528,17 +600,16 @@ internal static class LayerCompositorPixelOps
         var firstTileY = FloorDiv(sourceRegion.Y, ts);
         var lastTileX = FloorDiv(sourceRegion.Right - 1, ts);
         var lastTileY = FloorDiv(sourceRegion.Bottom - 1, ts);
-        var applyExpr = expressionColor != ExpressionColorMode.Color;
 
         // Integer fast path for Normal blend
-        if (blendMode == "Normal")
+        if (blendMode == BlendMode.Normal)
         {
             var opacityByte = (uint)Math.Round(opacity * 255);
             var fullOpacity = opacityByte == 255;
             for (var ty = firstTileY; ty <= lastTileY; ty++)
                 for (var tx = firstTileX; tx <= lastTileX; tx++)
                 {
-                    var tile = layer.Pixels.GetTileOrNull(tx, ty);
+                    var tile = pixels.GetTileOrNull(tx, ty);
                     if (tile == null) continue;
                     var clipLeft = Math.Max(sourceRegion.X, tx * ts);
                     var clipTop = Math.Max(sourceRegion.Y, ty * ts);
@@ -609,7 +680,7 @@ internal static class LayerCompositorPixelOps
             for (var ty = firstTileY; ty <= lastTileY; ty++)
                 for (var tx = firstTileX; tx <= lastTileX; tx++)
                 {
-                    var tile = layer.Pixels.GetTileOrNull(tx, ty);
+                    var tile = pixels.GetTileOrNull(tx, ty);
                     if (tile == null) continue;
                     var clipLeft = Math.Max(sourceRegion.X, tx * ts);
                     var clipTop = Math.Max(sourceRegion.Y, ty * ts);
@@ -661,19 +732,19 @@ internal static class LayerCompositorPixelOps
         for (var ty = firstTileY; ty <= lastTileY; ty++)
             for (var tx = firstTileX; tx <= lastTileX; tx++)
             {
-                var tile = layer.Pixels.GetTileOrNull(tx, ty);
-                if (tile == null) continue;
-                var clipLeft = Math.Max(sourceRegion.X, tx * ts);
-                var clipTop = Math.Max(sourceRegion.Y, ty * ts);
-                var clipRight = Math.Min(sourceRegion.Right, tx * ts + ts);
-                var clipBottom = Math.Min(sourceRegion.Bottom, ty * ts + ts);
-                for (int srcY = clipTop; srcY < clipBottom; srcY++)
-                {
-                    var tileLocalY = srcY - ty * ts;
-                    var tileLocalX0 = clipLeft - tx * ts;
-                    var tileRowBase = (tileLocalY * ts + tileLocalX0) * 4;
-                    var docY = srcY + offsetY;
-                    var dstRow = dst + (docY - originY) * dstStride;
+                    var tile = pixels.GetTileOrNull(tx, ty);
+                    if (tile == null) continue;
+                    var clipLeft = Math.Max(sourceRegion.X, tx * ts);
+                    var clipTop = Math.Max(sourceRegion.Y, ty * ts);
+                    var clipRight = Math.Min(sourceRegion.Right, tx * ts + ts);
+                    var clipBottom = Math.Min(sourceRegion.Bottom, ty * ts + ts);
+                    for (int srcY = clipTop; srcY < clipBottom; srcY++)
+                    {
+                        var tileLocalY = srcY - ty * ts;
+                        var tileLocalX0 = clipLeft - tx * ts;
+                        var tileRowBase = (tileLocalY * ts + tileLocalX0) * 4;
+                        var docY = srcY + offsetY;
+                        var dstRow = dst + (docY - originY) * dstStride;
                     for (int j = 0, srcX = clipLeft; srcX < clipRight; srcX++, j++)
                     {
                         var tileOffset = tileRowBase + j * 4;
@@ -706,7 +777,7 @@ internal static class LayerCompositorPixelOps
             }
 
         }
-        finally { layer.Pixels.ExitPixelReadLock(); }
+        finally { pixels.ExitPixelReadLock(); }
     }
 
     /// <summary>
@@ -730,14 +801,22 @@ internal static class LayerCompositorPixelOps
         var docBottom = Math.Min(Math.Min(clip.Bottom, content.Bottom), originY + height);
         if (docLeft >= docRight || docTop >= docBottom) return;
         var sourceRegion = new PixelRegion(docLeft - offsetX, docTop - offsetY, docRight - docLeft, docBottom - docTop);
-        if (!layer.Pixels.HasContentTiles(sourceRegion)) return;
+        var pixels = layer.Pixels;
+        if (!pixels.HasContentTiles(sourceRegion)) return;
 
         var blendMode = layer.BlendMode;
-        var isNormal = blendMode == "Normal";
+        var isNormal = blendMode == BlendMode.Normal;
         var hasLut = HasLut(blendMode);
         var lut = hasLut ? GetLut(blendMode) : null;
 
-        layer.Pixels.EnterPixelReadLock();
+        var layerColor = layer.LayerColor;
+        var hasLayerColor = layerColor.HasValue;
+        var expressionColor = layer.ExpressionColor;
+        var applyExpr = expressionColor != ExpressionColorMode.Color;
+        byte lcR = 255, lcG = 255, lcB = 255;
+        if (layerColor is { } lc) { lcR = lc.R; lcG = lc.G; lcB = lc.B; }
+
+        pixels.EnterPixelReadLock();
         try
         {
             var opacityByte = (uint)Math.Round(opacity * 255);
@@ -750,7 +829,7 @@ internal static class LayerCompositorPixelOps
             for (var ty = firstTileY; ty <= lastTileY; ty++)
             for (var tx = firstTileX; tx <= lastTileX; tx++)
             {
-                var tile = layer.Pixels.GetTileOrNull(tx, ty);
+                var tile = pixels.GetTileOrNull(tx, ty);
                 if (tile == null) continue;
                 var tileLeft = Math.Max(sourceRegion.X, tx * ts);
                 var tileTop = Math.Max(sourceRegion.Y, ty * ts);
@@ -772,30 +851,35 @@ internal static class LayerCompositorPixelOps
                         var docX = srcX + offsetX;
                         var dstOff = (docX - originX) * 4;
                         var dstPtr = dstRow + dstOff;
+
+                        // Apply layer color and expression color before blending
+                        byte srcB = tile[tileOff], srcG = tile[tileOff + 1], srcR = tile[tileOff + 2];
+                        if (hasLayerColor)
+                            ApplyLayerColor(ref srcB, ref srcG, ref srcR, lcB, lcG, lcR);
+                        if (applyExpr && !ApplyExpressionColorToSource(ref srcB, ref srcG, ref srcR, ref rawA, expressionColor))
+                            continue;
                         uint srcA = (rawA * opacityByte + 127) / 255;
                         if (srcA == 0) continue;
 
                         // Alpha-preserving blend: apply blend mode, gate by src alpha, keep dst alpha
                         if (isNormal)
                         {
-                            // Normal: blend source color * sa into dst, keep dst alpha
-                            BlendColorOnly(dstPtr, tile[tileOff], tile[tileOff + 1], tile[tileOff + 2], srcA);
+                            BlendColorOnly(dstPtr, srcB, srcG, srcR, srcA);
                         }
                         else if (hasLut)
                         {
-                            // LUT blend: compute blend result, mix with dst based on sa
                             uint db = dstPtr[0], dg = dstPtr[1], dr = dstPtr[2];
-                            uint blendedR = lut![((uint)tile[tileOff + 2] << 8) | dr];
-                            uint blendedG = lut![((uint)tile[tileOff + 1] << 8) | dg];
-                            uint blendedB = lut![((uint)tile[tileOff] << 8) | db];
+                            uint blendedR = lut![((uint)srcR << 8) | dr];
+                            uint blendedG = lut![((uint)srcG << 8) | dg];
+                            uint blendedB = lut![((uint)srcB << 8) | db];
                             BlendColorOnly(dstPtr, (byte)blendedB, (byte)blendedG, (byte)blendedR, srcA);
                         }
                         else
                         {
                             // Double path: compute blend via double math
-                            double sB = tile[tileOff]     / 255.0;
-                            double sG = tile[tileOff + 1] / 255.0;
-                            double sR = tile[tileOff + 2] / 255.0;
+                            double sB = srcB / 255.0;
+                            double sG = srcG / 255.0;
+                            double sR = srcR / 255.0;
                             double sA = srcA / 255.0;
                             double dB = dstPtr[0] / 255.0;
                             double dG = dstPtr[1] / 255.0;
@@ -815,7 +899,7 @@ internal static class LayerCompositorPixelOps
                 }
             }
         }
-        finally { layer.Pixels.ExitPixelReadLock(); }
+        finally { pixels.ExitPixelReadLock(); }
     }
 
     /// <summary>Blend src_color * sa into dst_color, preserve dst_alpha.</summary>
@@ -944,42 +1028,42 @@ internal static class LayerCompositorPixelOps
     internal static (double r, double g, double b) ApplyBlendMode(
         double srcR, double srcG, double srcB, double srcA,
         double dstR, double dstG, double dstB, double dstA,
-        string blendMode)
+        BlendMode blendMode)
     {
         return blendMode switch
         {
-            "Normal" or "PassThrough" => (srcR, srcG, srcB),
-            "Dissolve" => (srcR, srcG, srcB),
-            "Multiply" => (dstR * srcR, dstG * srcG, dstB * srcB),
-            "Screen" => (1.0 - (1.0 - dstR) * (1.0 - srcR),
-                        1.0 - (1.0 - dstG) * (1.0 - srcG),
-                        1.0 - (1.0 - dstB) * (1.0 - srcB)),
-            "Overlay" => (Overlay(dstR, srcR), Overlay(dstG, srcG), Overlay(dstB, srcB)),
-            "SoftLight" => (SoftLight(dstR, srcR), SoftLight(dstG, srcG), SoftLight(dstB, srcB)),
-            "HardLight" => (HardLight(dstR, srcR), HardLight(dstG, srcG), HardLight(dstB, srcB)),
-             "ColorDodge" => (ColorDodge(dstR, srcR), ColorDodge(dstG, srcG), ColorDodge(dstB, srcB)),
-            "EasyDodge" => (EasyDodge(dstR, srcR), EasyDodge(dstG, srcG), EasyDodge(dstB, srcB)),
-            "ColorBurn" => (ColorBurn(dstR, srcR), ColorBurn(dstG, srcG), ColorBurn(dstB, srcB)),
-            "Darken" => (Math.Min(dstR, srcR), Math.Min(dstG, srcG), Math.Min(dstB, srcB)),
-            "Lighten" => (Math.Max(dstR, srcR), Math.Max(dstG, srcG), Math.Max(dstB, srcB)),
-            "Difference" => (Math.Abs(dstR - srcR), Math.Abs(dstG - srcG), Math.Abs(dstB - srcB)),
-            "Exclusion" => (dstR + srcR - 2.0 * dstR * srcR,
-                           dstG + srcG - 2.0 * dstG * srcG,
-                           dstB + srcB - 2.0 * dstB * srcB),
-            "LinearBurn" => (dstR + srcR - 1.0, dstG + srcG - 1.0, dstB + srcB - 1.0),
-            "LinearDodge" => (dstR + srcR, dstG + srcG, dstB + srcB),
-            "VividLight" => (VividLight(dstR, srcR), VividLight(dstG, srcG), VividLight(dstB, srcB)),
-            "LinearLight" => (LinearLight(dstR, srcR), LinearLight(dstG, srcG), LinearLight(dstB, srcB)),
-            "PinLight" => (PinLight(dstR, srcR), PinLight(dstG, srcG), PinLight(dstB, srcB)),
-            "HardMix" => (HardMix(dstR, srcR), HardMix(dstG, srcG), HardMix(dstB, srcB)),
-            "DarkerColor" => LuminosityBlend(dstR, dstG, dstB, srcR, srcG, srcB, useDarker: true),
-            "LighterColor" => LuminosityBlend(dstR, dstG, dstB, srcR, srcG, srcB, useDarker: false),
-            "Subtract" => (dstR - srcR, dstG - srcG, dstB - srcB),
-            "Divide" => (SafeDivide(dstR, srcR), SafeDivide(dstG, srcG), SafeDivide(dstB, srcB)),
-            "Hue" => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 0),
-            "Saturation" => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 1),
-            "Color" => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 2),
-            "Luminosity" => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 3),
+            BlendMode.Normal or BlendMode.PassThrough => (srcR, srcG, srcB),
+            BlendMode.Dissolve => (srcR, srcG, srcB),
+            BlendMode.Multiply => (dstR * srcR, dstG * srcG, dstB * srcB),
+            BlendMode.Screen => (1.0 - (1.0 - dstR) * (1.0 - srcR),
+                                  1.0 - (1.0 - dstG) * (1.0 - srcG),
+                                  1.0 - (1.0 - dstB) * (1.0 - srcB)),
+            BlendMode.Overlay => (Overlay(dstR, srcR), Overlay(dstG, srcG), Overlay(dstB, srcB)),
+            BlendMode.SoftLight => (SoftLight(dstR, srcR), SoftLight(dstG, srcG), SoftLight(dstB, srcB)),
+            BlendMode.HardLight => (HardLight(dstR, srcR), HardLight(dstG, srcG), HardLight(dstB, srcB)),
+            BlendMode.ColorDodge => (ColorDodge(dstR, srcR), ColorDodge(dstG, srcG), ColorDodge(dstB, srcB)),
+            BlendMode.EasyDodge => (EasyDodge(dstR, srcR), EasyDodge(dstG, srcG), EasyDodge(dstB, srcB)),
+            BlendMode.ColorBurn => (ColorBurn(dstR, srcR), ColorBurn(dstG, srcG), ColorBurn(dstB, srcB)),
+            BlendMode.Darken => (Math.Min(dstR, srcR), Math.Min(dstG, srcG), Math.Min(dstB, srcB)),
+            BlendMode.Lighten => (Math.Max(dstR, srcR), Math.Max(dstG, srcG), Math.Max(dstB, srcB)),
+            BlendMode.Difference => (Math.Abs(dstR - srcR), Math.Abs(dstG - srcG), Math.Abs(dstB - srcB)),
+            BlendMode.Exclusion => (dstR + srcR - 2.0 * dstR * srcR,
+                                    dstG + srcG - 2.0 * dstG * srcG,
+                                    dstB + srcB - 2.0 * dstB * srcB),
+            BlendMode.LinearBurn => (dstR + srcR - 1.0, dstG + srcG - 1.0, dstB + srcB - 1.0),
+            BlendMode.LinearDodge => (dstR + srcR, dstG + srcG, dstB + srcB),
+            BlendMode.VividLight => (VividLight(dstR, srcR), VividLight(dstG, srcG), VividLight(dstB, srcB)),
+            BlendMode.LinearLight => (LinearLight(dstR, srcR), LinearLight(dstG, srcG), LinearLight(dstB, srcB)),
+            BlendMode.PinLight => (PinLight(dstR, srcR), PinLight(dstG, srcG), PinLight(dstB, srcB)),
+            BlendMode.HardMix => (HardMix(dstR, srcR), HardMix(dstG, srcG), HardMix(dstB, srcB)),
+            BlendMode.DarkerColor => LuminosityBlend(dstR, dstG, dstB, srcR, srcG, srcB, useDarker: true),
+            BlendMode.LighterColor => LuminosityBlend(dstR, dstG, dstB, srcR, srcG, srcB, useDarker: false),
+            BlendMode.Subtract => (dstR - srcR, dstG - srcG, dstB - srcB),
+            BlendMode.Divide => (SafeDivide(dstR, srcR), SafeDivide(dstG, srcG), SafeDivide(dstB, srcB)),
+            BlendMode.Hue => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 0),
+            BlendMode.Saturation => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 1),
+            BlendMode.Color => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 2),
+            BlendMode.Luminosity => HslBlend(dstR, dstG, dstB, srcR, srcG, srcB, mode: 3),
             _ => (srcR, srcG, srcB)
         };
     }

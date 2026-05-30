@@ -12,14 +12,14 @@ namespace Floss.App.Docking;
 public sealed class WorkspaceLayout
 {
     public double LeftRailWidth { get; set; } = 48;
-    public double RightPanelWidth { get; set; } = 292;
+        public double RightPanelWidth { get; set; } = 250;
     public double RightDockSplit { get; set; } = 0.5;
     public double BottomDockHeight { get; set; } = 320;
 
     [JsonInclude]
     public List<DockColumnLayout> RightColumns { get; set; } =
     [
-        new() { Id = "right-0", PanelIds = ["color", "brush", "layers"] }
+        new() { Id = "right-0", PanelIds = ["color", "color-slider", "layer-properties", "brush", "tool-properties", "layers"] }
     ];
 
     [JsonInclude]
@@ -37,7 +37,7 @@ public sealed class WorkspaceLayout
 
     [JsonInclude]
     [JsonPropertyName("HiddenDockers")]
-    public HashSet<string> HiddenPanelIds { get; set; } = ["tools", "layer-properties", "color-slider"];
+    public HashSet<string> HiddenPanelIds { get; set; } = ["tools", "color-slider"];
 
     /// <summary>Per-panel content state (scroll position, selected category, etc.).</summary>
     [JsonInclude]
@@ -57,14 +57,17 @@ public sealed class WorkspaceLayout
         // Migrate: brush is now a first-class docked panel, not a popup-only panel
         HiddenPanelIds.Remove("brush");
         HiddenPanelIds.Remove("tool-properties");
+        HiddenPanelIds.Remove("layer-properties");
 
-        // Migrate the old default inspector stack to the cleaner single-column order.
-        // Custom layouts are left alone unless they exactly match the old default.
+        // Migrate: color-slider is now visible by default
+        HiddenPanelIds.Remove("color-slider");
+
+        // Migrate old default or missing panels to the current layout.
         if (RightColumns.Count == 1 &&
-            RightColumns[0].PanelIds.SequenceEqual(["brush", "color", "color-slider", "layers"]))
+            (RightColumns[0].PanelIds.SequenceEqual(["brush", "color", "color-slider", "layers"]) ||
+             RightColumns[0].PanelIds.SequenceEqual(["color", "brush", "layers"])))
         {
-            RightColumns[0].PanelIds = ["color", "brush", "layers"];
-            HiddenPanelIds.Add("color-slider");
+            RightColumns[0].PanelIds = ["color", "color-slider", "layer-properties", "brush", "tool-properties", "layers"];
         }
 
         if (RightColumns.Count < 1)

@@ -1,6 +1,7 @@
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using Floss.App.Canvas.Compositing;
 using Floss.App.Document;
 using Floss.App.Kra;
 
@@ -22,7 +23,7 @@ public class KraImporterTests
 
         var layer = document.Layers[0];
         TestAssertions.Equal("Ink", layer.Name);
-        TestAssertions.Equal("Multiply", layer.BlendMode);
+        TestAssertions.Equal(BlendMode.Multiply, layer.BlendMode);
         TestAssertions.True(Math.Abs(layer.Opacity - (127 / 255.0)) < 0.001);
         TestAssertions.True(layer.IsVisible);
         TestAssertions.False(layer.IsLocked);
@@ -120,7 +121,7 @@ public class KraImporterTests
         TestAssertions.Equal("Child", document.Layers[1].Name);
         TestAssertions.True(document.Layers[2].IsGroup);
         TestAssertions.Equal("Group", document.Layers[2].Name);
-        TestAssertions.Equal("PassThrough", document.Layers[2].BlendMode);
+        TestAssertions.Equal(BlendMode.PassThrough, document.Layers[2].BlendMode);
         TestAssertions.Equal(1, document.Layers[2].Children.Count);
         TestAssertions.Equal("Child", document.Layers[2].Children[0].Name);
         TestAssertions.True(ReferenceEquals(document.Layers[2], document.Layers[1].Parent));

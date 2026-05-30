@@ -10,11 +10,12 @@ internal interface ILayerMergeHost
 {
     unsafe void CompositePaintLayer(
         byte* dst, int dstStride, int width, int height,
-        DrawingLayer layer, double opacityScale, PixelRegion clip, int originX, int originY);
+        DrawingLayer layer, double opacityScale, PixelRegion clip, int originX, int originY,
+        BlendMode? blendModeOverride = null, double? opacityOverride = null);
 
     unsafe void CompositeProjectionBuffer(
         byte* dst, int dstStride, TiledPixelBuffer projection,
-        string blendMode, double opacity, PixelRegion clip, int originX, int originY);
+        BlendMode blendMode, double opacity, PixelRegion clip, int originX, int originY);
 
     unsafe void CompositeClippedPaintLayer(
         byte* dst, int dstStride, int width, int height,

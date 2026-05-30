@@ -24,15 +24,15 @@ public partial class MainWindow
         // Color wheel view
         _colorPicker = new HsvColorPicker
         {
-            Height = 188,
-            Margin = new Thickness(16, 4, 16, 14)
+            Height = 130,
+            Margin = new Thickness(4, 2, 4, 4)
         };
         _colorPicker.HsvChanged += OnPickerHsvChanged;
 
         _hexInput = new TextBox
         {
-            Width = 116,
-            Height = 28,
+            Width = 80,
+            Height = 24,
             FontSize = 11,
             FontFamily = new FontFamily("Consolas, Courier New, monospace"),
             Background = new SolidColorBrush(Color.Parse(Bg3)),
@@ -49,7 +49,7 @@ public partial class MainWindow
 
         _swatchPanel = new WrapPanel
         {
-            Margin = new Thickness(16, 4, 16, 14),
+            Margin = new Thickness(8, 2, 8, 8),
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
             ItemWidth = SwatchSize + 2,
             ItemHeight = SwatchSize + 2
@@ -57,7 +57,7 @@ public partial class MainWindow
 
         _wheelView = new StackPanel
         {
-            Children = { _colorPicker, new Border { Margin = new Thickness(16, 0, 16, 14), Child = _hexInput } }
+            Children = { _colorPicker, new Border { Margin = new Thickness(8, 0, 8, 8), Child = _hexInput } }
         };
 
         // HSV sliders view
@@ -128,17 +128,16 @@ public partial class MainWindow
 
     private StackPanel BuildRgbSlidersView()
     {
-        var panel = new StackPanel { Spacing = 8, Margin = new Thickness(16, 4, 16, 14) };
+        var panel = new StackPanel { Spacing = 4, Margin = new Thickness(8, 2, 8, 8) };
         _rgbRSlider = CreateRgbSlider(0, 255, Colors.Black, Colors.Red);
         _rgbGSlider = CreateRgbSlider(0, 255, Colors.Black, Colors.Green);
         _rgbBSlider = CreateRgbSlider(0, 255, Colors.Black, Colors.Blue);
         panel.Children.Add(_rgbRSlider);
         panel.Children.Add(_rgbGSlider);
         panel.Children.Add(_rgbBSlider);
-
         var preview = new Border
         {
-            Height = 24, Margin = new Thickness(0, 4, 0, 0),
+            Height = 20, Margin = new Thickness(0, 2, 0, 0),
             BorderThickness = new Thickness(1),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             CornerRadius = new CornerRadius(2),
@@ -152,7 +151,7 @@ public partial class MainWindow
 
     private static Slider CreateRgbSlider(double min, double max, Color start, Color end)
     {
-        var s = new Slider { Minimum = min, Maximum = max, Height = 18, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
+        var s = new Slider { Minimum = min, Maximum = max, Height = 14, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
         s.Background = new LinearGradientBrush
         {
             StartPoint = new RelativePoint(0, 0.5, RelativeUnit.Relative),
@@ -218,8 +217,8 @@ public partial class MainWindow
     }
 
     // ── Swatch panel ──────────────────────────────────────────────────────────
-    private const int SwatchColumns = 10;
-    private const int SwatchSize = 18;
+    private const int SwatchColumns = 12;
+    private const int SwatchSize = 14;
 
     private void BuildSwatches()
     {

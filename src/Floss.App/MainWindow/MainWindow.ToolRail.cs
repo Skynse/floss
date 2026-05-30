@@ -20,8 +20,8 @@ public partial class MainWindow
         {
             HorizontalAlignment = HorizontalAlignment.Center,
             Margin = new Thickness(0),
-            ItemWidth = 38,
-            ItemHeight = 36
+            ItemWidth = 30,
+            ItemHeight = 28
         };
 
         BuildToolRail();
@@ -68,8 +68,8 @@ public partial class MainWindow
         var colorBtn = new Button
         {
             Content = _colorWell,
-            Width = 32,
-            Height = 30,
+            Width = 26,
+            Height = 24,
             Background = Avalonia.Media.Brushes.Transparent,
             Padding = new Thickness(5),
             HorizontalContentAlignment = HorizontalAlignment.Center,
@@ -82,8 +82,8 @@ public partial class MainWindow
         {
             HorizontalAlignment = HorizontalAlignment.Center,
             Margin = new Thickness(0, 4),
-            ItemWidth = 34,
-            ItemHeight = 32
+            ItemWidth = 28,
+            ItemHeight = 26
         };
 
         BuildToolRail();
@@ -510,8 +510,8 @@ public partial class MainWindow
             var iconBtn = new Button
             {
                 Content = MaterialIcon(p, 18),
-                Width = 32,
-                Height = 30,
+            Width = 28,
+            Height = 26,
                 Margin = new Thickness(2),
                 Background = new SolidColorBrush(Color.Parse(group.CustomIcon == p ? AccentSoft : Bg2)),
                 BorderBrush = new SolidColorBrush(Color.Parse(group.CustomIcon == p ? Accent : Stroke)),

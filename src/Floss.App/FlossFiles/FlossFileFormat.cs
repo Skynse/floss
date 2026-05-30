@@ -5,6 +5,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Floss.App.Canvas.Compositing;
 using Floss.App.Document;
 using Floss.App.ImageFiles;
 using SkiaSharp;
@@ -100,7 +101,7 @@ public static class FlossFileFormat
             layer.IsVisible = info.IsVisible;
             layer.IsLocked = info.IsLocked;
             layer.Opacity = Math.Clamp(info.Opacity, 0, 1);
-            layer.BlendMode = string.IsNullOrWhiteSpace(info.BlendMode) ? "Normal" : info.BlendMode;
+            layer.BlendMode = string.IsNullOrWhiteSpace(info.BlendMode) ? BlendMode.Normal : BlendModeExtensions.FromString(info.BlendMode);
             layer.OffsetX = info.OffsetX;
             layer.OffsetY = info.OffsetY;
             layer.IsOpen = info.IsOpen;
@@ -173,7 +174,7 @@ public static class FlossFileFormat
                 IsVisible = layer.IsVisible,
                 IsLocked = layer.IsLocked,
                 Opacity = layer.Opacity,
-                BlendMode = layer.BlendMode,
+                BlendMode = layer.BlendMode.ToLegacyString(),
                 OffsetX = layer.OffsetX,
                 OffsetY = layer.OffsetY,
                 Width = layer.Width,

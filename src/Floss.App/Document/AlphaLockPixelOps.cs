@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Floss.App.Canvas;
+using Floss.App.Canvas.Compositing;
 using SkiaSharp;
 
 namespace Floss.App.Document;
@@ -90,8 +91,8 @@ internal static class AlphaLockPixelOps
     {
         if (cover == 0) return;
 
-        var blendName = SkBlendModeToLayerName(mode);
-        if (blendName == null)
+        var blendMode = SkBlendModeToLayerName(mode);
+        if (blendMode == null)
         {
             ApplySrcOver(ref dstB, ref dstG, ref dstR, ref dstA, srcB, srcG, srcR, cover, alphaLocked);
             return;
@@ -106,7 +107,7 @@ internal static class AlphaLockPixelOps
         var dg = dstG / 255.0;
         var db = dstB / 255.0;
 
-        var (br, bg, bb) = LayerCompositorPixelOps.ApplyBlendMode(sr, sg, sb, sa, dr, dg, db, da, blendName);
+        var (br, bg, bb) = LayerCompositorPixelOps.ApplyBlendMode(sr, sg, sb, sa, dr, dg, db, da, blendMode.Value);
 
         if (alphaLocked)
         {
@@ -134,19 +135,19 @@ internal static class AlphaLockPixelOps
         dstA = (byte)Math.Clamp(outA * 255.0 + 0.5, 0, 255);
     }
 
-    private static string? SkBlendModeToLayerName(SKBlendMode mode) => mode switch
+    private static BlendMode? SkBlendModeToLayerName(SKBlendMode mode) => mode switch
     {
-        SKBlendMode.Multiply => "Multiply",
-        SKBlendMode.Screen => "Screen",
-        SKBlendMode.Overlay => "Overlay",
-        SKBlendMode.Darken => "Darken",
-        SKBlendMode.Lighten => "Lighten",
-        SKBlendMode.ColorDodge => "ColorDodge",
-        SKBlendMode.ColorBurn => "ColorBurn",
-        SKBlendMode.HardLight => "HardLight",
-        SKBlendMode.SoftLight => "SoftLight",
-        SKBlendMode.Difference => "Difference",
-        SKBlendMode.Exclusion => "Exclusion",
+        SKBlendMode.Multiply => BlendMode.Multiply,
+        SKBlendMode.Screen => BlendMode.Screen,
+        SKBlendMode.Overlay => BlendMode.Overlay,
+        SKBlendMode.Darken => BlendMode.Darken,
+        SKBlendMode.Lighten => BlendMode.Lighten,
+        SKBlendMode.ColorDodge => BlendMode.ColorDodge,
+        SKBlendMode.ColorBurn => BlendMode.ColorBurn,
+        SKBlendMode.HardLight => BlendMode.HardLight,
+        SKBlendMode.SoftLight => BlendMode.SoftLight,
+        SKBlendMode.Difference => BlendMode.Difference,
+        SKBlendMode.Exclusion => BlendMode.Exclusion,
         _ => null
     };
 

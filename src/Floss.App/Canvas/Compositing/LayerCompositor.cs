@@ -63,7 +63,16 @@ public sealed class LayerCompositor : IDisposable
     private int _strokePaintLayerIndex = -1;
     public bool StrokeSuspendActive => _strokeSuspendDepth > 0;
 
-    public void Dispose() { ClearAll(); }
+    public void Dispose()
+    {
+        // Wait for any background composite pass to finish before tearing down.
+        // The compositor holds DocumentRenderLock.Read() during CompositeCore;
+        // disposing while it's active causes SynchronizationLockException.
+        var spin = new SpinWait();
+        while (Volatile.Read(ref _compositeActive) > 0)
+            spin.SpinOnce();
+        ClearAll();
+    }
 
     private static void DispatchToPool(int count, Action<int> action)
     {
@@ -517,8 +526,8 @@ public sealed class LayerCompositor : IDisposable
 
     private sealed class MergeHost(LayerCompositor o) : ILayerMergeHost
     {
-        public unsafe void CompositePaintLayer(byte* d, int ds, int w, int h, DrawingLayer l, double op, PixelRegion c, int ox, int oy) => LayerCompositorPixelOps.CompositeLayer(d, ds, w, h, l, op, c, ox, oy);
-        public unsafe void CompositeProjectionBuffer(byte* d, int ds, TiledPixelBuffer p, string b, double op, PixelRegion c, int ox, int oy) => LayerCompositorPixelOps.CompositeProjectionBuffer(d, ds, p, b, op, c, ox, oy);
+        public unsafe void CompositePaintLayer(byte* d, int ds, int w, int h, DrawingLayer l, double op, PixelRegion c, int ox, int oy, BlendMode? blendModeOverride = null, double? opacityOverride = null) => LayerCompositorPixelOps.CompositeLayer(d, ds, w, h, l, op, c, ox, oy, blendModeOverride, opacityOverride);
+        public unsafe void CompositeProjectionBuffer(byte* d, int ds, TiledPixelBuffer p, BlendMode b, double op, PixelRegion c, int ox, int oy) => LayerCompositorPixelOps.CompositeProjectionBuffer(d, ds, p, b, op, c, ox, oy);
         public unsafe void CompositeClippedPaintLayer(byte* d, int ds, int w, int h, DrawingLayer l, DrawingLayer bl, double op, PixelRegion c, int ox, int oy) => LayerCompositorPixelOps.CompositeClippedLayer(d, ds, w, h, l, bl, op, c, ox, oy);
         public unsafe void CompositeClippedGroupIntoBuffer(byte* d, int ds, int w, int h, DrawingLayer g, DrawingLayer bl, double op, PixelRegion c, int ox, int oy) => o.CompositeClippedGroup(d, ds, w, h, g, bl, op, c, ox, oy);
     }
@@ -526,14 +535,18 @@ public sealed class LayerCompositor : IDisposable
     private unsafe void CompositeClippedGroup(byte* d, int ds, int w, int h, DrawingLayer g, DrawingLayer bl, double op, PixelRegion c, int ox, int oy)
     {
         var go = g.Opacity * op; if (go <= 0 || g.Children.Count == 0) return;
-        var tmp = ArrayPool<byte>.Shared.Rent(c.Width * c.Height * 4); Array.Clear(tmp);
-        fixed (byte* tp = tmp)
+        var tmp = ArrayPool<byte>.Shared.Rent(c.Width * c.Height * 4);
+        try
         {
-            if (g.BlendMode == "PassThrough") Projection.CompositeSiblingList(tp, c.Width * 4, c.Width, c.Height, g.Children, go, c, c.X, c.Y);
-            else Projection.CompositeGroupNode(tp, c.Width * 4, c.Width, c.Height, g, op, c, c.X, c.Y);
-            LayerCompositorPixelOps.CompositeClippedBuffer(d, ds, w, h, tp, c.Width * 4, bl, g.BlendMode, c, ox, oy);
+            Array.Clear(tmp, 0, c.Width * c.Height * 4);
+            fixed (byte* tp = tmp)
+            {
+                if (g.BlendMode == BlendMode.PassThrough) Projection.CompositeSiblingList(tp, c.Width * 4, c.Width, c.Height, g.Children, go, c, c.X, c.Y);
+                else Projection.CompositeGroupNode(tp, c.Width * 4, c.Width, c.Height, g, op, c, c.X, c.Y);
+                LayerCompositorPixelOps.CompositeClippedBuffer(d, ds, w, h, tp, c.Width * 4, bl, g.BlendMode, c, ox, oy);
+            }
         }
-        ArrayPool<byte>.Shared.Return(tmp);
+        finally { ArrayPool<byte>.Shared.Return(tmp); }
     }
 }
 

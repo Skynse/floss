@@ -4,6 +4,7 @@ using System.Linq;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
+using Floss.App.Canvas.Compositing;
 
 namespace Floss.App.Document;
 
@@ -26,7 +27,7 @@ public sealed class DrawingLayer : IDisposable
     public bool IsVisible { get; set; } = true;
     public bool IsLocked { get; set; }
     public double Opacity { get; set; } = 1.0;
-    public string BlendMode { get; set; } = "Normal";
+    public BlendMode BlendMode { get; set; } = BlendMode.Normal;
     public Avalonia.Media.Color? LayerColor { get; set; }
     public ExpressionColorMode ExpressionColor { get; set; } = ExpressionColorMode.Color;
     public int OffsetX { get; set; }
@@ -46,6 +47,14 @@ public sealed class DrawingLayer : IDisposable
     public bool HasMask => MaskPixels != null;
     public bool IsMaskVisible { get; set; } = true;
     public bool IsMaskEditing { get; set; }
+
+    /// <summary>
+    /// The buffer currently being painted on: <see cref="MaskPixels"/> when
+    /// <see cref="IsMaskEditing"/> is true, otherwise <see cref="Pixels"/>.
+    /// All drawing operations (brush, fill, etc.) must use this instead of
+    /// mutating <see cref="Pixels"/> directly.
+    /// </summary>
+    public TiledPixelBuffer ActivePixels => IsMaskEditing && MaskPixels != null ? MaskPixels : Pixels;
 
     public TiledPixelBuffer Pixels { get; internal set; }
     public int Width => Pixels.Width;

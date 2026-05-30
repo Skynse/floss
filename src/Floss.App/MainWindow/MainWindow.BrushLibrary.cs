@@ -39,7 +39,7 @@ public partial class MainWindow : Window
     {
         _brushPresetRowCache.Clear();
 
-        _strokePreview = new BrushStrokePreview { Height = 58, Margin = new Thickness(16, 2, 16, 8) };
+        _strokePreview = new BrushStrokePreview { Height = 34, Margin = new Thickness(4, 1, 4, 3) };
 
         _sizeSlider = MkSlider(1, BrushSizeLimits.FallbackMaxDiameterPx, 20, "Size");
         _maxSizePercentSlider = MkSlider(
@@ -73,7 +73,7 @@ public partial class MainWindow : Window
         editBrushBtn.Click += (_, _) => OpenToolProperties();
 
         // Header: active brush name + action buttons
-        var headerRow = new DockPanel { Margin = new Thickness(16, 0, 12, 10), LastChildFill = true };
+        var headerRow = new DockPanel { Margin = new Thickness(8, 0, 8, 6), LastChildFill = true };
         DockPanel.SetDock(panelMenuBtn, Avalonia.Controls.Dock.Right);
         DockPanel.SetDock(editBrushBtn, Avalonia.Controls.Dock.Right);
         DockPanel.SetDock(duplicateBrushBtn, Avalonia.Controls.Dock.Right);

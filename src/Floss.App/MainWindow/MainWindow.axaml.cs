@@ -13,6 +13,7 @@ using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Floss.App.Brushes;
 using Floss.App.Canvas;
+using Floss.App.Canvas.Compositing;
 using Floss.App.Docking;
 using Floss.App.Document;
 using Floss.App.FlossFiles;
@@ -83,49 +84,49 @@ public partial class MainWindow : Window, Tools.IViewportController
     private string? _selectedCategory;
 
     // ── Blend modes ───────────────────────────────────────────────────────────
-    private static readonly string[] BlendModes =
+    private static readonly BlendMode[] BlendModes =
     [
-        "Normal", "PassThrough", "Dissolve",
-        "Multiply", "Screen", "Overlay", "SoftLight", "HardLight",
-        "ColorDodge", "Glow Dodge", "ColorBurn", "LinearDodge", "LinearBurn",
-        "Darken", "Lighten", "DarkerColor", "LighterColor",
-        "Difference", "Exclusion", "Subtract", "Divide",
-        "Hue", "Saturation", "Color", "Luminosity",
-        "VividLight", "LinearLight", "PinLight", "HardMix",
+        BlendMode.Normal, BlendMode.PassThrough, BlendMode.Dissolve,
+        BlendMode.Multiply, BlendMode.Screen, BlendMode.Overlay, BlendMode.SoftLight, BlendMode.HardLight,
+        BlendMode.ColorDodge, BlendMode.EasyDodge, BlendMode.ColorBurn, BlendMode.LinearDodge, BlendMode.LinearBurn,
+        BlendMode.Darken, BlendMode.Lighten, BlendMode.DarkerColor, BlendMode.LighterColor,
+        BlendMode.Difference, BlendMode.Exclusion, BlendMode.Subtract, BlendMode.Divide,
+        BlendMode.Hue, BlendMode.Saturation, BlendMode.Color, BlendMode.Luminosity,
+        BlendMode.VividLight, BlendMode.LinearLight, BlendMode.PinLight, BlendMode.HardMix,
     ];
 
-    private static string BlendAbbr(string mode) => mode switch
+    private static string BlendAbbr(BlendMode mode) => mode switch
     {
-        "Normal" => "Nrm",
-        "Dissolve" => "Dis",
-        "Multiply" => "Mul",
-        "Screen" => "Scr",
-        "Overlay" => "Ovl",
-        "SoftLight" => "SL",
-        "HardLight" => "HL",
-        "ColorDodge" => "CDg",
-        "EasyDodge" => "EDg",
-        "ColorBurn" => "CBn",
-        "LinearDodge" => "LDg",
-        "LinearBurn" => "LBn",
-        "Darken" => "Drk",
-        "Lighten" => "Lgt",
-        "DarkerColor" => "DC",
-        "LighterColor" => "LC",
-        "Difference" => "Dif",
-        "Exclusion" => "Exc",
-        "Subtract" => "Sub",
-        "Divide" => "Div",
-        "Hue" => "Hue",
-        "Saturation" => "Sat",
-        "Color" => "Col",
-        "Luminosity" => "Lum",
-        "VividLight" => "VL",
-        "LinearLight" => "LL",
-        "PinLight" => "PL",
-        "HardMix" => "HM",
-        "PassThrough" => "PT",
-        _ => mode[..Math.Min(3, mode.Length)]
+        BlendMode.Normal => "Nrm",
+        BlendMode.Dissolve => "Dis",
+        BlendMode.Multiply => "Mul",
+        BlendMode.Screen => "Scr",
+        BlendMode.Overlay => "Ovl",
+        BlendMode.SoftLight => "SL",
+        BlendMode.HardLight => "HL",
+        BlendMode.ColorDodge => "CDg",
+        BlendMode.EasyDodge => "EDg",
+        BlendMode.ColorBurn => "CBn",
+        BlendMode.LinearDodge => "LDg",
+        BlendMode.LinearBurn => "LBn",
+        BlendMode.Darken => "Drk",
+        BlendMode.Lighten => "Lgt",
+        BlendMode.DarkerColor => "DC",
+        BlendMode.LighterColor => "LC",
+        BlendMode.Difference => "Dif",
+        BlendMode.Exclusion => "Exc",
+        BlendMode.Subtract => "Sub",
+        BlendMode.Divide => "Div",
+        BlendMode.Hue => "Hue",
+        BlendMode.Saturation => "Sat",
+        BlendMode.Color => "Col",
+        BlendMode.Luminosity => "Lum",
+        BlendMode.VividLight => "VL",
+        BlendMode.LinearLight => "LL",
+        BlendMode.PinLight => "PL",
+        BlendMode.HardMix => "HM",
+        BlendMode.PassThrough => "PT",
+        _ => mode.ToString()[..Math.Min(3, mode.ToString().Length)]
     };
 
     // ── Controls ──────────────────────────────────────────────────────────────
@@ -649,8 +650,8 @@ public partial class MainWindow : Window, Tools.IViewportController
             Background = new SolidColorBrush(Color.Parse(Bg0)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 0, 0, 1),
-            Height = 20,
-            Padding = new Thickness(8, 0),
+            Height = 16,
+            Padding = new Thickness(6, 0),
             Child = _canvasStatusText,
             IsHitTestVisible = false
         };
@@ -660,14 +661,14 @@ public partial class MainWindow : Window, Tools.IViewportController
             Background = new SolidColorBrush(Color.Parse(Bg0)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 1, 0, 0),
-            Height = 22,
-            Padding = new Thickness(8, 0),
+            Height = 18,
+            Padding = new Thickness(6, 0),
             Child = BuildFooterPanel(),
             IsHitTestVisible = false
         };
 
         BuildTabBar();
-        var centerArea = new Grid { RowDefinitions = new RowDefinitions("26,20,*,22") };
+        var centerArea = new Grid { RowDefinitions = new RowDefinitions("24,16,*,18") };
         Grid.SetRow(_tabBarContainer, 0);
         Grid.SetRow(statusBar, 1);
         Grid.SetRow(_workspaceViewport, 2);
@@ -690,8 +691,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         var root = new Grid();
         root.ColumnDefinitions.Add(new ColumnDefinition(0, GridUnitType.Pixel));    // left panel
         root.ColumnDefinitions.Add(new ColumnDefinition(0, GridUnitType.Pixel));    // left splitter
-        root.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 320 }); // canvas
-        root.ColumnDefinitions.Add(new ColumnDefinition(292, GridUnitType.Pixel) { MinWidth = 260, MaxWidth = 520 }); // right panel
+        root.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 260 }); // canvas
+        root.ColumnDefinitions.Add(new ColumnDefinition(250, GridUnitType.Pixel) { MinWidth = 200, MaxWidth = 440 }); // right panel
         _rootGrid = root;
         _rootColumnWidths = [.. root.ColumnDefinitions.Select(c => c.Width)];
 
@@ -1120,8 +1121,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         _zoomDisplay = new TextBlock
         {
             Text = "100%",
-            Width = 44,
-            FontSize = 10,
+            Width = 38,
+            FontSize = 9,
             TextAlignment = TextAlignment.Center,
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
@@ -1129,8 +1130,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         _rotDisplay = new TextBlock
         {
             Text = "0°",
-            Width = 34,
-            FontSize = 10,
+            Width = 30,
+            FontSize = 9,
             TextAlignment = TextAlignment.Center,
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
@@ -1204,9 +1205,9 @@ public partial class MainWindow : Window, Tools.IViewportController
     {
         var btn = new Button
         {
-            Content = MaterialIcon(icon, 16),
-            Width = 26,
-            Height = 24,
+            Content = MaterialIcon(icon, 14),
+            Width = 22,
+            Height = 20,
             Padding = new Thickness(0),
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
@@ -1593,7 +1594,7 @@ public partial class MainWindow : Window, Tools.IViewportController
                 {
                     Text = $"Missing panel: {id}",
                     Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-                    FontSize = 10,
+        FontSize = 9,
                     Margin = new Thickness(8)
                 }
             };
@@ -1656,7 +1657,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         };
         var header = new Border
         {
-            Padding = new Thickness(16, 11, 14, 8),
+            Padding = new Thickness(10, 6, 10, 4),
             Child = headerRow,
             ContextMenu = ctxMenu
         };
@@ -2211,10 +2212,10 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         if (hasPanels)
         {
-            column.MinWidth = 260;
-            column.MaxWidth = 520;
+            column.MinWidth = 200;
+            column.MaxWidth = 440;
             column.Width = new GridLength(
-                Math.Clamp(App.Config.WorkspaceLayout.RightPanelWidth, 260, 520),
+                Math.Clamp(App.Config.WorkspaceLayout.RightPanelWidth, 200, 440),
                 GridUnitType.Pixel);
             if (_rightPanel != null)
                 _rightPanel.IsVisible = true;
@@ -2448,10 +2449,10 @@ public partial class MainWindow : Window, Tools.IViewportController
         var btn = new Button
         {
             Content = glyph,
-            Width = 28,
-            Height = 28,
+            Width = 22,
+            Height = 22,
             Padding = new Thickness(0),
-            FontSize = 13,
+            FontSize = 11,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
             Background = new SolidColorBrush(Color.Parse(Bg2)),
@@ -2466,7 +2467,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private static Button SmIconBtn(string icon, string tip)
     {
         var btn = SmBtn("", tip);
-        btn.Content = Icons.Make(icon, 13, new SolidColorBrush(Color.Parse(TextSecondary)));
+        btn.Content = Icons.Make(icon, 11, new SolidColorBrush(Color.Parse(TextSecondary)));
         return btn;
     }
 

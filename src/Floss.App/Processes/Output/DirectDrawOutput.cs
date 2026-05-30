@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
@@ -16,10 +17,10 @@ namespace Floss.App.Processes.Output;
 // while later pointer events queue new transactions instead of blocking pen-up.
 public sealed class DirectDrawOutput : IOutputProcess
 {
-    private const long PreviewNotifyIntervalMs = 12;
-    private const double RenderSliceBudgetMs = 3.0;
-    private const int MaxSegmentsPerSlice = 8;
-    private const int InitialSegmentsPerSlice = 1;
+    private const long PreviewNotifyIntervalMs = 8;
+    private const double RenderSliceBudgetMs = 12.0;
+    private const int MaxSegmentsPerSlice = 256;
+    private const int InitialSegmentsPerSlice = 4;
 
     public bool IsPaintOutput => true;
     private readonly BrushEngine _brushEngine;
@@ -131,7 +132,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         if (!initialRegion.IsEmpty)
             ctx.Document.NotifyStrokeSuspendBegin(initialRegion, ctx.ActiveLayerIndex);
 
-        layer.Pixels.LiveStroke = true;
+        layer.ActivePixels.LiveStroke = true;
         return tx;
     }
 
@@ -198,7 +199,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         Dispatcher.UIThread.Post(_processQueuedAction, DispatcherPriority.Normal);
     }
 
-    private async void ProcessQueuedSegments(bool force)
+    private void ProcessQueuedSegments(bool force)
     {
         _processingScheduled = false;
         if (_processing)
@@ -230,28 +231,21 @@ public sealed class DirectDrawOutput : IOutputProcess
                     ? remaining
                     : Math.Min(remaining, tx.SuggestedSegmentCount(RenderSliceBudgetMs, InitialSegmentsPerSlice, MaxSegmentsPerSlice));
 
-                // CRITICAL: snapshot the sample slice BEFORE Task.Run. tx.QueuedSamples
-                // is mutated on the UI thread (Preview adds samples while we render).
-                // List<>.Add can reallocate its backing array — a reader on the background
-                // thread could observe a torn reference and crash with a native AV with
-                // no managed stack. The snapshot is a stable read-only copy.
                 var startIndex = tx.NextSegmentIndex;
-                var snapshot = SnapshotSamples(tx.QueuedSamples, startIndex - 1, segmentCount + 1);
+                var (snapshot, snapshotRent) = SnapshotSamples(tx.QueuedSamples, startIndex - 1, segmentCount + 1);
                 var snapshotStart = 1; // first sample is segment-start anchor
 
-                var result = await Task.Run(() =>
-                {
-                    var segStarted = Stopwatch.GetTimestamp();
-                    var dirty = ProcessSegmentBatch(tx, snapshot, snapshotStart, segmentCount);
-                    return (dirty, segmentCount, ElapsedMs(segStarted));
-                });
+                var segStarted = Stopwatch.GetTimestamp();
+                var dirty = ProcessSegmentBatch(tx, snapshot, snapshotStart, segmentCount);
+                ArrayPool<CanvasInputSample>.Shared.Return(snapshotRent);
+                var segMs = ElapsedMs(segStarted);
 
-                tx.NextSegmentIndex += result.segmentCount;
-                processed += result.segmentCount;
-                tx.RecordSegmentTime(result.Item3, result.segmentCount);
+                tx.NextSegmentIndex += segmentCount;
+                processed += segmentCount;
+                tx.RecordSegmentTime(segMs, segmentCount);
 
-                if (!result.dirty.IsEmpty)
-                    batchDirty = batchDirty.Union(result.dirty);
+                if (!dirty.IsEmpty)
+                    batchDirty = batchDirty.Union(dirty);
 
                 if (!force && processed >= MaxSegmentsPerSlice)
                     break;
@@ -314,8 +308,9 @@ public sealed class DirectDrawOutput : IOutputProcess
 
             var segmentStarted = Stopwatch.GetTimestamp();
             var startIndex = tx.NextSegmentIndex;
-            var snapshot = SnapshotSamples(tx.QueuedSamples, startIndex - 1, segmentCount + 1);
+            var (snapshot, snapshotRent) = SnapshotSamples(tx.QueuedSamples, startIndex - 1, segmentCount + 1);
             batchDirty = batchDirty.Union(ProcessSegmentBatch(tx, snapshot, 1, segmentCount));
+            ArrayPool<CanvasInputSample>.Shared.Return(snapshotRent);
             tx.NextSegmentIndex += segmentCount;
             processed += segmentCount;
             tx.RecordSegmentTime(ElapsedMs(segmentStarted), segmentCount);
@@ -371,66 +366,59 @@ public sealed class DirectDrawOutput : IOutputProcess
     {
         using var telemetry = RenderTelemetry.ScopeNow();
 
-        var savedPixels = tx.Layer.Pixels;
         var savedAlphaLocked = tx.Layer.IsAlphaLocked;
         var isMaskEditing = tx.Layer.IsMaskEditing && tx.Layer.MaskPixels != null;
+        if (isMaskEditing)
+            tx.Layer.IsAlphaLocked = false;
+
         try
         {
-        if (isMaskEditing)
-        {
-            tx.Layer.Pixels = tx.Layer.MaskPixels!;
-            tx.Layer.IsAlphaLocked = false;
-        }
-
-        var region = EstimateSegmentBatchRegion(tx, samples, startSegmentIndex, segmentCount);
-        if (!region.IsEmpty)
-        {
-            tx.Layer.Pixels.EnterPixelReadLock();
-            try
+            var region = EstimateSegmentBatchRegion(tx, samples, startSegmentIndex, segmentCount);
+            if (!region.IsEmpty)
             {
-                tx.Layer.CaptureTiles(region, tx.BeforeTiles);
-            }
-            finally
-            {
-                tx.Layer.Pixels.ExitPixelReadLock();
-            }
-        }
-
-        var started = Stopwatch.GetTimestamp();
-        var pickupSampler = tx.PickupSampler;
-        var pickupTiles = tx.PickupTiles;
-
-        _brushEngine.CanvasZoom = tx.Ctx.Viewport?.Zoom ?? 1.0;
-        var dirty = _brushEngine.RasterizeSegments(tx.Layer, tx.Brush, samples, startSegmentIndex, segmentCount,
-            pickupSampler, pickupTiles);
-        RenderTelemetry.RecordBrush(ElapsedMs(started), _brushEngine.LastStats.Path, _brushEngine.LastStats.StampCount, _brushEngine.LastStats.CachedDabCount);
-
-        if (!dirty.IsEmpty)
-        {
-            tx.Layer.Pixels.EnterPixelWriteLock();
-            try
-            {
-                RestoreUnselectedPixels(tx.Layer, dirty, tx.Ctx.Selection, tx.BeforeTiles);
-            }
-            finally
-            {
-                tx.Layer.Pixels.ExitPixelWriteLock();
+                tx.Layer.ActivePixels.EnterPixelReadLock();
+                try
+                {
+                    tx.Layer.ActivePixels.CaptureTiles(region, tx.BeforeTiles);
+                }
+                finally
+                {
+                    tx.Layer.ActivePixels.ExitPixelReadLock();
+                }
             }
 
-            var translatedDirty = dirty.Translate(tx.Layer.OffsetX, tx.Layer.OffsetY);
-            tx.DirtyRegion = tx.DirtyRegion.Union(translatedDirty);
-            return translatedDirty;
-        }
+            var started = Stopwatch.GetTimestamp();
+            var pickupSampler = tx.PickupSampler;
+            var pickupTiles = tx.PickupTiles;
 
-        return PixelRegion.Empty;
+            _brushEngine.CanvasZoom = tx.Ctx.Viewport?.Zoom ?? 1.0;
+            var dirty = _brushEngine.RasterizeSegments(tx.Layer, tx.Brush, samples, startSegmentIndex, segmentCount,
+                pickupSampler, pickupTiles);
+            RenderTelemetry.RecordBrush(ElapsedMs(started), _brushEngine.LastStats.Path, _brushEngine.LastStats.StampCount, _brushEngine.LastStats.CachedDabCount);
+
+            if (!dirty.IsEmpty)
+            {
+                tx.Layer.ActivePixels.EnterPixelWriteLock();
+                try
+                {
+                    RestoreUnselectedPixels(tx.Layer, dirty, tx.Ctx.Selection, tx.BeforeTiles);
+                }
+                finally
+                {
+                    tx.Layer.ActivePixels.ExitPixelWriteLock();
+                }
+
+                var translatedDirty = dirty.Translate(tx.Layer.OffsetX, tx.Layer.OffsetY);
+                tx.DirtyRegion = tx.DirtyRegion.Union(translatedDirty);
+                return translatedDirty;
+            }
+
+            return PixelRegion.Empty;
         }
         finally
         {
             if (isMaskEditing)
-            {
-                tx.Layer.Pixels = savedPixels;
                 tx.Layer.IsAlphaLocked = savedAlphaLocked;
-            }
         }
     }
 
@@ -443,14 +431,14 @@ public sealed class DirectDrawOutput : IOutputProcess
         return region;
     }
 
-    private static CanvasInputSample[] SnapshotSamples(List<CanvasInputSample> source, int startIndex, int count)
+    private static (CanvasInputSample[] Snapshot, CanvasInputSample[] Rent) SnapshotSamples(List<CanvasInputSample> source, int startIndex, int count)
     {
         var available = Math.Max(0, source.Count - Math.Max(0, startIndex));
         var actual = Math.Min(count, available);
-        var snapshot = new CanvasInputSample[actual];
+        var rent = ArrayPool<CanvasInputSample>.Shared.Rent(actual);
         for (var i = 0; i < actual; i++)
-            snapshot[i] = source[startIndex + i];
-        return snapshot;
+            rent[i] = source[startIndex + i];
+        return (rent, rent);
     }
 
     private static void Commit(StrokeTransaction tx)
@@ -476,7 +464,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         }
         finally
         {
-            tx.Layer.Pixels.LiveStroke = false;
+            tx.Layer.ActivePixels.LiveStroke = false;
             // Always release the stroke-suspend on the compositor so deferred
             // invalidations from elsewhere get flushed even if Commit threw.
             tx.Ctx.Document.NotifyStrokeSuspendEnd();
@@ -520,14 +508,17 @@ public sealed class DirectDrawOutput : IOutputProcess
 
     private void WaitForProcessingToFinish()
     {
-        // Wait up to 2 seconds for the background rasterize Task.Run to complete.
-        // The previous bounded spin (~1 ms) could bail before processing finished,
-        // letting the UI thread mutate tx.BeforeTiles / tx.QueuedSamples concurrently
-        // with the background reader — a major source of native crashes with no log.
         var deadline = Environment.TickCount64 + 2000;
         var spin = new SpinWait();
         while (_processing && Environment.TickCount64 < deadline)
+        {
             spin.SpinOnce();
+            // Pump the dispatcher so async continuations (which clear _processing) can run.
+            // Without this, Cancel() on the UI thread deadlocks with ProcessQueuedSegments'
+            // await Task.Run() continuation that also needs the UI thread.
+            if (spin.Count % 16 == 0)
+                Dispatcher.UIThread.RunJobs();
+        }
     }
 
     public void WaitUntilIdle()
@@ -564,7 +555,7 @@ public sealed class DirectDrawOutput : IOutputProcess
 
     private static void RestoreTransaction(StrokeTransaction tx)
     {
-        tx.Layer.Pixels.LiveStroke = false;
+        tx.Layer.ActivePixels.LiveStroke = false;
         try
         {
             if (tx.BeforeTiles.Count == 0)
@@ -572,7 +563,7 @@ public sealed class DirectDrawOutput : IOutputProcess
 
             using var mutation = tx.Ctx.Document.RenderLock.Write();
             foreach (var ((tileX, tileY), tile) in tx.BeforeTiles)
-                tx.Layer.RestoreTile(tileX, tileY, tile);
+                tx.Layer.ActivePixels.RestoreTile(tileX, tileY, tile);
 
             var tileDirty = ComputeTileDirtyRegion(tx.BeforeTiles).Translate(tx.Layer.OffsetX, tx.Layer.OffsetY);
             if (!tileDirty.IsEmpty)
@@ -620,7 +611,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         var ty = FloorDiv(y, ts);
         if (!beforeTiles.TryGetValue((tx, ty), out var tile) || tile == null)
         {
-            currentLayer.Pixels.GetPixel(x, y, out b, out g, out r, out a);
+            currentLayer.ActivePixels.GetPixel(x, y, out b, out g, out r, out a);
             return;
         }
 
@@ -641,7 +632,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         if (beforeTiles.TryGetValue((tileX, tileY), out var captured))
             return captured;
 
-        return currentLayer.Pixels.GetTileOrNull(tileX, tileY);
+        return currentLayer.ActivePixels.GetTileOrNull(tileX, tileY);
     }
 
     private static void RestoreUnselectedPixels(DrawingLayer layer, PixelRegion dirty, SelectionMask selection, Dictionary<(int, int), byte[]?> beforeTiles)
@@ -689,7 +680,7 @@ public sealed class DirectDrawOutput : IOutputProcess
 
                         if (beforeTile != null)
                         {
-                            liveTile ??= layer.Pixels.GetOrCreateRawTile(tx, ty);
+                            liveTile ??= layer.ActivePixels.GetOrCreateRawTile(tx, ty);
                             liveTile[offset] = beforeTile[offset];
                             liveTile[offset + 1] = beforeTile[offset + 1];
                             liveTile[offset + 2] = beforeTile[offset + 2];
@@ -697,7 +688,7 @@ public sealed class DirectDrawOutput : IOutputProcess
                         }
                         else
                         {
-                            liveTile ??= layer.Pixels.GetOrCreateRawTile(tx, ty);
+                            liveTile ??= layer.ActivePixels.GetOrCreateRawTile(tx, ty);
                             liveTile[offset] = 0;
                             liveTile[offset + 1] = 0;
                             liveTile[offset + 2] = 0;

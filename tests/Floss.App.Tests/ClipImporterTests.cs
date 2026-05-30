@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using Floss.App.Canvas.Compositing;
 using Xunit;
 
 namespace Floss.App.Tests;
@@ -333,8 +334,8 @@ public class ClipImporterTests
         var method = typeof(Floss.App.Clip.ClipImporter)
             .GetMethod("MapBlendMode",
                 System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
-        var result = (string)method.Invoke(null, [cspComposite, false])!;
-        Assert.Equal(expectedFlossMode, result);
+        var result = (BlendMode)method.Invoke(null, [cspComposite, false])!;
+        Assert.Equal(BlendModeExtensions.FromString(expectedFlossMode), result);
     }
 
     [Fact]
@@ -343,11 +344,11 @@ public class ClipImporterTests
         var method = typeof(Floss.App.Clip.ClipImporter)
             .GetMethod("MapBlendMode",
                 System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
-        var result = (string)method.Invoke(null, [0, true])!;
-        Assert.Equal("Normal", result);
+        var result = (BlendMode)method.Invoke(null, [0, true])!;
+        Assert.Equal(BlendMode.Normal, result);
 
-        var passThrough = (string)method.Invoke(null, [30, true])!;
-        Assert.Equal("PassThrough", passThrough);
+        var passThrough = (BlendMode)method.Invoke(null, [30, true])!;
+        Assert.Equal(BlendMode.PassThrough, passThrough);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
