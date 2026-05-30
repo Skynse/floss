@@ -126,12 +126,7 @@ public sealed class LayerCompositor : IDisposable
     private void MarkAllCellsDirty()
     {
         for (var i = 0; i < _cellDirty.Length; i++)
-        {
             _cellDirty[i] = true;
-            // Drawpile GlCanvasImpl.resizeImpl: zero the buffer so stale
-            // content doesn't persist when tiles are missing post-delete/resize.
-            _cellBitmaps[i]?.Erase(SKColors.Transparent);
-        }
     }
 
     private void ClearAll()

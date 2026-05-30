@@ -1492,7 +1492,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             context.DrawRectangle(null, new Pen(CursorInnerBrush, t, dash2), new Rect(rx, ry, rw, rh));
         }
 
-        if ((_isPointerOver || _isCursorPreviewLocked || _toolController.HasPendingOperation))
+        if ((_isPointerOver || _isCursorPreviewLocked || _toolController.HasPendingOperation) && !IsPaintBlockedByLock)
         {
             var mode = ActiveCursorMode();
             var pos = _isCursorPreviewLocked ? _lockedPointerPos : _pointerPos;

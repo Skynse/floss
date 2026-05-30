@@ -22,6 +22,13 @@
 - `src/Floss.App/Brushes/BrushEngine.cs:1727,2064,2231` — 3 stamp SrcOver paths fixed
 - `src/Floss.App/Canvas/CompositeNormalRowManaged.cs:33-38` — correct pattern (reference)
 
+### Compositor Alpha Flash on Full Invalidation
+**Root cause:** `MarkAllCellsDirty()` in `LayerCompositor.cs` was calling `_cellBitmaps[i]?.Erase(SKColors.Transparent)` to zero cell buffers. After a full invalidation (e.g., triggered by interacting with a dropdown, changing layer properties), the next `DrawTiles` frame would render those transparent-erased cells, producing a visible checkerboard/alpha flash until the next composite pass filled them.
+
+**Fix:** Removed the `Erase(SKColors.Transparent)` call. `MarkAllCellsDirty` now only sets `_cellDirty[i] = true`. The old content persists visually until the composite pass overwrites it, eliminating the flash.
+
+**File:** `src/Floss.App/Canvas/Compositing/LayerCompositor.cs:126-135`
+
 ## Architecture
 
 ### Layer compositing (Krita-aligned)
