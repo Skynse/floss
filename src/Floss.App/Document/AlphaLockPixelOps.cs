@@ -42,11 +42,11 @@ internal static class AlphaLockPixelOps
     private static void ApplyDstOut(ref byte dstB, ref byte dstG, ref byte dstR, ref byte dstA, byte cover)
     {
         if (dstA == 0 || cover == 0) return;
+        // DstOut for unpremultiplied alpha: only alpha is reduced by the brush
+        // mask. Color channels remain unchanged so partially-erased pixels keep
+        // their original hue/saturation and only become more transparent.
         var keep = 255 - cover;
         dstA = (byte)(dstA * keep / 255);
-        dstB = (byte)(dstB * keep / 255);
-        dstG = (byte)(dstG * keep / 255);
-        dstR = (byte)(dstR * keep / 255);
     }
 
     private static void ApplySrcOver(

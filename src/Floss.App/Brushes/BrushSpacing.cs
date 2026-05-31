@@ -26,17 +26,33 @@ public static class BrushSpacing
     public static float CalcAutoSpacing(float brushSize, float coeff)
         => coeff * (brushSize < 1f ? brushSize : MathF.Sqrt(brushSize));
 
+    /// <summary>
+    /// MyPaint-style spacing: combines dabs-per-radius and dabs-per-second.
+    /// Returns the distance between dabs in pixels.
+    /// </summary>
     public static float EffectiveDistance(
         BrushPreset brush,
         float stampSize,
         float spacingMultiplier,
-        float speed01)
+        float speed01,
+        float dabsPerBasicRadius = -1,
+        float dabsPerActualRadius = -1,
+        float dabsPerSecond = -1)
     {
         stampSize = Math.Max(MinStampSizePx, stampSize);
         spacingMultiplier = Math.Clamp(spacingMultiplier, 0.05f, 4f);
 
+        // MyPaint-style three-term spacing
         float baseSpacing;
-        if (brush.AutoSpacingActive)
+        if (dabsPerBasicRadius >= 0 && dabsPerActualRadius >= 0 && dabsPerSecond >= 0)
+        {
+            float baseRadius = Math.Max(MinStampSizePx, (float)brush.Size);
+            float basicSpacing = dabsPerBasicRadius > 0.001f ? baseRadius / dabsPerBasicRadius : float.MaxValue;
+            float actualSpacing = dabsPerActualRadius > 0.001f ? stampSize / dabsPerActualRadius : float.MaxValue;
+            float timeSpacing = dabsPerSecond > 0.001f ? speed01 * 5000f / dabsPerSecond : float.MaxValue;
+            baseSpacing = Math.Min(basicSpacing, Math.Min(actualSpacing, timeSpacing));
+        }
+        else if (brush.AutoSpacingActive)
         {
             baseSpacing = CalcAutoSpacing(stampSize, (float)brush.AutoSpacingCoeff) * spacingMultiplier;
         }

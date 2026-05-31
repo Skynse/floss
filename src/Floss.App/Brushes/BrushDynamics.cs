@@ -17,6 +17,13 @@ public sealed partial class BrushDynamics
     public CurveOption TipDensity { get; set; } = CurveOption.Off();
     public CurveOption TipThickness { get; set; } = CurveOption.Off();
 
+    // MyPaint-style dynamics
+    public CurveOption OffsetBySpeed { get; set; } = CurveOption.Off();
+    public CurveOption OffsetByRandom { get; set; } = CurveOption.Off();
+    public CurveOption EllipticalDabRatio { get; set; } = CurveOption.Off();
+    public CurveOption EllipticalDabAngle { get; set; } = CurveOption.Off();
+    public CurveOption CustomInput { get; set; } = CurveOption.Off();
+
     public enum AngleSource { None, DirectionOfLine, PenTilt, PenTwist }
 
     // ── Evaluation ───────────────────────────────────────────────────────────
@@ -46,7 +53,12 @@ public sealed partial class BrushDynamics
         Rotation = Rotation.Clone(),
         Spacing = Spacing.Clone(),
         TipDensity = TipDensity.Clone(),
-        TipThickness = TipThickness.Clone()
+        TipThickness = TipThickness.Clone(),
+        OffsetBySpeed = OffsetBySpeed.Clone(),
+        OffsetByRandom = OffsetByRandom.Clone(),
+        EllipticalDabRatio = EllipticalDabRatio.Clone(),
+        EllipticalDabAngle = EllipticalDabAngle.Clone(),
+        CustomInput = CustomInput.Clone()
     };
 
     // ── Serialization ────────────────────────────────────────────────────────
@@ -69,7 +81,12 @@ public sealed partial class BrushDynamics
                 Rotation = FromDto(dto.Rotation),
                 Spacing = FromDto(dto.Spacing),
                 TipDensity = FromDto(dto.TipDensity),
-                TipThickness = FromDto(dto.TipThickness)
+                TipThickness = FromDto(dto.TipThickness),
+                OffsetBySpeed = FromDto(dto.OffsetBySpeed),
+                OffsetByRandom = FromDto(dto.OffsetByRandom),
+                EllipticalDabRatio = FromDto(dto.EllipticalDabRatio),
+                EllipticalDabAngle = FromDto(dto.EllipticalDabAngle),
+                CustomInput = FromDto(dto.CustomInput)
             };
         }
         catch { return new BrushDynamics(); }
@@ -227,7 +244,12 @@ public sealed partial class BrushDynamics
         Rotation = ToDto(Rotation),
         Spacing = ToDto(Spacing),
         TipDensity = ToDto(TipDensity),
-        TipThickness = ToDto(TipThickness)
+        TipThickness = ToDto(TipThickness),
+        OffsetBySpeed = ToDto(OffsetBySpeed),
+        OffsetByRandom = ToDto(OffsetByRandom),
+        EllipticalDabRatio = ToDto(EllipticalDabRatio),
+        EllipticalDabAngle = ToDto(EllipticalDabAngle),
+        CustomInput = ToDto(CustomInput)
     };
 
     private static CurveOptionDto ToDto(CurveOption opt) => new()
@@ -283,6 +305,11 @@ public sealed partial class BrushDynamics
         public CurveOptionDto? Spacing { get; set; }
         public CurveOptionDto? TipDensity { get; set; }
         public CurveOptionDto? TipThickness { get; set; }
+        public CurveOptionDto? OffsetBySpeed { get; set; }
+        public CurveOptionDto? OffsetByRandom { get; set; }
+        public CurveOptionDto? EllipticalDabRatio { get; set; }
+        public CurveOptionDto? EllipticalDabAngle { get; set; }
+        public CurveOptionDto? CustomInput { get; set; }
     }
 
     internal sealed class CurveOptionDto

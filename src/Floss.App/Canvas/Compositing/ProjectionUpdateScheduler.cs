@@ -71,12 +71,6 @@ public sealed class ProjectionUpdateScheduler
 
     public void ApplyPending(LayerCompositor compositor)
     {
-        // If a background composite is mid-pass we DON'T want to block the UI
-        // thread on its gate. Leave our pending state intact and try again on
-        // the next render tick (which the composite's completion will trigger).
-        if (compositor.IsCompositeActive)
-            return;
-
         PixelRegion? dirty;
         IReadOnlyList<DrawingLayer>? layers;
         int? layerIndex;

@@ -36,6 +36,28 @@ public sealed record BrushPreset(
     public double Grain { get; init; } = 0.0;
     public string? Texture { get; init; } = null;
     public double Smoothing { get; init; } = 0.3;
+
+    // ── MyPaint-style dynamics (stateful brush engine) ───────────────────────
+    public double SlowTracking { get; init; } = 0.0;
+    public double SlowTrackingPerDab { get; init; } = 0.0;
+    public double TrackingNoise { get; init; } = 0.0;
+    public double Speed1Slowness { get; init; } = 0.04;
+    public double Speed2Slowness { get; init; } = 0.8;
+    public double Speed1Gamma { get; init; } = 4.0;
+    public double Speed2Gamma { get; init; } = 4.0;
+    public double OffsetBySpeed { get; init; } = 0.0;
+    public double OffsetBySpeedSlowness { get; init; } = 0.0;
+    public double OffsetByRandom { get; init; } = 0.0;
+    public double OffsetMultiplier { get; init; } = 0.0;
+    public double DabsPerBasicRadius { get; init; } = 0.0;
+    public double DabsPerActualRadius { get; init; } = 3.0;
+    public double DabsPerSecond { get; init; } = 0.0;
+    public double StrokeThreshold { get; init; } = 0.0;
+    public double StrokeDurationLogarithmic { get; init; } = 4.0;
+    public double StrokeHoldtime { get; init; } = 0.0;
+    public double EllipticalDabRatio { get; init; } = 1.0;
+    public double EllipticalDabAngle { get; init; } = 0.0;
+    public double DirectionFilter { get; init; } = 2.0;
     /// <summary>Brush Studio ceiling for the size slider, as percent of the canvas-scaled default max (100–400).</summary>
     public double MaxSizePercent { get; init; } = BrushSizeLimits.DefaultMaxSizePercent;
     public bool AutoSpacingActive { get; init; } = false;

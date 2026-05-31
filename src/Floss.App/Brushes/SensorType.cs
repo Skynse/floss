@@ -15,7 +15,15 @@ public enum SensorType
     TiltY,
     Rotation,
     /// <summary>Combined pen tilt magnitude (horizontal → vertical).</summary>
-    Tilt
+    Tilt,
+
+    // MyPaint-style sensors
+    NormSpeed1Slow,
+    NormSpeed2Slow,
+    Direction,
+    DirectionAngle,
+    Stroke,
+    CustomInput,
 }
 
 public sealed class SensorConfig
@@ -37,6 +45,13 @@ public sealed class SensorConfig
         SensorType.TiltY => Math.Clamp((sp.TiltY + 90f) / 180f, 0, 1),
         SensorType.Tilt => CombinedTilt01(sp),
         SensorType.Rotation => Math.Clamp((sp.Twist + 180f) / 360f, 0, 1),
+        // MyPaint-style
+        SensorType.NormSpeed1Slow => Math.Clamp(sp.NormSpeed1Slow, 0, 1),
+        SensorType.NormSpeed2Slow => Math.Clamp(sp.NormSpeed2Slow, 0, 1),
+        SensorType.Direction => Math.Clamp(sp.Direction / 180f, 0, 1),
+        SensorType.DirectionAngle => Math.Clamp(sp.DirectionAngle / 360f, 0, 1),
+        SensorType.Stroke => Math.Clamp(sp.Stroke, 0, 1),
+        SensorType.CustomInput => Math.Clamp(sp.CustomInput, 0, 1),
         _ => 0f
     };
 

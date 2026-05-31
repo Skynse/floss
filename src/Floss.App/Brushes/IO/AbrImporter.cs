@@ -1074,7 +1074,7 @@ public static class AbrImporter
 
         // ── Kind ─────────────────────────────────────────────────────────────
             var blendMode = p?.IsEraser == true
-                ? SkiaSharp.SKBlendMode.Clear
+                ? SkiaSharp.SKBlendMode.DstOut
                 : SkiaSharp.SKBlendMode.SrcOver;
 
         var tipThickness = 1.0;

@@ -2016,9 +2016,14 @@ public sealed class DrawingCanvas : Control, IDisposable
         // Keep tool's hover position current even when no stroke is active,
         // so the shift-line preview tracks the cursor through panning.
         if (_activePointerId < 0)
+        {
             HandlePointerInput(ToolInputEventKind.Move, point);
-
-        InvalidateVisual();
+            // Only invalidate for hover preview if the cursor actually moved.
+            if (_pointerPos != _prevPointerPos)
+                InvalidateVisual();
+        }
+        // During an active stroke, brush output will trigger its own invalidation
+        // via FlushPreviewDirty — no need to redundantly invalidate here.
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)

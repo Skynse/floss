@@ -17,6 +17,8 @@ public enum BrushParameterTarget
     TipDensity,
     TipThickness,
     Scatter,
+    EllipseRatio,
+    EllipseAngle,
 }
 
 public enum BrushParameterNodeKind
