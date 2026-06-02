@@ -26,11 +26,13 @@ namespace Floss.App.Canvas.Compositing;
 public sealed class LayerCompositor : IDisposable
 {
     private static readonly RenderThreadPool _renderPool = RenderThreadPool.Create("FlossComposite");
-
+    private WriteableBitmap? _cachedBitmap;
+    private int _cachedBitmapW, _cachedBitmapH;
+    private readonly ManualResetEventSlim _compositeIdleEvent = new(true);
     private LayerProjectionPlane? _projection;
     private LayerProjectionPlane Projection =>
         _projection ??= new LayerProjectionPlane(new MergeHost(this));
-
+    private static readonly System.Collections.Concurrent.ConcurrentBag<CountdownEvent> _cdePool = [];
     public const int DirtyTileBudget = 32;
     private const int MaxMissingTilesPerFrame = 96;
     private const int MaxCompositeCacheTiles = 8192;
@@ -65,21 +67,40 @@ public sealed class LayerCompositor : IDisposable
 
     public void Dispose()
     {
-        // Wait for any background composite pass to finish before tearing down.
-        // The compositor holds DocumentRenderLock.Read() during CompositeCore;
-        // disposing while it's active causes SynchronizationLockException.
-        var spin = new SpinWait();
-        while (Volatile.Read(ref _compositeActive) > 0)
-            spin.SpinOnce();
+        _compositeIdleEvent.Wait(); // Efficiently blocks without burning CPU
         ClearAll();
+        _compositeIdleEvent.Dispose();
     }
 
     private static void DispatchToPool(int count, Action<int> action)
     {
         if (count <= 0) return;
-        using var cde = new CountdownEvent(count);
-        for (var i = 0; i < count; i++) { var idx = i; _renderPool.Enqueue(() => { action(idx); cde.Signal(); }); }
-        cde.Wait();
+
+        if (!_cdePool.TryTake(out var cde))
+            cde = new CountdownEvent(1);
+
+        cde.Reset(count);
+        try
+        {
+            for (var i = 0; i < count; i++)
+            {
+                var idx = i;
+                _renderPool.Enqueue(() =>
+                {
+                    try { action(idx); }
+                    finally { cde.Signal(); }
+                });
+            }
+            cde.Wait();
+        }
+        finally
+        {
+            // Return to pool for next frame, cap pool size to prevent memory leaks
+            if (_cdePool.Count < 16)
+                _cdePool.Add(cde);
+            else
+                cde.Dispose();
+        }
     }
 
     // ═══ Public API ═══════════════════════════════════════════════════════════
@@ -95,11 +116,11 @@ public sealed class LayerCompositor : IDisposable
         if (_tileTotal == 0) return true;
         var area = TileAreaForRegion(vp.ClipTo(_width, _height));
         for (var ty = area.Top; ty <= area.Bottom; ty++)
-        for (var tx = area.Left; tx <= area.Right; tx++)
-        {
-            var idx = tileIndex(tx, ty);
-            if (idx < 0 || _pendingComposite.Contains(idx)) return true;
-        }
+            for (var tx = area.Left; tx <= area.Right; tx++)
+            {
+                var idx = tileIndex(tx, ty);
+                if (idx < 0 || _pendingComposite.Contains(idx)) return true;
+            }
         return false;
     }
 
@@ -156,44 +177,44 @@ public sealed class LayerCompositor : IDisposable
         {
             if (_width * _height > 64_000_000 || _cellBitmaps.Length == 0)
                 return new WriteableBitmap(new PixelSize(1, 1), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Unpremul);
-            var r = new WriteableBitmap(new PixelSize(_width, _height), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Unpremul);
-            using var fb = r.Lock(); var d = (byte*)fb.Address;
+
+            // FIX: Cache the bitmap and only recreate if the canvas size changes
+            if (_cachedBitmap == null || _cachedBitmapW != _width || _cachedBitmapH != _height)
+            {
+                _cachedBitmap?.Dispose();
+                _cachedBitmap = new WriteableBitmap(new PixelSize(_width, _height), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Unpremul);
+                _cachedBitmapW = _width;
+                _cachedBitmapH = _height;
+            }
+
+            using var fb = _cachedBitmap.Lock();
+            var d = (byte*)fb.Address;
             lock (CompositeGate)
             {
                 for (var cy = 0; cy < _cellRows; cy++)
-                for (var cx = 0; cx < _cellCols; cx++)
-                {
-                    var ci = cy * _cellCols + cx; var cb = _cellBitmaps[ci]; if (cb == null) continue;
-                    var dx = cx * MaxCellDim; var dy = cy * MaxCellDim;
-                    var tw = cb.Width; var th = cb.Height; if (tw <= 0 || th <= 0) { tw = 1; th = 1; }
-                    var s = (byte*)cb.GetPixels().ToPointer(); var sr = cb.RowBytes;
-                    for (var y = 0; y < th; y++) Buffer.MemoryCopy(s + y * sr, d + (dy + y) * fb.RowBytes + dx * 4, tw * 4, tw * 4);
-                }
+                    for (var cx = 0; cx < _cellCols; cx++)
+                    {
+                        var ci = cy * _cellCols + cx; var cb = _cellBitmaps[ci]; if (cb == null) continue;
+                        var dx = cx * MaxCellDim; var dy = cy * MaxCellDim;
+                        var tw = cb.Width; var th = cb.Height; if (tw <= 0 || th <= 0) { tw = 1; th = 1; }
+                        var s = (byte*)cb.GetPixels().ToPointer(); var sr = cb.RowBytes;
+                        for (var y = 0; y < th; y++) Buffer.MemoryCopy(s + y * sr, d + (dy + y) * fb.RowBytes + dx * 4, tw * 4, tw * 4);
+                    }
             }
-            return r;
+            return _cachedBitmap;
         }
     }
 
     public void DrawTiles(DrawingContext context, Rect target, PixelRegion? visibleViewport = null)
     {
-        // Drawpile: main thread holds queue_mutex during both enqueue and
-        // eachDirtyTileReset to prevent races with background render threads.
         lock (CompositeGate)
         {
             EnsureCells();
-        }
-        if (_cellBitmaps.Length == 0) return;
-
-        var vp = visibleViewport?.ClipTo(_width, _height) ?? new PixelRegion(0, 0, _width, _height);
-        if (vp.IsEmpty) return;
-
-        // Drawpile: TileCache access (dirty tile iter, resize reset, texture upload)
-        // is all protected by cacheMutex. Floss equivalent: hold CompositeGate
-        // through the entire draw pass so SetSize/InvalidateCells cannot replace
-        // cell arrays mid-iteration.
-        lock (CompositeGate)
-        {
             if (_cellBitmaps.Length == 0 || _cellCols <= 0) return;
+
+            var vp = visibleViewport?.ClipTo(_width, _height) ?? new PixelRegion(0, 0, _width, _height);
+            if (vp.IsEmpty) return;
+
             FlushDirtyCellImages();
 
             for (var ci = 0; ci < _cellBitmaps.Length; ci++)
@@ -224,11 +245,11 @@ public sealed class LayerCompositor : IDisposable
         _cellCols = nc; _cellRows = nr; var nt = nc * nr;
         _cellBitmaps = new SKBitmap?[nt]; _cellImages = new SKImage?[nt]; _cellDirty = new bool[nt];
         for (var oy = 0; oy < Math.Min(or, nr); oy++)
-        for (var ox = 0; ox < Math.Min(oc, nc); ox++)
-        {
-            var oi = oy * oc + ox; var ni = oy * nc + ox;
-            if (oi < oldBmps.Length) { _cellBitmaps[ni] = oldBmps[oi]; _cellImages[ni] = oldImgs[oi]; _cellDirty[ni] = oldDirty[oi]; }
-        }
+            for (var ox = 0; ox < Math.Min(oc, nc); ox++)
+            {
+                var oi = oy * oc + ox; var ni = oy * nc + ox;
+                if (oi < oldBmps.Length) { _cellBitmaps[ni] = oldBmps[oi]; _cellImages[ni] = oldImgs[oi]; _cellDirty[ni] = oldDirty[oi]; }
+            }
         for (var i = 0; i < oldBmps.Length; i++) { var oy = i / oc; var ox = i % oc; if (oy >= nr || ox >= nc) { var img = oldImgs[i]; if (img != null) _delayedDispose.Enqueue(((object)img, 8)); var bmp = oldBmps[i]; if (bmp != null) _delayedDispose.Enqueue(((object)bmp, 8)); } }
 
         for (var ci = 0; ci < nt; ci++)
@@ -324,9 +345,14 @@ public sealed class LayerCompositor : IDisposable
     public bool Composite(IReadOnlyList<DrawingLayer> layers, int w, int h,
         uint paperColor = 0, PixelRegion? viewport = null, double zoom = 1.0, int? forceLod = null)
     {
+        _compositeIdleEvent.Reset();
         Interlocked.Increment(ref _compositeActive);
         try { lock (CompositeGate) { return CompositeCore(layers, w, h, paperColor, viewport); } }
-        finally { Interlocked.Decrement(ref _compositeActive); }
+        finally
+        {
+            if (Interlocked.Decrement(ref _compositeActive) == 0)
+                _compositeIdleEvent.Set();
+        }
     }
 
     private unsafe bool CompositeCore(IReadOnlyList<DrawingLayer> layers, int w, int h, uint paperColor, PixelRegion? viewport)
@@ -344,7 +370,7 @@ public sealed class LayerCompositor : IDisposable
         {
             var da = TileAreaForRegion(dirty);
             for (var ty = da.Top; ty <= da.Bottom; ty++)
-            for (var tx = da.Left; tx <= da.Right; tx++) { var idx = tileIndex(tx, ty); if (idx >= 0) _pendingComposite.Add(idx); }
+                for (var tx = da.Left; tx <= da.Right; tx++) { var idx = tileIndex(tx, ty); if (idx >= 0) _pendingComposite.Add(idx); }
         }
 
         var missing = new List<int>();
@@ -352,7 +378,7 @@ public sealed class LayerCompositor : IDisposable
         {
             var va = TileAreaForRegion(vv);
             for (var ty = va.Top; ty <= va.Bottom; ty++)
-            for (var tx = va.Left; tx <= va.Right; tx++) { var idx = tileIndex(tx, ty); if (idx >= 0 && _tileScratch[idx] == null && !_pendingComposite.Contains(idx)) missing.Add(idx); }
+                for (var tx = va.Left; tx <= va.Right; tx++) { var idx = tileIndex(tx, ty); if (idx >= 0 && _tileScratch[idx] == null && !_pendingComposite.Contains(idx)) missing.Add(idx); }
         }
 
         _fullDirty = false; _dirtyRegion = null;
@@ -364,7 +390,7 @@ public sealed class LayerCompositor : IDisposable
         if (pending.Count == 0 && missing.Count == 0) { LastDirtyTileCount = 0; LastMissingTileCount = 0; return false; }
 
         var tl = new List<int>(pending);
-        foreach (var idx in missing) if (!tl.Contains(idx)) tl.Add(idx);
+
         foreach (var idx in tl) EnsureScratchTile(idx);
         var all = tl.ToArray();
 
@@ -464,14 +490,67 @@ public sealed class LayerCompositor : IDisposable
 
     private List<int> SelectPendingTiles(PixelRegion? vp, List<int> mis, int maxD, int maxM)
     {
-        var res = new List<int>();
+
+        maxD = Math.Min(maxD, _pendingComposite.Count);
+        maxM = Math.Min(maxM, mis.Count);
+
+
+        var res = new List<int>(maxD + maxM);
         var cx = vp is { } v ? v.X + v.Width / 2 : _width / 2;
         var cy = vp is { } v2 ? v2.Y + v2.Height / 2 : _height / 2;
-        var p = new List<int>(_pendingComposite);
-        p.Sort((a, b) => { int ay = a / _xtiles, ax = a % _xtiles, by = b / _xtiles, bx = b % _xtiles; return (Math.Abs(ax * 64 + 32 - cx) + Math.Abs(ay * 64 + 32 - cy)).CompareTo(Math.Abs(bx * 64 + 32 - cx) + Math.Abs(by * 64 + 32 - cy)); });
-        foreach (var i in p) { if (res.Count >= maxD) break; _pendingComposite.Remove(i); res.Add(i); }
-        mis.Sort((a, b) => { int ay = a / _xtiles, ax = a % _xtiles, by = b / _xtiles, bx = b % _xtiles; return (Math.Abs(ax * 64 + 32 - cx) + Math.Abs(ay * 64 + 32 - cy)).CompareTo(Math.Abs(bx * 64 + 32 - cx) + Math.Abs(by * 64 + 32 - cy)); });
-        foreach (var i in mis) { if (res.Contains(i)) continue; if (res.Count >= maxD + maxM) break; res.Add(i); }
+
+        if (_pendingComposite.Count > 0 && maxD > 0)
+        {
+            // O(N) scan to find the closest maxD tiles without a full sort
+            var closest = new List<(int idx, int dist)>(maxD);
+            foreach (var idx in _pendingComposite)
+            {
+                int ay = idx / _xtiles, ax = idx % _xtiles;
+                int dist = Math.Abs(ax * 64 + 32 - cx) + Math.Abs(ay * 64 + 32 - cy);
+
+                if (closest.Count < maxD)
+                {
+                    closest.Add((idx, dist));
+                    if (closest.Count == maxD) closest.Sort((a, b) => b.dist.CompareTo(a.dist)); // keep max at index 0
+                }
+                else if (dist < closest[0].dist)
+                {
+                    closest[0] = (idx, dist);
+                    closest.Sort((a, b) => b.dist.CompareTo(a.dist));
+                }
+            }
+            foreach (var item in closest)
+            {
+                _pendingComposite.Remove(item.idx);
+                res.Add(item.idx);
+            }
+        }
+
+        if (mis.Count > 0 && maxM > 0)
+        {
+            var closest = new List<(int idx, int dist)>(maxM);
+            foreach (var idx in mis)
+            {
+                if (res.Contains(idx)) continue;
+                int ay = idx / _xtiles, ax = idx % _xtiles;
+                int dist = Math.Abs(ax * 64 + 32 - cx) + Math.Abs(ay * 64 + 32 - cy);
+
+                if (closest.Count < maxM)
+                {
+                    closest.Add((idx, dist));
+                    if (closest.Count == maxM) closest.Sort((a, b) => b.dist.CompareTo(a.dist));
+                }
+                else if (dist < closest[0].dist)
+                {
+                    closest[0] = (idx, dist);
+                    closest.Sort((a, b) => b.dist.CompareTo(a.dist));
+                }
+            }
+            foreach (var (idx, dist) in closest)
+            {
+                res.Add(idx);
+            }
+        }
         return res;
     }
 
@@ -560,7 +639,11 @@ internal sealed class SkiaTileDrawOp : ICustomDrawOperation
     public SkiaTileDrawOp(SKImage image, SKRect src, Rect dest) { _image = image; _ownsImage = false; _src = src; _dest = dest; }
     public Rect Bounds => _dest;
     public bool HitTest(Point p) => false;
-    public bool Equals(ICustomDrawOperation? o) => false;
+    public bool Equals(ICustomDrawOperation? o) =>
+        o is SkiaTileDrawOp other &&
+        _image == other._image &&
+        _src == other._src &&
+        _dest == other._dest;
     public void Dispose() { if (_ownsImage) _image?.Dispose(); }
     public void Render(ImmediateDrawingContext ctx)
     {

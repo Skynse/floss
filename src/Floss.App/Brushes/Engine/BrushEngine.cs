@@ -1,5 +1,4 @@
 using System;
-using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -9,7 +8,6 @@ using System.Threading.Tasks;
 using Avalonia.Media;
 using Floss.App.Document;
 using Floss.App.Input;
-using Floss.App.MyPaint;
 using SkiaSharp;
 using static Floss.App.Brushes.BrushDynamics;
 
@@ -193,11 +191,10 @@ public sealed class BrushEngine : IDisposable
         int startSegmentIndex,
         int segmentCount,
         PixelSampler? sampleSource = null,
-        TileReader? tileReader = null,
-        bool ensureLastEndpoint = false)
+        TileReader? tileReader = null)
     {
         lock (_gate)
-            return RasterizeSegmentsCore(layer, brush, samples, startSegmentIndex, segmentCount, sampleSource, tileReader, ensureLastEndpoint);
+            return RasterizeSegmentsCore(layer, brush, samples, startSegmentIndex, segmentCount, sampleSource, tileReader);
     }
 
     private PixelRegion RasterizeSegmentsCore(
@@ -207,8 +204,7 @@ public sealed class BrushEngine : IDisposable
         int startSegmentIndex,
         int segmentCount,
         PixelSampler? sampleSource,
-        TileReader? tileReader,
-        bool ensureLastEndpoint = false)
+        TileReader? tileReader)
     {
         if (segmentCount <= 0 || samples.Count < 2) return PixelRegion.Empty;
         if (startSegmentIndex <= 0 || startSegmentIndex >= samples.Count) return PixelRegion.Empty;
@@ -230,10 +226,7 @@ public sealed class BrushEngine : IDisposable
         var lastSegmentIndex = Math.Min(samples.Count - 1, startSegmentIndex + segmentCount - 1);
         var dirty = PixelRegion.Empty;
         for (var i = startSegmentIndex; i <= lastSegmentIndex; i++)
-        {
-            var ensureEndpoint = ensureLastEndpoint && i == lastSegmentIndex;
-            dirty = dirty.Union(BuildStamps(stroke, brush, samples[i - 1], samples[i], ensureEndpoint));
-        }
+            dirty = dirty.Union(BuildStamps(stroke, brush, samples[i - 1], samples[i], ensureEndpoint: false));
 
         if (dirty.IsEmpty || _stamps.Count == 0)
         {
@@ -354,7 +347,7 @@ public sealed class BrushEngine : IDisposable
                         var smearResult = TryRenderSpatialSmearStamp(layer, stroke, brush, stamp, stampDirty);
                         if (smearResult == SpatialSmearResult.Rendered)
                         {
-                            layer.ActivePixels.PruneRegion(stampDirty);
+                            layer.Pixels.PruneRegion(stampDirty);
                         }
                         else if (smearResult == SpatialSmearResult.Failed)
                         {
@@ -480,9 +473,6 @@ public sealed class BrushEngine : IDisposable
 
     private unsafe void RenderCurrentStamps(DrawingLayer layer, ActiveStroke stroke, BrushPreset brush, PixelRegion dirty)
     {
-        // Clip to layer bounds — stamps outside the document must not create tiles.
-        dirty = dirty.ClipTo(layer.Width, layer.Height);
-        if (dirty.IsEmpty) return;
         // For standard SrcOver brushes without color mixing, render stamps to a
         // temporary scratch with Lighten blend so overlapping stamps within this
         // batch take the MAX alpha rather than compounding. The scratch is then
@@ -509,7 +499,7 @@ public sealed class BrushEngine : IDisposable
                     brushGrain, texPx, texW, texH, texStride, dirty, grainTable))
             {
                 _lastRasterPath = "CachedColorTileMajor";
-                layer.ActivePixels.PruneRegion(dirty);
+                layer.Pixels.PruneRegion(dirty);
                 return;
             }
 
@@ -519,7 +509,7 @@ public sealed class BrushEngine : IDisposable
                     brushGrain, texPx, texW, texH, texStride, dirty, grainTable))
             {
                 _lastRasterPath = "CachedTileMajor";
-                layer.ActivePixels.PruneRegion(dirty);
+                layer.Pixels.PruneRegion(dirty);
                 return;
             }
         }
@@ -733,7 +723,7 @@ public sealed class BrushEngine : IDisposable
         var subdivisions = Math.Max(8, Math.Min(96, (int)Math.Ceiling(estimatedStamps * 4)));
 
         var p0 = new SplinePoint(
-            stroke.State.PrevFromX, stroke.State.PrevFromY, stroke.State.LastPressure,
+            stroke.State.LastX, stroke.State.LastY, stroke.State.LastPressure,
             stroke.State.LastTiltX, stroke.State.LastTiltY, (float)from.Twist);
         var p1 = ToSplinePoint(from);
         var p2 = ToSplinePoint(to);
@@ -783,17 +773,11 @@ public sealed class BrushEngine : IDisposable
         }
 
         // On the final segment, the spacing accumulator may leave a small gap to
-        // the pen-up endpoint. Always place a stamp at the endpoint so the stroke
-        // doesn't end prematurely with an uncovered tail.
-        if (ensureEndpoint)
+        // the pen-up endpoint. Expand the dirty region by one stamp radius to
+        // ensure soft brush edges cover any sub-spacing gap.
+        if (ensureEndpoint && _stamps.Count > 0)
         {
-            var endpointSp = BuildStrokePoint(stroke, to, velocity01);
-            var endpointStamp = CreateStamp(stroke, brush, endpointSp);
-            if (!BrushSpacing.IsStampTooSmall(endpointStamp.Size))
-            {
-                _stamps.Add(endpointStamp);
-                dirty = dirty.Union(StampBounds(endpointStamp));
-            }
+            dirty = dirty.Inflate((int)(_stamps[^1].Size * 0.25f + 1));
         }
 
         stroke.State.LastX = (float)to.X;
@@ -801,8 +785,6 @@ public sealed class BrushEngine : IDisposable
         stroke.State.LastPressure = (float)to.Pressure;
         stroke.State.LastTiltX = (float)to.TiltX;
         stroke.State.LastTiltY = (float)to.TiltY;
-        stroke.State.PrevFromX = (float)from.X;
-        stroke.State.PrevFromY = (float)from.Y;
 
         return dirty;
     }
@@ -814,8 +796,8 @@ public sealed class BrushEngine : IDisposable
         var segLenSq = segDx * segDx + segDy * segDy;
         if (segLenSq < 1e-6) return true;
 
-        var prevDx = from.X - stroke.State.PrevFromX;
-        var prevDy = from.Y - stroke.State.PrevFromY;
+        var prevDx = from.X - stroke.State.LastX;
+        var prevDy = from.Y - stroke.State.LastY;
         if (prevDx * prevDx + prevDy * prevDy < 1e-4) return true;
 
         var cross = prevDx * segDy - prevDy * segDx;
@@ -883,25 +865,14 @@ public sealed class BrushEngine : IDisposable
         if (stroke.State.DistanceLeftover >= stroke.State.NextStampDistance)
             stroke.State.DistanceLeftover = 0;
 
-        // Ensure the stroke endpoint is always covered by a stamp.
-        if (ensureEndpoint)
-        {
-            var endpointSp = BuildStrokePoint(stroke, to, velocity01);
-            var endpointStamp = CreateStamp(stroke, brush, endpointSp);
-            if (!BrushSpacing.IsStampTooSmall(endpointStamp.Size))
-            {
-                _stamps.Add(endpointStamp);
-                dirty = dirty.Union(StampBounds(endpointStamp));
-            }
-        }
+        if (ensureEndpoint && _stamps.Count > 0)
+            dirty = dirty.Inflate((int)(_stamps[^1].Size * 0.25f + 1));
 
         stroke.State.LastX = (float)to.X;
         stroke.State.LastY = (float)to.Y;
         stroke.State.LastPressure = (float)to.Pressure;
         stroke.State.LastTiltX = (float)to.TiltX;
         stroke.State.LastTiltY = (float)to.TiltY;
-        stroke.State.PrevFromX = (float)from.X;
-        stroke.State.PrevFromY = (float)from.Y;
         return dirty;
     }
 
@@ -915,8 +886,7 @@ public sealed class BrushEngine : IDisposable
             totalDistance: stroke.State.TotalDistance,
             dabSeqNo: stroke.State.DabSeqNo,
             random: Hash01((int)(sample.X * 7919f), (int)(sample.Y * 6353f)),
-            strokeRandom: stroke.StrokeRandom,
-            timeMicros: sample.TimeMicros);
+            strokeRandom: stroke.StrokeRandom);
 
     private static float StampSpacing(BrushPreset brush, StampSample stamp)
         => BrushSpacing.EffectiveDistance(brush, stamp.Size, stamp.SpacingMultiplier, stamp.Speed);
@@ -963,26 +933,23 @@ public sealed class BrushEngine : IDisposable
         stroke.State.LastPressure = (float)to.Pressure;
         stroke.State.LastTiltX = (float)to.TiltX;
         stroke.State.LastTiltY = (float)to.TiltY;
-        stroke.State.PrevFromX = (float)from.X;
-        stroke.State.PrevFromY = (float)from.Y;
         return dirty;
     }
 
     private static bool ShouldCollapseToSingleStamp(StampSample stamp, float distance, BrushPreset brush)
     {
-        // Only collapse for sub-pixel movements where interpolation is pointless.
-        // The spacing accumulator already handles short segments correctly;
-        // collapsing was causing fast strokes to polygonize (stamps only at raw
-        // input sample points, with no interpolation between them).
-        return distance < 1.0f;
+        if (distance < 0.5f)
+            return false;
+
+        var spacing = BrushSpacing.EffectiveDistance(brush, stamp.Size, stamp.SpacingMultiplier, stamp.Speed);
+        if (distance <= spacing * 0.85f)
+            return true;
+
+        return stamp.Size >= 64f && distance <= stamp.Size * 0.75f;
     }
 
-    private static StampSample CreateStamp(ActiveStroke stroke, BrushPreset brush, in StrokePoint rawSp)
+    private static StampSample CreateStamp(ActiveStroke stroke, BrushPreset brush, in StrokePoint sp)
     {
-        // MyPaint-style state update: slow tracking, filtered speed/direction,
-        // stroke progress, offset by speed, Gaussian scatter.
-        var sp = UpdateStrokeStateAndBuildPoint(stroke, brush, rawSp);
-
         var dyn = brush.Dynamics;
         var paramLookup = stroke.ParamGraphLookup;
         var sizeMul = EvalParameter(paramLookup, BrushParameterTarget.Size, sp, dyn.EvalSize(sp));
@@ -998,10 +965,6 @@ public sealed class BrushEngine : IDisposable
         var scatter = EvalParameter(paramLookup, BrushParameterTarget.Scatter, sp,
             dyn.Scatter.IsEnabled ? dyn.EvalScatter(sp) : 0f);
         var rotDeg = EvalParameter(paramLookup, BrushParameterTarget.Angle, sp, dyn.EvalRotationDeg(sp));
-        var ellipseRatio = EvalParameter(paramLookup, BrushParameterTarget.EllipseRatio, sp,
-            dyn.EllipticalDabRatio.IsEnabled ? dyn.EllipticalDabRatio.Compute(sp) : 1f);
-        var ellipseAngle = EvalParameter(paramLookup, BrushParameterTarget.EllipseAngle, sp,
-            dyn.EllipticalDabAngle.IsEnabled ? dyn.EllipticalDabAngle.Compute(sp) : 0f);
         var size = Math.Max(0.5f, (float)brush.Size * sizeMul);
         // Opacity is independent of AmountOfPaint. AmountOfPaint controls how much
         // brush color is deposited, not the visibility of the stamp.
@@ -1034,9 +997,7 @@ public sealed class BrushEngine : IDisposable
             Math.Clamp(spacingMul, 0.05f, 4f),
             Math.Clamp(tipThicknessMul, 0.01f, 4f),
             SelectTipIndex(brush, sp),
-            Math.Clamp(sp.Speed, 0f, 1f),
-            Math.Max(1f, ellipseRatio),
-            ellipseAngle);
+            Math.Clamp(sp.Speed, 0f, 1f));
     }
 
     private static float EvalParameter(Dictionary<BrushParameterTarget, BrushParameterGraph> lookup, BrushParameterTarget target, in StrokePoint sp, float fallback)
@@ -1062,199 +1023,6 @@ public sealed class BrushEngine : IDisposable
             * Math.Max(1.0f, (float)brush.Dynamics.Spacing.MaxOutput);
         var scatter = brush.Dynamics.Scatter.IsEnabled ? maxSize * Math.Max(0.0, brush.Dynamics.Scatter.MaxOutput) : 0.0;
         return Math.Max(1.0, maxSize * 0.75 + spacing + scatter + 3.0);
-    }
-
-    /// <summary>MyPaint speed-mapping precalc: log(gamma+x)*m+q.</summary>
-    private static void PrecalcSpeedMapping(float gammaLog, out float gamma, out float m, out float q)
-    {
-        gamma = MathF.Exp(gammaLog);
-        const float fix1X = 45.0f;
-        const float fix1Y = 0.5f;
-        const float fix2Dy = 0.015f;
-        float c1 = MathF.Log(fix1X + gamma);
-        m = fix2Dy * (fix1X + gamma);
-        q = fix1Y - m * c1;
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static float ExpDecay(float timeConst, float dt)
-    {
-        if (timeConst <= 0.001f) return 0.0f;
-        return MathF.Exp(-dt / timeConst);
-    }
-
-    /// <summary>
-    /// MyPaint-style state update per dab: slow tracking, filtered speed/direction,
-    /// stroke progress, offset by speed, Gaussian scatter. Replaces raw position
-    /// with the lagged actual position.
-    /// </summary>
-    private static StrokePoint UpdateStrokeStateAndBuildPoint(ActiveStroke stroke, BrushPreset brush, in StrokePoint rawSp)
-    {
-        ref var state = ref stroke.State;
-
-        // ── Step deltas ─────────────────────────────────────────────────────────
-        float stepDx = rawSp.X - state.PrevDabX;
-        float stepDy = rawSp.Y - state.PrevDabY;
-        float stepDist = MathF.Sqrt(stepDx * stepDx + stepDy * stepDy);
-        float dtime = state.PrevDabTimeMicros > 0
-            ? Math.Max(0.001f, (rawSp.TimeMicros - state.PrevDabTimeMicros) / 1_000_000.0f)
-            : 0.001f;
-        float baseRadius = MathF.Max(0.2f, MathF.Exp((float)brush.Size > 0 ? MathF.Log((float)brush.Size) : 0f));
-        float stepDdab = stepDist / MathF.Max(baseRadius, 0.2f);
-
-        // ── Slow tracking (positional lag) ─────────────────────────────────────
-        if (brush.SlowTrackingPerDab > 0.001)
-        {
-            float fac = 1.0f - ExpDecay((float)brush.SlowTrackingPerDab, stepDdab);
-            state.ActualX += (rawSp.X - state.ActualX) * fac;
-            state.ActualY += (rawSp.Y - state.ActualY) * fac;
-        }
-        else
-        {
-            state.ActualX = rawSp.X;
-            state.ActualY = rawSp.Y;
-        }
-
-        // ── Norm speed (pixels/sec, adjusted for viewzoom=1) ──────────────────
-        float normDx = stepDx / dtime;
-        float normDy = stepDy / dtime;
-        float normSpeed = MathF.Sqrt(normDx * normDx + normDy * normDy);
-        float normDist = MathF.Sqrt(
-            (stepDx / dtime / baseRadius) * (stepDx / dtime / baseRadius) +
-            (stepDy / dtime / baseRadius) * (stepDy / dtime / baseRadius)) * dtime;
-
-        // ── Filtered speed 1 & 2 (log-mapped) ──────────────────────────────────
-        if (brush.Speed1Slowness > 0.001)
-        {
-            float fac1 = 1.0f - ExpDecay((float)brush.Speed1Slowness, dtime);
-            state.NormSpeed1Slow += (normSpeed - state.NormSpeed1Slow) * fac1;
-        }
-        if (brush.Speed2Slowness > 0.001)
-        {
-            float fac2 = 1.0f - ExpDecay((float)brush.Speed2Slowness, dtime);
-            state.NormSpeed2Slow += (normSpeed - state.NormSpeed2Slow) * fac2;
-        }
-
-        // ── Filtered velocity vector (offset by speed) ─────────────────────────
-        if (brush.OffsetBySpeedSlowness > 0.001 || brush.OffsetBySpeed > 0.001)
-        {
-            float tc = MathF.Exp((float)brush.OffsetBySpeedSlowness * 0.01f) - 1.0f;
-            if (tc < 0.002f) tc = 0.002f;
-            float fac = 1.0f - ExpDecay(tc, dtime);
-            state.NormDxSlow += (normDx - state.NormDxSlow) * fac;
-            state.NormDySlow += (normDy - state.NormDySlow) * fac;
-        }
-
-        // ── Direction filter (360° + 180°) ─────────────────────────────────────
-        if (brush.DirectionFilter > 0.001f)
-        {
-            float stepInDabtime = stepDist;
-            float tcDir = MathF.Exp((float)brush.DirectionFilter * 0.5f) - 1.0f;
-            if (tcDir < 0.002f) tcDir = 0.002f;
-            float facDir = 1.0f - ExpDecay(tcDir, stepInDabtime);
-
-            // 360° direction
-            state.DirectionAngleDx += (stepDx - state.DirectionAngleDx) * facDir;
-            state.DirectionAngleDy += (stepDy - state.DirectionAngleDy) * facDir;
-
-            // 180° direction (flip if closer to opposite)
-            float dxOld = state.DirectionDx;
-            float dyOld = state.DirectionDy;
-            float dx = stepDx;
-            float dy = stepDy;
-            if ((dxOld - dx) * (dxOld - dx) + (dyOld - dy) * (dyOld - dy) >
-                (dxOld - (-dx)) * (dxOld - (-dx)) + (dyOld - (-dy)) * (dyOld - (-dy)))
-            {
-                dx = -dx;
-                dy = -dy;
-            }
-            state.DirectionDx += (dx - state.DirectionDx) * facDir;
-            state.DirectionDy += (dy - state.DirectionDy) * facDir;
-        }
-
-        // ── Stroke progress ────────────────────────────────────────────────────
-        if (brush.StrokeDurationLogarithmic > -10)
-        {
-            float threshold = (float)brush.StrokeThreshold;
-            float lim = 0.0001f;
-            if (!state.StrokeStarted && rawSp.Pressure > threshold + lim)
-            {
-                state.StrokeStarted = true;
-                state.Stroke = 0.0f;
-            }
-            else if (state.StrokeStarted && rawSp.Pressure <= threshold * 0.9f + lim)
-            {
-                state.StrokeStarted = false;
-            }
-
-            float frequency = MathF.Exp(-(float)brush.StrokeDurationLogarithmic);
-            float strokeVal = MathF.Max(0, state.Stroke + normDist * frequency);
-            float wrap = 1.0f + MathF.Max(0, (float)brush.StrokeHoldtime);
-            if (strokeVal >= wrap && wrap > 9.9f + 1.0f)
-                state.Stroke = 1.0f;
-            else if (strokeVal >= wrap)
-                state.Stroke = strokeVal % wrap;
-            else
-                state.Stroke = strokeVal;
-        }
-
-        // ── Custom input slow filter ───────────────────────────────────────────
-        if (brush.Dynamics.CustomInput.IsEnabled)
-        {
-            float fac = 1.0f - ExpDecay(1.0f, 0.1f); // default slowness=1
-            state.CustomInput += ((float)brush.Dynamics.CustomInput.Compute(rawSp) - state.CustomInput) * fac;
-        }
-
-        // ── Compute log-mapped speed inputs ────────────────────────────────────
-        float speed1Input = MathF.Log(stroke.SpeedMappingGamma1 + state.NormSpeed1Slow) * stroke.SpeedMappingM1 + stroke.SpeedMappingQ1;
-        float speed2Input = MathF.Log(stroke.SpeedMappingGamma2 + state.NormSpeed2Slow) * stroke.SpeedMappingM2 + stroke.SpeedMappingQ2;
-
-        // ── Direction angles ─────────────────────────────────────────────────
-        float dirAngle360 = MathF.Atan2(state.DirectionAngleDy, state.DirectionAngleDx);
-        float dirAngle180 = MathF.Atan2(state.DirectionDy, state.DirectionDx);
-        float directionDeg = MyPaint.MyPaintHelpers.ModArith(dirAngle180 * (180f / MathF.PI) + 180f, 180f);
-        float directionAngleDeg = MyPaint.MyPaintHelpers.ModArith(dirAngle360 * (180f / MathF.PI) + 360f, 360f);
-
-        // ── Tracking noise (random jitter on actual position) ──────────────────
-        float actualX = state.ActualX;
-        float actualY = state.ActualY;
-        if (brush.TrackingNoise > 0.001f)
-        {
-            float noise = MyPaint.MyPaintHelpers.RandGauss(stroke.Rng) * (float)brush.TrackingNoise;
-            actualX += noise;
-            actualY += noise;
-        }
-
-        // ── Offset by speed ──────────────────────────────────────────────────
-        if (brush.OffsetBySpeed > 0.001f)
-        {
-            actualX += state.NormDxSlow * (float)brush.OffsetBySpeed * 0.1f;
-            actualY += state.NormDySlow * (float)brush.OffsetBySpeed * 0.1f;
-        }
-
-        // ── Offset by random (Gaussian scatter) ──────────────────────────────
-        if (brush.OffsetByRandom > 0.001f)
-        {
-            float amp = (float)brush.OffsetByRandom * baseRadius;
-            actualX += MyPaint.MyPaintHelpers.RandGauss(stroke.Rng) * amp;
-            actualY += MyPaint.MyPaintHelpers.RandGauss(stroke.Rng) * amp;
-        }
-
-        // ── Update prev-dab tracker ──────────────────────────────────────────
-        state.PrevDabX = rawSp.X;
-        state.PrevDabY = rawSp.Y;
-        state.PrevDabTimeMicros = rawSp.TimeMicros;
-
-        return new StrokePoint(
-            actualX, actualY, rawSp.Pressure,
-            rawSp.TiltX, rawSp.TiltY, rawSp.Twist,
-            rawSp.DrawingAngle, rawSp.Speed,
-            rawSp.TotalDistance, rawSp.DabSeqNo,
-            rawSp.Random, rawSp.StrokeRandom,
-            rawSp.TimeMicros,
-            speed1Input, speed2Input,
-            directionDeg, directionAngleDeg,
-            state.Stroke, state.CustomInput);
     }
 
     private unsafe void RenderStampsViaScratch(DrawingLayer layer, ActiveStroke stroke, BrushPreset brush, PixelRegion dirty)
@@ -1760,7 +1528,7 @@ public sealed class BrushEngine : IDisposable
         float halfBms = baseMaskSize * 0.5f;
         const int tsz = TiledPixelBuffer.TileSize;
 
-        layer.ActivePixels.EnterPixelWriteLock();
+        layer.Pixels.EnterPixelWriteLock();
         try
         {
             for (int si = 0; si < _stamps.Count; si++)
@@ -1791,22 +1559,17 @@ public sealed class BrushEngine : IDisposable
                     float rx = isHorizontal ? rxBase : rxBase * thickMul;
                     float ry = isHorizontal ? ryBase * thickMul : ryBase;
 
-                    // Apply MyPaint-style elliptical dab dynamics
-                    float rxEff = rx * stamp.EllipseRatio;
-                    float ryEff = ry;
-                    float effAngle = stamp.Angle + stamp.EllipseAngle;
-
                     // For image tips the effective half-extent is the full mask half-size × scale
-                    float bboxHalfX = isImageTip ? halfBms * MathF.Abs(scaleX) : rxEff;
-                    float bboxHalfY = isImageTip ? halfBms * MathF.Abs(scaleY) : ryEff;
+                    float bboxHalfX = isImageTip ? halfBms * MathF.Abs(scaleX) : rx;
+                    float bboxHalfY = isImageTip ? halfBms * MathF.Abs(scaleY) : ry;
                     if (bboxHalfX < 0.5f || bboxHalfY < 0.5f) continue;
 
                     // Always rotate for image tips (texture has directionality); skip for rotationally-symmetric circles
-                    bool hasRot = MathF.Abs(effAngle) > 0.1f && (isImageTip || useGraphEval || !isCircle);
+                    bool hasRot = MathF.Abs(stamp.Angle) > 0.1f && (isImageTip || useGraphEval || !isCircle);
                     float cosA = 1f, sinA = 0f;
                     if (hasRot)
                     {
-                        float rad = effAngle * MathF.PI / 180f;
+                        float rad = stamp.Angle * MathF.PI / 180f;
                         cosA = MathF.Cos(rad);
                         sinA = MathF.Sin(rad);
                     }
@@ -1854,16 +1617,6 @@ public sealed class BrushEngine : IDisposable
                     int lastTx = (int)Math.Floor((double)(bRight - 1) / tsz);
                     int lastTy = (int)Math.Floor((double)(bBottom - 1) / tsz);
 
-                    // Fast libmypaint path: analytical mask + AVX2 compositing.
-                    // Replaces per-pixel Sqrt+Pow (even the "fastAlpha" delegate path)
-                    // with libmypaint's no-sqrt linear-segment hardness falloff.
-                    if (!isImageTip && !hasGrainTable && brushGrain <= 0f && isSrcOver && isCircle)
-                    {
-                        RasterizeStampLibmypaint(layer, stamp, rxEff, ryEff, hasRot, cosA, sinA,
-                            brushB, brushG, brushR, stampOpacity255, alphaLocked);
-                        continue;
-                    }
-
                     for (int ty = firstTy; ty <= lastTy; ty++)
                     {
                         int tilePixY = ty * tsz;
@@ -1878,7 +1631,7 @@ public sealed class BrushEngine : IDisposable
                             int pxMaxX = Math.Min(bRight, tilePixX + tsz);
                             if (pxMinX >= pxMaxX) continue;
 
-                            var tile = layer.ActivePixels.GetOrCreateRawTile(tx, ty);
+                            var tile = layer.Pixels.GetOrCreateRawTile(tx, ty);
 
                             for (int py = pxMinY; py < pxMaxY; py++)
                             {
@@ -1920,8 +1673,8 @@ public sealed class BrushEngine : IDisposable
                                     }
                                     else if (useGraphEval)
                                     {
-                                        float u = 0.5f + fdx / (rxEff * 2f);
-                                        float v = 0.5f + fdy / (ryEff * 2f);
+                                        float u = 0.5f + fdx / (rx * 2f);
+                                        float v = 0.5f + fdy / (ry * 2f);
                                         if (u < 0f || v < 0f || u > 1f || v > 1f) continue;
                                         alpha = fastAlpha != null
                                             ? fastAlpha(u, v)
@@ -1931,8 +1684,8 @@ public sealed class BrushEngine : IDisposable
                                     else
                                     {
                                         // Analytical radial alpha — squared comparison avoids Sqrt for core pixels
-                                        float ndx = fdx / rxEff;
-                                        float ndy = fdy / ryEff;
+                                        float ndx = fdx / rx;
+                                        float ndy = fdy / ry;
                                         float t2 = ndx * ndx + ndy * ndy;
                                         if (t2 >= 1f) continue;
 
@@ -1999,94 +1752,10 @@ public sealed class BrushEngine : IDisposable
         }
         finally
         {
-            layer.ActivePixels.ExitPixelWriteLock();
+            layer.Pixels.ExitPixelWriteLock();
         }
 
-        layer.ActivePixels.PruneRegion(dirty);
-    }
-
-    /// <summary>
-    /// Fast libmypaint-style mask generation + AVX2 vectorized compositing.
-    /// Replaces per-pixel Sqrt+Pow with analytical mask generation and
-    /// StampSrcOverMaskedRow for simple procedural circular/elliptical brushes.
-    /// </summary>
-    private unsafe void RasterizeStampLibmypaint(
-        DrawingLayer layer, StampSample stamp,
-        float rx, float ry, bool hasRot, float cosA, float sinA,
-        int brushB, int brushG, int brushR, float stampOpacity255, bool alphaLocked)
-    {
-        float radius = Math.Max(rx, ry);
-        float aspectRatio = radius / Math.Min(rx, ry);
-        float angleDeg = stamp.Angle + stamp.EllipseAngle;
-        if (ry > rx) angleDeg += 90f;
-
-        int maskW = 0, maskH = 0, maskX = 0, maskY = 0;
-        int maxMaskDim = (int)(radius + 1.0f) * 2 + 1;
-        byte[] maskBuf = ArrayPool<byte>.Shared.Rent(maxMaskDim * maxMaskDim);
-        try
-        {
-            MyPaintDabRenderer.RenderDabMaskByte(
-                stamp.X, stamp.Y, radius, stamp.Hardness, 0f,
-                aspectRatio, angleDeg,
-                maskBuf, out maskW, out maskH, out maskX, out maskY);
-
-            if (maskW <= 0 || maskH <= 0) return;
-
-            const int tsz = TiledPixelBuffer.TileSize;
-            int bLeft = maskX;
-            int bTop = maskY;
-            int bRight = maskX + maskW;
-            int bBottom = maskY + maskH;
-
-            int firstTx = (int)Math.Floor((double)bLeft / tsz);
-            int firstTy = (int)Math.Floor((double)bTop / tsz);
-            int lastTx = (int)Math.Floor((double)(bRight - 1) / tsz);
-            int lastTy = (int)Math.Floor((double)(bBottom - 1) / tsz);
-
-            int opacity255 = (int)(stampOpacity255 + 0.5f);
-            if (opacity255 <= 0) return;
-
-            fixed (byte* maskP = maskBuf)
-            {
-                for (int ty = firstTy; ty <= lastTy; ty++)
-                {
-                    int tilePixY = ty * tsz;
-                    int pxMinY = Math.Max(bTop, tilePixY);
-                    int pxMaxY = Math.Min(bBottom, tilePixY + tsz);
-                    if (pxMinY >= pxMaxY) continue;
-
-                    for (int tx = firstTx; tx <= lastTx; tx++)
-                    {
-                        int tilePixX = tx * tsz;
-                        int pxMinX = Math.Max(bLeft, tilePixX);
-                        int pxMaxX = Math.Min(bRight, tilePixX + tsz);
-                        if (pxMinX >= pxMaxX) continue;
-
-                        var tile = layer.ActivePixels.GetOrCreateRawTile(tx, ty);
-
-                        for (int py = pxMinY; py < pxMaxY; py++)
-                        {
-                            int ly = py - tilePixY;
-                            int rowBase = ly * tsz * 4;
-                            int localY = py - maskY;
-                            byte* maskRow = maskP + localY * maskW + (pxMinX - maskX);
-                            int dstOffset = rowBase + (pxMinX - tilePixX) * 4;
-
-                            fixed (byte* tp = tile)
-                            {
-                                Canvas.Engine.SimdPixelOps.StampSrcOverMaskedRow(
-                                    tp + dstOffset, maskRow,
-                                    pxMaxX - pxMinX, brushB, brushG, brushR, opacity255, alphaLocked);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(maskBuf);
-        }
+        layer.Pixels.PruneRegion(dirty);
     }
 
     private unsafe bool TryRasterizeCachedDabsTileMajor(
@@ -2136,9 +1805,11 @@ public sealed class BrushEngine : IDisposable
                     colorA = color.Alpha;
                 }
 
-                stroke.TryGetCachedDab(stamp, out var dab);
-                if (dab == null)
-                    continue;
+                if (!stroke.TryGetCachedDab(stamp, out var dab))
+                {
+                    buckets.Clear();
+                    return false;
+                }
                 _lastCachedDabCount++;
 
                 var left = (int)MathF.Round(stamp.X) + dab.OffsetX;
@@ -2178,14 +1849,14 @@ public sealed class BrushEngine : IDisposable
                 return true;
             _lastTileBucketCount = buckets.Count;
 
-            layer.ActivePixels.EnterPixelWriteLock();
+            layer.Pixels.EnterPixelWriteLock();
             try
             {
                 foreach (var (key, dabs) in buckets)
                 {
                     int tx = (short)key;
                     int ty = (short)(key >> 16);
-                    var tile = layer.ActivePixels.GetOrCreateRawTile(tx, ty);
+                    var tile = layer.Pixels.GetOrCreateRawTile(tx, ty);
                     var tilePixX = tx * tsz;
                     var tilePixY = ty * tsz;
 
@@ -2199,7 +1870,7 @@ public sealed class BrushEngine : IDisposable
                     }
                 }
             }
-            finally { layer.ActivePixels.ExitPixelWriteLock(); }
+            finally { layer.Pixels.ExitPixelWriteLock(); }
 
             return true;
         }
@@ -2282,14 +1953,14 @@ public sealed class BrushEngine : IDisposable
                 return true;
             _lastTileBucketCount = buckets.Count;
 
-            layer.ActivePixels.EnterPixelWriteLock();
+            layer.Pixels.EnterPixelWriteLock();
             try
             {
                 foreach (var (key, dabs) in buckets)
                 {
                     int tx = (short)key;
                     int ty = (short)(key >> 16);
-                    var tile = layer.ActivePixels.GetOrCreateRawTile(tx, ty);
+                    var tile = layer.Pixels.GetOrCreateRawTile(tx, ty);
                     var tilePixX = tx * tsz;
                     var tilePixY = ty * tsz;
 
@@ -2303,7 +1974,7 @@ public sealed class BrushEngine : IDisposable
                     }
                 }
             }
-            finally { layer.ActivePixels.ExitPixelWriteLock(); }
+            finally { layer.Pixels.ExitPixelWriteLock(); }
 
             return true;
         }
@@ -2627,7 +2298,7 @@ public sealed class BrushEngine : IDisposable
         int lastTx = (int)Math.Floor((double)(right - 1) / tsz);
         int lastTy = (int)Math.Floor((double)(bottom - 1) / tsz);
 
-        layer.ActivePixels.EnterPixelWriteLock();
+        layer.Pixels.EnterPixelWriteLock();
         try
         {
             for (int ty = firstTy; ty <= lastTy; ty++)
@@ -2644,7 +2315,7 @@ public sealed class BrushEngine : IDisposable
                     int pxMaxX = Math.Min(right, tilePixX + tsz);
                     if (pxMinX >= pxMaxX) continue;
 
-                    var tile = layer.ActivePixels.GetOrCreateRawTile(tx, ty);
+                    var tile = layer.Pixels.GetOrCreateRawTile(tx, ty);
 
                     for (int py = pxMinY; py < pxMaxY; py++)
                     {
@@ -2695,7 +2366,7 @@ public sealed class BrushEngine : IDisposable
                 }
             }
         }
-        finally { layer.ActivePixels.ExitPixelWriteLock(); }
+        finally { layer.Pixels.ExitPixelWriteLock(); }
 
         return true;
     }
@@ -3197,7 +2868,7 @@ public sealed class BrushEngine : IDisposable
             {
                 int key = (tx & 0xFFFF) | ((ty & 0xFFFF) << 16);
                 if (srcSnapshots.ContainsKey(key)) continue;
-                var raw = layer.ActivePixels.GetTileOrNull(tx, ty);
+                var raw = layer.Pixels.GetTileOrNull(tx, ty);
                 if (raw == null)
                 {
                     srcSnapshots[key] = null;
@@ -3210,7 +2881,7 @@ public sealed class BrushEngine : IDisposable
             }
         }
 
-        layer.ActivePixels.EnterPixelWriteLock();
+        layer.Pixels.EnterPixelWriteLock();
         try
         {
             var firstTx = FloorDiv(pxMinX, tsz);
@@ -3224,7 +2895,7 @@ public sealed class BrushEngine : IDisposable
                 for (var tx = firstTx; tx <= lastTx; tx++)
                 {
                     var tilePixX = tx * tsz;
-                    var dstTile = layer.ActivePixels.GetOrCreateRawTile(tx, ty);
+                    var dstTile = layer.Pixels.GetOrCreateRawTile(tx, ty);
 
                     var tilePxMinX = Math.Max(pxMinX, tilePixX);
                     var tilePxMinY = Math.Max(pxMinY, tilePixY);
@@ -3314,7 +2985,7 @@ public sealed class BrushEngine : IDisposable
         }
         finally
         {
-            layer.ActivePixels.ExitPixelWriteLock();
+            layer.Pixels.ExitPixelWriteLock();
         }
 
         return renderedAny ? SpatialSmearResult.Rendered : SpatialSmearResult.Failed;
@@ -3430,20 +3101,20 @@ public sealed class BrushEngine : IDisposable
     {
         if (!layer.IsAlphaLocked)
         {
-            layer.ActivePixels.RenderWithSkia(dirty, render);
+            layer.Pixels.RenderWithSkia(dirty, render);
             return;
         }
 
-        var before = layer.ActivePixels.CaptureTiles(dirty);
-        layer.ActivePixels.RenderWithSkia(dirty, render);
-        layer.ActivePixels.EnterPixelWriteLock();
+        var before = layer.Pixels.CaptureTiles(dirty);
+        layer.Pixels.RenderWithSkia(dirty, render);
+        layer.Pixels.EnterPixelWriteLock();
         try
         {
-            AlphaLockPixelOps.RestoreLockedTransparentPixels(layer.ActivePixels, dirty, before);
+            AlphaLockPixelOps.RestoreLockedTransparentPixels(layer.Pixels, dirty, before);
         }
         finally
         {
-            layer.ActivePixels.ExitPixelWriteLock();
+            layer.Pixels.ExitPixelWriteLock();
         }
     }
 
@@ -3609,7 +3280,7 @@ public sealed class BrushEngine : IDisposable
                     if (sampleSource != null)
                         sampleSource(px, py, out b, out g, out r, out a);
                     else
-                        layer.ActivePixels.GetPixel(px, py, out b, out g, out r, out a);
+                        layer.Pixels.GetPixel(px, py, out b, out g, out r, out a);
                     var o = rowOffset + x * 4;
                     _sampleBuffer[o] = b;
                     _sampleBuffer[o + 1] = g;
@@ -3746,7 +3417,7 @@ public sealed class BrushEngine : IDisposable
             return;
         }
 
-        layer.ActivePixels.GetPixel(x, y, out b, out g, out r, out a);
+        layer.Pixels.GetPixel(x, y, out b, out g, out r, out a);
     }
 
     // Simplified RGB <-> LCh conversion for perceptual mixing
@@ -3966,10 +3637,6 @@ public sealed class BrushEngine : IDisposable
                 (float)sample.X, (float)sample.Y,
                 (float)sample.Pressure, (float)sample.TiltX, (float)sample.TiltY);
 
-            // MyPaint speed-mapping precalc (logarithmic speed curves)
-            PrecalcSpeedMapping((float)brush.Speed1Gamma, out SpeedMappingGamma1, out SpeedMappingM1, out SpeedMappingQ1);
-            PrecalcSpeedMapping((float)brush.Speed2Gamma, out SpeedMappingGamma2, out SpeedMappingM2, out SpeedMappingQ2);
-
             var sp = new StrokePoint(
                 (float)sample.X, (float)sample.Y, (float)sample.Pressure,
                 (float)sample.TiltX, (float)sample.TiltY, (float)sample.Twist,
@@ -4005,15 +3672,6 @@ public sealed class BrushEngine : IDisposable
         public readonly Dictionary<BrushParameterTarget, BrushParameterGraph> ParamGraphLookup;
         public StrokeState State;
         public int BaseMaskSize { get; }
-
-        // MyPaint-style stateful brush engine
-        public readonly MyPaint.MyPaintRng Rng = new(1000);
-        public float SpeedMappingGamma1;
-        public float SpeedMappingM1;
-        public float SpeedMappingQ1;
-        public float SpeedMappingGamma2;
-        public float SpeedMappingM2;
-        public float SpeedMappingQ2;
         private SKBitmap? _mask;
         private readonly bool _deferMaskGeneration;
         public SKBitmap Mask => _mask ??= TipFor(0).GenerateMask(BaseMaskSize, (float)_brush.Hardness);
@@ -4055,15 +3713,12 @@ public sealed class BrushEngine : IDisposable
                 scaleY *= thickness;
             else
                 scaleX *= thickness;
-            // Apply MyPaint-style elliptical dab ratio
-            scaleX *= stamp.EllipseRatio;
             if (_brush.FlipHorizontal) scaleX = -scaleX;
             if (_brush.FlipVertical) scaleY = -scaleY;
             Matrix = SKMatrix.CreateTranslation(-BaseMaskSize * 0.5f, -BaseMaskSize * 0.5f);
             Matrix = Matrix.PostConcat(SKMatrix.CreateScale(scaleX, scaleY));
-            float angle = stamp.Angle + stamp.EllipseAngle;
-            if (Math.Abs(angle) > 0.001f)
-                Matrix = Matrix.PostConcat(SKMatrix.CreateRotationDegrees(angle));
+            if (Math.Abs(stamp.Angle) > 0.001f)
+                Matrix = Matrix.PostConcat(SKMatrix.CreateRotationDegrees(stamp.Angle));
             Matrix = Matrix.PostConcat(SKMatrix.CreateTranslation(stamp.X, stamp.Y));
         }
 
@@ -4418,9 +4073,9 @@ public sealed class BrushEngine : IDisposable
         {
             public static CachedDabKey From(BrushPreset brush, StampSample stamp)
             {
-                var size = Math.Clamp((int)(stamp.Size * 0.5f) * 2, 2, 4096);
+                var size = Math.Clamp((int)MathF.Round(stamp.Size), 1, 4096);
                 var hardness = Math.Clamp((int)MathF.Round(Math.Clamp(stamp.Hardness, 0.001f, 1f) * 255f), 0, 255);
-                var thickness = Math.Clamp((int)MathF.Round(Math.Clamp((float)brush.TipThickness * stamp.TipThicknessMultiplier, 0.01f, 4f) * 64f) * 4, 4, 1024);
+                var thickness = Math.Clamp((int)MathF.Round(Math.Clamp((float)brush.TipThickness * stamp.TipThicknessMultiplier, 0.01f, 4f) * 256f), 3, 1024);
                 var angle = QuantizeAngle(stamp.Angle, brush);
                 var flipBits = (brush.FlipHorizontal ? 1 : 0) | (brush.FlipVertical ? 2 : 0);
                 return new CachedDabKey(size, hardness, thickness, angle, flipBits, Math.Max(0, stamp.TipIndex));
@@ -4501,9 +4156,7 @@ public sealed class BrushEngine : IDisposable
         float SpacingMultiplier,
         float TipThicknessMultiplier,
         int TipIndex,
-        float Speed,
-        float EllipseRatio,
-        float EllipseAngle);
+        float Speed);
     private readonly record struct PlacedDab(
         StampSample Stamp,
         ActiveStroke.CachedDab Dab,
