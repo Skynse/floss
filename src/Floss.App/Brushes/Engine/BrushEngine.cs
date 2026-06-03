@@ -122,9 +122,6 @@ public sealed class BrushEngine : IDisposable
     private ActiveStroke? _activeStroke;
     private SKBitmap? _scratch;
     private SKBitmap? _lodScratch;
-    private byte[]? _sampleBuffer;
-    private PixelRegion _sampleBufferRegion;
-    private int _sampleBufferStride;
     private readonly SKPaint _scratchCompositePaint = new() { BlendMode = SKBlendMode.SrcOver };
     private readonly Dictionary<string, SKBitmap?> _textureCache = new();
     private readonly Dictionary<int, List<PlacedDab>> _dabBuckets = new();
@@ -213,7 +210,6 @@ public sealed class BrushEngine : IDisposable
         _lastRasterPath = "None";
         _lastCachedDabCount = 0;
         _lastTileBucketCount = 0;
-        _sampleBufferRegion = PixelRegion.Empty;
 
         EnsureStroke(brush, samples[startSegmentIndex - 1]);
         var stroke = _activeStroke!;
@@ -247,8 +243,7 @@ public sealed class BrushEngine : IDisposable
             {
                 CrashLog.Write(ex, "BrushEngine.ColorMix", flushToDisk: true);
                 _stampColors.Clear();
-                _sampleBufferRegion = PixelRegion.Empty;
-            }
+                    }
         }
         else
         {
@@ -262,7 +257,6 @@ public sealed class BrushEngine : IDisposable
             }
         }
 
-        _sampleBufferRegion = PixelRegion.Empty;
 
         LastStats = BrushRenderStats.From(
             _lastRasterPath,
@@ -286,27 +280,14 @@ public sealed class BrushEngine : IDisposable
         TileReader? tileReader,
         long started)
     {
-        // Pin dab caches across color prep AND render. PrepareStampColors and
-        // RenderColorMixStampsViaScratch each Enter/Exit internally; without an
-        // outer pin the Exit after prep trims/disposes masks that render still
-        // needs — SIGSEGV in RenderColorMixStampsViaScratch on the bg thread.
-        stroke.EnterDabCacheUse();
-        try
+        PrepareStampColors(layer, brush, stroke, sampleSource);
+        if (dirty.IsEmpty || _stamps.Count == 0)
         {
-            PopulateSampleBuffer(layer, brush, dirty, sampleSource, tileReader);
-            PrepareStampColors(layer, brush, stroke, sampleSource);
-            if (dirty.IsEmpty || _stamps.Count == 0)
-            {
-                LastStats = BrushRenderStats.From("Empty", _stamps.Count, 0, 0, 0, ElapsedMs(started));
-                return;
-            }
+            LastStats = BrushRenderStats.From("Empty", _stamps.Count, 0, 0, 0, ElapsedMs(started));
+            return;
+        }
 
-            RenderCurrentStamps(layer, stroke, brush, dirty);
-        }
-        finally
-        {
-            stroke.ExitDabCacheUse();
-        }
+        RenderCurrentStamps(layer, stroke, brush, dirty);
     }
 
     // Smear and Running Color must read the LIVE layer and render stamp-by-stamp
@@ -332,7 +313,6 @@ public sealed class BrushEngine : IDisposable
         _stampColors.Clear();
         var useSpatialSmear = brush.SmudgeMode == SmudgeMode.Smear;
 
-        stroke.EnterDabCacheUse();
         try
         {
             for (var i = 0; i < allStamps.Length; i++)
@@ -351,8 +331,7 @@ public sealed class BrushEngine : IDisposable
                         }
                         else if (smearResult == SpatialSmearResult.Failed)
                         {
-                            _sampleBufferRegion = PixelRegion.Empty;
-                            _stampColors.Clear();
+                                                _stampColors.Clear();
                             _stamps.Add(stamp);
                             PrepareOneStampColor(layer, brush, stroke, stamp, sampleSource: null);
                             if (_stampColors.Count > 0 && _stampColors[0].Alpha > 0)
@@ -368,8 +347,7 @@ public sealed class BrushEngine : IDisposable
                     continue;
                 }
 
-                _sampleBufferRegion = PixelRegion.Empty;
-                _stampColors.Clear();
+                        _stampColors.Clear();
                 _stamps.Add(stamp);
                 PrepareOneStampColor(layer, brush, stroke, stamp, sampleSource: null);
                 if (_stampColors.Count == 0 || _stampColors[0].Alpha == 0)
@@ -392,7 +370,6 @@ public sealed class BrushEngine : IDisposable
         }
         finally
         {
-            stroke.ExitDabCacheUse();
         }
 
         _stamps.AddRange(allStamps);
@@ -417,7 +394,6 @@ public sealed class BrushEngine : IDisposable
         _lastRasterPath = "None";
         _lastCachedDabCount = 0;
         _lastTileBucketCount = 0;
-        _sampleBufferRegion = PixelRegion.Empty;
 
         EnsureStroke(brush, from);
         var stroke = _activeStroke!;
@@ -444,8 +420,7 @@ public sealed class BrushEngine : IDisposable
             {
                 CrashLog.Write(ex, "BrushEngine.ColorMix(Segment)", flushToDisk: true);
                 _stampColors.Clear();
-                _sampleBufferRegion = PixelRegion.Empty;
-            }
+                    }
         }
         else
         {
@@ -459,7 +434,6 @@ public sealed class BrushEngine : IDisposable
             }
         }
 
-        _sampleBufferRegion = PixelRegion.Empty;
 
         LastStats = BrushRenderStats.From(
             _lastRasterPath,
@@ -553,8 +527,7 @@ public sealed class BrushEngine : IDisposable
             var stroke = _activeStroke!;
             _stamps.Clear();
             _stampColors.Clear();
-            _sampleBufferRegion = PixelRegion.Empty;
-
+    
             var velocity01 = (float)Math.Clamp(velocity / 5000.0, 0, 1);
             var sp = BuildStrokePoint(stroke, sample, velocity01);
             var stamp = CreateStamp(stroke, brush, sp);
@@ -562,7 +535,6 @@ public sealed class BrushEngine : IDisposable
 
             if (brush.ColorMix)
             {
-                stroke.EnterDabCacheUse();
                 try
                 {
                     try
@@ -590,7 +562,6 @@ public sealed class BrushEngine : IDisposable
                 }
                 finally
                 {
-                    stroke.ExitDabCacheUse();
                 }
             }
 
@@ -720,7 +691,7 @@ public sealed class BrushEngine : IDisposable
         // would waste time on 90+ pointless Catmull-Rom evaluations.
         var stampSpacing = Math.Max(1, stroke.State.NextStampDistance);
         var estimatedStamps = distance / stampSpacing;
-        var subdivisions = Math.Max(8, Math.Min(96, (int)Math.Ceiling(estimatedStamps * 4)));
+        var subdivisions = Math.Max(4, Math.Min(48, (int)Math.Ceiling(estimatedStamps * 2)));
 
         var p0 = new SplinePoint(
             stroke.State.LastX, stroke.State.LastY, stroke.State.LastPressure,
@@ -889,7 +860,7 @@ public sealed class BrushEngine : IDisposable
             strokeRandom: stroke.StrokeRandom);
 
     private static float StampSpacing(BrushPreset brush, StampSample stamp)
-        => BrushSpacing.EffectiveDistance(brush, stamp.Size, stamp.SpacingMultiplier, stamp.Speed);
+        => BrushSpacing.EffectiveDistance(brush, stamp.Size, stamp.SpacingMultiplier);
 
     private PixelRegion BuildStampsContinuous(
         ActiveStroke stroke,
@@ -941,7 +912,7 @@ public sealed class BrushEngine : IDisposable
         if (distance < 0.5f)
             return false;
 
-        var spacing = BrushSpacing.EffectiveDistance(brush, stamp.Size, stamp.SpacingMultiplier, stamp.Speed);
+        var spacing = BrushSpacing.EffectiveDistance(brush, stamp.Size, stamp.SpacingMultiplier);
         if (distance <= spacing * 0.85f)
             return true;
 
@@ -996,8 +967,7 @@ public sealed class BrushEngine : IDisposable
             Math.Clamp(hardness, 0.001f, 1f),
             Math.Clamp(spacingMul, 0.05f, 4f),
             Math.Clamp(tipThicknessMul, 0.01f, 4f),
-            SelectTipIndex(brush, sp),
-            Math.Clamp(sp.Speed, 0f, 1f));
+            SelectTipIndex(brush, sp));
     }
 
     private static float EvalParameter(Dictionary<BrushParameterTarget, BrushParameterGraph> lookup, BrushParameterTarget target, in StrokePoint sp, float fallback)
@@ -1030,105 +1000,29 @@ public sealed class BrushEngine : IDisposable
         var w = dirty.Width;
         var h = dirty.Height;
 
-        // Round up to nearest 512 to reduce reallocation churn.
-        var needW = (w + 511) & ~511;
-        var needH = (h + 511) & ~511;
-
-        // Grow scratch bitmap on demand; shrink if grossly oversized.
-        if (_scratch == null || _scratch.Width < needW || _scratch.Height < needH)
+        // Allocate scratch at exact dirty size.
+        if (_scratch == null || _scratch.Width < w || _scratch.Height < h
+            || _scratch.Width > w * 4 || _scratch.Height > h * 4)
         {
-            var oldW = _scratch?.Width ?? 0;
-            var oldH = _scratch?.Height ?? 0;
             _scratch?.Dispose();
-            _scratch = new SKBitmap(new SKImageInfo(
-                Math.Max(needW, oldW),
-                Math.Max(needH, oldH),
-                SKColorType.Bgra8888, SKAlphaType.Unpremul));
-        }
-        else if (_scratch.Width > needW * 4 || _scratch.Height > needH * 4)
-        {
-            _scratch.Dispose();
-            _scratch = new SKBitmap(new SKImageInfo(needW, needH, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+            _scratch = new SKBitmap(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Unpremul));
         }
 
-        // Krita-style LOD rendering: at zoom < 1.0, render stamps into a
-        // downscaled buffer then upscale to full-res tiles. Reduces pixel
-        // work by effectiveScale² while preserving visual brush size.
-        // When the brush is larger than the mask, cap internal rendering at
-        // the mask resolution (Krita's KisQImagePyramid — max level is the
-        // one fitting within MIPMAP_SIZE_THRESHOLD). Without this, the scratch
-        // buffer is full-res even though the mask is smaller.
-        var lodScale = CanvasZoom < 1.0 ? (float)CanvasZoom : 1f;
-        var brushScale = brush.Size > stroke.BaseMaskSize
-            ? stroke.BaseMaskSize / (float)brush.Size : 1f;
-        var effectiveScale = Math.Min(lodScale, brushScale);
-
-        if (effectiveScale < 1f)
+        // Render stamps into the scratch with normal alpha compositing.
+        using (var sc = new SKCanvas(_scratch))
         {
-            var lodW = Math.Max(1, (int)Math.Ceiling(needW * effectiveScale));
-            var lodH = Math.Max(1, (int)Math.Ceiling(needH * effectiveScale));
+            sc.Save();
+            sc.ClipRect(SKRect.Create(0, 0, w, h));
+            sc.Clear(SKColors.Transparent);
+            sc.Restore();
 
-            if (_lodScratch == null || _lodScratch.Width < lodW || _lodScratch.Height < lodH)
-            {
-                var oldLw = _lodScratch?.Width ?? 0;
-                var oldLh = _lodScratch?.Height ?? 0;
-                _lodScratch?.Dispose();
-                _lodScratch = new SKBitmap(new SKImageInfo(
-                    Math.Max(lodW, oldLw),
-                    Math.Max(lodH, oldLh),
-                    SKColorType.Bgra8888, SKAlphaType.Unpremul));
-            }
-
-            // Step 1: render stamps at reduced resolution into LOD scratch.
-            using (var lc = new SKCanvas(_lodScratch))
-            {
-                lc.Save();
-                lc.ClipRect(SKRect.Create(0, 0, lodW, lodH));
-                lc.Clear(SKColors.Transparent);
-                lc.Restore();
-
-                lc.Save();
-                float invLod = 1f / effectiveScale;
-                lc.Scale(invLod, invLod);
-                lc.Translate(-dirty.X, -dirty.Y);
-                lc.ClipRect(SKRect.Create(dirty.X, dirty.Y, w, h));
-                stroke.Paint.BlendMode = SKBlendMode.Lighten;
-                RenderPreparedStamps(stroke, lc);
-                stroke.Paint.BlendMode = SKBlendMode.SrcOver;
-                lc.Restore();
-            }
-
-            // Step 2: upscale LOD result into full-res scratch.
-            using (var sc = new SKCanvas(_scratch))
-            {
-                sc.Save();
-                sc.ClipRect(SKRect.Create(0, 0, w, h));
-                sc.Clear(SKColors.Transparent);
-                sc.Restore();
-
-                sc.DrawBitmap(_lodScratch,
-                    new SKRect(0, 0, lodW, lodH),
-                    new SKRect(0, 0, w, h));
-            }
-        }
-        else
-        {
-            // Original full-res path (zoom >= 1.0).
-            using (var sc = new SKCanvas(_scratch))
-            {
-                sc.Save();
-                sc.ClipRect(SKRect.Create(0, 0, w, h));
-                sc.Clear(SKColors.Transparent);
-                sc.Restore();
-
-                sc.Save();
-                sc.Translate(-dirty.X, -dirty.Y);
-                sc.ClipRect(SKRect.Create(dirty.X, dirty.Y, w, h));
-                stroke.Paint.BlendMode = SKBlendMode.Lighten;
-                RenderPreparedStamps(stroke, sc);
-                stroke.Paint.BlendMode = SKBlendMode.SrcOver;
-                sc.Restore();
-            }
+            sc.Save();
+            sc.Translate(-dirty.X, -dirty.Y);
+            sc.ClipRect(SKRect.Create(dirty.X, dirty.Y, w, h));
+            stroke.Paint.BlendMode = SKBlendMode.SrcOver;
+            RenderPreparedStamps(stroke, sc);
+            stroke.Paint.BlendMode = SKBlendMode.SrcOver;
+            sc.Restore();
         }
 
         // Apply grain to the scratch in canvas space before compositing.
@@ -1211,21 +1105,11 @@ public sealed class BrushEngine : IDisposable
 
         try
         {
-            var needW = (w + 511) & ~511;
-            var needH = (h + 511) & ~511;
-
-            if (_scratch == null || _scratch.Width < needW || _scratch.Height < needH)
+            if (_scratch == null || _scratch.Width < w || _scratch.Height < h
+                || _scratch.Width > w * 4 || _scratch.Height > h * 4)
             {
                 _scratch?.Dispose();
-                _scratch = new SKBitmap(new SKImageInfo(
-                    Math.Max(needW, _scratch?.Width ?? 0),
-                    Math.Max(needH, _scratch?.Height ?? 0),
-                    SKColorType.Bgra8888, SKAlphaType.Unpremul));
-            }
-            else if (_scratch.Width > needW * 4 || _scratch.Height > needH * 4)
-            {
-                _scratch.Dispose();
-                _scratch = new SKBitmap(new SKImageInfo(needW, needH, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+                _scratch = new SKBitmap(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Unpremul));
             }
 
             if (_scratch == null || _scratch.IsEmpty)
@@ -1287,7 +1171,6 @@ public sealed class BrushEngine : IDisposable
 
             bool hasGrainFx = grainTable != null || brushGrain > 0f;
 
-            stroke.EnterDabCacheUse();
             try
             {
                 for (var i = 0; i < _stamps.Count; i++)
@@ -1432,7 +1315,6 @@ public sealed class BrushEngine : IDisposable
             }
             finally
             {
-                stroke.ExitDabCacheUse();
             }
 
             if (needsSkiaFallback)
@@ -1783,7 +1665,6 @@ public sealed class BrushEngine : IDisposable
         var buckets = _dabBuckets;
         buckets.EnsureCapacity(Math.Max(16, Math.Min(_stamps.Count * 4, 4096)));
 
-        stroke.EnterDabCacheUse();
         try
         {
             for (var i = 0; i < _stamps.Count; i++)
@@ -1876,7 +1757,6 @@ public sealed class BrushEngine : IDisposable
         }
         finally
         {
-            stroke.ExitDabCacheUse();
         }
     }
 
@@ -1901,7 +1781,6 @@ public sealed class BrushEngine : IDisposable
         var buckets = _colorDabBuckets;
         buckets.EnsureCapacity(Math.Max(16, Math.Min(_stamps.Count * 4, 4096)));
 
-        stroke.EnterColorDabCacheUse();
         try
         {
             for (var i = 0; i < _stamps.Count; i++)
@@ -1980,7 +1859,6 @@ public sealed class BrushEngine : IDisposable
         }
         finally
         {
-            stroke.ExitColorDabCacheUse();
         }
     }
 
@@ -2443,7 +2321,6 @@ public sealed class BrushEngine : IDisposable
     private void PrepareStampColors(DrawingLayer layer, BrushPreset brush, ActiveStroke stroke, PixelSampler? sampleSource)
     {
         _stampColors.Clear();
-        stroke.EnterDabCacheUse();
         try
         {
             for (var i = 0; i < _stamps.Count; i++)
@@ -2451,7 +2328,6 @@ public sealed class BrushEngine : IDisposable
         }
         finally
         {
-            stroke.ExitDabCacheUse();
         }
     }
 
@@ -3238,179 +3114,8 @@ public sealed class BrushEngine : IDisposable
     private const int SampleBufferMargin = 64;
     private const long MaxSampleBufferPixels = 6L * 1024 * 1024;
 
-    private void PopulateSampleBuffer(DrawingLayer layer, BrushPreset brush, PixelRegion dirty, PixelSampler? sampleSource, TileReader? tileReader)
-    {
-        _sampleBufferRegion = PixelRegion.Empty;
-        if (dirty.IsEmpty) return;
-
-        var blur = Math.Clamp((float)brush.BlurAmount, 0f, 1f);
-        var maxStampSize = 0f;
-        for (var i = 0; i < _stamps.Count; i++)
-            maxStampSize = MathF.Max(maxStampSize, _stamps[i].Size);
-        var blurReach = blur > 0f
-            ? Math.Min(MaxMixBlurRadius, (int)MathF.Ceiling(blur * Math.Max(8f, maxStampSize) * 0.85f))
-            : 0;
-        var dabReach = (int)MathF.Ceiling(maxStampSize * 0.6f);
-        var margin = Math.Max(SampleBufferMargin, Math.Max(blurReach, dabReach) + 4);
-
-        var region = dirty.Inflate(margin);
-        if (region.Width <= 0 || region.Height <= 0) return;
-        if ((long)region.Width * region.Height > MaxSampleBufferPixels) return;
-
-        var stride = region.Width * 4;
-        var needed = stride * region.Height;
-        if (_sampleBuffer == null || _sampleBuffer.Length < needed)
-            _sampleBuffer = new byte[Math.Max(needed, 256 * 256 * 4)];
-
-        if (tileReader != null)
-        {
-            PopulateSampleBufferByTile(region, stride, tileReader, layer, sampleSource);
-        }
-        else
-        {
-            // Slow per-pixel fallback (tests, non-tile-aware callers).
-            for (var y = 0; y < region.Height; y++)
-            {
-                var rowOffset = y * stride;
-                var py = region.Y + y;
-                for (var x = 0; x < region.Width; x++)
-                {
-                    var px = region.X + x;
-                    byte b, g, r, a;
-                    if (sampleSource != null)
-                        sampleSource(px, py, out b, out g, out r, out a);
-                    else
-                        layer.Pixels.GetPixel(px, py, out b, out g, out r, out a);
-                    var o = rowOffset + x * 4;
-                    _sampleBuffer[o] = b;
-                    _sampleBuffer[o + 1] = g;
-                    _sampleBuffer[o + 2] = r;
-                    _sampleBuffer[o + 3] = a;
-                }
-            }
-        }
-
-        _sampleBufferRegion = region;
-        _sampleBufferStride = stride;
-    }
-
-    private void PopulateSampleBufferByTile(PixelRegion region, int stride, TileReader tileReader, DrawingLayer layer, PixelSampler? sampleSource)
-    {
-        const int ts = TiledPixelBuffer.TileSize;
-        const int tileRowBytes = ts * 4;
-        var buffer = _sampleBuffer!;
-
-        var firstTileX = FloorDiv(region.X, ts);
-        var firstTileY = FloorDiv(region.Y, ts);
-        var lastTileX = FloorDiv(region.Right - 1, ts);
-        var lastTileY = FloorDiv(region.Bottom - 1, ts);
-
-        var tileCount = (lastTileY - firstTileY + 1) * (lastTileX - firstTileX + 1);
-        if (tileCount >= 16 && Environment.ProcessorCount > 1)
-        {
-            Parallel.For(firstTileY, lastTileY + 1, ty =>
-            {
-                var tilePixY = ty * ts;
-                var pyMin = Math.Max(region.Y, tilePixY);
-                var pyMax = Math.Min(region.Bottom, tilePixY + ts);
-                if (pyMin >= pyMax) return;
-
-                for (var tx = firstTileX; tx <= lastTileX; tx++)
-                {
-                    var tilePixX = tx * ts;
-                    var pxMin = Math.Max(region.X, tilePixX);
-                    var pxMax = Math.Min(region.Right, tilePixX + ts);
-                    if (pxMin >= pxMax) continue;
-                    var byteCount = (pxMax - pxMin) * 4;
-                    var tile = tileReader(tx, ty);
-
-                    if (tile == null)
-                    {
-                        for (var py = pyMin; py < pyMax; py++)
-                        {
-                            var bufOffset = (py - region.Y) * stride + (pxMin - region.X) * 4;
-                            Array.Clear(buffer, bufOffset, byteCount);
-                        }
-                    }
-                    else
-                    {
-                        for (var py = pyMin; py < pyMax; py++)
-                        {
-                            var tileLocalY = py - tilePixY;
-                            var tileLocalX = pxMin - tilePixX;
-                            var srcOffset = tileLocalY * tileRowBytes + tileLocalX * 4;
-                            var bufOffset = (py - region.Y) * stride + (pxMin - region.X) * 4;
-                            Buffer.BlockCopy(tile, srcOffset, buffer, bufOffset, byteCount);
-                        }
-                    }
-                }
-            });
-        }
-        else
-        {
-            for (var ty = firstTileY; ty <= lastTileY; ty++)
-            {
-                var tilePixY = ty * ts;
-                var pyMin = Math.Max(region.Y, tilePixY);
-                var pyMax = Math.Min(region.Bottom, tilePixY + ts);
-                if (pyMin >= pyMax) continue;
-
-                for (var tx = firstTileX; tx <= lastTileX; tx++)
-                {
-                    var tilePixX = tx * ts;
-                    var pxMin = Math.Max(region.X, tilePixX);
-                    var pxMax = Math.Min(region.Right, tilePixX + ts);
-                    if (pxMin >= pxMax) continue;
-                    var byteCount = (pxMax - pxMin) * 4;
-                    var tile = tileReader(tx, ty);
-
-                    if (tile == null)
-                    {
-                        for (var py = pyMin; py < pyMax; py++)
-                        {
-                            var bufOffset = (py - region.Y) * stride + (pxMin - region.X) * 4;
-                            Array.Clear(buffer, bufOffset, byteCount);
-                        }
-                    }
-                    else
-                    {
-                        for (var py = pyMin; py < pyMax; py++)
-                        {
-                            var tileLocalY = py - tilePixY;
-                            var tileLocalX = pxMin - tilePixX;
-                            var srcOffset = tileLocalY * tileRowBytes + tileLocalX * 4;
-                            var bufOffset = (py - region.Y) * stride + (pxMin - region.X) * 4;
-                            Buffer.BlockCopy(tile, srcOffset, buffer, bufOffset, byteCount);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private bool TryReadSampleBuffer(int x, int y, out byte b, out byte g, out byte r, out byte a)
-    {
-        var region = _sampleBufferRegion;
-        var buffer = _sampleBuffer;
-        if (buffer != null && region.Width > 0 && region.Height > 0 &&
-            x >= region.X && x < region.Right && y >= region.Y && y < region.Bottom)
-        {
-            var offset = (y - region.Y) * _sampleBufferStride + (x - region.X) * 4;
-            b = buffer[offset];
-            g = buffer[offset + 1];
-            r = buffer[offset + 2];
-            a = buffer[offset + 3];
-            return true;
-        }
-        b = g = r = a = 0;
-        return false;
-    }
-
     private void SamplePixel(DrawingLayer layer, PixelSampler? sampleSource, int x, int y, out byte b, out byte g, out byte r, out byte a)
     {
-        if (TryReadSampleBuffer(x, y, out b, out g, out r, out a))
-            return;
-
         if (sampleSource != null)
         {
             sampleSource(x, y, out b, out g, out r, out a);
@@ -3608,8 +3313,6 @@ public sealed class BrushEngine : IDisposable
         private readonly Queue<CachedDabKey> _dabCacheOrder = new();
         private readonly Dictionary<CachedDabKey, CachedColorDab> _colorDabCache = new();
         private readonly Queue<CachedDabKey> _colorDabCacheOrder = new();
-        private int _dabCacheUseDepth;
-        private int _colorDabCacheUseDepth;
         private readonly HashSet<SKBitmap> _ownedMasks = new();
         private readonly List<IBrushTip>? _ownedTipSet;
         private int[]? _cachedTipIndices;
@@ -3919,39 +3622,17 @@ public sealed class BrushEngine : IDisposable
                 angle);
         }
 
-        internal void EnterDabCacheUse() => _dabCacheUseDepth++;
+        internal void EnterDabCacheUse() { }
 
-        internal void ExitDabCacheUse()
-        {
-            if (_dabCacheUseDepth > 0)
-                _dabCacheUseDepth--;
-            if (_dabCacheUseDepth == 0)
-                TrimDabCacheCore();
-        }
+        internal void ExitDabCacheUse() { }
 
-        internal void EnterColorDabCacheUse() => _colorDabCacheUseDepth++;
+        internal void EnterColorDabCacheUse() { }
 
-        internal void ExitColorDabCacheUse()
-        {
-            if (_colorDabCacheUseDepth > 0)
-                _colorDabCacheUseDepth--;
-            if (_colorDabCacheUseDepth == 0)
-                TrimColorDabCacheCore();
-        }
+        internal void ExitColorDabCacheUse() { }
 
-        internal void TrimDabCache()
-        {
-            if (_dabCacheUseDepth > 0)
-                return;
-            TrimDabCacheCore();
-        }
+        internal void TrimDabCache() => TrimDabCacheCore();
 
-        internal void TrimColorDabCache()
-        {
-            if (_colorDabCacheUseDepth > 0)
-                return;
-            TrimColorDabCacheCore();
-        }
+        internal void TrimColorDabCache() => TrimColorDabCacheCore();
 
         private void TrimDabCacheCore()
         {
@@ -4155,8 +3836,7 @@ public sealed class BrushEngine : IDisposable
         float Hardness,
         float SpacingMultiplier,
         float TipThicknessMultiplier,
-        int TipIndex,
-        float Speed);
+        int TipIndex);
     private readonly record struct PlacedDab(
         StampSample Stamp,
         ActiveStroke.CachedDab Dab,

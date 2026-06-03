@@ -34,7 +34,7 @@ public static class BrushSpacing
         BrushPreset brush,
         float stampSize,
         float spacingMultiplier,
-        float speed01,
+        float speed01 = 0f,
         float dabsPerBasicRadius = -1,
         float dabsPerActualRadius = -1,
         float dabsPerSecond = -1)
@@ -64,12 +64,6 @@ public static class BrushSpacing
 
         var flow = Math.Clamp((float)brush.Flow, 0.01f, 1f);
         baseSpacing *= MathF.Sqrt(flow);
-
-        if (brush.SpeedSpacingStrength > 0.001)
-        {
-            var speedMul = 1f + (float)brush.SpeedSpacingStrength * Math.Clamp(speed01, 0f, 1f);
-            baseSpacing *= speedMul;
-        }
 
         return Math.Max(MinDistancePx, baseSpacing);
     }

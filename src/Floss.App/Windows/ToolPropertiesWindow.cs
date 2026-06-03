@@ -57,6 +57,12 @@ public sealed class ToolPropertiesWindow : Window
     private readonly Slider _densityOfPaintSlider = MkSlider(0, 1, 1.0, "Paint density (0=thin, 1=thick)");
     private readonly Slider _hardnessSlider = MkSlider(0, 1, 0.9, "Edge softness (anti-aliasing)");
     private readonly Slider _spacingSlider = MkSlider(0.01, 1, 0.1, "Stamp interval as fraction of size");
+    private readonly CheckBox _autoSpacingCheck = new()
+    {
+        Content = new TextBlock { Text = "Auto", FontSize = 11 },
+        Margin = new Thickness(0, -2, 0, 0),
+        IsChecked = true,
+    };
     private readonly Slider _smoothingSlider = MkSlider(0, 0.95, 0.3, "Input stabilization");
     private bool _speedAdaptiveStabilizer = true;
     public Action<bool>? OnSpeedAdaptiveChanged;
@@ -1321,6 +1327,7 @@ public sealed class ToolPropertiesWindow : Window
             Children =
             {
                 DynSliderRow("Spacing",   _spacingSlider,   "%", () => OpenSpacingDynamics(), "brush.spacing"),
+                _autoSpacingCheck,
                 PlainSliderRow("Stabilization", _smoothingSlider, "%", "brush.smoothing"),
                 cb
             }
@@ -2057,6 +2064,11 @@ public sealed class ToolPropertiesWindow : Window
         WireSlider(_flowSlider, v => Commit(p => p with { Flow = v }));
         WireSlider(_hardnessSlider, v => Commit(p => p with { Hardness = v }));
         WireSlider(_spacingSlider, v => Commit(p => p with { Spacing = v }));
+        _autoSpacingCheck.IsCheckedChanged += (_, _) =>
+        {
+            if (_syncing) return;
+            Commit(p => p with { AutoSpacingActive = _autoSpacingCheck.IsChecked ?? true });
+        };
         WireSlider(_smoothingSlider, v => Commit(p => p with { Smoothing = v }));
         WireSlider(_grainSlider, v => Commit(p => p with { Grain = v }));
         WireSlider(_angleSlider, v => Commit(p => p with { Angle = v }));
@@ -2090,6 +2102,7 @@ public sealed class ToolPropertiesWindow : Window
         _flowSlider.Value = Math.Clamp(preset.Flow, _flowSlider.Minimum, _flowSlider.Maximum);
         _hardnessSlider.Value = Math.Clamp(preset.Hardness, _hardnessSlider.Minimum, _hardnessSlider.Maximum);
         _spacingSlider.Value = Math.Clamp(preset.Spacing, _spacingSlider.Minimum, _spacingSlider.Maximum);
+        _autoSpacingCheck.IsChecked = preset.AutoSpacingActive;
         _smoothingSlider.Value = Math.Clamp(preset.Smoothing, _smoothingSlider.Minimum, _smoothingSlider.Maximum);
         _grainSlider.Value = Math.Clamp(preset.Grain, _grainSlider.Minimum, _grainSlider.Maximum);
         _angleSlider.Value = Math.Clamp(preset.Angle, _angleSlider.Minimum, _angleSlider.Maximum);

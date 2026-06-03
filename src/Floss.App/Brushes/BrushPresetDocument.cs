@@ -34,7 +34,6 @@ public sealed class BrushPresetDocument
     public double MaxSizePercent { get; set; } = BrushSizeLimits.DefaultMaxSizePercent;
     public bool AutoSpacingActive { get; set; }
     public double AutoSpacingCoeff { get; set; } = 1.0;
-    public double SpeedSpacingStrength { get; set; }
     public BrushGapMode GapMode { get; set; } = BrushGapMode.Normal;
     public bool ContinuousSpraying { get; set; }
     public BrushQuality Quality { get; set; } = BrushQuality.High;
@@ -74,7 +73,6 @@ public sealed class BrushPresetDocument
         MaxSizePercent = preset.MaxSizePercent,
         AutoSpacingActive = preset.AutoSpacingActive,
         AutoSpacingCoeff = preset.AutoSpacingCoeff,
-        SpeedSpacingStrength = preset.SpeedSpacingStrength,
         GapMode = preset.GapMode,
         ContinuousSpraying = preset.ContinuousSpraying,
         Quality = preset.Quality,
@@ -110,7 +108,6 @@ public sealed class BrushPresetDocument
             MaxSizePercent = MaxSizePercent <= 0 ? BrushSizeLimits.DefaultMaxSizePercent : MaxSizePercent,
             AutoSpacingActive = AutoSpacingActive,
             AutoSpacingCoeff = AutoSpacingCoeff <= 0 ? 1.0 : AutoSpacingCoeff,
-            SpeedSpacingStrength = SpeedSpacingStrength,
             GapMode = GapMode,
             ContinuousSpraying = ContinuousSpraying,
             Quality = Quality,

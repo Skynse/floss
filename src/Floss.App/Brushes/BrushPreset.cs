@@ -60,9 +60,8 @@ public sealed record BrushPreset(
     public double DirectionFilter { get; init; } = 2.0;
     /// <summary>Brush Studio ceiling for the size slider, as percent of the canvas-scaled default max (100–400).</summary>
     public double MaxSizePercent { get; init; } = BrushSizeLimits.DefaultMaxSizePercent;
-    public bool AutoSpacingActive { get; init; } = false;
+    public bool AutoSpacingActive { get; init; } = true;
     public double AutoSpacingCoeff { get; init; } = 1.0;
-    public double SpeedSpacingStrength { get; init; } = 0.0;
     public BrushGapMode GapMode { get; init; } = BrushGapMode.Normal;
     public bool ContinuousSpraying { get; init; } = false;
     public BrushQuality Quality { get; init; } = BrushQuality.High;
