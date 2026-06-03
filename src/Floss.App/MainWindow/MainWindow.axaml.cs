@@ -233,6 +233,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private int _pendingDragIndex = -1;
     private Point _pendingDragStartPos;
     private PointerPressedEventArgs? _pendingDragArgs;
+    private bool _pendingDragWasMultiSelected;
     private int _renamingLayerIndex = -1;
     private TextBox? _activeLayerNameEdit;
     private Action<bool>? _finishLayerRename;
@@ -651,7 +652,7 @@ public partial class MainWindow : Window, Tools.IViewportController
             Background = new SolidColorBrush(Color.Parse(Bg0)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 0, 0, 1),
-            Height = 16,
+            Height = 14,
             Padding = new Thickness(6, 0),
             Child = _canvasStatusText,
             IsHitTestVisible = false
@@ -662,14 +663,14 @@ public partial class MainWindow : Window, Tools.IViewportController
             Background = new SolidColorBrush(Color.Parse(Bg0)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 1, 0, 0),
-            Height = 18,
+            Height = 16,
             Padding = new Thickness(6, 0),
             Child = BuildFooterPanel(),
             IsHitTestVisible = false
         };
 
         BuildTabBar();
-        var centerArea = new Grid { RowDefinitions = new RowDefinitions("24,16,*,18") };
+        var centerArea = new Grid { RowDefinitions = new RowDefinitions("22,14,*,16") };
         Grid.SetRow(_tabBarContainer, 0);
         Grid.SetRow(statusBar, 1);
         Grid.SetRow(_workspaceViewport, 2);
@@ -1595,7 +1596,7 @@ public partial class MainWindow : Window, Tools.IViewportController
                 {
                     Text = $"Missing panel: {id}",
                     Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-        FontSize = 9,
+                    FontSize = 9,
                     Margin = new Thickness(8)
                 }
             };
@@ -1639,8 +1640,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         var body = BuildDockerBody(id, content);
         var titleText = new TextBlock
         {
-            Text = title.ToUpperInvariant(),
-            FontSize = 13,
+            Text = title,
+            FontSize = 12,
             FontWeight = FontWeight.SemiBold,
             Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
@@ -1658,7 +1659,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         };
         var header = new Border
         {
-            Padding = new Thickness(10, 6, 10, 4),
+            Padding = new Thickness(8, 4, 8, 3),
             Child = headerRow,
             ContextMenu = ctxMenu
         };
@@ -1691,8 +1692,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         Control child = id == "tool-properties"
             ? new ScrollViewer
             {
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Visible,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
                 ClipToBounds = true,
                 Content = content
             }
@@ -2479,6 +2480,7 @@ public partial class MainWindow : Window, Tools.IViewportController
             Minimum = min,
             Maximum = max,
             Value = value,
+            Height = 24,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
         ToolTip.SetTip(s, tip);
@@ -2503,14 +2505,13 @@ public partial class MainWindow : Window, Tools.IViewportController
             TextAlignment = TextAlignment.Right,
             Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            FontFamily = new FontFamily("Consolas, Courier New, monospace")
         };
         slider.PropertyChanged += (_, e) =>
         {
             if (e.Property == Slider.ValueProperty)
                 valText.Text = FormatSliderValue(slider.Value, fmt);
         };
-        var row = new DockPanel { LastChildFill = true };
+        var row = new DockPanel { LastChildFill = true, Height = 24 };
         DockPanel.SetDock(lbl, Dock.Left);
         DockPanel.SetDock(valText, Dock.Right);
         row.Children.Add(lbl);

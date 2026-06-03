@@ -65,6 +65,14 @@ public sealed class LayerCompositor : IDisposable
     private int _strokePaintLayerIndex = -1;
     public bool StrokeSuspendActive => _strokeSuspendDepth > 0;
 
+    // ── Stroke below-paint-layer cache ──
+    // During active strokes, cache the composite of all layers below the paint
+    // layer so only the paint layer's dirty tiles need re-compositing.
+    private SKBitmap?[] _strokeBelowCache = [];
+    private int _strokeBelowCacheTileTotal;
+    private PixelRegion _strokeBelowCacheDirty;
+    private bool _strokeBelowCacheValid;
+
     public void Dispose()
     {
         _compositeIdleEvent.Wait(); // Efficiently blocks without burning CPU
@@ -391,13 +399,113 @@ public sealed class LayerCompositor : IDisposable
 
         var tl = new List<int>(pending);
 
+        // Stroke optimization: split the layer stack into "below paint layer" and
+        // "paint layer + above". Cache the below composite per tile; only re-composite
+        // the paint layer's dirty tiles on top.
+        var canUseStrokeCache = _strokeSuspendDepth > 0
+            && _strokePaintLayerIndex >= 0
+            && _strokePaintLayerIndex < rl.Count
+            && !_fullDirty;
+
+        if (canUseStrokeCache)
+        {
+            // Find which stack entry corresponds to the paint layer
+            var paintStackIdx = -1;
+            for (var i = 0; i < rl.Count; i++)
+            {
+                if (rl[i].Layer == layers[_strokePaintLayerIndex])
+                {
+                    paintStackIdx = i;
+                    break;
+                }
+            }
+
+            if (paintStackIdx >= 0)
+            {
+                // Build below-paint and paint+above stacks
+                var belowStack = new List<ProjectionSiblingItem>(paintStackIdx);
+                for (var i = 0; i < paintStackIdx; i++)
+                    belowStack.Add(rl[i]);
+
+                var aboveStack = new List<ProjectionSiblingItem>(rl.Count - paintStackIdx);
+                for (var i = paintStackIdx; i < rl.Count; i++)
+                    aboveStack.Add(rl[i]);
+
+                EnsureStrokeBelowCache();
+
+                foreach (var idx in tl) EnsureScratchTile(idx);
+                var all = tl.ToArray();
+
+                void CompStroke(int slot)
+                {
+                    var ti = all[slot];
+                    var ty = ti / _xtiles;
+                    var tx = ti % _xtiles;
+                    var tr = TileRect(tx, ty);
+
+                    // Ensure the below-cache tile exists
+                    if (ti >= _strokeBelowCache.Length || _strokeBelowCache[ti] == null)
+                    {
+                        var bmp = AllocTileBitmap(tr);
+                        bmp.Erase(SKColors.Transparent);
+                        if (ti < _strokeBelowCache.Length) _strokeBelowCache[ti] = bmp;
+                        else return;
+                    }
+
+                    // Rebuild below-cache if dirty region overlaps this tile or cache is invalid
+                    if (!_strokeBelowCacheValid)
+                    {
+                        var cb = _strokeBelowCache[ti];
+                        cb!.Erase(SKColors.Transparent);
+                        var dst = (byte*)cb.GetPixels().ToPointer();
+                        var ds = cb.RowBytes;
+                        ClearTile(dst, ds, tr, tx * CmpTileSize, ty * CmpTileSize, paperColor);
+                        if (belowStack.Count > 0)
+                            Projection.CompositeSiblingStack(dst, ds, cb.Width, cb.Height,
+                                belowStack, 1.0, tr, tx * CmpTileSize, ty * CmpTileSize);
+                    }
+
+                    // Composite: start from below-cache, then paint+above on top
+                    var tile = _tileScratch[ti];
+                    if (tile == null) { tile = AllocTileBitmap(tr); _tileScratch[ti] = tile; }
+                    else tile.Erase(SKColors.Transparent);
+
+                    var tDst = (byte*)tile.GetPixels().ToPointer();
+                    var tDs = tile.RowBytes;
+                    var cb2 = _strokeBelowCache[ti];
+                    // Copy below-cache as base
+                    var src = (byte*)cb2!.GetPixels().ToPointer();
+                    var sDs = cb2.RowBytes;
+                    for (var y = 0; y < cb2.Height; y++)
+                        Buffer.MemoryCopy(src + y * sDs, tDst + y * tDs, cb2.Width * 4, cb2.Width * 4);
+
+                    // Composite paint layer + above onto the copy
+                    Projection.CompositeSiblingStack(tDst, tDs, tile.Width, tile.Height,
+                        aboveStack, 1.0, tr, tx * CmpTileSize, ty * CmpTileSize);
+                    CopyTileToCell(ti);
+                }
+
+                if (all.Length >= 4 && Environment.ProcessorCount > 1) DispatchToPool(all.Length, CompStroke);
+                else for (var i = 0; i < all.Length; i++) CompStroke(i);
+
+                _strokeBelowCacheValid = true;
+
+                foreach (var idx in all) _pendingComposite.Remove(idx);
+                TrimCompositeCache(vpClip);
+                LastDirtyTileCount = pending.Count;
+                LastMissingTileCount = missing.Count;
+                return _pendingComposite.Count > 0;
+            }
+        }
+
+        // Normal (non-stroke) composite path
         foreach (var idx in tl) EnsureScratchTile(idx);
-        var all = tl.ToArray();
+        var allNormal = tl.ToArray();
 
         // Composite each tile into its scratch bitmap, then memcpy to cell
         void Comp1(int slot)
         {
-            var ti = all[slot]; var ty = ti / _xtiles; var tx = ti % _xtiles; var tr = TileRect(tx, ty);
+            var ti = allNormal[slot]; var ty = ti / _xtiles; var tx = ti % _xtiles; var tr = TileRect(tx, ty);
             var bmp = _tileScratch[ti];
             if (bmp == null) { bmp = AllocTileBitmap(tr); _tileScratch[ti] = bmp; } else bmp.Erase(SKColors.Transparent);
             var dst = (byte*)bmp.GetPixels().ToPointer(); var ds = bmp.RowBytes;
@@ -406,10 +514,10 @@ public sealed class LayerCompositor : IDisposable
             CopyTileToCell(ti);
         }
 
-        if (all.Length >= 4 && Environment.ProcessorCount > 1) DispatchToPool(all.Length, Comp1);
-        else for (var i = 0; i < all.Length; i++) Comp1(i);
+        if (allNormal.Length >= 4 && Environment.ProcessorCount > 1) DispatchToPool(allNormal.Length, Comp1);
+        else for (var i = 0; i < allNormal.Length; i++) Comp1(i);
 
-        foreach (var idx in all) _pendingComposite.Remove(idx);
+        foreach (var idx in allNormal) _pendingComposite.Remove(idx);
         TrimCompositeCache(vpClip);
         LastDirtyTileCount = pending.Count; LastMissingTileCount = missing.Count;
         return _pendingComposite.Count > 0;
@@ -556,13 +664,83 @@ public sealed class LayerCompositor : IDisposable
 
     // ═══ Stroke suspend ═══════════════════════════════════════════════════════
 
-    public void BeginStrokeSuspend(PixelRegion _, int layerIndex = -1)
-    { lock (CompositeGate) { _strokeSuspendDepth++; _strokePaintLayerIndex = layerIndex; } }
-    public void ExtendStrokeSuspend(PixelRegion r) { }
+    public void BeginStrokeSuspend(PixelRegion region, int layerIndex = -1)
+    {
+        lock (CompositeGate)
+        {
+            _strokeSuspendDepth++;
+            _strokePaintLayerIndex = layerIndex;
+            if (_strokeSuspendDepth == 1 && layerIndex >= 0)
+            {
+                EnsureStrokeBelowCache();
+                _strokeBelowCacheDirty = region;
+                _strokeBelowCacheValid = false;
+            }
+        }
+    }
+
+    public void ExtendStrokeSuspend(PixelRegion r)
+    {
+        lock (CompositeGate)
+        {
+            if (_strokeSuspendDepth <= 0 || _strokePaintLayerIndex < 0) return;
+            _strokeBelowCacheDirty = _strokeBelowCacheDirty.IsEmpty
+                ? r
+                : _strokeBelowCacheDirty.Union(r);
+            _strokeBelowCacheValid = false;
+        }
+    }
+
     public void EndStrokeSuspend()
-    { lock (CompositeGate) { if (_strokeSuspendDepth > 0) _strokeSuspendDepth--; if (_strokeSuspendDepth > 0) return; _strokePaintLayerIndex = -1; } }
-    public void ResetStrokeSuspend() { lock (CompositeGate) { _strokeSuspendDepth = 0; _strokePaintLayerIndex = -1; } }
-    private void InvalidateGroupCaches(PixelRegion? r, IReadOnlyList<DrawingLayer>? l, int? li) { }
+    {
+        lock (CompositeGate)
+        {
+            if (_strokeSuspendDepth > 0) _strokeSuspendDepth--;
+            if (_strokeSuspendDepth > 0) return;
+            _strokePaintLayerIndex = -1;
+            ClearStrokeBelowCache();
+        }
+    }
+
+    public void ResetStrokeSuspend()
+    {
+        lock (CompositeGate)
+        {
+            _strokeSuspendDepth = 0;
+            _strokePaintLayerIndex = -1;
+            ClearStrokeBelowCache();
+        }
+    }
+
+    private void EnsureStrokeBelowCache()
+    {
+        if (_strokeBelowCacheTileTotal == _tileTotal && _strokeBelowCache.Length == _tileTotal) return;
+        ClearStrokeBelowCache();
+        _strokeBelowCache = new SKBitmap?[_tileTotal];
+        _strokeBelowCacheTileTotal = _tileTotal;
+    }
+
+    private void ClearStrokeBelowCache()
+    {
+        for (var i = 0; i < _strokeBelowCache.Length; i++)
+        {
+            var bmp = _strokeBelowCache[i];
+            if (bmp != null) { _delayedDispose.Enqueue((bmp, 8)); _strokeBelowCache[i] = null; }
+        }
+        _strokeBelowCacheValid = false;
+        _strokeBelowCacheDirty = PixelRegion.Empty;
+    }
+
+    private void InvalidateGroupCaches(PixelRegion? r, IReadOnlyList<DrawingLayer>? l, int? li)
+    {
+        if (_strokeSuspendDepth > 0 && r.HasValue && !_strokeBelowCacheDirty.IsEmpty)
+        {
+            // If a non-paint layer changed during stroke, invalidate the below cache
+            // for the affected tiles.
+            if (li != _strokePaintLayerIndex)
+                _strokeBelowCacheValid = false;
+        }
+    }
 
     // ═══ Test/export helpers ══════════════════════════════════════════════════
 

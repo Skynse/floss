@@ -182,8 +182,8 @@ public sealed class ModifierKeySettingsWindow : Window
         // ── Table host (rebuilt on changes) ──────────────────────────────────
         var scroll = new ScrollViewer
         {
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Visible,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
             Content = _tableHost
         };
 
@@ -320,8 +320,8 @@ public sealed class ModifierKeySettingsWindow : Window
             Background = new SolidColorBrush(Color.Parse(Bg1)),
             Content = new ScrollViewer
             {
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Visible,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
                 Content = list
             }
         };
@@ -734,16 +734,16 @@ public sealed class ModifierKeySettingsWindow : Window
     {
         var map = new Dictionary<(int, int), (InputProcessType Input, OutputProcessType Output, List<string> Presets)>();
         foreach (var group in App.ToolGroups.Groups)
-        foreach (var preset in group.Presets)
-        {
-            var key = ((int)preset.InputProcess, (int)preset.OutputProcess);
-            if (!map.TryGetValue(key, out var entry))
+            foreach (var preset in group.Presets)
             {
-                entry = (preset.InputProcess, preset.OutputProcess, []);
-                map[key] = entry;
+                var key = ((int)preset.InputProcess, (int)preset.OutputProcess);
+                if (!map.TryGetValue(key, out var entry))
+                {
+                    entry = (preset.InputProcess, preset.OutputProcess, []);
+                    map[key] = entry;
+                }
+                entry.Presets.Add($"{group.Name}/{preset.Name}");
             }
-            entry.Presets.Add($"{group.Name}/{preset.Name}");
-        }
         return map.Values.OrderBy(v => v.Input).ThenBy(v => v.Output).ToList();
     }
 }

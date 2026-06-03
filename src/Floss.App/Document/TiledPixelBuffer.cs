@@ -16,10 +16,12 @@ public sealed class TiledPixelBuffer : IDisposable
     private static readonly object SolidTileTemplateLock = new();
     private static readonly Dictionary<uint, byte[]> SolidTileTemplates = [];
 
-    // Hot raw tiles — currently in active use.
+    // Hot raw tiles.
     private readonly Dictionary<(int X, int Y), byte[]> _tiles = [];
     // Cold compressed tiles — swapped out to reduce memory.
     private readonly Dictionary<(int X, int Y), byte[]> _compressed = [];
+    // Copy-on-write refcounts. Absent key means rf=0 (mutable in place).
+    private readonly Dictionary<(int X, int Y), int> _refs = [];
 
     private readonly string _scratchDir;
     private readonly object _lock = new();
@@ -41,6 +43,61 @@ public sealed class TiledPixelBuffer : IDisposable
     /// <summary>Bump the tile-key version. Must be called inside <c>_lock</c>.</summary>
     private void InvalidateTileKeyCache() => _tileKeyVersion++;
 
+    private void Retain((int X, int Y) key)
+    {
+        lock (_lock)
+        {
+            _refs.TryGetValue(key, out var n);
+            _refs[key] = n + 1;
+        }
+    }
+
+    internal void ReleaseRef((int X, int Y) key)
+    {
+        lock (_lock)
+        {
+            if (!_refs.TryGetValue(key, out var n) || n <= 1)
+                _refs.Remove(key);
+            else
+                _refs[key] = n - 1;
+        }
+    }
+
+    internal void ReleaseCapturedRefs(IReadOnlyDictionary<(int X, int Y), byte[]?> captured)
+    {
+        if (captured.Count == 0) return;
+        lock (_lock)
+        {
+            foreach (var key in captured.Keys)
+            {
+                if (!_refs.TryGetValue(key, out var n) || n <= 1)
+                    _refs.Remove(key);
+                else
+                    _refs[key] = n - 1;
+            }
+        }
+    }
+
+    private bool IsShared((int X, int Y) key)
+    {
+        lock (_lock)
+            return _refs.ContainsKey(key);
+    }
+
+    private byte[] CowClone((int X, int Y) key, byte[] raw)
+    {
+        if (!IsShared(key)) return raw;
+        var clone = TileMemoryPool.Rent();
+        Buffer.BlockCopy(raw, 0, clone, 0, raw.Length);
+        lock (_lock)
+        {
+            _tiles[key] = clone;
+            InvalidateTileKeyCache();
+        }
+        ReleaseRef(key);
+        return clone;
+    }
+
     public TiledPixelBuffer(int width, int height)
     {
         MinX = 0;
@@ -61,6 +118,7 @@ public sealed class TiledPixelBuffer : IDisposable
                 TileMemoryPool.Return(raw);
             _tiles.Clear();
             _compressed.Clear();
+            _refs.Clear();
         }
         _pixelLock.Dispose();
     }
@@ -269,7 +327,7 @@ public sealed class TiledPixelBuffer : IDisposable
     {
         var key = (tileX, tileY);
         var raw = EnsureRaw(key);
-        if (raw != null) return raw;
+        if (raw != null) return CowClone(key, raw);
 
         raw = TileMemoryPool.Rent();
         lock (_lock)
@@ -318,6 +376,7 @@ public sealed class TiledPixelBuffer : IDisposable
         {
             _tiles.Clear();
             _compressed.Clear();
+            _refs.Clear();
             InvalidateTileKeyCache();
         }
     }
@@ -450,15 +509,9 @@ public sealed class TiledPixelBuffer : IDisposable
                 if (target.ContainsKey(key)) continue;
 
                 var raw = EnsureRaw(key);
-                if (raw == null)
-                {
-                    target.Add(key, null);
-                    continue;
-                }
-
-                var copy = new byte[raw.Length];
-                Buffer.BlockCopy(raw, 0, copy, 0, raw.Length);
-                target.Add(key, copy);
+                target.Add(key, raw);
+                if (raw != null)
+                    Retain(key);
             }
         }
     }
@@ -467,11 +520,12 @@ public sealed class TiledPixelBuffer : IDisposable
     {
         var key = (tileX, tileY);
         var raw = EnsureRaw(key);
-        if (raw == null) return null;
-
-        var copy = new byte[raw.Length];
-        Buffer.BlockCopy(raw, 0, copy, 0, raw.Length);
-        return copy;
+        if (raw != null)
+        {
+            Retain(key);
+            return raw;
+        }
+        return null;
     }
 
     public void Restore(PixelRegion region, byte[] bytes)
@@ -509,8 +563,6 @@ public sealed class TiledPixelBuffer : IDisposable
         {
             lock (_lock)
             {
-                if (_tiles.TryGetValue(key, out var existingRaw))
-                    TileMemoryPool.Return(existingRaw);
                 _tiles.Remove(key);
                 _compressed.Remove(key);
                 InvalidateTileKeyCache();
@@ -521,7 +573,7 @@ public sealed class TiledPixelBuffer : IDisposable
         var raw = EnsureRaw(key);
         if (raw == null || raw.Length != bytes.Length)
         {
-            raw = new byte[bytes.Length];
+            raw = TileMemoryPool.Rent();
             lock (_lock)
             {
                 _tiles[key] = raw;
@@ -529,6 +581,10 @@ public sealed class TiledPixelBuffer : IDisposable
                 InvalidateTileKeyCache();
             }
             ExtendBounds(tileX * TileSize, tileY * TileSize, (tileX + 1) * TileSize, (tileY + 1) * TileSize);
+        }
+        else
+        {
+            raw = CowClone(key, raw);
         }
         Buffer.BlockCopy(bytes, 0, raw, 0, bytes.Length);
     }
@@ -1020,7 +1076,7 @@ public sealed class TiledPixelBuffer : IDisposable
     {
         var key = ToTileKey(x, y);
         var raw = EnsureRaw(key);
-        if (raw != null) return raw;
+        if (raw != null) return CowClone(key, raw);
 
         raw = TileMemoryPool.Rent();
         lock (_lock)
@@ -1058,6 +1114,10 @@ public sealed class TiledPixelBuffer : IDisposable
                     }
                     ExtendBounds(tx * TileSize, ty * TileSize, (tx + 1) * TileSize, (ty + 1) * TileSize);
                 }
+                else
+                {
+                    raw = CowClone(key, raw);
+                }
 
                 var tileRegion = new PixelRegion(tx * TileSize, ty * TileSize, TileSize, TileSize).Intersect(region);
                 if (!tileRegion.IsEmpty) action(tx, ty, raw, tileRegion);
@@ -1067,6 +1127,8 @@ public sealed class TiledPixelBuffer : IDisposable
 
     private void PruneTransparentTiles(PixelRegion region)
     {
+        if (LiveStroke) return;
+
         var firstTileX = FloorDiv(region.X, TileSize);
         var firstTileY = FloorDiv(region.Y, TileSize);
         var lastTileX = FloorDiv(region.Right - 1, TileSize);

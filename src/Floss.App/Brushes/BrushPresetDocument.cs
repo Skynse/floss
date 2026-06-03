@@ -31,6 +31,7 @@ public sealed class BrushPresetDocument
     public BrushTipSelectionMode TipSelectionMode { get; set; } = BrushTipSelectionMode.Single;
     public double Grain { get; set; }
     public double Smoothing { get; set; }
+    public bool SpeedAdaptiveStabilizer { get; set; } = true;
     public double MaxSizePercent { get; set; } = BrushSizeLimits.DefaultMaxSizePercent;
     public bool AutoSpacingActive { get; set; }
     public double AutoSpacingCoeff { get; set; } = 1.0;
@@ -70,6 +71,7 @@ public sealed class BrushPresetDocument
         TipSelectionMode = preset.TipSelectionMode,
         Grain = preset.Grain,
         Smoothing = preset.Smoothing,
+        SpeedAdaptiveStabilizer = preset.SpeedAdaptiveStabilizer,
         MaxSizePercent = preset.MaxSizePercent,
         AutoSpacingActive = preset.AutoSpacingActive,
         AutoSpacingCoeff = preset.AutoSpacingCoeff,
@@ -105,6 +107,7 @@ public sealed class BrushPresetDocument
             TipSelectionMode = TipSelectionMode,
             Grain = Grain,
             Smoothing = Smoothing,
+            SpeedAdaptiveStabilizer = SpeedAdaptiveStabilizer,
             MaxSizePercent = MaxSizePercent <= 0 ? BrushSizeLimits.DefaultMaxSizePercent : MaxSizePercent,
             AutoSpacingActive = AutoSpacingActive,
             AutoSpacingCoeff = AutoSpacingCoeff <= 0 ? 1.0 : AutoSpacingCoeff,

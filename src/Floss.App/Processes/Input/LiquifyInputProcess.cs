@@ -41,6 +41,8 @@ public sealed class LiquifyInputProcess : IInputProcess
                 RawSamples = [a, b],
                 SmoothedSamples = [a, b]
             };
+            _straightLineAnchor = s;
+            return;
         }
 
         _straightLineAnchorSet = false;

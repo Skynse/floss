@@ -10,19 +10,19 @@ namespace Floss.App.Config;
 public static class AppColors
 {
     // ── Background hierarchy ─────────────────────────────────────────────
-    public const string Bg0      = "#0b0c0e";   // deepest bg (window chrome)
-    public const string Bg1      = "#101113";   // panel/toolbar bg
-    public const string Bg2      = "#17181b";   // elevated surface (dockers, dialogs)
-    public const string Bg3      = "#24262b";   // hover/active surface
-    public const string BgSidebar = "#111214";  // sidebar/panel rail
+    public const string Bg0      = "#181a1f";   // deepest bg (window chrome)
+    public const string Bg1      = "#202227";   // panel/toolbar bg
+    public const string Bg2      = "#282a30";   // elevated surface (dockers, dialogs)
+    public const string Bg3      = "#343640";   // hover/active surface
+    public const string BgSidebar = "#1c1e23";  // sidebar/panel rail
 
     // ── Borders ──────────────────────────────────────────────────────────
-    public const string Stroke   = "#2a2c31";
+    public const string Stroke   = "#363840";
 
     // ── Text ─────────────────────────────────────────────────────────────
     public const string TextPrimary   = "#f0f2f5";
-    public const string TextSecondary = "#c6c9cf";
-    public const string TextMuted     = "#7f858e";
+    public const string TextSecondary = "#d0d3d8";
+    public const string TextMuted     = "#90959c";
 
     // ── Accent ───────────────────────────────────────────────────────────
     public const string Accent     = "#0078f2";
@@ -36,12 +36,12 @@ public static class AppColors
     public const string Danger  = "#da3633";
 
     // ── Slider ───────────────────────────────────────────────────────────
-    public const string SliderTrack      = "#0d0d0d";
-    public const string SliderFill       = "#3a6bc9";
-    public const string SliderFillHover  = "#4a7de0";
-    public const string SliderFillActive = "#5a8ef5";
-    public const string SliderThumb      = "#88a6d4";
-    public const string SliderThumbLine  = "#7aa4ec";
+    public const string SliderTrack      = "#242730";
+    public const string SliderFill       = "#4a7bdb";
+    public const string SliderFillHover  = "#5b8ded";
+    public const string SliderFillActive = "#6c9efa";
+    public const string SliderThumb      = "#96b0df";
+    public const string SliderThumbLine  = "#88afe8";
 
     // ── Corner radii ─────────────────────────────────────────────────────
     public const int SmRadius      = 4;

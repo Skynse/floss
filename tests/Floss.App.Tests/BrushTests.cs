@@ -416,7 +416,7 @@ public class BrushTests
         var dirty = engine.RasterizeSegment(layer, brush, from, to);
 
         TestAssertions.False(dirty.IsEmpty);
-        TestAssertions.Equal("CachedTileMajor", engine.LastStats.Path);
+        TestAssertions.Equal("TileMajor", engine.LastStats.Path);
         TestAssertions.True(engine.LastStats.CachedDabCount > 10);
         TestAssertions.True(engine.LastStats.TileBucketCount > 0);
     }
@@ -447,7 +447,7 @@ public class BrushTests
         var dirty = engine.RasterizeSegment(layer, brush, from, to);
 
         TestAssertions.False(dirty.IsEmpty);
-        TestAssertions.Equal("CachedTileMajor", engine.LastStats.Path);
+        TestAssertions.Equal("TileMajor", engine.LastStats.Path);
         TestAssertions.True(engine.LastStats.CachedDabCount > 10);
         TestAssertions.True(engine.LastStats.TileBucketCount > 0);
     }
@@ -495,7 +495,7 @@ public class BrushTests
         var dirty = engine.RasterizeSegment(layer, brush, from, to);
 
         TestAssertions.False(dirty.IsEmpty);
-        TestAssertions.Equal("CachedColorTileMajor", engine.LastStats.Path);
+        TestAssertions.Equal("ColorTileMajor", engine.LastStats.Path);
         TestAssertions.True(engine.LastStats.CachedDabCount > 10);
         layer.Pixels.GetPixel(240, 128, out var b, out var g, out var r, out var a);
         TestAssertions.True(a > 0, "Colored image tip should deposit alpha.");
@@ -529,7 +529,7 @@ public class BrushTests
         var dirty = engine.RasterizeSegments(layer, brush, samples, 1, samples.Count - 1);
 
         TestAssertions.False(dirty.IsEmpty);
-        TestAssertions.Equal("CachedColorTileMajor", engine.LastStats.Path);
+        TestAssertions.Equal("ColorTileMajor", engine.LastStats.Path);
         TestAssertions.True(engine.LastStats.StampCount > 40,
             $"Expected many unique stamps in one batch, got {engine.LastStats.StampCount}.");
         TestAssertions.True(engine.LastStats.CachedDabCount > 32,
@@ -603,7 +603,7 @@ public class BrushTests
 
         TestAssertions.False(dirty.IsEmpty);
         TestAssertions.True(
-            engine.LastStats.Path is "SpatialSmear" or "SmudgeSequential" or "ColorMixScratch" or "CachedTileMajor",
+            engine.LastStats.Path is "SpatialSmear" or "SmudgeSequential" or "ColorMixScratch" or "CachedTileMajor" or "TileMajor",
             $"Unexpected color-mix render path: {engine.LastStats.Path}");
         layer.Pixels.GetPixel(200, 128, out _, out _, out _, out var alpha);
         TestAssertions.True(alpha > 0);
@@ -672,7 +672,7 @@ public class BrushTests
 
         TestAssertions.False(dirty.IsEmpty);
         var path = engine.LastStats.Path;
-        TestAssertions.True(path is "SkiaFallback" or "CachedTileMajor" or "ColorMixScratch",
+        TestAssertions.True(path is "SkiaFallback" or "CachedTileMajor" or "ColorMixScratch" or "TileMajor",
             $"Large color-mix brush must use a painting raster path, got {path}.");
         layer.Pixels.GetPixel(1100, 800, out _, out _, out _, out var alpha);
         TestAssertions.True(alpha > 0, "Large color-mix brush must actually paint instead of dropping stamps.");
@@ -1483,7 +1483,7 @@ public class BrushTests
         var dirty = engine.RasterizeSegment(layer, brush, from, to);
 
         TestAssertions.False(dirty.IsEmpty);
-        TestAssertions.Equal("CachedTileMajor", engine.LastStats.Path);
+        TestAssertions.Equal("TileMajor", engine.LastStats.Path);
         TestAssertions.True(engine.LastStats.CachedDabCount > 0);
     }
 

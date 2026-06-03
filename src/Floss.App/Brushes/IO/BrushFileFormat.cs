@@ -15,7 +15,7 @@ public static class BrushFileFormat
     private const uint Magic = 0x52424C46; // FLBR, little endian
 
     // Version 13 adds material-tip id/label on library entries.
-    private const int Version = 13;
+    private const int Version = 14;
 
     public static BrushAsset Load(string path)
     {
@@ -90,12 +90,16 @@ public static class BrushFileFormat
                     tips.Add(ReadTip(reader, version));
             }
             var parameterGraphs = ReadParameterGraphs(reader, version);
+            bool speedAdaptive = true;
+            if (version >= 14)
+                speedAdaptive = reader.ReadBoolean();
             asset.Preset = new BrushPreset(name, size, opacity, hardness, spacing, color, angle)
             {
                 Dynamics = dynamics,
                 Flow = flow,
                 Grain = grain,
                 Smoothing = smoothing,
+                SpeedAdaptiveStabilizer = speedAdaptive,
                 BaseAngleSource = baseAngleSource,
                 AngleJitter = angleJitter,
                 Quality = quality,
@@ -228,6 +232,9 @@ public static class BrushFileFormat
         foreach (var tip in p.Tips)
             WriteTip(writer, tip);
         WriteParameterGraphs(writer, p.ParameterGraphs);
+
+        // Version 14
+        writer.Write(p.SpeedAdaptiveStabilizer);
     }
 
     // ── Helpers (kept exactly the same) ────────────────────────────────────

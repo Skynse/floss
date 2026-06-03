@@ -18,9 +18,9 @@ namespace Floss.App.Processes.Output;
 public sealed class DirectDrawOutput : IOutputProcess
 {
     private const long PreviewNotifyIntervalMs = 1;
-    private const double RenderSliceBudgetMs = 5.0;
-    private const int MaxSegmentsPerSlice = 16;
-    private const int InitialSegmentsPerSlice = 4;
+    private const double RenderSliceBudgetMs = 10.0;
+    private const int MaxSegmentsPerSlice = 256;
+    private const int InitialSegmentsPerSlice = 8;
 
     public bool IsPaintOutput => true;
     private readonly BrushEngine _brushEngine;
@@ -59,9 +59,10 @@ public sealed class DirectDrawOutput : IOutputProcess
 
         EnsureActiveTransaction();
 
-        // Render synchronously right here in the pointer event.
-        // No dispatcher post, no Task.Run — pixels go to tiles immediately.
-        ProcessQueuedSync();
+        // Never block the pointer event — schedule rendering asynchronously.
+        // Pixels hit tiles before the next frame via DispatcherPriority.Render.
+        if (!_processing)
+            Dispatcher.UIThread.Post(() => ProcessQueuedSync(), DispatcherPriority.Render);
     }
 
     public void Execute(ToolContext ctx, IProcessedInput input)
@@ -195,7 +196,7 @@ public sealed class DirectDrawOutput : IOutputProcess
 
             if (tx.NextSegmentIndex < tx.QueuedSamples.Count)
             {
-                // UI-thread budget exceeded; offload remainder to background.
+                // Still have work — re-schedule for next Render callback.
                 scheduleBackground = true;
                 return;
             }
@@ -225,8 +226,8 @@ public sealed class DirectDrawOutput : IOutputProcess
         finally
         {
             _processing = false;
-            if (scheduleBackground)
-                Dispatcher.UIThread.Post(() => ProcessQueuedAsync(), DispatcherPriority.Background);
+            if (scheduleBackground && _active != null)
+                Dispatcher.UIThread.Post(() => ProcessQueuedSync(), DispatcherPriority.Render);
         }
     }
 
@@ -371,14 +372,19 @@ public sealed class DirectDrawOutput : IOutputProcess
 
         if (!dirty.IsEmpty)
         {
-            tx.Layer.Pixels.EnterPixelWriteLock();
-            try
+            var hasSelection = tx.Ctx.Selection.HasSelection;
+            var alphaLocked = tx.Layer.IsAlphaLocked;
+            if (hasSelection || alphaLocked)
             {
-                RestoreUnselectedPixels(tx.Layer, dirty, tx.Ctx.Selection, tx.BeforeTiles);
-            }
-            finally
-            {
-                tx.Layer.Pixels.ExitPixelWriteLock();
+                tx.Layer.Pixels.EnterPixelWriteLock();
+                try
+                {
+                    RestoreUnselectedPixels(tx.Layer, dirty, tx.Ctx.Selection, tx.BeforeTiles);
+                }
+                finally
+                {
+                    tx.Layer.Pixels.ExitPixelWriteLock();
+                }
             }
 
             var translatedDirty = dirty.Translate(tx.Layer.OffsetX, tx.Layer.OffsetY);
@@ -560,7 +566,10 @@ public sealed class DirectDrawOutput : IOutputProcess
         try
         {
             if (tx.BeforeTiles.Count == 0)
+            {
+                tx.Layer.Pixels.ReleaseCapturedRefs(tx.BeforeTiles);
                 return;
+            }
 
             using var mutation = tx.Ctx.Document.RenderLock.Write();
             foreach (var ((tileX, tileY), tile) in tx.BeforeTiles)
@@ -576,6 +585,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         }
         finally
         {
+            tx.Layer.Pixels.ReleaseCapturedRefs(tx.BeforeTiles);
             tx.Ctx.Document.NotifyStrokeSuspendEnd();
         }
     }

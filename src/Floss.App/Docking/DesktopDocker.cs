@@ -672,7 +672,8 @@ public sealed class DesktopDocker
         {
             Foreground = new SolidColorBrush(Color.Parse("#cccccc")),
             Background = new SolidColorBrush(Color.Parse("#cc1e1e20")),
-            FontSize = 11, FontWeight = FontWeight.SemiBold,
+            FontSize = 11,
+            FontWeight = FontWeight.SemiBold,
             Padding = new Thickness(8, 3),
             IsHitTestVisible = false,
             ZIndex = 1001
@@ -921,7 +922,9 @@ public sealed class DesktopDocker
 
         var title = new TextBlock
         {
-            Text = panel.Title, FontSize = 9, FontWeight = FontWeight.SemiBold,
+            Text = panel.Title,
+            FontSize = 9,
+            FontWeight = FontWeight.SemiBold,
             Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
             VerticalAlignment = VerticalAlignment.Center
         };
@@ -964,9 +967,10 @@ public sealed class DesktopDocker
         if (id == "tool-properties")
             return new ScrollViewer
             {
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                ClipToBounds = true, Content = content
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Visible,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
+                ClipToBounds = true,
+                Content = content
             };
         return new Border { ClipToBounds = true, Child = content };
     }

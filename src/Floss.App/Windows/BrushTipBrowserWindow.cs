@@ -113,8 +113,8 @@ public sealed class BrushTipBrowserWindow : Window
 
         return new ScrollViewer
         {
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Visible,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
             Padding = new Thickness(10, 8, 10, 8),
             Content = stack
         };

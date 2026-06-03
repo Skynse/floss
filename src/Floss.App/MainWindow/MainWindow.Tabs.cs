@@ -62,16 +62,16 @@ public partial class MainWindow
             Orientation = Orientation.Horizontal,
             Spacing = 1,
             VerticalAlignment = VerticalAlignment.Bottom,
-            Margin = new Thickness(4, 3, 0, 0)
+            Margin = new Thickness(4, 2, 0, 0)
         };
 
         var newTabBtn = new Button
         {
             Content = "+",
             Width = 24,
-            Height = 23,
+            Height = 22,
             Padding = new Thickness(0),
-            FontSize = 13,
+            FontSize = 12,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
             Background = new SolidColorBrush(Color.Parse(Bg1)),
@@ -95,7 +95,7 @@ public partial class MainWindow
         _tabBarContainer = new ScrollViewer
         {
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Hidden,
-            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Visible,
             Content = bar,
             Background = new SolidColorBrush(Color.Parse(Bg0)),
             IsVisible = false,

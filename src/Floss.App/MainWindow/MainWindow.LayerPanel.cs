@@ -1009,9 +1009,6 @@ public partial class MainWindow
             var alreadySelected = _selectedLayerIndices.Contains(index);
             if (isRightClick)
             {
-                // Right-click unselected row: select it alone, then open the menu.
-                // Right-click an already-selected row: keep the full multi-selection
-                // (do not call SelectLayer — that fires LayersChanged and clears it).
                 if (!alreadySelected)
                 {
                     _selectedLayerIndices.Clear();
@@ -1022,20 +1019,25 @@ public partial class MainWindow
                 return;
             }
 
-            // Ctrl+click always toggles selection (even on already-selected layers).
-            // For plain click on an already-selected layer, skip SelectLayerWithModifiers
-            // so the multi-selection persists through the pending drag gesture.
             var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
-            if (ctrl || !alreadySelected)
+            if (ctrl)
+            {
                 SelectLayerWithModifiers(index, e.KeyModifiers);
+                return;
+            }
 
-            // Don't start a drag when modifier keys are held (Ctrl=toggle, Shift=range).
-            if (ctrl || e.KeyModifiers.HasFlag(KeyModifiers.Shift) || e.ClickCount > 1) return;
+            if (!alreadySelected)
+            {
+                SelectLayerWithModifiers(index, e.KeyModifiers);
+            }
 
+            // Plain click on already-selected layer with multi-selection:
+            // defer collapse until we know it's not a drag.
             // Store pending drag state; actual drag starts in PointerMoved after threshold exceeded.
             _pendingDragIndex = index;
             _pendingDragStartPos = point.Position;
             _pendingDragArgs = e;
+            _pendingDragWasMultiSelected = alreadySelected && _selectedLayerIndices.Count > 1;
         }
         catch (Exception ex) { CrashLog.Write(ex, "MainWindow.LayerRowPointerPressed"); }
     }
@@ -1060,6 +1062,7 @@ public partial class MainWindow
         var args = _pendingDragArgs!;
         _pendingDragIndex = -1;
         _pendingDragArgs = null;
+        _pendingDragWasMultiSelected = false;
 
         _layerDragSourceIndex = index;
         var draggedIndices = _selectedLayerIndices.Contains(index)
@@ -1087,8 +1090,21 @@ public partial class MainWindow
 
     private void LayerRowPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
+        var wasMulti = _pendingDragWasMultiSelected;
+        var idx = _pendingDragIndex;
         _pendingDragIndex = -1;
         _pendingDragArgs = null;
+        _pendingDragWasMultiSelected = false;
+
+        // Plain click (no drag) on a layer that was part of a multi-selection:
+        // collapse to just this layer.
+        if (wasMulti && idx >= 0 && sender is Border row && row.Tag is int index)
+        {
+            _selectedLayerIndices.Clear();
+            _selectedLayerIndices.Add(index);
+            _canvas.SelectLayer(index);
+            BuildLayerList();
+        }
     }
 
     private void WindowPointerPressed(object? sender, PointerPressedEventArgs e)

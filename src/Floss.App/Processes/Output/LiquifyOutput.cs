@@ -282,6 +282,8 @@ public sealed class LiquifyOutput : IOutputProcess
 
     private void Cleanup()
     {
+        if (_beforeTiles is { Count: > 0 } bt && _currentLayer != null)
+            _currentLayer.Pixels.ReleaseCapturedRefs(bt);
         _strokeActive = false;
         _lastProcessedIndex = -1;
         _beforeTiles = null;

@@ -111,8 +111,8 @@ public partial class MainWindow
             CacheMode = new BitmapCache(),
             Child = new ScrollViewer
             {
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Visible,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
                 Content = outerStack
             }
         };
@@ -510,8 +510,8 @@ public partial class MainWindow
             var iconBtn = new Button
             {
                 Content = MaterialIcon(p, 18),
-            Width = 28,
-            Height = 26,
+                Width = 28,
+                Height = 26,
                 Margin = new Thickness(2),
                 Background = new SolidColorBrush(Color.Parse(group.CustomIcon == p ? AccentSoft : Bg2)),
                 BorderBrush = new SolidColorBrush(Color.Parse(group.CustomIcon == p ? Accent : Stroke)),

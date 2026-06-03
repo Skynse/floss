@@ -52,6 +52,8 @@ public sealed class BrushStrokeInputProcess : IInputProcess
                 RawSamples = [a, b],
                 SmoothedSamples = [a, b]
             };
+            _straightLineAnchor = s;
+            return;
         }
 
         _straightLineAnchorSet = false;
@@ -81,14 +83,6 @@ public sealed class BrushStrokeInputProcess : IInputProcess
             _history.RemoveAt(0);
 
         var smoothed = GetStabilizedPosition();
-
-        // Only emit when the stabilized cursor actually moves enough;
-        // the raw stream is always preserved for the engine.
-        var dx = smoothed.X - _lastSmoothed.X;
-        var dy = smoothed.Y - _lastSmoothed.Y;
-        if (Math.Sqrt(dx * dx + dy * dy) < 0.1)
-            return;
-
         _smoothed.Add(smoothed);
         _lastSmoothed = smoothed;
     }
