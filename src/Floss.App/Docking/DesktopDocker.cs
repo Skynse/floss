@@ -161,12 +161,12 @@ public sealed class DesktopDocker
     {
         if (_canvasOnly) return;
 
-        if (_rootGrid.ColumnDefinitions.Count > 4)
+        if (_rootGrid.ColumnDefinitions.Count > 2)
         {
             if (_rootGrid.ColumnDefinitions[0].ActualWidth > 0)
                 Layout.LeftRailWidth = Math.Max(36, _rootGrid.ColumnDefinitions[0].ActualWidth);
-            if (_rootGrid.ColumnDefinitions[4].ActualWidth > 0)
-                Layout.RightPanelWidth = Math.Max(300, _rootGrid.ColumnDefinitions[4].ActualWidth);
+            if (_rootGrid.ColumnDefinitions[2].ActualWidth > 0)
+                Layout.RightPanelWidth = Math.Max(300, _rootGrid.ColumnDefinitions[2].ActualWidth);
         }
 
         SaveProportions();
@@ -188,11 +188,11 @@ public sealed class DesktopDocker
         Layout = newLayout;
         Layout.Normalize(PanelRegistry.AllIds);
 
-        if (_rootGrid.ColumnDefinitions.Count > 4)
+        if (_rootGrid.ColumnDefinitions.Count > 2)
         {
             _rootGrid.ColumnDefinitions[0].Width = new GridLength(
                 Math.Clamp(Layout.LeftRailWidth, 36, 800), GridUnitType.Pixel);
-            _rootGrid.ColumnDefinitions[4].Width = new GridLength(
+            _rootGrid.ColumnDefinitions[2].Width = new GridLength(
                 Math.Clamp(Layout.RightPanelWidth, 300, 1000), GridUnitType.Pixel);
         }
 

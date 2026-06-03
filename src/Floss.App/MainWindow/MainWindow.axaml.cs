@@ -621,7 +621,6 @@ public partial class MainWindow : Window, Tools.IViewportController
         _selectionOutlineOverlay = new SelectionOutlineOverlay(_canvas);
         _canvasHost.Children.Add(_selectionOutlineOverlay);
         _canvasFrame.Child = _canvasHost;
-        //_canvasFrame.PointerEntered += (_, _) => _canvasFrame.Cursor = new Cursor(StandardCursorType.None);
         _canvasFrame.PointerExited += (_, _) => _canvasFrame.Cursor = null;
 
         _workspaceViewport = new Grid
@@ -647,30 +646,33 @@ public partial class MainWindow : Window, Tools.IViewportController
         _canvasStatusText = MiniText();
         _footerStatusText = MiniText();
 
+        // Thin status bar above canvas (zoom/size info)
         var statusBar = new Border
         {
-            Background = new SolidColorBrush(Color.Parse(Bg0)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(0, 0, 0, 1),
-            Height = 14,
-            Padding = new Thickness(6, 0),
+            Background = new SolidColorBrush(Color.Parse(Bg1)),
+            Height = 18,
+            Padding = new Thickness(8, 0),
             Child = _canvasStatusText,
             IsHitTestVisible = false
         };
 
+        // Thin footer bar (active tool, color swatch)
         var footer = new Border
         {
-            Background = new SolidColorBrush(Color.Parse(Bg0)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(0, 1, 0, 0),
-            Height = 16,
-            Padding = new Thickness(6, 0),
+            Background = new SolidColorBrush(Color.Parse(Bg1)),
+            Height = 20,
+            Padding = new Thickness(8, 0),
             Child = BuildFooterPanel(),
             IsHitTestVisible = false
         };
 
         BuildTabBar();
-        var centerArea = new Grid { RowDefinitions = new RowDefinitions("22,14,*,16") };
+
+        // Floating tool strip — horizontal toolbar at the top of the canvas
+        var floatingTools = BuildFloatingToolStrip();
+
+        // ── Center area: tab bar | options bar | canvas | footer ──
+        var centerArea = new Grid { RowDefinitions = new RowDefinitions("26,Auto,*,20") };
         Grid.SetRow(_tabBarContainer, 0);
         Grid.SetRow(statusBar, 1);
         Grid.SetRow(_workspaceViewport, 2);
@@ -682,38 +684,24 @@ public partial class MainWindow : Window, Tools.IViewportController
         AttachBusyOverlay();
         AttachNodeGraphDockToCenter(centerArea);
 
+        // Floating tools overlay in the canvas row
+        Grid.SetRow(floatingTools, 2);
+        centerArea.Children.Add(floatingTools);
+
         _dockerRows.Clear();
         _dockerSections.Clear();
         var leftPanel = BuildLeftDockColumn();
         var rightPanel = BuildRightPanel();
 
-        // Floating tool strip — horizontal toolbar at the top of the canvas
-        var floatingTools = BuildFloatingToolStrip();
-
+        // ── Root: left | canvas | right (no splitters in the new layout) ──
         var root = new Grid();
         root.ColumnDefinitions.Add(new ColumnDefinition(0, GridUnitType.Pixel));    // left panel
-        root.ColumnDefinitions.Add(new ColumnDefinition(0, GridUnitType.Pixel));    // left splitter
         root.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 260 }); // canvas
         root.ColumnDefinitions.Add(new ColumnDefinition(250, GridUnitType.Pixel) { MinWidth = 200, MaxWidth = 440 }); // right panel
         _rootGrid = root;
         _rootColumnWidths = [.. root.ColumnDefinitions.Select(c => c.Width)];
 
-        var leftSplitter = new GridSplitter
-        {
-            Width = 3,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
-            Background = new SolidColorBrush(Color.Parse(Bg0)),
-            IsVisible = false
-        };
-        leftSplitter.DragCompleted += (_, _) =>
-        {
-            CaptureRootColumnWidths();
-            PersistWorkspaceLayout();
-        };
-        _leftSplitter = leftSplitter;
-
-        // Popup that floats over the canvas, anchored to the right panel's left edge
+        // Popup that floats over the canvas, anchored to the right panel
         _dockerPopup = new Popup
         {
             IsLightDismissEnabled = false,
@@ -731,24 +719,18 @@ public partial class MainWindow : Window, Tools.IViewportController
             }
         };
 
-        // Add floating tools as an overlay in the center area
-        Grid.SetRow(floatingTools, 2);
-        centerArea.Children.Add(floatingTools);
-
         Grid.SetColumn(leftPanel, 0);
-        Grid.SetColumn(leftSplitter, 1);
-        Grid.SetColumn(centerArea, 2);
-        Grid.SetColumn(rightPanel, 3);
+        Grid.SetColumn(centerArea, 1);
+        Grid.SetColumn(rightPanel, 2);
         root.Children.Add(leftPanel);
-        root.Children.Add(leftSplitter);
         root.Children.Add(centerArea);
         root.Children.Add(rightPanel);
-        // Popup must be in the visual tree to function; column 99 avoids conflicts
         Grid.SetColumn(_dockerPopup, 99);
         root.Children.Add(_dockerPopup);
 
-        var shell = new Grid { RowDefinitions = new RowDefinitions("24,*") };
+        // ── Shell: menu bar (thin) | main content ──
         var menu = BuildMenuBar();
+        var shell = new Grid { RowDefinitions = new RowDefinitions("22,*") };
         Grid.SetRow(menu, 0);
         Grid.SetRow(root, 1);
         shell.Children.Add(menu);
