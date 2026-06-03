@@ -11,33 +11,30 @@ using Floss.App.Tools;
 
 namespace Floss.App.Processes.Output;
 
-// Paints strokes onto the active layer using bounded UI-thread work slices.
-// Each pen stroke is a transaction. Finished strokes can continue rendering
-// while later pointer events queue new transactions instead of blocking pen-up.
+// Paints strokes onto the active layer. Active-stroke segments are rendered
+// synchronously on the UI thread (pointer event → tiles → Invalidate) so there
+// is no dispatcher or thread-pool hop.  Background work is only used when
+// finalizing a stroke while a new one has already started.
 public sealed class DirectDrawOutput : IOutputProcess
 {
-    private const long PreviewNotifyIntervalMs = 12;
-    private const double RenderSliceBudgetMs = 3.0;
-    private const int MaxSegmentsPerSlice = 8;
-    private const int InitialSegmentsPerSlice = 1;
+    private const long PreviewNotifyIntervalMs = 1;
+    private const double RenderSliceBudgetMs = 5.0;
+    private const int MaxSegmentsPerSlice = 16;
+    private const int InitialSegmentsPerSlice = 4;
 
     public bool IsPaintOutput => true;
     private readonly BrushEngine _brushEngine;
-    private readonly BrushPreparationScheduler _preparationScheduler = new();
     private readonly Queue<StrokeTransaction> _pendingTransactions = new();
-    private readonly Action _processQueuedAction;
 
     public bool Antialiasing { get; set; } = true;
 
     private StrokeTransaction? _active;
     private StrokeTransaction? _accepting;
-    private bool _processingScheduled;
     private bool _processing;
 
     public DirectDrawOutput(BrushEngine brushEngine, DrawingDocument _)
     {
         _brushEngine = brushEngine;
-        _processQueuedAction = () => ProcessQueuedSegments(force: false);
     }
 
     public void Preview(ToolContext ctx, IProcessedInput input)
@@ -52,7 +49,7 @@ public sealed class DirectDrawOutput : IOutputProcess
             ? _accepting
             : BeginTransaction(ctx, layer, samples[0]);
 
-        QueueNewSamples(tx, layer, ctx.Brush, samples);
+        QueueNewSamples(tx, layer, samples);
         if (tx.NextSegmentIndex == 1 &&
             tx.QueuedSamples.Count == 1 &&
             tx.QueuedSamples[0].Source is CanvasInputSource.Mouse or CanvasInputSource.Unknown)
@@ -61,7 +58,10 @@ public sealed class DirectDrawOutput : IOutputProcess
         }
 
         EnsureActiveTransaction();
-        ScheduleProcessQueued();
+
+        // Render synchronously right here in the pointer event.
+        // No dispatcher post, no Task.Run — pixels go to tiles immediately.
+        ProcessQueuedSync();
     }
 
     public void Execute(ToolContext ctx, IProcessedInput input)
@@ -87,12 +87,11 @@ public sealed class DirectDrawOutput : IOutputProcess
         }
 
         EnsureActiveTransaction();
-        ScheduleProcessQueued();
+        ProcessQueuedSync();
     }
 
     private StrokeTransaction BeginTransaction(ToolContext ctx, DrawingLayer layer, CanvasInputSample firstSample)
     {
-        _preparationScheduler.QueuePrepare(ctx.Brush, firstSample);
         var tx = new StrokeTransaction(ctx, layer, ctx.ActiveLayerIndex, ctx.Brush, ToLayerSample(layer, firstSample));
         if (_active == null)
             _active = tx;
@@ -100,8 +99,6 @@ public sealed class DirectDrawOutput : IOutputProcess
             _pendingTransactions.Enqueue(tx);
         _accepting = tx;
 
-        // Cache Blend-smudge pickup delegates once per stroke to avoid
-        // two heap-allocated closure objects per ProcessSegmentBatch.
         if (ctx.Brush.ColorMix && ctx.Brush.SmudgeMode == SmudgeMode.Blend)
         {
             tx.PickupSampler = (x, y, out b, out g, out r, out a) =>
@@ -109,10 +106,6 @@ public sealed class DirectDrawOutput : IOutputProcess
             tx.PickupTiles = (tileX, tileY) => ReadBeforeStrokeTileFrom(tx.BeforeTiles, tx.Layer, tileX, tileY);
         }
 
-        // Krita-style stroke suspend: hint a generous initial bounding box
-        // around the first stamp. The compositor will only process invalidations
-        // inside this region (extended per-stamp below) until the stroke ends —
-        // unrelated pending dirties are deferred.
         var radius = Math.Max(64, (int)Math.Ceiling(ctx.Brush.Size + 32));
         var docX = (int)Math.Round(firstSample.X) + layer.OffsetX;
         var docY = (int)Math.Round(firstSample.Y) + layer.OffsetY;
@@ -125,49 +118,14 @@ public sealed class DirectDrawOutput : IOutputProcess
         return tx;
     }
 
-    private static void QueueNewSamples(StrokeTransaction tx, DrawingLayer layer, BrushPreset brush, IReadOnlyList<CanvasInputSample> samples)
+    private static void QueueNewSamples(StrokeTransaction tx, DrawingLayer layer, IReadOnlyList<CanvasInputSample> samples)
     {
         var start = Math.Max(0, tx.LastQueuedInputIndex + 1);
         for (var i = start; i < samples.Count; i++)
         {
-            var sample = ToLayerSample(layer, samples[i]);
-            AppendBoundedSample(tx, brush, sample);
+            tx.QueuedSamples.Add(ToLayerSample(layer, samples[i]));
             tx.LastQueuedInputIndex = i;
         }
-    }
-
-    private static void AppendBoundedSample(StrokeTransaction tx, BrushPreset brush, CanvasInputSample sample)
-    {
-        if (tx.QueuedSamples.Count > 0)
-        {
-            var lastIndex = tx.QueuedSamples.Count - 1;
-            if (lastIndex >= tx.NextSegmentIndex
-                && ShouldCoalesceQueuedSample(tx.QueuedSamples[lastIndex], sample, brush))
-            {
-                tx.QueuedSamples[lastIndex] = sample;
-                return;
-            }
-        }
-
-        tx.QueuedSamples.Add(sample);
-    }
-
-    private static bool ShouldCoalesceQueuedSample(CanvasInputSample previous, CanvasInputSample next, BrushPreset brush)
-    {
-        if (previous.Phase != CanvasInputPhase.Move || next.Phase != CanvasInputPhase.Move)
-            return false;
-
-        // Pressure/tilt/twist changes affect dynamics. Keep those samples even
-        // when the pointer barely moved so large expressive strokes do not flatten.
-        if (Math.Abs(next.Pressure - previous.Pressure) > 0.03) return false;
-        if (Math.Abs(next.TiltX - previous.TiltX) > 0.08) return false;
-        if (Math.Abs(next.TiltY - previous.TiltY) > 0.08) return false;
-        if (Math.Abs(next.Twist - previous.Twist) > 4.0) return false;
-
-        var spacing = BrushSpacing.EstimateDistance(brush);
-        var size = Math.Max(BrushSpacing.MinStampSizePx, (float)brush.Size);
-        var threshold = Math.Clamp(Math.Min(spacing * 0.20f, size * 0.02f), 1f, 24f);
-        return previous.DistanceTo(next) < threshold;
     }
 
     private void EnsureActiveTransaction()
@@ -179,18 +137,103 @@ public sealed class DirectDrawOutput : IOutputProcess
             _active = _pendingTransactions.Dequeue();
     }
 
-    private void ScheduleProcessQueued()
+    // Render synchronously on the caller thread (pointer event handler).
+    // No dispatcher post, no Task.Run.  Heavy batches still get sliced so
+    // the UI thread doesn't stall for more than ~5 ms.
+    private void ProcessQueuedSync()
     {
-        if (_processingScheduled || _processing)
+        if (_processing)
             return;
 
-        _processingScheduled = true;
-        Dispatcher.UIThread.Post(_processQueuedAction, DispatcherPriority.Normal);
+        EnsureActiveTransaction();
+        var tx = _active;
+        if (tx == null)
+            return;
+
+        _processing = true;
+        var started = Stopwatch.GetTimestamp();
+        var processed = 0;
+        var batchDirty = PixelRegion.Empty;
+        var scheduleBackground = false;
+
+        try
+        {
+            if (!tx.StrokeStarted)
+            {
+                _brushEngine.BeginStroke(tx.Brush, tx.FirstSample);
+                tx.StrokeStarted = true;
+            }
+
+            while (tx.NextSegmentIndex < tx.QueuedSamples.Count)
+            {
+                var remaining = tx.QueuedSamples.Count - tx.NextSegmentIndex;
+                var segmentCount = Math.Min(remaining, tx.SuggestedSegmentCount(RenderSliceBudgetMs, InitialSegmentsPerSlice, MaxSegmentsPerSlice));
+
+                var startIndex = tx.NextSegmentIndex;
+                var snapshot = SnapshotSamples(tx.QueuedSamples, startIndex - 1, segmentCount + 1);
+                var snapshotStart = 1;
+
+                var dirty = ProcessSegmentBatch(tx, snapshot, snapshotStart, segmentCount);
+
+                tx.NextSegmentIndex += segmentCount;
+                processed += segmentCount;
+
+                if (!dirty.IsEmpty)
+                    batchDirty = batchDirty.Union(dirty);
+
+                if (processed >= MaxSegmentsPerSlice)
+                    break;
+                if (ElapsedMs(started) >= RenderSliceBudgetMs)
+                    break;
+            }
+
+            if (!batchDirty.IsEmpty)
+            {
+                tx.PendingPreviewDirty = tx.PendingPreviewDirty.Union(batchDirty);
+                FlushPreviewDirty(tx, force: tx.FinalizeRequested);
+            }
+
+            if (tx.NextSegmentIndex < tx.QueuedSamples.Count)
+            {
+                // UI-thread budget exceeded; offload remainder to background.
+                scheduleBackground = true;
+                return;
+            }
+
+            if (tx.FinalizeRequested)
+            {
+                FlushPreviewDirty(tx, force: true);
+                _brushEngine.EndStroke();
+                Commit(tx);
+                _active = null;
+                EnsureActiveTransaction();
+                if (_active != null)
+                    scheduleBackground = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write(ex, "DirectDrawOutput.ProcessQueuedSync", flushToDisk: true);
+            _brushEngine.EndStroke();
+            RestoreTransaction(tx);
+            _active = null;
+            _accepting = ReferenceEquals(_accepting, tx) ? null : _accepting;
+            EnsureActiveTransaction();
+            if (_active != null)
+                scheduleBackground = true;
+        }
+        finally
+        {
+            _processing = false;
+            if (scheduleBackground)
+                Dispatcher.UIThread.Post(() => ProcessQueuedAsync(), DispatcherPriority.Background);
+        }
     }
 
-    private async void ProcessQueuedSegments(bool force)
+    // Fallback background path for when the UI-thread budget is exceeded
+    // or when we need to finalize a transaction while not in a pointer event.
+    private async void ProcessQueuedAsync()
     {
-        _processingScheduled = false;
         if (_processing)
             return;
 
@@ -216,18 +259,11 @@ public sealed class DirectDrawOutput : IOutputProcess
             while (tx.NextSegmentIndex < tx.QueuedSamples.Count)
             {
                 var remaining = tx.QueuedSamples.Count - tx.NextSegmentIndex;
-                var segmentCount = force
-                    ? remaining
-                    : Math.Min(remaining, tx.SuggestedSegmentCount(RenderSliceBudgetMs, InitialSegmentsPerSlice, MaxSegmentsPerSlice));
+                var segmentCount = Math.Min(remaining, tx.SuggestedSegmentCount(RenderSliceBudgetMs, InitialSegmentsPerSlice, MaxSegmentsPerSlice));
 
-                // CRITICAL: snapshot the sample slice BEFORE Task.Run. tx.QueuedSamples
-                // is mutated on the UI thread (Preview adds samples while we render).
-                // List<>.Add can reallocate its backing array — a reader on the background
-                // thread could observe a torn reference and crash with a native AV with
-                // no managed stack. The snapshot is a stable read-only copy.
                 var startIndex = tx.NextSegmentIndex;
                 var snapshot = SnapshotSamples(tx.QueuedSamples, startIndex - 1, segmentCount + 1);
-                var snapshotStart = 1; // first sample is segment-start anchor
+                var snapshotStart = 1;
 
                 var result = await Task.Run(() =>
                 {
@@ -243,16 +279,16 @@ public sealed class DirectDrawOutput : IOutputProcess
                 if (!result.dirty.IsEmpty)
                     batchDirty = batchDirty.Union(result.dirty);
 
-                if (!force && processed >= MaxSegmentsPerSlice)
+                if (processed >= MaxSegmentsPerSlice)
                     break;
-                if (!force && ElapsedMs(started) >= RenderSliceBudgetMs)
+                if (ElapsedMs(started) >= RenderSliceBudgetMs)
                     break;
             }
 
             if (!batchDirty.IsEmpty)
             {
                 tx.PendingPreviewDirty = tx.PendingPreviewDirty.Union(batchDirty);
-                FlushPreviewDirty(tx, force: force || tx.FinalizeRequested);
+                FlushPreviewDirty(tx, force: tx.FinalizeRequested);
             }
 
             if (tx.NextSegmentIndex < tx.QueuedSamples.Count)
@@ -274,7 +310,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         }
         catch (Exception ex)
         {
-            CrashLog.Write(ex, "DirectDrawOutput.ProcessQueuedSegments", flushToDisk: true);
+            CrashLog.Write(ex, "DirectDrawOutput.ProcessQueuedAsync", flushToDisk: true);
             _brushEngine.EndStroke();
             RestoreTransaction(tx);
             _active = null;
@@ -287,56 +323,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         {
             _processing = false;
             if (scheduleAfterProcessing)
-                ScheduleProcessQueued();
-        }
-    }
-
-    private void ProcessSegmentsSync(StrokeTransaction tx, bool force,
-        ref long started, ref int processed, ref PixelRegion batchDirty,
-        ref bool scheduleAfterProcessing)
-    {
-        while (tx.NextSegmentIndex < tx.QueuedSamples.Count)
-        {
-            var remaining = tx.QueuedSamples.Count - tx.NextSegmentIndex;
-            var segmentCount = force
-                ? remaining
-                : Math.Min(remaining, tx.SuggestedSegmentCount(RenderSliceBudgetMs, InitialSegmentsPerSlice, MaxSegmentsPerSlice));
-
-            var segmentStarted = Stopwatch.GetTimestamp();
-            var startIndex = tx.NextSegmentIndex;
-            var snapshot = SnapshotSamples(tx.QueuedSamples, startIndex - 1, segmentCount + 1);
-            batchDirty = batchDirty.Union(ProcessSegmentBatch(tx, snapshot, 1, segmentCount));
-            tx.NextSegmentIndex += segmentCount;
-            processed += segmentCount;
-            tx.RecordSegmentTime(ElapsedMs(segmentStarted), segmentCount);
-
-            if (!force && processed >= MaxSegmentsPerSlice)
-                break;
-            if (!force && ElapsedMs(started) >= RenderSliceBudgetMs)
-                break;
-        }
-
-        if (!batchDirty.IsEmpty)
-        {
-            tx.PendingPreviewDirty = tx.PendingPreviewDirty.Union(batchDirty);
-            FlushPreviewDirty(tx, force: force || tx.FinalizeRequested);
-        }
-
-        if (tx.NextSegmentIndex < tx.QueuedSamples.Count)
-        {
-            scheduleAfterProcessing = true;
-            return;
-        }
-
-        if (tx.FinalizeRequested)
-        {
-            FlushPreviewDirty(tx, force: true);
-            _brushEngine.EndStroke();
-            Commit(tx);
-            _active = null;
-            EnsureActiveTransaction();
-            if (_active != null)
-                scheduleAfterProcessing = true;
+                Dispatcher.UIThread.Post(() => ProcessQueuedAsync(), DispatcherPriority.Background);
         }
     }
 
@@ -348,8 +335,6 @@ public sealed class DirectDrawOutput : IOutputProcess
         if (!force && now - tx.LastPreviewNotifyMs < PreviewNotifyIntervalMs)
             return;
 
-        // Extend the stroke suspend region so the compositor knows the brush
-        // wandered. Generously inflated so the brush radius fits comfortably.
         tx.Ctx.Document.NotifyStrokeSuspendExtend(tx.PendingPreviewDirty);
         tx.Ctx.Document.NotifyChanged(tx.PendingPreviewDirty, tx.LayerIndex);
         tx.Ctx.InvalidateRender();
@@ -359,11 +344,6 @@ public sealed class DirectDrawOutput : IOutputProcess
 
     private PixelRegion ProcessSegmentBatch(StrokeTransaction tx, CanvasInputSample[] samples, int startSegmentIndex, int segmentCount)
     {
-        // Do NOT take DocumentRenderLock.Write here. This method runs on a
-        // background thread (Task.Run). Holding the document write lock for the
-        // entire rasterize blocks DrawingCanvas.Render on the UI thread at
-        // RenderLock.Read — the app freezes with no crash log. Tile mutations
-        // are already serialized via TiledPixelBuffer's pixel read/write locks.
         using var telemetry = RenderTelemetry.ScopeNow();
 
         var region = EstimateSegmentBatchRegion(tx, samples, startSegmentIndex, segmentCount);
@@ -452,8 +432,6 @@ public sealed class DirectDrawOutput : IOutputProcess
         finally
         {
             tx.Layer.Pixels.LiveStroke = false;
-            // Always release the stroke-suspend on the compositor so deferred
-            // invalidations from elsewhere get flushed even if Commit threw.
             tx.Ctx.Document.NotifyStrokeSuspendEnd();
         }
     }
@@ -471,16 +449,11 @@ public sealed class DirectDrawOutput : IOutputProcess
 
         _active = null;
         _accepting = null;
-        _processingScheduled = false;
     }
 
     public bool HasPendingWork =>
-        _processing || _processingScheduled || _active != null || _pendingTransactions.Count > 0;
+        _processing || _active != null || _pendingTransactions.Count > 0;
 
-    // Marks the active/accepting transaction as finalize-requested so the
-    // background task will commit it normally, then detaches _accepting.
-    // Call this when switching away from the tool while drawing — do NOT
-    // call Cancel(), which would block the UI thread and revert the stroke.
     public void FinalizeAccepting()
     {
         if (_accepting != null)
@@ -490,15 +463,11 @@ public sealed class DirectDrawOutput : IOutputProcess
         }
         if (_active != null && !_active.FinalizeRequested)
             _active.FinalizeRequested = true;
-        ScheduleProcessQueued();
+        ProcessQueuedSync();
     }
 
     private void WaitForProcessingToFinish()
     {
-        // Wait up to 2 seconds for the background rasterize Task.Run to complete.
-        // The previous bounded spin (~1 ms) could bail before processing finished,
-        // letting the UI thread mutate tx.BeforeTiles / tx.QueuedSamples concurrently
-        // with the background reader — a major source of native crashes with no log.
         var deadline = Environment.TickCount64 + 2000;
         var spin = new SpinWait();
         while (_processing && Environment.TickCount64 < deadline)
@@ -517,7 +486,6 @@ public sealed class DirectDrawOutput : IOutputProcess
         if (_processing)
             return;
 
-        _processingScheduled = false;
         EnsureActiveTransaction();
         while (_active is { } tx)
         {
@@ -534,6 +502,55 @@ public sealed class DirectDrawOutput : IOutputProcess
             ProcessSegmentsSync(tx, force: true, ref started, ref processed, ref batchDirty, ref scheduleAfterProcessing);
             if (ReferenceEquals(_active, tx))
                 break;
+        }
+    }
+
+    private void ProcessSegmentsSync(StrokeTransaction tx, bool force,
+        ref long started, ref int processed, ref PixelRegion batchDirty,
+        ref bool scheduleAfterProcessing)
+    {
+        while (tx.NextSegmentIndex < tx.QueuedSamples.Count)
+        {
+            var remaining = tx.QueuedSamples.Count - tx.NextSegmentIndex;
+            var segmentCount = force
+                ? remaining
+                : Math.Min(remaining, tx.SuggestedSegmentCount(RenderSliceBudgetMs, InitialSegmentsPerSlice, MaxSegmentsPerSlice));
+
+            var segmentStarted = Stopwatch.GetTimestamp();
+            var startIndex = tx.NextSegmentIndex;
+            var snapshot = SnapshotSamples(tx.QueuedSamples, startIndex - 1, segmentCount + 1);
+            batchDirty = batchDirty.Union(ProcessSegmentBatch(tx, snapshot, 1, segmentCount));
+            tx.NextSegmentIndex += segmentCount;
+            processed += segmentCount;
+            tx.RecordSegmentTime(ElapsedMs(segmentStarted), segmentCount);
+
+            if (!force && processed >= MaxSegmentsPerSlice)
+                break;
+            if (!force && ElapsedMs(started) >= RenderSliceBudgetMs)
+                break;
+        }
+
+        if (!batchDirty.IsEmpty)
+        {
+            tx.PendingPreviewDirty = tx.PendingPreviewDirty.Union(batchDirty);
+            FlushPreviewDirty(tx, force: force || tx.FinalizeRequested);
+        }
+
+        if (tx.NextSegmentIndex < tx.QueuedSamples.Count)
+        {
+            scheduleAfterProcessing = true;
+            return;
+        }
+
+        if (tx.FinalizeRequested)
+        {
+            FlushPreviewDirty(tx, force: true);
+            _brushEngine.EndStroke();
+            Commit(tx);
+            _active = null;
+            EnsureActiveTransaction();
+            if (_active != null)
+                scheduleAfterProcessing = true;
         }
     }
 
@@ -610,9 +627,6 @@ public sealed class DirectDrawOutput : IOutputProcess
 
     private static byte[]? ReadBeforeStrokeTileFrom(Dictionary<(int, int), byte[]?> beforeTiles, DrawingLayer currentLayer, int tileX, int tileY)
     {
-        // beforeTiles holds the layer's pre-stroke snapshot for tiles already
-        // touched by this stroke. For tiles outside that set, fall back to the
-        // live layer state (which hasn't been written yet for that tile).
         if (beforeTiles.TryGetValue((tileX, tileY), out var captured))
             return captured;
 
@@ -633,7 +647,6 @@ public sealed class DirectDrawOutput : IOutputProcess
         int lastTileX = FloorDiv(dirty.Right - 1, ts);
         int lastTileY = FloorDiv(dirty.Bottom - 1, ts);
 
-        // Caller (ProcessSegmentBatch) already holds the pixel write lock.
         for (int ty = firstTileY; ty <= lastTileY; ty++)
         {
             var tilePixY = ty * ts;
@@ -712,7 +725,6 @@ public sealed class DirectDrawOutput : IOutputProcess
         public double AverageSegmentMs { get; private set; }
         public int RemainingSegments => Math.Max(0, QueuedSamples.Count - NextSegmentIndex);
 
-        // Cached per-transaction to avoid delegate allocations per segment batch.
         public BrushEngine.PixelSampler? PickupSampler { get; set; }
         public BrushEngine.TileReader? PickupTiles { get; set; }
 

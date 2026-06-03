@@ -384,33 +384,30 @@ public static class FilterEngine
         var rad = angleDegrees * MathF.PI / 180f;
         var dx = MathF.Cos(rad);
         var dy = MathF.Sin(rad);
-        var half = length * 0.5f;
+        int radius = length / 2;
+        int rightEdge = length - radius - 1;
 
         if (MathF.Abs(dy) < 0.005f)
         {
-            var lx = (int)MathF.Round(dx);
-            if (lx == 0) lx = 1;
-            var hx = half;
             if (sel == null || !sel.HasSelection)
             {
-                var count = length;
                 Parallel.For(0, h, y =>
                 {
                     long sumB = 0, sumG = 0, sumR = 0, sumA = 0;
                     for (int k = 0; k < length; k++)
                     {
-                        var sx = Math.Clamp((int)(k - hx) * Math.Sign(lx), 0, w - 1);
+                        var sx = Math.Clamp(k - radius, 0, w - 1);
                         var si = (y * w + sx) * 4;
                         sumB += source[si + 0]; sumG += source[si + 1]; sumR += source[si + 2]; sumA += source[si + 3];
                     }
                     var d0 = (y * w) * 4;
-                    result[d0 + 0] = (byte)(sumB / count); result[d0 + 1] = (byte)(sumG / count);
-                    result[d0 + 2] = (byte)(sumR / count); result[d0 + 3] = (byte)(sumA / count);
+                    result[d0 + 0] = (byte)(sumB / length); result[d0 + 1] = (byte)(sumG / length);
+                    result[d0 + 2] = (byte)(sumR / length); result[d0 + 3] = (byte)(sumA / length);
 
                     for (var x = 1; x < w; x++)
                     {
-                        var remX = Math.Clamp(x - 1 - (int)hx * Math.Sign(lx), 0, w - 1);
-                        var addX = Math.Clamp(x + (int)hx * Math.Sign(lx), 0, w - 1);
+                        var remX = Math.Clamp(x - 1 - radius, 0, w - 1);
+                        var addX = Math.Clamp(x + rightEdge, 0, w - 1);
                         var ri = (y * w + remX) * 4;
                         var ai = (y * w + addX) * 4;
                         sumB += source[ai + 0] - source[ri + 0];
@@ -418,8 +415,8 @@ public static class FilterEngine
                         sumR += source[ai + 2] - source[ri + 2];
                         sumA += source[ai + 3] - source[ri + 3];
                         var di = (y * w + x) * 4;
-                        result[di + 0] = (byte)(sumB / count); result[di + 1] = (byte)(sumG / count);
-                        result[di + 2] = (byte)(sumR / count); result[di + 3] = (byte)(sumA / count);
+                        result[di + 0] = (byte)(sumB / length); result[di + 1] = (byte)(sumG / length);
+                        result[di + 2] = (byte)(sumR / length); result[di + 3] = (byte)(sumA / length);
                     }
                 });
             }
@@ -432,7 +429,7 @@ public static class FilterEngine
                         long sumB = 0, sumG = 0, sumR = 0, sumA = 0;
                         for (var step = 0; step < length; step++)
                         {
-                            var sx = Math.Clamp((int)MathF.Round(x + dx * (step - half)), 0, w - 1);
+                            var sx = Math.Clamp((int)MathF.Round(x + dx * (step - radius)), 0, w - 1);
                             var si = (y * w + sx) * 4;
                             sumB += source[si + 0]; sumG += source[si + 1];
                             sumR += source[si + 2]; sumA += source[si + 3];
@@ -445,27 +442,25 @@ public static class FilterEngine
         }
         else if (MathF.Abs(dx) < 0.005f)
         {
-            var hy = half;
             if (sel == null || !sel.HasSelection)
             {
-                var count = length;
                 for (var x = 0; x < w; x++)
                 {
                     long sumB = 0, sumG = 0, sumR = 0, sumA = 0;
                     for (int k = 0; k < length; k++)
                     {
-                        var sy = Math.Clamp((int)(k - hy) * Math.Sign(dy), 0, h - 1);
+                        var sy = Math.Clamp(k - radius, 0, h - 1);
                         var si = (sy * w + x) * 4;
                         sumB += source[si + 0]; sumG += source[si + 1]; sumR += source[si + 2]; sumA += source[si + 3];
                     }
                     var d0 = x * 4;
-                    result[d0 + 0] = (byte)(sumB / count); result[d0 + 1] = (byte)(sumG / count);
-                    result[d0 + 2] = (byte)(sumR / count); result[d0 + 3] = (byte)(sumA / count);
+                    result[d0 + 0] = (byte)(sumB / length); result[d0 + 1] = (byte)(sumG / length);
+                    result[d0 + 2] = (byte)(sumR / length); result[d0 + 3] = (byte)(sumA / length);
 
                     for (var y = 1; y < h; y++)
                     {
-                        var remY = Math.Clamp(y - 1 - (int)hy * Math.Sign(dy), 0, h - 1);
-                        var addY = Math.Clamp(y + (int)hy * Math.Sign(dy), 0, h - 1);
+                        var remY = Math.Clamp(y - 1 - radius, 0, h - 1);
+                        var addY = Math.Clamp(y + rightEdge, 0, h - 1);
                         var ri = (remY * w + x) * 4;
                         var ai = (addY * w + x) * 4;
                         sumB += source[ai + 0] - source[ri + 0];
@@ -473,8 +468,8 @@ public static class FilterEngine
                         sumR += source[ai + 2] - source[ri + 2];
                         sumA += source[ai + 3] - source[ri + 3];
                         var di = (y * w + x) * 4;
-                        result[di + 0] = (byte)(sumB / count); result[di + 1] = (byte)(sumG / count);
-                        result[di + 2] = (byte)(sumR / count); result[di + 3] = (byte)(sumA / count);
+                        result[di + 0] = (byte)(sumB / length); result[di + 1] = (byte)(sumG / length);
+                        result[di + 2] = (byte)(sumR / length); result[di + 3] = (byte)(sumA / length);
                     }
                 }
             }
@@ -487,7 +482,7 @@ public static class FilterEngine
                         long sumB = 0, sumG = 0, sumR = 0, sumA = 0;
                         for (var step = 0; step < length; step++)
                         {
-                            var sy = Math.Clamp((int)MathF.Round(y + dy * (step - half)), 0, h - 1);
+                            var sy = Math.Clamp((int)MathF.Round(y + dy * (step - radius)), 0, h - 1);
                             var si = (sy * w + x) * 4;
                             sumB += source[si + 0]; sumG += source[si + 1];
                             sumR += source[si + 2]; sumA += source[si + 3];
@@ -501,7 +496,6 @@ public static class FilterEngine
         else
         {
             var stride = Math.Max(1, length / 12);
-            var steps = length / stride;
             Parallel.For(0, h, y =>
             {
                 for (var x = 0; x < w; x++)
@@ -511,7 +505,7 @@ public static class FilterEngine
                     var count = 0;
                     for (var step = 0; step < length; step += stride)
                     {
-                        var sample = step - half;
+                        var sample = step - radius;
                         var sx = Math.Clamp((int)MathF.Round(x + dx * sample), 0, w - 1);
                         var sy = Math.Clamp((int)MathF.Round(y + dy * sample), 0, h - 1);
                         var si = (sy * w + sx) * 4;

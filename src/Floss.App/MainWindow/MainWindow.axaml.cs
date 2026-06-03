@@ -152,6 +152,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private Slider _hardnessSlider = null!;
     private Slider _spacingSlider = null!;
     private Slider _smoothingSlider = null!;
+    private bool _speedAdaptiveStabilizer = true;
     private Slider _grainSlider = null!;
     private Slider _flowSlider = null!;
     private Slider _layerOpacitySlider = null!;

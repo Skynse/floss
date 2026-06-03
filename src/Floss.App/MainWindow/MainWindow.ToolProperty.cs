@@ -92,6 +92,8 @@ public partial class MainWindow
                 SliderProp("brush.hardness", "Hardness", true, _hardnessSlider, "%"),
                 SliderProp("brush.spacing", "Spacing", false, _spacingSlider, "%"),
                 SliderProp("brush.smoothing", "Stabilization", true, _smoothingSlider, "%"),
+                BoolProp("brush.speedAdaptive", "Adjust by speed", false,
+                    () => _speedAdaptiveStabilizer, v => { _speedAdaptiveStabilizer = v; _canvas?.SetStabilizerSpeedAdaptive(v); }),
                 SliderProp("brush.grain", "Grain", false, _grainSlider, "%"),
                 EnumProp("brush.quality", "Quality", false,
                     () => _activePreset?.Quality ?? BrushQuality.High, v => UpdateCurrentBrush(p => p with { Quality = v })),

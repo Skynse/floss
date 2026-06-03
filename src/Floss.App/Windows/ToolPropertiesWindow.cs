@@ -58,6 +58,8 @@ public sealed class ToolPropertiesWindow : Window
     private readonly Slider _hardnessSlider = MkSlider(0, 1, 0.9, "Edge softness (anti-aliasing)");
     private readonly Slider _spacingSlider = MkSlider(0.01, 1, 0.1, "Stamp interval as fraction of size");
     private readonly Slider _smoothingSlider = MkSlider(0, 0.95, 0.3, "Input stabilization");
+    private bool _speedAdaptiveStabilizer = true;
+    public Action<bool>? OnSpeedAdaptiveChanged;
     private readonly Slider _angleSlider = MkSlider(0, 360, 0, "Base angle in degrees");
     private readonly Slider _grainSlider = MkSlider(0, 1, 0.0, "Noise texture strength");
     private readonly Slider _tipDensitySlider = MkSlider(0, 1, 1.0, "Brush tip density (0=none, 1=full)");
@@ -1300,15 +1302,30 @@ public sealed class ToolPropertiesWindow : Window
         return row;
     }
 
-    private Control BuildStrokeContent() => new StackPanel
+    private Control BuildStrokeContent()
     {
-        Spacing = 0,
-        Children =
+        var cb = new CheckBox
         {
-            DynSliderRow("Spacing",   _spacingSlider,   "%", () => OpenSpacingDynamics(), "brush.spacing"),
-            PlainSliderRow("Smoothing", _smoothingSlider, "%", "brush.smoothing")
-        }
-    };
+            Content = new TextBlock { Text = "Adjust by speed", FontSize = 11 },
+            Margin = new Thickness(0, 2, 0, 0),
+            IsChecked = _speedAdaptiveStabilizer,
+        };
+        cb.IsCheckedChanged += (_, _) =>
+        {
+            _speedAdaptiveStabilizer = cb.IsChecked ?? true;
+            OnSpeedAdaptiveChanged?.Invoke(_speedAdaptiveStabilizer);
+        };
+        return new StackPanel
+        {
+            Spacing = 0,
+            Children =
+            {
+                DynSliderRow("Spacing",   _spacingSlider,   "%", () => OpenSpacingDynamics(), "brush.spacing"),
+                PlainSliderRow("Stabilization", _smoothingSlider, "%", "brush.smoothing"),
+                cb
+            }
+        };
+    }
 
     private Control BuildTextureContent()
     {

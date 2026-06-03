@@ -51,7 +51,7 @@ public partial class MainWindow : Window
         _flowSlider = MkSlider(0.01, 1, 1.0, "Flow — controls paint buildup per dab");
         _hardnessSlider = MkSlider(0, 1, 0.9, "Hardness — edge softness");
         _spacingSlider = MkSlider(0.02, 1, 0.1, "Spacing");
-        _smoothingSlider = MkSlider(0, 0.95, 0.3, "Smoothing — input stabilization");
+            _smoothingSlider = MkSlider(0, 0.95, 0.3, "Stabilization");
         _grainSlider = MkSlider(0, 1, 0.0, "Grain — noise texture");
 
         _activeBrushLabel = new TextBlock
@@ -1873,6 +1873,7 @@ public partial class MainWindow : Window
 
             RefreshToolProperties();
         }, SaveNodeGraphAsNewBrushPreset, OpenBrushTipGraphEditor);
+        _toolPropsWindow.OnSpeedAdaptiveChanged = enabled => _canvas?.SetStabilizerSpeedAdaptive(enabled);
         _toolPropsWindow.Closed += (_, _) => _toolPropsWindow = null;
         _toolPropsWindow.Show(this);
     }

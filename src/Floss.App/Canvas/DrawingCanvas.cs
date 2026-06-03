@@ -539,6 +539,14 @@ public sealed class DrawingCanvas : Control, IDisposable
         InvalidateVisual();
     }
 
+    public void SetStabilizerSpeedAdaptive(bool enabled)
+    {
+        if (_brushTool.Input is BrushStrokeInputProcess brushInput)
+            brushInput.SpeedAdaptiveStabilizer = enabled;
+        if (_eraserTool.Input is BrushStrokeInputProcess eraserInput)
+            eraserInput.SpeedAdaptiveStabilizer = enabled;
+    }
+
     public void SetBrushQuality(BrushQuality quality)
     {
         _brush = _brush with { Quality = quality };
