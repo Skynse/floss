@@ -22,6 +22,9 @@ public sealed class TiledPixelBuffer : IDisposable
     private readonly Dictionary<(int X, int Y), byte[]> _compressed = [];
     // Copy-on-write refcounts. Absent key means rf=0 (mutable in place).
     private readonly Dictionary<(int X, int Y), int> _refs = [];
+    // Pre-clone pool (Krita: m_clonesStack). When refcount 1→2, a copy
+    // is pre-allocated so CowClone can use it without Rent + BlockCopy.
+    private readonly Dictionary<(int X, int Y), Queue<byte[]>> _clones = [];
 
     private readonly string _scratchDir;
     private readonly object _lock = new();
@@ -43,12 +46,22 @@ public sealed class TiledPixelBuffer : IDisposable
     /// <summary>Bump the tile-key version. Must be called inside <c>_lock</c>.</summary>
     private void InvalidateTileKeyCache() => _tileKeyVersion++;
 
-    private void Retain((int X, int Y) key)
+    private void Retain((int X, int Y) key, byte[]? data)
     {
         lock (_lock)
         {
             _refs.TryGetValue(key, out var n);
             _refs[key] = n + 1;
+            // Pre-clone (Krita: pooler fills m_clonesStack): when refcount goes
+            // 1→2 (first share), pre-copy the data so CowClone gets a hit.
+            if (n == 1 && data != null)
+            {
+                var clone = TileMemoryPool.RentUnsafe();
+                Buffer.BlockCopy(data, 0, clone, 0, TileBytes);
+                if (!_clones.TryGetValue(key, out var stack))
+                    _clones[key] = stack = new Queue<byte[]>(2);
+                stack.Enqueue(clone);
+            }
         }
     }
 
@@ -57,7 +70,15 @@ public sealed class TiledPixelBuffer : IDisposable
         lock (_lock)
         {
             if (!_refs.TryGetValue(key, out var n) || n <= 1)
+            {
                 _refs.Remove(key);
+                if (_clones.TryGetValue(key, out var stack))
+                {
+                    while (stack.Count > 0)
+                        TileMemoryPool.Return(stack.Dequeue());
+                    _clones.Remove(key);
+                }
+            }
             else
                 _refs[key] = n - 1;
         }
@@ -71,7 +92,15 @@ public sealed class TiledPixelBuffer : IDisposable
             foreach (var key in captured.Keys)
             {
                 if (!_refs.TryGetValue(key, out var n) || n <= 1)
+                {
                     _refs.Remove(key);
+                    if (_clones.TryGetValue(key, out var stack))
+                    {
+                        while (stack.Count > 0)
+                            TileMemoryPool.Return(stack.Dequeue());
+                        _clones.Remove(key);
+                    }
+                }
                 else
                     _refs[key] = n - 1;
             }
@@ -86,11 +115,21 @@ public sealed class TiledPixelBuffer : IDisposable
 
     private byte[] CowClone((int X, int Y) key, byte[] raw)
     {
-        if (!IsShared(key)) return raw;
-        var clone = TileMemoryPool.Rent();
-        Buffer.BlockCopy(raw, 0, clone, 0, raw.Length);
+        byte[] clone;
         lock (_lock)
         {
+            if (!_refs.ContainsKey(key)) return raw;
+            // Pre-clone hit (Krita: m_clonesStack.pop): no Rent + no BlockCopy
+            if (_clones.TryGetValue(key, out var stack) && stack.Count > 0)
+            {
+                clone = stack.Dequeue();
+                if (stack.Count == 0) _clones.Remove(key);
+            }
+            else
+            {
+                clone = TileMemoryPool.RentUnsafe();
+                Buffer.BlockCopy(raw, 0, clone, 0, TileBytes);
+            }
             _tiles[key] = clone;
             InvalidateTileKeyCache();
         }
@@ -119,6 +158,10 @@ public sealed class TiledPixelBuffer : IDisposable
             _tiles.Clear();
             _compressed.Clear();
             _refs.Clear();
+            foreach (var stack in _clones.Values)
+                while (stack.Count > 0)
+                    TileMemoryPool.Return(stack.Dequeue());
+            _clones.Clear();
         }
         _pixelLock.Dispose();
     }
@@ -377,6 +420,10 @@ public sealed class TiledPixelBuffer : IDisposable
             _tiles.Clear();
             _compressed.Clear();
             _refs.Clear();
+            foreach (var stack in _clones.Values)
+                while (stack.Count > 0)
+                    TileMemoryPool.Return(stack.Dequeue());
+            _clones.Clear();
             InvalidateTileKeyCache();
         }
     }
@@ -511,7 +558,7 @@ public sealed class TiledPixelBuffer : IDisposable
                 var raw = EnsureRaw(key);
                 target.Add(key, raw);
                 if (raw != null)
-                    Retain(key);
+                    Retain(key, raw);
             }
         }
     }
@@ -522,7 +569,7 @@ public sealed class TiledPixelBuffer : IDisposable
         var raw = EnsureRaw(key);
         if (raw != null)
         {
-            Retain(key);
+            Retain(key, raw);
             return raw;
         }
         return null;

@@ -31,6 +31,7 @@ public sealed class DirectDrawOutput : IOutputProcess
     private StrokeTransaction? _active;
     private StrokeTransaction? _accepting;
     private bool _processing;
+    private int _scheduled;
 
     public DirectDrawOutput(BrushEngine brushEngine, DrawingDocument _)
     {
@@ -59,10 +60,13 @@ public sealed class DirectDrawOutput : IOutputProcess
 
         EnsureActiveTransaction();
 
-        // Never block the pointer event — schedule rendering asynchronously.
-        // Pixels hit tiles before the next frame via DispatcherPriority.Render.
-        if (!_processing)
-            Dispatcher.UIThread.Post(() => ProcessQueuedSync(), DispatcherPriority.Render);
+        // Krita-style async dab rendering: ProcessQueuedAsync runs
+        // ProcessSegmentBatch on a Task.Run worker thread, then flushes
+        // preview dirty on the UI thread. _scheduled flag deduplicates
+        // so only one batch is in-flight at a time — samples accumulate
+        // in QueuedSamples and are drained by the processing loop.
+        if (Interlocked.CompareExchange(ref _scheduled, 1, 0) == 0)
+            ProcessQueuedAsync();
     }
 
     public void Execute(ToolContext ctx, IProcessedInput input)
@@ -88,6 +92,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         }
 
         EnsureActiveTransaction();
+        WaitForProcessingToFinish();
         ProcessQueuedSync();
     }
 
@@ -235,13 +240,13 @@ public sealed class DirectDrawOutput : IOutputProcess
     // or when we need to finalize a transaction while not in a pointer event.
     private async void ProcessQueuedAsync()
     {
-        if (_processing)
-            return;
-
         EnsureActiveTransaction();
         var tx = _active;
         if (tx == null)
+        {
+            _scheduled = 0;
             return;
+        }
 
         _processing = true;
         var started = Stopwatch.GetTimestamp();
@@ -323,8 +328,10 @@ public sealed class DirectDrawOutput : IOutputProcess
         finally
         {
             _processing = false;
+            _scheduled = 0;
             if (scheduleAfterProcessing)
-                Dispatcher.UIThread.Post(() => ProcessQueuedAsync(), DispatcherPriority.Background);
+                if (Interlocked.CompareExchange(ref _scheduled, 1, 0) == 0)
+                    Dispatcher.UIThread.Post(() => ProcessQueuedAsync(), DispatcherPriority.Background);
         }
     }
 

@@ -14,15 +14,23 @@ using static Floss.App.Config.AppColors;
 public partial class MainWindow
 {
     // ── Tools docker content (used by the docker system) ──────────────────────
-    private Control BuildToolsContent()
+    private Control BuildToolsContent(bool vertical = false)
     {
-        _toolRailStack = new WrapPanel
-        {
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0),
-            ItemWidth = 30,
-            ItemHeight = 28
-        };
+        _toolRailStack = vertical
+            ? new StackPanel
+            {
+                Orientation = Orientation.Vertical,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Spacing = 1,
+                Margin = new Thickness(0)
+            }
+            : new WrapPanel
+            {
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0),
+                ItemWidth = 30,
+                ItemHeight = 28
+            };
 
         BuildToolRail();
 

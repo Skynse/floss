@@ -8,10 +8,10 @@ public sealed class CompositorConfig
     public static CompositorConfig Default { get; } = new();
 
     /// <summary>Max dirty tiles composited per frame (Drawpile: DirtyTileBudget).</summary>
-    public int DirtyTileBudget { get; set; } = 32;
+    public int DirtyTileBudget { get; set; } = 256;
 
     /// <summary>Max missing tiles loaded per frame.</summary>
-    public int MaxMissingTilesPerFrame { get; set; } = 96;
+    public int MaxMissingTilesPerFrame { get; set; } = 384;
 
     /// <summary>Max composite cache tiles before LRU trim.</summary>
     public int MaxCompositeCacheTiles { get; set; } = 8192;

@@ -33,8 +33,8 @@ public sealed class LayerCompositor : IDisposable
     private LayerProjectionPlane Projection =>
         _projection ??= new LayerProjectionPlane(new MergeHost(this));
     private static readonly System.Collections.Concurrent.ConcurrentBag<CountdownEvent> _cdePool = [];
-    public const int DirtyTileBudget = 32;
-    private const int MaxMissingTilesPerFrame = 96;
+    public const int DirtyTileBudget = 256;
+    private const int MaxMissingTilesPerFrame = 384;
     private const int MaxCompositeCacheTiles = 8192;
     private const int CmpTileSize = 64;
     // Drawpile PixmapGrid max cell dimension (32000 for Qt's max pixmap)

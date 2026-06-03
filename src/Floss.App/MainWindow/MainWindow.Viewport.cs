@@ -251,6 +251,7 @@ public partial class MainWindow : ICanvasInputHost
 
     private void ApplyCanvasOnlyLayout(bool canvasOnly)
     {
+        if (_leftPanel != null) _leftPanel.IsVisible = !canvasOnly;
         if (_rightPanel != null) _rightPanel.IsVisible = !canvasOnly;
 
         if (_rootGrid == null || _rootColumnWidths == null)
@@ -261,7 +262,7 @@ public partial class MainWindow : ICanvasInputHost
             var col = _rootGrid.ColumnDefinitions[i];
             if (canvasOnly)
             {
-                col.Width = i == 2
+                col.Width = i == 1
                     ? new GridLength(1, GridUnitType.Star)
                     : new GridLength(0);
                 col.MinWidth = 0;
@@ -270,8 +271,13 @@ public partial class MainWindow : ICanvasInputHost
             else
             {
                 col.Width = _rootColumnWidths[i];
-                col.MinWidth = i == 2 ? 320 : 0;
-                col.MaxWidth = double.PositiveInfinity;
+                col.MinWidth = i switch
+                {
+                    1 => 260,
+                    2 => 200,
+                    _ => 0
+                };
+                col.MaxWidth = i == 2 ? 440 : double.PositiveInfinity;
             }
         }
     }

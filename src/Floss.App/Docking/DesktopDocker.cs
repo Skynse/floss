@@ -540,13 +540,11 @@ public sealed class DesktopDocker
 
     private void EnterCanvasOnly()
     {
-        if (_canvasOnly || _rootGrid.ColumnDefinitions.Count < 5) return;
+        if (_canvasOnly || _rootGrid.ColumnDefinitions.Count < 3) return;
         _savedColWidths = _rootGrid.ColumnDefinitions.Select(c => c.Width).ToArray();
 
         _rootGrid.ColumnDefinitions[0].Width = new GridLength(0);
-        _rootGrid.ColumnDefinitions[1].Width = new GridLength(0);
-        _rootGrid.ColumnDefinitions[3].Width = new GridLength(0);
-        _rootGrid.ColumnDefinitions[4].Width = new GridLength(0);
+        _rootGrid.ColumnDefinitions[2].Width = new GridLength(0);
 
         LeftRail.IsVisible = false;
         RightPanel.IsVisible = false;
@@ -560,12 +558,11 @@ public sealed class DesktopDocker
         if (!_canvasOnly) return;
         _canvasOnly = false;
 
-        if (_savedColWidths is { Length: >= 5 })
+        if (_savedColWidths is { Length: >= 3 })
         {
             _rootGrid.ColumnDefinitions[0].Width = _savedColWidths[0];
             _rootGrid.ColumnDefinitions[1].Width = _savedColWidths[1];
-            _rootGrid.ColumnDefinitions[3].Width = _savedColWidths[3];
-            _rootGrid.ColumnDefinitions[4].Width = _savedColWidths[4];
+            _rootGrid.ColumnDefinitions[2].Width = _savedColWidths[2];
         }
 
         LeftRail.IsVisible = true;
@@ -722,8 +719,8 @@ public sealed class DesktopDocker
             ? Math.Max(_rootGrid.ColumnDefinitions[0].ActualWidth, 48) : 48;
 
         // Right panel start X in root grid coordinates
-        var rightStart = _rootGrid.ColumnDefinitions is { Count: > 4 }
-            ? _rootGrid.ColumnDefinitions.Take(4).Sum(cd => cd.ActualWidth) : rw;
+        var rightStart = _rootGrid.ColumnDefinitions is { Count: > 2 }
+            ? _rootGrid.ColumnDefinitions.Take(2).Sum(cd => cd.ActualWidth) : rw;
 
         // Left column drop zone
         if (rootPt.X <= leftW + 40)

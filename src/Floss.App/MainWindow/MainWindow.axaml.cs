@@ -533,7 +533,6 @@ public partial class MainWindow : Window, Tools.IViewportController
     private bool _syncingBrushUi;
     private Control? _rightPanel;
     private Control? _leftPanel;
-    private Control? _leftSplitter;
     private Control? _shellMenu;
     private Control? _statusBar;
     private Control? _footer;
@@ -1268,7 +1267,7 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         return new Border
         {
-            Background = new SolidColorBrush(Color.Parse(Bg1)),
+            Background = new SolidColorBrush(Color.Parse(BgSidebar)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 0, 1, 0),
             ClipToBounds = true,
@@ -1292,8 +1291,9 @@ public partial class MainWindow : Window, Tools.IViewportController
         {
             return new Border
             {
-                Background = new SolidColorBrush(Color.Parse(Bg0)),
+                Background = new SolidColorBrush(Color.Parse(BgSidebar)),
                 BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+                BorderThickness = new Thickness(1, 0, 0, 0),
                 ClipToBounds = true,
                 Child = grid
             };
@@ -1308,8 +1308,9 @@ public partial class MainWindow : Window, Tools.IViewportController
             grid.Children.Add(dock);
             return new Border
             {
-                Background = new SolidColorBrush(Color.Parse(Bg0)),
+                Background = new SolidColorBrush(Color.Parse(BgSidebar)),
                 BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+                BorderThickness = new Thickness(1, 0, 0, 0),
                 ClipToBounds = true,
                 Child = grid
             };
@@ -1342,9 +1343,9 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         return new Border
         {
-            Background = new SolidColorBrush(Color.Parse(Bg0)),
+            Background = new SolidColorBrush(Color.Parse(BgSidebar)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(0),
+            BorderThickness = new Thickness(1, 0, 0, 0),
             ClipToBounds = true,
             Child = grid
         };
@@ -2166,33 +2167,32 @@ public partial class MainWindow : Window, Tools.IViewportController
         if (_rootGrid == null || _rootGrid.ColumnDefinitions.Count < 3) return;
         var layout = App.Config.WorkspaceLayout;
         var hasPanels = layout.LeftColumn.ResolvedRows().Count > 0;
+        var column = _rootGrid.ColumnDefinitions[0];
 
         if (hasPanels)
         {
-            _rootGrid.ColumnDefinitions[0].MinWidth = 220;
-            _rootGrid.ColumnDefinitions[0].MaxWidth = 360;
-            _rootGrid.ColumnDefinitions[0].Width = new GridLength(300, GridUnitType.Pixel);
-            _rootGrid.ColumnDefinitions[1].MinWidth = 3;
-            _rootGrid.ColumnDefinitions[1].Width = new GridLength(3, GridUnitType.Pixel);
-            _leftSplitter!.IsVisible = true;
+            column.MinWidth = 220;
+            column.MaxWidth = 360;
+            column.Width = new GridLength(300, GridUnitType.Pixel);
+            if (_leftPanel != null)
+                _leftPanel.IsVisible = true;
         }
         else
         {
-            _rootGrid.ColumnDefinitions[0].MinWidth = 0;
-            _rootGrid.ColumnDefinitions[0].MaxWidth = double.PositiveInfinity;
-            _rootGrid.ColumnDefinitions[0].Width = new GridLength(0);
-            _rootGrid.ColumnDefinitions[1].MinWidth = 0;
-            _rootGrid.ColumnDefinitions[1].Width = new GridLength(0);
-            _leftSplitter!.IsVisible = false;
+            column.MinWidth = 0;
+            column.MaxWidth = double.PositiveInfinity;
+            column.Width = new GridLength(0);
+            if (_leftPanel != null)
+                _leftPanel.IsVisible = false;
         }
     }
 
     private void UpdateRightPanelWidth()
     {
-        if (_rootGrid == null || _rootGrid.ColumnDefinitions.Count < 4) return;
+        if (_rootGrid == null || _rootGrid.ColumnDefinitions.Count < 3) return;
 
         var hasPanels = App.Config.WorkspaceLayout.RightColumns.Any(HasVisibleDockerRows);
-        var column = _rootGrid.ColumnDefinitions[3];
+        var column = _rootGrid.ColumnDefinitions[2];
 
         if (hasPanels)
         {
@@ -2232,10 +2232,10 @@ public partial class MainWindow : Window, Tools.IViewportController
     private void SaveWorkspaceLayoutFromUi()
     {
         var layout = App.Config.WorkspaceLayout;
-        if (_rootGrid != null && _rootGrid.ColumnDefinitions.Count > 3)
+        if (_rootGrid != null && _rootGrid.ColumnDefinitions.Count > 2)
         {
-            if (_rootGrid.ColumnDefinitions[3].ActualWidth > 0)
-                layout.RightPanelWidth = Math.Max(240, _rootGrid.ColumnDefinitions[3].ActualWidth);
+            if (_rootGrid.ColumnDefinitions[2].ActualWidth > 0)
+                layout.RightPanelWidth = Math.Max(240, _rootGrid.ColumnDefinitions[2].ActualWidth);
         }
         // Save right-panel column split ratio (relevant for 2-column layouts)
         if (_rightPanel is Border { Child: Grid dockGrid }
@@ -2517,7 +2517,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     {
         var cfg = App.Config;
         cfg.WorkspaceLayout ??= WorkspaceLayout.CreateDefault();
-        if (_rootGrid != null && _rootGrid.ColumnDefinitions.Count > 3)
+        if (_rootGrid != null && _rootGrid.ColumnDefinitions.Count >= 3)
         {
             UpdateRightPanelWidth();
             CaptureRootColumnWidths();
@@ -2997,21 +2997,20 @@ public partial class MainWindow : Window, Tools.IViewportController
 
     private Control BuildFloatingToolStrip()
     {
-        var wrapper = new Border
+        return new Border
         {
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top,
-            Margin = new Thickness(0, 8, 0, 0),
+            Margin = new Thickness(0),
             ZIndex = 100,
-            Background = new SolidColorBrush(Color.Parse("#f20b0c0e")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#303238")),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(8, 5),
-            Child = BuildToolsContent()
+            Width = 42,
+            Background = new SolidColorBrush(Color.Parse(BgSidebar)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(0, 0, 1, 0),
+            CornerRadius = new CornerRadius(0),
+            Padding = new Thickness(3, 4),
+            Child = BuildToolsContent(vertical: true)
         };
-
-        return wrapper;
     }
 
     private Control BuildPopupTriggerStrip()

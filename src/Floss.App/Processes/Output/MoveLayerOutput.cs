@@ -136,6 +136,16 @@ public sealed class MoveLayerOutput : IOutputProcess
 
         // Write shifted pixels at new local position (Drawpile: put_image).
         var newContentBounds = new PixelRegion(newX, newY, oldW, oldH);
+
+        // Clipping: restrict to base-layer alpha before writing
+        if (layer.IsClipping)
+        {
+            var baseLayer = GetClippingBaseLayer(layer, ctx.Document);
+            if (baseLayer != null)
+                MaskPixelsToBaseAlpha(captured, contentBounds.Width, contentBounds.Height,
+                    baseLayer, newContentBounds.X, newContentBounds.Y);
+        }
+
         layer.Pixels.Restore(newContentBounds, captured);
 
         // Restore the original offset — pixels now live at new local coords,
@@ -171,4 +181,40 @@ public sealed class MoveLayerOutput : IOutputProcess
 
     private static int FloorDown(int v, int d) => v >= 0 ? (v / d) * d : ((v - d + 1) / d) * d;
     private static int AlignUp(int v, int d) => ((v + d - 1) / d) * d;
+
+    private static DrawingLayer? GetClippingBaseLayer(DrawingLayer clipped, DrawingDocument doc)
+    {
+        DrawingLayer? prev = null;
+        foreach (var l in doc.Layers)
+        {
+            if (ReferenceEquals(l, clipped))
+                return prev != null && !prev.IsClipping ? prev : null;
+            prev = l;
+        }
+        return null;
+    }
+
+    private static unsafe void MaskPixelsToBaseAlpha(
+        byte[] pixels, int w, int h, DrawingLayer baseLayer, int dstX, int dstY)
+    {
+        fixed (byte* p = pixels)
+        {
+            for (var y = 0; y < h; y++)
+            {
+                var row = p + y * w * 4;
+                for (var x = 0; x < w; x++)
+                {
+                    if (row[x * 4 + 3] == 0) continue;
+                    baseLayer.Pixels.GetPixel(dstX + x, dstY + y, out _, out _, out _, out var baseA);
+                    if (baseA == 0)
+                    {
+                        row[x * 4 + 0] = 0;
+                        row[x * 4 + 1] = 0;
+                        row[x * 4 + 2] = 0;
+                        row[x * 4 + 3] = 0;
+                    }
+                }
+            }
+        }
+    }
 }
