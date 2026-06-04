@@ -45,9 +45,9 @@ public sealed class ToolFactory
     }
 
     private static double EffectiveStabilization(ToolPreset preset)
-        => preset.BrushOverride?.Smoothing is { } s
+        => preset.BrushOverride?.Smoothing is { } s and > 0.001
             ? s
-            : preset.Stabilization > 0.001 ? preset.Stabilization : 0.0;
+            : preset.Stabilization > 0.001 ? preset.Stabilization : 0.3;
 
     private IInputProcess CreateInput(ToolPreset preset)
     {
@@ -56,7 +56,7 @@ public sealed class ToolFactory
             InputProcessType.Pen or InputProcessType.Brush or InputProcessType.Eraser or InputProcessType.Smudge
                 => new BrushStrokeInputProcess { Stabilization = EffectiveStabilization(preset) },
             InputProcessType.Liquify => new LiquifyInputProcess(),
-            InputProcessType.Lasso => new LassoInputProcess { Stabilization = preset.Stabilization > 0.001 ? preset.Stabilization : 0.0 },
+            InputProcessType.Lasso => new LassoInputProcess { Stabilization = preset.Stabilization > 0.001 ? preset.Stabilization : 0.3 },
             InputProcessType.Polyline => new PolylineInputProcess { ClosePath = preset.PolylineClosePath },
             InputProcessType.Rect => new RectInputProcess { ShapeKind = preset.ShapeKind },
             InputProcessType.Click => new ClickInputProcess(),

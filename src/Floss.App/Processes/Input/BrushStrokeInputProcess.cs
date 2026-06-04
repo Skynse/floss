@@ -52,8 +52,6 @@ public sealed class BrushStrokeInputProcess : IInputProcess
                 RawSamples = [a, b],
                 SmoothedSamples = [a, b]
             };
-            _straightLineAnchor = s;
-            return;
         }
 
         _straightLineAnchorSet = false;
@@ -83,6 +81,15 @@ public sealed class BrushStrokeInputProcess : IInputProcess
             _history.RemoveAt(0);
 
         var smoothed = GetStabilizedPosition();
+
+        // Only emit when the stabilized cursor actually moves enough.
+        // Fast strokes use a smaller threshold so gaps don't open before render catches up.
+        var dx = smoothed.X - _lastSmoothed.X;
+        var dy = smoothed.Y - _lastSmoothed.Y;
+        var minDist = _lastSpeed01 >= 0.55f ? 0.35 : 0.1;
+        if (Math.Sqrt(dx * dx + dy * dy) < minDist)
+            return;
+
         _smoothed.Add(smoothed);
         _lastSmoothed = smoothed;
     }
@@ -191,9 +198,14 @@ public sealed class BrushStrokeInputProcess : IInputProcess
             return baseCount;
 
         _lastSpeed01 = ComputeSpeed01(raw);
+
+        // Fast strokes: passthrough (1 sample) so ink stays under the pen like Krita.
+        if (_lastSpeed01 >= 0.55f)
+            return 1;
+
         var speedBlend = Math.Clamp(_lastSpeed01, 0f, 1f);
 
-        // Fast = minCount, slow = baseCount
+        // Medium speed: blend between min and full stabilizer window.
         var target = (1.0 - speedBlend) * baseCount + speedBlend * minCount;
         return Math.Max(minCount, (int)Math.Round(target));
     }

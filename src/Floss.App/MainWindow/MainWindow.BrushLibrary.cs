@@ -50,8 +50,8 @@ public partial class MainWindow : Window
         _opacitySlider = MkSlider(0.01, 1, 1.0, "Opacity");
         _flowSlider = MkSlider(0.01, 1, 1.0, "Flow — controls paint buildup per dab");
         _hardnessSlider = MkSlider(0, 1, 0.9, "Hardness — edge softness");
-        _spacingSlider = MkSlider(0.001, 1, 0.1, "Spacing");
-        _smoothingSlider = MkSlider(0, 0.95, 0.3, "Stabilization");
+        _spacingSlider = MkSlider(0.02, 1, 0.1, "Spacing");
+            _smoothingSlider = MkSlider(0, 0.95, 0.3, "Stabilization");
         _grainSlider = MkSlider(0, 1, 0.0, "Grain — noise texture");
 
         _activeBrushLabel = new TextBlock
@@ -88,8 +88,8 @@ public partial class MainWindow : Window
         _brushCategoryPanel = new StackPanel { Orientation = Avalonia.Layout.Orientation.Vertical };
         var catScroll = ScrollHelper.Create(sv =>
         {
-            sv.HorizontalScrollBarVisibility = ScrollBarVisibility.Visible;
-            sv.VerticalScrollBarVisibility = ScrollBarVisibility.Visible;
+            sv.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+            sv.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
             sv.Content = _brushCategoryPanel;
             sv.MinWidth = 88;
             sv.MaxWidth = 116;
@@ -99,8 +99,8 @@ public partial class MainWindow : Window
         _presetPanel = new StackPanel { Orientation = Avalonia.Layout.Orientation.Vertical };
         var presetScroll = ScrollHelper.Create(sv =>
         {
-            sv.HorizontalScrollBarVisibility = ScrollBarVisibility.Visible;
-            sv.VerticalScrollBarVisibility = ScrollBarVisibility.Visible;
+            sv.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+            sv.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
             sv.Content = _presetPanel;
         });
         _brushPresetScroll = presetScroll;
@@ -627,18 +627,18 @@ public partial class MainWindow : Window
             var selectedOutput = (OutputProcessType)(outputPicker.SelectedItem ?? preset.OutputProcess);
             var validInputs = ProcessCompatibility.ValidInputsFor(selectedOutput);
             inputPicker.ItemsSource = validInputs;
-
+            
             // If current input is invalid for new output, select default
             var currentInput = (InputProcessType?)inputPicker.SelectedItem ?? preset.InputProcess;
             if (!validInputs.Contains(currentInput))
                 inputPicker.SelectedItem = ProcessCompatibility.DefaultInputFor(selectedOutput);
             else
                 inputPicker.SelectedItem = currentInput;
-
+                
             // Disable input picker for locked outputs
             inputPicker.IsEnabled = !ProcessCompatibility.LockedOutputs.Contains(selectedOutput);
         }
-
+        
         outputPicker.SelectionChanged += (_, _) => RefreshInputPicker();
         RefreshInputPicker(); // Initial population
 
@@ -805,7 +805,7 @@ public partial class MainWindow : Window
             {
                 var assetCopy = sourceAsset.CloneForSaveAs(copy.Name);
                 _brushLibrary.Save(assetCopy);
-                _brushAssets = [.. _brushAssets, assetCopy];
+                _brushAssets = [.._brushAssets, assetCopy];
                 copy.BrushId = assetCopy.Id;
             }
             else
@@ -928,7 +928,7 @@ public partial class MainWindow : Window
 
         var asset = BrushAsset.FromPreset(brushPreset, category: _selectedCategory);
         _brushLibrary.Save(asset);
-        _brushAssets = [.. _brushAssets, asset];
+        _brushAssets = [.._brushAssets, asset];
 
         var newPreset = new ToolPreset
         {
@@ -1748,7 +1748,6 @@ public partial class MainWindow : Window
             _spacingSlider.Value = Math.Clamp(preset.Spacing, _spacingSlider.Minimum, _spacingSlider.Maximum);
             _smoothingSlider.Value = Math.Clamp(preset.Smoothing, _smoothingSlider.Minimum, _smoothingSlider.Maximum);
             _grainSlider.Value = Math.Clamp(preset.Grain, _grainSlider.Minimum, _grainSlider.Maximum);
-            _speedAdaptiveStabilizer = preset.SpeedAdaptiveStabilizer;
         }
         finally
         {
@@ -1874,12 +1873,7 @@ public partial class MainWindow : Window
 
             RefreshToolProperties();
         }, SaveNodeGraphAsNewBrushPreset, OpenBrushTipGraphEditor);
-        _toolPropsWindow.OnSpeedAdaptiveChanged = enabled =>
-        {
-            _canvas?.SetStabilizerSpeedAdaptive(enabled);
-            _speedAdaptiveStabilizer = enabled;
-            UpdateCurrentBrush(p => p with { SpeedAdaptiveStabilizer = enabled });
-        };
+        _toolPropsWindow.OnSpeedAdaptiveChanged = enabled => _canvas?.SetStabilizerSpeedAdaptive(enabled);
         _toolPropsWindow.Closed += (_, _) => _toolPropsWindow = null;
         _toolPropsWindow.Show(this);
     }
@@ -1920,7 +1914,7 @@ public partial class MainWindow : Window
             ShapeData = null
         };
         _brushLibrary.Save(asset);
-        _brushAssets = [.. _brushAssets, asset];
+        _brushAssets = [.._brushAssets, asset];
 
         var toolPreset = new ToolPreset
         {
@@ -2000,7 +1994,7 @@ public partial class MainWindow : Window
         var updated = current with
         {
             Tip = new NodeBrushTip(BrushTipNodeGraph.FromImageTip(tip.PngBytes)),
-            Tips = [.. current.Tips.Where(t => t.Kind == BrushTipStorageKind.EmbeddedPng).Select(t => t.DeepClone()), tip.DeepClone()]
+            Tips = [..current.Tips.Where(t => t.Kind == BrushTipStorageKind.EmbeddedPng).Select(t => t.DeepClone()), tip.DeepClone()]
         };
         UpdateCurrentBrush(_ => updated);
         RefreshGroupPresets();

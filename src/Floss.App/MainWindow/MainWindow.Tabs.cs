@@ -49,6 +49,7 @@ public partial class MainWindow
     private readonly List<DocumentTab> _tabs = new();
     private DocumentTab? _activeTab;
     private bool _pendingLayerRebuild;
+    private bool _layerRebuildCoalesce;
     private StackPanel _tabBar = null!;
     private ScrollViewer _tabBarContainer = null!;
     private Action? _canvasUnwire;
@@ -62,16 +63,16 @@ public partial class MainWindow
             Orientation = Orientation.Horizontal,
             Spacing = 1,
             VerticalAlignment = VerticalAlignment.Bottom,
-            Margin = new Thickness(4, 2, 0, 0)
+            Margin = new Thickness(4, 3, 0, 0)
         };
 
         var newTabBtn = new Button
         {
             Content = "+",
             Width = 24,
-            Height = 22,
+            Height = 23,
             Padding = new Thickness(0),
-            FontSize = 12,
+            FontSize = 13,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
             Background = new SolidColorBrush(Color.Parse(Bg1)),
@@ -95,7 +96,7 @@ public partial class MainWindow
         _tabBarContainer = new ScrollViewer
         {
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Hidden,
-            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Visible,
+            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
             Content = bar,
             Background = new SolidColorBrush(Color.Parse(Bg0)),
             IsVisible = false,
@@ -466,18 +467,31 @@ public partial class MainWindow
         PruneLayerSelection();
         SyncCanvasFrameToDocument(fitToViewport: false);
         _rulerOverlay?.InvalidateVisual();
-        // Throttle — only rebuild layer list once per render frame.
-        // NotifyLayersChanged fires on every layer add/delete/toggle and
-        // BuildLayerList allocates ~10 new controls per layer.
-        if (_pendingLayerRebuild) return;
+        // Coalesce to one rebuild per frame, but never drop a later LayersChanged
+        // (e.g. expand/collapse while a rebuild is already queued).
+        ScheduleLayerListRebuild();
+        UpdateStatus();
+        UpdateSelectionActionBar();
+    }
+
+    private void ScheduleLayerListRebuild()
+    {
+        if (_pendingLayerRebuild)
+        {
+            _layerRebuildCoalesce = true;
+            return;
+        }
+
         _pendingLayerRebuild = true;
         Avalonia.Threading.Dispatcher.UIThread.Post(() =>
         {
-            _pendingLayerRebuild = false;
-            BuildLayerList();
-        }, Avalonia.Threading.DispatcherPriority.Background);
-        UpdateStatus();
-        UpdateSelectionActionBar();
+            do
+            {
+                _layerRebuildCoalesce = false;
+                _pendingLayerRebuild = false;
+                BuildLayerList();
+            } while (_layerRebuildCoalesce);
+        }, Avalonia.Threading.DispatcherPriority.Render);
     }
 
     private void OnCanvasLayerMetadataChanged(object? s, LayerMetadataChangedEventArgs e)

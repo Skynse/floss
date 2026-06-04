@@ -16,9 +16,9 @@ internal static class ToolPresetSync
     }
 
     private static double EffectiveStabilization(ToolPreset preset)
-        => preset.BrushOverride?.Smoothing is { } s
+        => preset.BrushOverride?.Smoothing is { } s and > 0.001
             ? s
-            : preset.Stabilization > 0.001 ? preset.Stabilization : 0.0;
+            : preset.Stabilization > 0.001 ? preset.Stabilization : 0.3;
 
     private static void ApplyInput(IInputProcess input, ToolPreset preset)
     {
@@ -26,10 +26,9 @@ internal static class ToolPresetSync
         {
             case BrushStrokeInputProcess brushStroke:
                 brushStroke.Stabilization = EffectiveStabilization(preset);
-                brushStroke.SpeedAdaptiveStabilizer = preset.BrushOverride?.SpeedAdaptiveStabilizer ?? true;
                 break;
             case LassoInputProcess lasso:
-                lasso.Stabilization = preset.Stabilization > 0.001 ? preset.Stabilization : 0.0;
+                lasso.Stabilization = preset.Stabilization > 0.001 ? preset.Stabilization : 0.3;
                 break;
             case PolylineInputProcess polyline:
                 polyline.ClosePath = preset.PolylineClosePath;

@@ -14,23 +14,15 @@ using static Floss.App.Config.AppColors;
 public partial class MainWindow
 {
     // ── Tools docker content (used by the docker system) ──────────────────────
-    private Control BuildToolsContent(bool vertical = false)
+    private Control BuildToolsContent()
     {
-        _toolRailStack = vertical
-            ? new StackPanel
-            {
-                Orientation = Orientation.Vertical,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Spacing = 1,
-                Margin = new Thickness(0)
-            }
-            : new WrapPanel
-            {
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0),
-                ItemWidth = 30,
-                ItemHeight = 28
-            };
+        _toolRailStack = new WrapPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0),
+            ItemWidth = 30,
+            ItemHeight = 28
+        };
 
         BuildToolRail();
 
@@ -119,8 +111,8 @@ public partial class MainWindow
             CacheMode = new BitmapCache(),
             Child = new ScrollViewer
             {
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Visible,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 Content = outerStack
             }
         };
@@ -518,8 +510,8 @@ public partial class MainWindow
             var iconBtn = new Button
             {
                 Content = MaterialIcon(p, 18),
-                Width = 28,
-                Height = 26,
+            Width = 28,
+            Height = 26,
                 Margin = new Thickness(2),
                 Background = new SolidColorBrush(Color.Parse(group.CustomIcon == p ? AccentSoft : Bg2)),
                 BorderBrush = new SolidColorBrush(Color.Parse(group.CustomIcon == p ? Accent : Stroke)),

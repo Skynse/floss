@@ -17,9 +17,12 @@ namespace Floss.App.Processes.Output;
 // finalizing a stroke while a new one has already started.
 public sealed class DirectDrawOutput : IOutputProcess
 {
-    private const long PreviewNotifyIntervalMs = 1;
-    private const double RenderSliceBudgetMs = 10.0;
-    private const int MaxSegmentsPerSlice = 256;
+    // Time-slicing only applies when draining the backlog outside an active pointer
+    // move (Finalize/Flush). During Preview we drain the full queue synchronously
+    // so strokes stay under the pen (Krita-style), not playing catch-up.
+    private const long PreviewNotifyIntervalMs = 0;
+    private const double RenderSliceBudgetMs = 8.0;
+    private const int MaxSegmentsPerSlice = 64;
     private const int InitialSegmentsPerSlice = 8;
 
     public bool IsPaintOutput => true;
@@ -31,7 +34,6 @@ public sealed class DirectDrawOutput : IOutputProcess
     private StrokeTransaction? _active;
     private StrokeTransaction? _accepting;
     private bool _processing;
-    private int _scheduled;
 
     public DirectDrawOutput(BrushEngine brushEngine, DrawingDocument _)
     {
@@ -60,13 +62,9 @@ public sealed class DirectDrawOutput : IOutputProcess
 
         EnsureActiveTransaction();
 
-        // Krita-style async dab rendering: ProcessQueuedAsync runs
-        // ProcessSegmentBatch on a Task.Run worker thread, then flushes
-        // preview dirty on the UI thread. _scheduled flag deduplicates
-        // so only one batch is in-flight at a time — samples accumulate
-        // in QueuedSamples and are drained by the processing loop.
-        if (Interlocked.CompareExchange(ref _scheduled, 1, 0) == 0)
-            ProcessQueuedAsync();
+        // Drain every queued segment on the UI thread before returning from the
+        // pointer event — no 5 ms budget cap, no Background-priority catch-up.
+        ProcessQueuedSync(drainAll: true);
     }
 
     public void Execute(ToolContext ctx, IProcessedInput input)
@@ -93,7 +91,7 @@ public sealed class DirectDrawOutput : IOutputProcess
 
         EnsureActiveTransaction();
         WaitForProcessingToFinish();
-        ProcessQueuedSync();
+        ProcessQueuedSync(drainAll: true);
     }
 
     private StrokeTransaction BeginTransaction(ToolContext ctx, DrawingLayer layer, CanvasInputSample firstSample)
@@ -144,9 +142,7 @@ public sealed class DirectDrawOutput : IOutputProcess
     }
 
     // Render synchronously on the caller thread (pointer event handler).
-    // No dispatcher post, no Task.Run.  Heavy batches still get sliced so
-    // the UI thread doesn't stall for more than ~5 ms.
-    private void ProcessQueuedSync()
+    private void ProcessQueuedSync(bool drainAll = false)
     {
         if (_processing)
             return;
@@ -160,7 +156,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         var started = Stopwatch.GetTimestamp();
         var processed = 0;
         var batchDirty = PixelRegion.Empty;
-        var scheduleBackground = false;
+        var scheduleContinue = false;
 
         try
         {
@@ -170,52 +166,7 @@ public sealed class DirectDrawOutput : IOutputProcess
                 tx.StrokeStarted = true;
             }
 
-            while (tx.NextSegmentIndex < tx.QueuedSamples.Count)
-            {
-                var remaining = tx.QueuedSamples.Count - tx.NextSegmentIndex;
-                var segmentCount = Math.Min(remaining, tx.SuggestedSegmentCount(RenderSliceBudgetMs, InitialSegmentsPerSlice, MaxSegmentsPerSlice));
-
-                var startIndex = tx.NextSegmentIndex;
-                var snapshot = SnapshotSamples(tx.QueuedSamples, startIndex - 1, segmentCount + 1);
-                var snapshotStart = 1;
-
-                var dirty = ProcessSegmentBatch(tx, snapshot, snapshotStart, segmentCount);
-
-                tx.NextSegmentIndex += segmentCount;
-                processed += segmentCount;
-
-                if (!dirty.IsEmpty)
-                    batchDirty = batchDirty.Union(dirty);
-
-                if (processed >= MaxSegmentsPerSlice)
-                    break;
-                if (ElapsedMs(started) >= RenderSliceBudgetMs)
-                    break;
-            }
-
-            if (!batchDirty.IsEmpty)
-            {
-                tx.PendingPreviewDirty = tx.PendingPreviewDirty.Union(batchDirty);
-                FlushPreviewDirty(tx, force: tx.FinalizeRequested);
-            }
-
-            if (tx.NextSegmentIndex < tx.QueuedSamples.Count)
-            {
-                // Still have work — re-schedule for next Render callback.
-                scheduleBackground = true;
-                return;
-            }
-
-            if (tx.FinalizeRequested)
-            {
-                FlushPreviewDirty(tx, force: true);
-                _brushEngine.EndStroke();
-                Commit(tx);
-                _active = null;
-                EnsureActiveTransaction();
-                if (_active != null)
-                    scheduleBackground = true;
-            }
+            ProcessSegmentsSync(tx, drainAll, ref started, ref processed, ref batchDirty, ref scheduleContinue);
         }
         catch (Exception ex)
         {
@@ -226,13 +177,15 @@ public sealed class DirectDrawOutput : IOutputProcess
             _accepting = ReferenceEquals(_accepting, tx) ? null : _accepting;
             EnsureActiveTransaction();
             if (_active != null)
-                scheduleBackground = true;
+                scheduleContinue = true;
         }
         finally
         {
             _processing = false;
-            if (scheduleBackground && _active != null)
-                Dispatcher.UIThread.Post(() => ProcessQueuedSync(), DispatcherPriority.Render);
+            // Never defer active-stroke work to Background — keep draining at Render
+            // priority until the queue matches the pen.
+            if (scheduleContinue && _active != null)
+                Dispatcher.UIThread.Post(() => ProcessQueuedSync(drainAll: true), DispatcherPriority.Render);
         }
     }
 
@@ -240,13 +193,13 @@ public sealed class DirectDrawOutput : IOutputProcess
     // or when we need to finalize a transaction while not in a pointer event.
     private async void ProcessQueuedAsync()
     {
+        if (_processing)
+            return;
+
         EnsureActiveTransaction();
         var tx = _active;
         if (tx == null)
-        {
-            _scheduled = 0;
             return;
-        }
 
         _processing = true;
         var started = Stopwatch.GetTimestamp();
@@ -328,10 +281,8 @@ public sealed class DirectDrawOutput : IOutputProcess
         finally
         {
             _processing = false;
-            _scheduled = 0;
             if (scheduleAfterProcessing)
-                if (Interlocked.CompareExchange(ref _scheduled, 1, 0) == 0)
-                    Dispatcher.UIThread.Post(() => ProcessQueuedAsync(), DispatcherPriority.Background);
+                Dispatcher.UIThread.Post(() => ProcessQueuedAsync(), DispatcherPriority.Background);
         }
     }
 
@@ -379,19 +330,14 @@ public sealed class DirectDrawOutput : IOutputProcess
 
         if (!dirty.IsEmpty)
         {
-            var hasSelection = tx.Ctx.Selection.HasSelection;
-            var alphaLocked = tx.Layer.IsAlphaLocked;
-            if (hasSelection || alphaLocked)
+            tx.Layer.Pixels.EnterPixelWriteLock();
+            try
             {
-                tx.Layer.Pixels.EnterPixelWriteLock();
-                try
-                {
-                    RestoreUnselectedPixels(tx.Layer, dirty, tx.Ctx.Selection, tx.BeforeTiles);
-                }
-                finally
-                {
-                    tx.Layer.Pixels.ExitPixelWriteLock();
-                }
+                RestoreUnselectedPixels(tx.Layer, dirty, tx.Ctx.Selection, tx.BeforeTiles);
+            }
+            finally
+            {
+                tx.Layer.Pixels.ExitPixelWriteLock();
             }
 
             var translatedDirty = dirty.Translate(tx.Layer.OffsetX, tx.Layer.OffsetY);
@@ -476,7 +422,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         }
         if (_active != null && !_active.FinalizeRequested)
             _active.FinalizeRequested = true;
-        ProcessQueuedSync();
+        ProcessQueuedSync(drainAll: true);
     }
 
     private void WaitForProcessingToFinish()
@@ -546,7 +492,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         if (!batchDirty.IsEmpty)
         {
             tx.PendingPreviewDirty = tx.PendingPreviewDirty.Union(batchDirty);
-            FlushPreviewDirty(tx, force: force || tx.FinalizeRequested);
+            FlushPreviewDirty(tx, force: true);
         }
 
         if (tx.NextSegmentIndex < tx.QueuedSamples.Count)
@@ -573,10 +519,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         try
         {
             if (tx.BeforeTiles.Count == 0)
-            {
-                tx.Layer.Pixels.ReleaseCapturedRefs(tx.BeforeTiles);
                 return;
-            }
 
             using var mutation = tx.Ctx.Document.RenderLock.Write();
             foreach (var ((tileX, tileY), tile) in tx.BeforeTiles)
@@ -592,7 +535,6 @@ public sealed class DirectDrawOutput : IOutputProcess
         }
         finally
         {
-            tx.Layer.Pixels.ReleaseCapturedRefs(tx.BeforeTiles);
             tx.Ctx.Document.NotifyStrokeSuspendEnd();
         }
     }

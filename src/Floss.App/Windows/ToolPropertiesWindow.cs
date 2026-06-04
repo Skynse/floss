@@ -56,7 +56,7 @@ public sealed class ToolPropertiesWindow : Window
     private readonly Slider _amountOfPaintSlider = MkSlider(0, 1, 1.0, "Amount of paint deposited (0=none, 1=full)");
     private readonly Slider _densityOfPaintSlider = MkSlider(0, 1, 1.0, "Paint density (0=thin, 1=thick)");
     private readonly Slider _hardnessSlider = MkSlider(0, 1, 0.9, "Edge softness (anti-aliasing)");
-    private readonly Slider _spacingSlider = MkSlider(0.001, 1, 0.1, "Spacing");
+    private readonly Slider _spacingSlider = MkSlider(0.01, 1, 0.1, "Stamp interval as fraction of size");
     private readonly CheckBox _autoSpacingCheck = new()
     {
         Content = new TextBlock { Text = "Auto", FontSize = 11 },
@@ -105,11 +105,11 @@ public sealed class ToolPropertiesWindow : Window
         _onOpenNodeGraphEditor = onOpenNodeGraphEditor;
         _isBrushTool = toolPreset.OutputProcess == OutputProcessType.DirectDraw;
 
-        Width = 480;
-        Height = 560;
+        Width = 560;
+        Height = 620;
         CanResize = true;
-        MinWidth = 420;
-        MinHeight = 400;
+        MinWidth = 500;
+        MinHeight = 500;
         Background = new SolidColorBrush(Color.Parse(Bg0));
         Title = _isBrushTool ? "Brush Settings" : $"Tool Properties — {toolPreset.Name}";
         WindowDecorations = WindowDecorations.None;
@@ -185,8 +185,8 @@ public sealed class ToolPropertiesWindow : Window
         var header = new DockPanel
         {
             LastChildFill = true,
-            Height = 44,
-            Margin = new Thickness(16, 0)
+            Height = 60,
+            Margin = new Thickness(22, 0)
         };
         header.PointerPressed += (_, e) =>
         {
@@ -197,18 +197,23 @@ public sealed class ToolPropertiesWindow : Window
         header.Children.Add(closeBtn);
         header.Children.Add(title);
 
-        _preview.Height = 80;
-        _preview.Margin = new Thickness(16, 0, 16, 8);
+        _preview.Height = 122;
+        _preview.Margin = new Thickness(72, 0, 72, 14);
 
         var tabs = new Border
         {
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 1, 0, 1),
-            Child = BuildTabs()
+            Child = new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                Content = BuildTabs()
+            }
         };
 
         _contentHost.Background = new SolidColorBrush(Color.Parse(Bg1));
-        _contentHost.Padding = new Thickness(8, 4, 8, 4);
+        _contentHost.Padding = new Thickness(12, 12);
 
         var shell = new Grid
         {
@@ -241,7 +246,7 @@ public sealed class ToolPropertiesWindow : Window
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            MinHeight = 38
+            MinHeight = 46
         };
         foreach (var btn in _catButtons)
             stack.Children.Add(btn);
@@ -282,10 +287,10 @@ public sealed class ToolPropertiesWindow : Window
         var btn = new Button
         {
             Content = CategoryDisplayName(_categories[index]),
-            MinWidth = 60,
-            Height = 38,
-            Padding = new Thickness(12, 0),
-            FontSize = 12,
+            Width = 78,
+            Height = 46,
+            Padding = new Thickness(0),
+            FontSize = 13,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
             Background = new SolidColorBrush(Colors.Transparent),
@@ -369,6 +374,7 @@ public sealed class ToolPropertiesWindow : Window
     private static ScrollViewer WrapContent(Control content) => new()
     {
         Content = content,
+        Padding = new Thickness(0, 0, 12, 0)
     };
 
     // ── Category content ──────────────────────────────────────────────────────
@@ -432,10 +438,7 @@ public sealed class ToolPropertiesWindow : Window
             var trashBtn = new Button
             {
                 Content = "✕",
-                Width = 14,
-                Height = 14,
-                Padding = new Thickness(0),
-                FontSize = 8,
+                Width = 14, Height = 14, Padding = new Thickness(0), FontSize = 8,
                 HorizontalContentAlignment = HorizontalAlignment.Center,
                 VerticalContentAlignment = VerticalAlignment.Center,
                 Background = new SolidColorBrush(Color.Parse(Bg1)),
@@ -518,8 +521,8 @@ public sealed class ToolPropertiesWindow : Window
 
         var galleryScroll = new ScrollViewer
         {
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Visible,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
             Content = galleryPanel,
             Margin = new Thickness(0, 0, 0, 2)
         };
@@ -886,10 +889,7 @@ public sealed class ToolPropertiesWindow : Window
         }
         var btn = new Button
         {
-            Width = 54,
-            Height = 58,
-            Margin = new Thickness(2),
-            Padding = new Thickness(2),
+            Width = 54, Height = 58, Margin = new Thickness(2), Padding = new Thickness(2),
             Background = new SolidColorBrush(Color.Parse(active ? AccentSoft : Bg2)),
             BorderBrush = new SolidColorBrush(Color.Parse(active ? Accent : Stroke)),
             BorderThickness = new Thickness(1),
@@ -975,10 +975,7 @@ public sealed class ToolPropertiesWindow : Window
     {
         var btn = new Button
         {
-            Width = 54,
-            Height = 58,
-            Margin = new Thickness(2),
-            Padding = new Thickness(2),
+            Width = 54, Height = 58, Margin = new Thickness(2), Padding = new Thickness(2),
             Background = new SolidColorBrush(Color.Parse(Bg2)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
@@ -1168,9 +1165,7 @@ public sealed class ToolPropertiesWindow : Window
         var previewImg = new Image { Source = previewBmp, Width = 56, Height = 56, Stretch = Stretch.Uniform };
         var previewBox = new Border
         {
-            Width = 64,
-            Height = 64,
-            Padding = new Thickness(4),
+            Width = 64, Height = 64, Padding = new Thickness(4),
             Background = new SolidColorBrush(Color.Parse(Bg2)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
@@ -1258,9 +1253,7 @@ public sealed class ToolPropertiesWindow : Window
         var img = new Image { Source = bmp, Width = 30, Height = 30, Stretch = Stretch.Uniform };
         var thumb = new Border
         {
-            Width = 36,
-            Height = 36,
-            Padding = new Thickness(2),
+            Width = 36, Height = 36, Padding = new Thickness(2),
             Background = new SolidColorBrush(Color.Parse(Bg2)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
@@ -2110,7 +2103,6 @@ public sealed class ToolPropertiesWindow : Window
         _hardnessSlider.Value = Math.Clamp(preset.Hardness, _hardnessSlider.Minimum, _hardnessSlider.Maximum);
         _spacingSlider.Value = Math.Clamp(preset.Spacing, _spacingSlider.Minimum, _spacingSlider.Maximum);
         _autoSpacingCheck.IsChecked = preset.AutoSpacingActive;
-        _speedAdaptiveStabilizer = preset.SpeedAdaptiveStabilizer;
         _smoothingSlider.Value = Math.Clamp(preset.Smoothing, _smoothingSlider.Minimum, _smoothingSlider.Maximum);
         _grainSlider.Value = Math.Clamp(preset.Grain, _grainSlider.Minimum, _grainSlider.Maximum);
         _angleSlider.Value = Math.Clamp(preset.Angle, _angleSlider.Minimum, _angleSlider.Maximum);
@@ -2188,7 +2180,6 @@ public sealed class ToolPropertiesWindow : Window
             Minimum = min,
             Maximum = max,
             Value = value,
-            Height = 24,
             VerticalAlignment = VerticalAlignment.Center
         };
         ToolTip.SetTip(s, tip);
@@ -2208,7 +2199,8 @@ public sealed class ToolPropertiesWindow : Window
         FontSize = 10,
         FontWeight = FontWeight.SemiBold,
         Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-        Margin = new Thickness(0, 12, 0, 4),
+        Margin = new Thickness(0, 8, 0, 6),
+        LetterSpacing = 0
     };
 
     private static void StyleCombo(ComboBox combo)

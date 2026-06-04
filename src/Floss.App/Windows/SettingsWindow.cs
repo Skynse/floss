@@ -192,8 +192,8 @@ public sealed class SettingsWindow : Window
 
         return new ScrollViewer
         {
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Visible,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             Content = content
         };
     }
@@ -304,8 +304,8 @@ public sealed class SettingsWindow : Window
 
         return new ScrollViewer
         {
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Visible,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             Content = content
         };
     }

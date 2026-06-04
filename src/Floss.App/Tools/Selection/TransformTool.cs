@@ -680,30 +680,6 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         }
 
         layer.Pixels.Restore(clipped, flat);
-
-        // Clipping: re-apply base-layer alpha constraint if this layer is clipped
-        if (layer.IsClipping)
-        {
-            var baseLayer = GetClippingBaseLayer(layer);
-            if (baseLayer != null)
-            {
-                for (var cy = 0; cy < clipped.Height; cy++)
-                {
-                    var ly = clipped.Y + cy - layer.OffsetY;
-                    var baseY = clipped.Y + cy - baseLayer.OffsetY;
-                    for (var cx = 0; cx < clipped.Width; cx++)
-                    {
-                        var lx = clipped.X + cx - layer.OffsetX;
-                        var baseX = clipped.X + cx - baseLayer.OffsetX;
-                        layer.Pixels.GetPixel(lx, ly, out _, out _, out _, out var la);
-                        if (la == 0) continue;
-                        baseLayer.Pixels.GetPixel(baseX, baseY, out _, out _, out _, out var ba);
-                        if (ba == 0)
-                            layer.Pixels.SetPixel(lx, ly, 0, 0, 0, 0);
-                    }
-                }
-            }
-        }
     }
 
     // ── Helper methods (unchanged from original) ──
@@ -961,17 +937,5 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
 
         var rotY = rect.Bottom + Math.Max(rect.Height * 0.25, 12);
         yield return (TransformDragPart.Rotate, new Point(midX, rotY));
-    }
-
-    private DrawingLayer? GetClippingBaseLayer(DrawingLayer clipped)
-    {
-        DrawingLayer? prev = null;
-        foreach (var l in _context.Document.Layers)
-        {
-            if (ReferenceEquals(l, clipped))
-                return prev != null && !prev.IsClipping ? prev : null;
-            prev = l;
-        }
-        return null;
     }
 }

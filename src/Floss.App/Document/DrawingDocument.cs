@@ -376,14 +376,9 @@ public sealed class DrawingDocument : IDisposable
         foreach (var (key, before) in beforeTiles)
         {
             var after = layer.CaptureTile(key.X, key.Y);
-            if (ReferenceEquals(before, after)) continue;
-            if (before != null && after != null && TileBytesEqual(before, after)) continue;
-            var beforeCopy = before != null ? CopyTileBytes(before) : null;
-            var afterCopy = after != null ? CopyTileBytes(after) : null;
-            patches.Add(new LayerTilePatch(key.X, key.Y, beforeCopy, afterCopy));
+            if (TileBytesEqual(before, after)) continue;
+            patches.Add(new LayerTilePatch(key.X, key.Y, before, after));
         }
-
-        layer.Pixels.ReleaseCapturedRefs(beforeTiles as Dictionary<(int, int), byte[]?> ?? []);
 
         if (patches.Count == 0) return;
 
@@ -407,14 +402,9 @@ public sealed class DrawingDocument : IDisposable
             foreach (var (key, before) in mutation.BeforeTiles)
             {
                 var after = layer.CaptureTile(key.X, key.Y);
-                if (ReferenceEquals(before, after)) continue;
-                if (before != null && after != null && TileBytesEqual(before, after)) continue;
-                var beforeCopy = before != null ? CopyTileBytes(before) : null;
-                var afterCopy = after != null ? CopyTileBytes(after) : null;
-                patches.Add(new LayerTilePatch(key.X, key.Y, beforeCopy, afterCopy));
+                if (TileBytesEqual(before, after)) continue;
+                patches.Add(new LayerTilePatch(key.X, key.Y, before, after));
             }
-
-            layer.Pixels.ReleaseCapturedRefs(mutation.BeforeTiles);
 
             if (patches.Count == 0) continue;
             states.Add(new LayerTileHistoryState(mutation.LayerIndex, patches.ToArray(), mutation.DirtyRegion));
@@ -1313,13 +1303,6 @@ public sealed class DrawingDocument : IDisposable
             copy.IsMaskVisible = source.IsMaskVisible;
         }
         foreach (var child in source.Children) { var childCopy = CloneLayerTree(child); childCopy.Parent = copy; copy.Children.Add(childCopy); }
-        return copy;
-    }
-
-    private static byte[] CopyTileBytes(byte[] src)
-    {
-        var copy = new byte[src.Length];
-        Buffer.BlockCopy(src, 0, copy, 0, src.Length);
         return copy;
     }
 

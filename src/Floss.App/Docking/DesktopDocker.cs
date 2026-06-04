@@ -161,12 +161,12 @@ public sealed class DesktopDocker
     {
         if (_canvasOnly) return;
 
-        if (_rootGrid.ColumnDefinitions.Count > 2)
+        if (_rootGrid.ColumnDefinitions.Count > 4)
         {
             if (_rootGrid.ColumnDefinitions[0].ActualWidth > 0)
                 Layout.LeftRailWidth = Math.Max(36, _rootGrid.ColumnDefinitions[0].ActualWidth);
-            if (_rootGrid.ColumnDefinitions[2].ActualWidth > 0)
-                Layout.RightPanelWidth = Math.Max(300, _rootGrid.ColumnDefinitions[2].ActualWidth);
+            if (_rootGrid.ColumnDefinitions[4].ActualWidth > 0)
+                Layout.RightPanelWidth = Math.Max(300, _rootGrid.ColumnDefinitions[4].ActualWidth);
         }
 
         SaveProportions();
@@ -188,11 +188,11 @@ public sealed class DesktopDocker
         Layout = newLayout;
         Layout.Normalize(PanelRegistry.AllIds);
 
-        if (_rootGrid.ColumnDefinitions.Count > 2)
+        if (_rootGrid.ColumnDefinitions.Count > 4)
         {
             _rootGrid.ColumnDefinitions[0].Width = new GridLength(
                 Math.Clamp(Layout.LeftRailWidth, 36, 800), GridUnitType.Pixel);
-            _rootGrid.ColumnDefinitions[2].Width = new GridLength(
+            _rootGrid.ColumnDefinitions[4].Width = new GridLength(
                 Math.Clamp(Layout.RightPanelWidth, 300, 1000), GridUnitType.Pixel);
         }
 
@@ -540,11 +540,13 @@ public sealed class DesktopDocker
 
     private void EnterCanvasOnly()
     {
-        if (_canvasOnly || _rootGrid.ColumnDefinitions.Count < 3) return;
+        if (_canvasOnly || _rootGrid.ColumnDefinitions.Count < 5) return;
         _savedColWidths = _rootGrid.ColumnDefinitions.Select(c => c.Width).ToArray();
 
         _rootGrid.ColumnDefinitions[0].Width = new GridLength(0);
-        _rootGrid.ColumnDefinitions[2].Width = new GridLength(0);
+        _rootGrid.ColumnDefinitions[1].Width = new GridLength(0);
+        _rootGrid.ColumnDefinitions[3].Width = new GridLength(0);
+        _rootGrid.ColumnDefinitions[4].Width = new GridLength(0);
 
         LeftRail.IsVisible = false;
         RightPanel.IsVisible = false;
@@ -558,11 +560,12 @@ public sealed class DesktopDocker
         if (!_canvasOnly) return;
         _canvasOnly = false;
 
-        if (_savedColWidths is { Length: >= 3 })
+        if (_savedColWidths is { Length: >= 5 })
         {
             _rootGrid.ColumnDefinitions[0].Width = _savedColWidths[0];
             _rootGrid.ColumnDefinitions[1].Width = _savedColWidths[1];
-            _rootGrid.ColumnDefinitions[2].Width = _savedColWidths[2];
+            _rootGrid.ColumnDefinitions[3].Width = _savedColWidths[3];
+            _rootGrid.ColumnDefinitions[4].Width = _savedColWidths[4];
         }
 
         LeftRail.IsVisible = true;
@@ -669,8 +672,7 @@ public sealed class DesktopDocker
         {
             Foreground = new SolidColorBrush(Color.Parse("#cccccc")),
             Background = new SolidColorBrush(Color.Parse("#cc1e1e20")),
-            FontSize = 11,
-            FontWeight = FontWeight.SemiBold,
+            FontSize = 11, FontWeight = FontWeight.SemiBold,
             Padding = new Thickness(8, 3),
             IsHitTestVisible = false,
             ZIndex = 1001
@@ -719,8 +721,8 @@ public sealed class DesktopDocker
             ? Math.Max(_rootGrid.ColumnDefinitions[0].ActualWidth, 48) : 48;
 
         // Right panel start X in root grid coordinates
-        var rightStart = _rootGrid.ColumnDefinitions is { Count: > 2 }
-            ? _rootGrid.ColumnDefinitions.Take(2).Sum(cd => cd.ActualWidth) : rw;
+        var rightStart = _rootGrid.ColumnDefinitions is { Count: > 4 }
+            ? _rootGrid.ColumnDefinitions.Take(4).Sum(cd => cd.ActualWidth) : rw;
 
         // Left column drop zone
         if (rootPt.X <= leftW + 40)
@@ -919,9 +921,7 @@ public sealed class DesktopDocker
 
         var title = new TextBlock
         {
-            Text = panel.Title,
-            FontSize = 9,
-            FontWeight = FontWeight.SemiBold,
+            Text = panel.Title, FontSize = 9, FontWeight = FontWeight.SemiBold,
             Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
             VerticalAlignment = VerticalAlignment.Center
         };
@@ -964,10 +964,9 @@ public sealed class DesktopDocker
         if (id == "tool-properties")
             return new ScrollViewer
             {
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Visible,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
-                ClipToBounds = true,
-                Content = content
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                ClipToBounds = true, Content = content
             };
         return new Border { ClipToBounds = true, Child = content };
     }

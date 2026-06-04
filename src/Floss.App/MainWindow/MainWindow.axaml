@@ -2,6 +2,6 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="Floss.App.MainWindow"
         Width="1600" Height="1050"
-        MinWidth="1000" MinHeight="650"
+        MinWidth="1200" MinHeight="800"
         Background="{StaticResource Bg0Brush}"
         Title="Floss"/>

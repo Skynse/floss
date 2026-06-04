@@ -35,8 +35,7 @@ public sealed record BrushPreset(
     public BrushTipDirection TipDirection { get; init; } = BrushTipDirection.Horizontal;
     public double Grain { get; init; } = 0.0;
     public string? Texture { get; init; } = null;
-    public double Smoothing { get; init; } = 0.0;
-    public bool SpeedAdaptiveStabilizer { get; init; } = true;
+    public double Smoothing { get; init; } = 0.3;
 
     // ── MyPaint-style dynamics (stateful brush engine) ───────────────────────
     public double SlowTracking { get; init; } = 0.0;

@@ -95,12 +95,7 @@ public partial class MainWindow
                     () => _activePreset?.AutoSpacingActive ?? true, v => UpdateCurrentBrush(p => p with { AutoSpacingActive = v })),
                 SliderProp("brush.smoothing", "Stabilization", true, _smoothingSlider, "%"),
                 BoolProp("brush.speedAdaptive", "Adjust by speed", false,
-                    () => _speedAdaptiveStabilizer, v =>
-                    {
-                        _speedAdaptiveStabilizer = v;
-                        _canvas?.SetStabilizerSpeedAdaptive(v);
-                        UpdateCurrentBrush(p => p with { SpeedAdaptiveStabilizer = v });
-                    }),
+                    () => _speedAdaptiveStabilizer, v => { _speedAdaptiveStabilizer = v; _canvas?.SetStabilizerSpeedAdaptive(v); }),
                 SliderProp("brush.grain", "Grain", false, _grainSlider, "%"),
                 EnumProp("brush.quality", "Quality", false,
                     () => _activePreset?.Quality ?? BrushQuality.High, v => UpdateCurrentBrush(p => p with { Quality = v })),

@@ -94,8 +94,8 @@ public sealed class AdjustmentLayerDialog : Window
         Control AdjRow(string label, double min, double max, Func<float> get, Action<float> set, string fmt = "0")
         {
             var lbl = FilterLabel(label);
-            var sl = FilterSlider(min, max, get());
-            var vl = FilterValueLabel(string.Format($"{{0:{fmt}}}", get()));
+            var sl  = FilterSlider(min, max, get());
+            var vl  = FilterValueLabel(string.Format($"{{0:{fmt}}}", get()));
             sl.PropertyChanged += (_, e) =>
             {
                 if (e.Property.Name != nameof(Slider.Value)) return;
@@ -109,11 +109,11 @@ public sealed class AdjustmentLayerDialog : Window
         {
             case AdjustmentKind.BrightnessContrast:
                 panel.Children.Add(AdjRow("Brightness", -255, 255, () => _working.Brightness, v => { _working.Brightness = v; _preview(_working); }));
-                panel.Children.Add(AdjRow("Contrast", -100, 100, () => _working.Contrast, v => { _working.Contrast = v; _preview(_working); }));
+                panel.Children.Add(AdjRow("Contrast",   -100, 100, () => _working.Contrast,   v => { _working.Contrast   = v; _preview(_working); }));
                 break;
 
             case AdjustmentKind.HueSaturationLuminosity:
-                panel.Children.Add(AdjRow("Hue", -180, 180, () => _working.Hue, v => { _working.Hue = v; _preview(_working); }));
+                panel.Children.Add(AdjRow("Hue",        -180, 180, () => _working.Hue,        v => { _working.Hue        = v; _preview(_working); }));
                 panel.Children.Add(AdjRow("Saturation", -100, 100, () => _working.Saturation, v => { _working.Saturation = v; _preview(_working); }));
                 panel.Children.Add(AdjRow("Luminosity", -100, 100, () => _working.Luminosity, v => { _working.Luminosity = v; _preview(_working); }));
                 break;
@@ -124,9 +124,9 @@ public sealed class AdjustmentLayerDialog : Window
 
             case AdjustmentKind.LevelCorrection:
                 panel.Children.Add(SectionLabel("Input"));
-                panel.Children.Add(AdjRow("Black", 0, 255, () => _working.LevelInBlack, v => { _working.LevelInBlack = v; _preview(_working); }));
-                panel.Children.Add(AdjRow("White", 0, 255, () => _working.LevelInWhite, v => { _working.LevelInWhite = v; _preview(_working); }));
-                panel.Children.Add(AdjRow("Gamma", 0, 10, () => _working.LevelGamma, v => { _working.LevelGamma = v; _preview(_working); }, "F2"));
+                panel.Children.Add(AdjRow("Black", 0, 255, () => _working.LevelInBlack,  v => { _working.LevelInBlack  = v; _preview(_working); }));
+                panel.Children.Add(AdjRow("White", 0, 255, () => _working.LevelInWhite,  v => { _working.LevelInWhite  = v; _preview(_working); }));
+                panel.Children.Add(AdjRow("Gamma", 0, 10,  () => _working.LevelGamma,    v => { _working.LevelGamma    = v; _preview(_working); }, "F2"));
                 panel.Children.Add(SectionLabel("Output"));
                 panel.Children.Add(AdjRow("Black", 0, 255, () => _working.LevelOutBlack, v => { _working.LevelOutBlack = v; _preview(_working); }));
                 panel.Children.Add(AdjRow("White", 0, 255, () => _working.LevelOutWhite, v => { _working.LevelOutWhite = v; _preview(_working); }));
@@ -172,8 +172,8 @@ public sealed class AdjustmentLayerDialog : Window
 
         var scroll = new ScrollViewer
         {
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Visible,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             MaxHeight = 520,
             Content = panel
         };
@@ -301,18 +301,15 @@ public sealed class AdjustmentLayerDialog : Window
 
                 var posSlider = new Slider
                 {
-                    Minimum = 0,
-                    Maximum = 1,
+                    Minimum = 0, Maximum = 1,
                     Value = stop.Pos,
-                    Width = 120,
-                    Height = 20,
+                    Width = 120, Height = 20,
                     TickFrequency = 0.01
                 };
                 var posLabel = new TextBlock
                 {
                     Text = $"{stop.Pos:F2}",
-                    FontSize = 11,
-                    Width = 34,
+                    FontSize = 11, Width = 34,
                     VerticalAlignment = VerticalAlignment.Center,
                     Foreground = new SolidColorBrush(Color.Parse(TextPrimary))
                 };
@@ -326,8 +323,7 @@ public sealed class AdjustmentLayerDialog : Window
 
                 var colorSwatch = new Border
                 {
-                    Width = 24,
-                    Height = 20,
+                    Width = 24, Height = 20,
                     CornerRadius = new CornerRadius(3),
                     BorderThickness = new Thickness(1),
                     BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
@@ -352,11 +348,7 @@ public sealed class AdjustmentLayerDialog : Window
 
                 var removeBtn = new Button
                 {
-                    Content = "×",
-                    FontSize = 12,
-                    Width = 22,
-                    Height = 22,
-                    Padding = new Thickness(0),
+                    Content = "×", FontSize = 12, Width = 22, Height = 22, Padding = new Thickness(0),
                     HorizontalContentAlignment = HorizontalAlignment.Center,
                     IsEnabled = stops.Count > 2
                 };
@@ -371,8 +363,7 @@ public sealed class AdjustmentLayerDialog : Window
 
                 var row = new StackPanel
                 {
-                    Orientation = Orientation.Horizontal,
-                    Spacing = 6,
+                    Orientation = Orientation.Horizontal, Spacing = 6,
                     VerticalAlignment = VerticalAlignment.Center
                 };
                 row.Children.Add(colorSwatch);
@@ -418,7 +409,7 @@ public sealed class AdjustmentLayerDialog : Window
         var arr = new float[stops.Count * 4];
         for (var i = 0; i < stops.Count; i++)
         {
-            arr[i * 4] = stops[i].Pos;
+            arr[i * 4]     = stops[i].Pos;
             arr[i * 4 + 1] = stops[i].R;
             arr[i * 4 + 2] = stops[i].G;
             arr[i * 4 + 3] = stops[i].B;

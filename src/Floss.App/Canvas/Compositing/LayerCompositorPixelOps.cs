@@ -514,8 +514,7 @@ internal static class LayerCompositorPixelOps
         var lut = new byte[65536];
         for (int s = 0; s < 256; s++)
             for (int d = 0; d < 256; d++)
-                lut[(s << 8) | d] = (byte)Math.Clamp(
-                    Math.Round(fn(s / 255.0, d / 255.0) * 255, MidpointRounding.AwayFromZero), 0, 255);
+                lut[(s << 8) | d] = (byte)Math.Clamp(Math.Round(fn(s / 255.0, d / 255.0) * 255), 0, 255);
         return lut;
     }
 
@@ -555,10 +554,10 @@ internal static class LayerCompositorPixelOps
             dst[3] = (byte)srcA;
             return;
         }
-        uint dstCont = (dstA * (255 - srcA) + 127) / 255;
-        uint outA = srcA + dstCont;
+        uint outA = srcA + ((dstA * (255 - srcA)) >> 8);
         if (outA == 0) return;
         uint half = outA >> 1;
+        uint dstCont = (dstA * (255 - srcA)) >> 8;
         dst[0] = (byte)((srcB * srcA + dstB * dstCont + half) / outA);
         dst[1] = (byte)((srcG * srcA + dstG * dstCont + half) / outA);
         dst[2] = (byte)((srcR * srcA + dstR * dstCont + half) / outA);
@@ -1020,10 +1019,10 @@ internal static class LayerCompositorPixelOps
         var outAlpha = srcA + dstA * (1.0 - srcA);
         if (outAlpha <= 0) return;
 
-        dst[0] = (byte)Math.Clamp(Math.Round((blendB * srcA + dstB * dstA * (1.0 - srcA)) / outAlpha * 255, MidpointRounding.AwayFromZero), 0, 255);
-        dst[1] = (byte)Math.Clamp(Math.Round((blendG * srcA + dstG * dstA * (1.0 - srcA)) / outAlpha * 255, MidpointRounding.AwayFromZero), 0, 255);
-        dst[2] = (byte)Math.Clamp(Math.Round((blendR * srcA + dstR * dstA * (1.0 - srcA)) / outAlpha * 255, MidpointRounding.AwayFromZero), 0, 255);
-        dst[3] = (byte)Math.Clamp(Math.Round(outAlpha * 255, MidpointRounding.AwayFromZero), 0, 255);
+        dst[0] = (byte)Math.Clamp((blendB * srcA + dstB * dstA * (1.0 - srcA)) / outAlpha * 255, 0, 255);
+        dst[1] = (byte)Math.Clamp((blendG * srcA + dstG * dstA * (1.0 - srcA)) / outAlpha * 255, 0, 255);
+        dst[2] = (byte)Math.Clamp((blendR * srcA + dstR * dstA * (1.0 - srcA)) / outAlpha * 255, 0, 255);
+        dst[3] = (byte)Math.Clamp(outAlpha * 255, 0, 255);
     }
 
     internal static (double r, double g, double b) ApplyBlendMode(

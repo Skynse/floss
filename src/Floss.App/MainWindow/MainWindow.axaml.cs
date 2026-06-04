@@ -233,7 +233,6 @@ public partial class MainWindow : Window, Tools.IViewportController
     private int _pendingDragIndex = -1;
     private Point _pendingDragStartPos;
     private PointerPressedEventArgs? _pendingDragArgs;
-    private bool _pendingDragWasMultiSelected;
     private int _renamingLayerIndex = -1;
     private TextBox? _activeLayerNameEdit;
     private Action<bool>? _finishLayerRename;
@@ -533,6 +532,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private bool _syncingBrushUi;
     private Control? _rightPanel;
     private Control? _leftPanel;
+    private Control? _leftSplitter;
     private Control? _shellMenu;
     private Control? _statusBar;
     private Control? _footer;
@@ -620,6 +620,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         _selectionOutlineOverlay = new SelectionOutlineOverlay(_canvas);
         _canvasHost.Children.Add(_selectionOutlineOverlay);
         _canvasFrame.Child = _canvasHost;
+        //_canvasFrame.PointerEntered += (_, _) => _canvasFrame.Cursor = new Cursor(StandardCursorType.None);
         _canvasFrame.PointerExited += (_, _) => _canvasFrame.Cursor = null;
 
         _workspaceViewport = new Grid
@@ -645,33 +646,30 @@ public partial class MainWindow : Window, Tools.IViewportController
         _canvasStatusText = MiniText();
         _footerStatusText = MiniText();
 
-        // Thin status bar above canvas (zoom/size info)
         var statusBar = new Border
         {
-            Background = new SolidColorBrush(Color.Parse(Bg1)),
-            Height = 18,
-            Padding = new Thickness(8, 0),
+            Background = new SolidColorBrush(Color.Parse(Bg0)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Height = 16,
+            Padding = new Thickness(6, 0),
             Child = _canvasStatusText,
             IsHitTestVisible = false
         };
 
-        // Thin footer bar (active tool, color swatch)
         var footer = new Border
         {
-            Background = new SolidColorBrush(Color.Parse(Bg1)),
-            Height = 20,
-            Padding = new Thickness(8, 0),
+            Background = new SolidColorBrush(Color.Parse(Bg0)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Height = 18,
+            Padding = new Thickness(6, 0),
             Child = BuildFooterPanel(),
             IsHitTestVisible = false
         };
 
         BuildTabBar();
-
-        // Floating tool strip — horizontal toolbar at the top of the canvas
-        var floatingTools = BuildFloatingToolStrip();
-
-        // ── Center area: tab bar | options bar | canvas | footer ──
-        var centerArea = new Grid { RowDefinitions = new RowDefinitions("26,Auto,*,20") };
+        var centerArea = new Grid { RowDefinitions = new RowDefinitions("24,16,*,18") };
         Grid.SetRow(_tabBarContainer, 0);
         Grid.SetRow(statusBar, 1);
         Grid.SetRow(_workspaceViewport, 2);
@@ -683,24 +681,38 @@ public partial class MainWindow : Window, Tools.IViewportController
         AttachBusyOverlay();
         AttachNodeGraphDockToCenter(centerArea);
 
-        // Floating tools overlay in the canvas row
-        Grid.SetRow(floatingTools, 2);
-        centerArea.Children.Add(floatingTools);
-
         _dockerRows.Clear();
         _dockerSections.Clear();
         var leftPanel = BuildLeftDockColumn();
         var rightPanel = BuildRightPanel();
 
-        // ── Root: left | canvas | right (no splitters in the new layout) ──
+        // Floating tool strip — horizontal toolbar at the top of the canvas
+        var floatingTools = BuildFloatingToolStrip();
+
         var root = new Grid();
         root.ColumnDefinitions.Add(new ColumnDefinition(0, GridUnitType.Pixel));    // left panel
+        root.ColumnDefinitions.Add(new ColumnDefinition(0, GridUnitType.Pixel));    // left splitter
         root.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 260 }); // canvas
         root.ColumnDefinitions.Add(new ColumnDefinition(250, GridUnitType.Pixel) { MinWidth = 200, MaxWidth = 440 }); // right panel
         _rootGrid = root;
         _rootColumnWidths = [.. root.ColumnDefinitions.Select(c => c.Width)];
 
-        // Popup that floats over the canvas, anchored to the right panel
+        var leftSplitter = new GridSplitter
+        {
+            Width = 3,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
+            Background = new SolidColorBrush(Color.Parse(Bg0)),
+            IsVisible = false
+        };
+        leftSplitter.DragCompleted += (_, _) =>
+        {
+            CaptureRootColumnWidths();
+            PersistWorkspaceLayout();
+        };
+        _leftSplitter = leftSplitter;
+
+        // Popup that floats over the canvas, anchored to the right panel's left edge
         _dockerPopup = new Popup
         {
             IsLightDismissEnabled = false,
@@ -718,18 +730,24 @@ public partial class MainWindow : Window, Tools.IViewportController
             }
         };
 
+        // Add floating tools as an overlay in the center area
+        Grid.SetRow(floatingTools, 2);
+        centerArea.Children.Add(floatingTools);
+
         Grid.SetColumn(leftPanel, 0);
-        Grid.SetColumn(centerArea, 1);
-        Grid.SetColumn(rightPanel, 2);
+        Grid.SetColumn(leftSplitter, 1);
+        Grid.SetColumn(centerArea, 2);
+        Grid.SetColumn(rightPanel, 3);
         root.Children.Add(leftPanel);
+        root.Children.Add(leftSplitter);
         root.Children.Add(centerArea);
         root.Children.Add(rightPanel);
+        // Popup must be in the visual tree to function; column 99 avoids conflicts
         Grid.SetColumn(_dockerPopup, 99);
         root.Children.Add(_dockerPopup);
 
-        // ── Shell: menu bar (thin) | main content ──
+        var shell = new Grid { RowDefinitions = new RowDefinitions("24,*") };
         var menu = BuildMenuBar();
-        var shell = new Grid { RowDefinitions = new RowDefinitions("22,*") };
         Grid.SetRow(menu, 0);
         Grid.SetRow(root, 1);
         shell.Children.Add(menu);
@@ -1267,7 +1285,7 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         return new Border
         {
-            Background = new SolidColorBrush(Color.Parse(BgSidebar)),
+            Background = new SolidColorBrush(Color.Parse(Bg1)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 0, 1, 0),
             ClipToBounds = true,
@@ -1291,9 +1309,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         {
             return new Border
             {
-                Background = new SolidColorBrush(Color.Parse(BgSidebar)),
+                Background = new SolidColorBrush(Color.Parse(Bg0)),
                 BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-                BorderThickness = new Thickness(1, 0, 0, 0),
                 ClipToBounds = true,
                 Child = grid
             };
@@ -1308,9 +1325,8 @@ public partial class MainWindow : Window, Tools.IViewportController
             grid.Children.Add(dock);
             return new Border
             {
-                Background = new SolidColorBrush(Color.Parse(BgSidebar)),
+                Background = new SolidColorBrush(Color.Parse(Bg0)),
                 BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-                BorderThickness = new Thickness(1, 0, 0, 0),
                 ClipToBounds = true,
                 Child = grid
             };
@@ -1343,9 +1359,9 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         return new Border
         {
-            Background = new SolidColorBrush(Color.Parse(BgSidebar)),
+            Background = new SolidColorBrush(Color.Parse(Bg0)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1, 0, 0, 0),
+            BorderThickness = new Thickness(0),
             ClipToBounds = true,
             Child = grid
         };
@@ -1579,7 +1595,7 @@ public partial class MainWindow : Window, Tools.IViewportController
                 {
                     Text = $"Missing panel: {id}",
                     Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-                    FontSize = 9,
+        FontSize = 9,
                     Margin = new Thickness(8)
                 }
             };
@@ -1623,8 +1639,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         var body = BuildDockerBody(id, content);
         var titleText = new TextBlock
         {
-            Text = title,
-            FontSize = 12,
+            Text = title.ToUpperInvariant(),
+            FontSize = 13,
             FontWeight = FontWeight.SemiBold,
             Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
@@ -1642,7 +1658,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         };
         var header = new Border
         {
-            Padding = new Thickness(8, 4, 8, 3),
+            Padding = new Thickness(10, 6, 10, 4),
             Child = headerRow,
             ContextMenu = ctxMenu
         };
@@ -1675,8 +1691,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         Control child = id == "tool-properties"
             ? new ScrollViewer
             {
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Visible,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 ClipToBounds = true,
                 Content = content
             }
@@ -2167,32 +2183,33 @@ public partial class MainWindow : Window, Tools.IViewportController
         if (_rootGrid == null || _rootGrid.ColumnDefinitions.Count < 3) return;
         var layout = App.Config.WorkspaceLayout;
         var hasPanels = layout.LeftColumn.ResolvedRows().Count > 0;
-        var column = _rootGrid.ColumnDefinitions[0];
 
         if (hasPanels)
         {
-            column.MinWidth = 220;
-            column.MaxWidth = 360;
-            column.Width = new GridLength(300, GridUnitType.Pixel);
-            if (_leftPanel != null)
-                _leftPanel.IsVisible = true;
+            _rootGrid.ColumnDefinitions[0].MinWidth = 220;
+            _rootGrid.ColumnDefinitions[0].MaxWidth = 360;
+            _rootGrid.ColumnDefinitions[0].Width = new GridLength(300, GridUnitType.Pixel);
+            _rootGrid.ColumnDefinitions[1].MinWidth = 3;
+            _rootGrid.ColumnDefinitions[1].Width = new GridLength(3, GridUnitType.Pixel);
+            _leftSplitter!.IsVisible = true;
         }
         else
         {
-            column.MinWidth = 0;
-            column.MaxWidth = double.PositiveInfinity;
-            column.Width = new GridLength(0);
-            if (_leftPanel != null)
-                _leftPanel.IsVisible = false;
+            _rootGrid.ColumnDefinitions[0].MinWidth = 0;
+            _rootGrid.ColumnDefinitions[0].MaxWidth = double.PositiveInfinity;
+            _rootGrid.ColumnDefinitions[0].Width = new GridLength(0);
+            _rootGrid.ColumnDefinitions[1].MinWidth = 0;
+            _rootGrid.ColumnDefinitions[1].Width = new GridLength(0);
+            _leftSplitter!.IsVisible = false;
         }
     }
 
     private void UpdateRightPanelWidth()
     {
-        if (_rootGrid == null || _rootGrid.ColumnDefinitions.Count < 3) return;
+        if (_rootGrid == null || _rootGrid.ColumnDefinitions.Count < 4) return;
 
         var hasPanels = App.Config.WorkspaceLayout.RightColumns.Any(HasVisibleDockerRows);
-        var column = _rootGrid.ColumnDefinitions[2];
+        var column = _rootGrid.ColumnDefinitions[3];
 
         if (hasPanels)
         {
@@ -2232,10 +2249,10 @@ public partial class MainWindow : Window, Tools.IViewportController
     private void SaveWorkspaceLayoutFromUi()
     {
         var layout = App.Config.WorkspaceLayout;
-        if (_rootGrid != null && _rootGrid.ColumnDefinitions.Count > 2)
+        if (_rootGrid != null && _rootGrid.ColumnDefinitions.Count > 3)
         {
-            if (_rootGrid.ColumnDefinitions[2].ActualWidth > 0)
-                layout.RightPanelWidth = Math.Max(240, _rootGrid.ColumnDefinitions[2].ActualWidth);
+            if (_rootGrid.ColumnDefinitions[3].ActualWidth > 0)
+                layout.RightPanelWidth = Math.Max(240, _rootGrid.ColumnDefinitions[3].ActualWidth);
         }
         // Save right-panel column split ratio (relevant for 2-column layouts)
         if (_rightPanel is Border { Child: Grid dockGrid }
@@ -2462,7 +2479,6 @@ public partial class MainWindow : Window, Tools.IViewportController
             Minimum = min,
             Maximum = max,
             Value = value,
-            Height = 24,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
         ToolTip.SetTip(s, tip);
@@ -2487,13 +2503,14 @@ public partial class MainWindow : Window, Tools.IViewportController
             TextAlignment = TextAlignment.Right,
             Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            FontFamily = new FontFamily("Consolas, Courier New, monospace")
         };
         slider.PropertyChanged += (_, e) =>
         {
             if (e.Property == Slider.ValueProperty)
                 valText.Text = FormatSliderValue(slider.Value, fmt);
         };
-        var row = new DockPanel { LastChildFill = true, Height = 24 };
+        var row = new DockPanel { LastChildFill = true };
         DockPanel.SetDock(lbl, Dock.Left);
         DockPanel.SetDock(valText, Dock.Right);
         row.Children.Add(lbl);
@@ -2517,7 +2534,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     {
         var cfg = App.Config;
         cfg.WorkspaceLayout ??= WorkspaceLayout.CreateDefault();
-        if (_rootGrid != null && _rootGrid.ColumnDefinitions.Count >= 3)
+        if (_rootGrid != null && _rootGrid.ColumnDefinitions.Count > 3)
         {
             UpdateRightPanelWidth();
             CaptureRootColumnWidths();
@@ -2997,20 +3014,21 @@ public partial class MainWindow : Window, Tools.IViewportController
 
     private Control BuildFloatingToolStrip()
     {
-        return new Border
+        var wrapper = new Border
         {
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top,
-            Margin = new Thickness(0),
+            Margin = new Thickness(0, 8, 0, 0),
             ZIndex = 100,
-            Width = 42,
-            Background = new SolidColorBrush(Color.Parse(BgSidebar)),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(0, 0, 1, 0),
-            CornerRadius = new CornerRadius(0),
-            Padding = new Thickness(3, 4),
-            Child = BuildToolsContent(vertical: true)
+            Background = new SolidColorBrush(Color.Parse("#f20b0c0e")),
+            BorderBrush = new SolidColorBrush(Color.Parse("#303238")),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(8, 5),
+            Child = BuildToolsContent()
         };
+
+        return wrapper;
     }
 
     private Control BuildPopupTriggerStrip()
