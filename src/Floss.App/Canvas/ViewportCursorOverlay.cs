@@ -6,7 +6,7 @@ using Avalonia.Media;
 namespace Floss.App.Canvas;
 
 /// <summary>
-/// Draws the tool cursor across the entire workspace viewport (dot-pattern area included).
+/// Draws the tool cursor across the entire workspace viewport (margins and canvas).
 /// Hit-test disabled so pointer events reach the canvas and viewport handlers below.
 /// </summary>
 internal sealed class ViewportCursorOverlay : Control
