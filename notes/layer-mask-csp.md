@@ -25,4 +25,4 @@
 
 - `DrawingLayer.ActivePixels` → mask buffer when `IsMaskEditing`.
 - Brush writes use `ActivePixels`; after composite, mask pixels sync RGB from alpha for thumbnail preview.
-- Adjustment layers: apply to scratch, blend to dst with `maskAlpha * opacity`.
+- Adjustment layers: LUT in-place on dst, gated by mask tile alpha × layer opacity (`ApplyWithMask`).

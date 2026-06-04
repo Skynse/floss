@@ -46,6 +46,9 @@ public sealed class AdjustmentLayerData
     // Gradient stops: flat [pos0,r0,g0,b0, pos1,r1,g1,b1, ...] all in 0..1
     public float[] GradientStops { get; set; } = [0f, 0f, 0f, 0f, 1f, 1f, 1f, 1f];
 
+    /// <summary>Precomputed RGB transform; rebuilt when <see cref="AdjustmentLayerLutCache"/> signature changes.</summary>
+    public AdjustmentLayerLutCache LutCache { get; } = new();
+
     public AdjustmentLayerData Clone() => new()
     {
         Kind = Kind,
