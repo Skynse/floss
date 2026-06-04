@@ -1705,7 +1705,7 @@ public partial class MainWindow : Window
         App.ToolGroups.SyncWithAssets(_brushAssets, _activeToolGroup);
         App.ToolGroups.Save();
         RefreshGroupPresets();
-        if (_nodeGraphDockVisible)
+        if (IsDockerVisible("node-graph"))
             InvalidateNodeGraphDockState();
     }
 

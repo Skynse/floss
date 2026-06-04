@@ -15,13 +15,14 @@ public sealed record DockPlacement(
 {
     public bool IsTabMember => TabGroupKey != null && IndexInTab >= 0;
     public bool IsSoloRow => !IsTabMember && RowKey == TabGroupKey;
+    public DockZone Zone => DockColumnIndices.ZoneOf(ColumnIndex);
 }
 
 public enum DockDropKind
 {
     InsertRow,
     MergeTab,
-    /// <summary>New dock column beside the canvas (left or right stack).</summary>
+    /// <summary>New dock column on left, right, or bottom edge.</summary>
     InsertDockColumn,
 }
 
@@ -38,11 +39,17 @@ public static class DockLayoutOps
 
         for (var i = 0; i < layout.RightColumns.Count; i++)
         {
-            var r = SearchColumn(layout.RightColumns[i], i, panelId);
+            var r = SearchColumn(layout.RightColumns[i], DockColumnIndices.Right(i), panelId);
             if (r != null) return r;
         }
 
-        return SearchColumn(layout.BottomColumn, DockColumnIndices.Bottom, panelId);
+        for (var i = 0; i < layout.BottomColumns.Count; i++)
+        {
+            var b = SearchColumn(layout.BottomColumns[i], DockColumnIndices.Bottom(i), panelId);
+            if (b != null) return b;
+        }
+
+        return null;
     }
 
     private static DockPlacement? SearchColumn(DockColumnLayout col, int columnIndex, string panelId)
@@ -79,9 +86,6 @@ public static class DockLayoutOps
 
     public static DockColumnLayout GetColumn(WorkspaceLayout layout, int columnIndex)
     {
-        if (columnIndex == DockColumnIndices.Bottom)
-            return layout.BottomColumn;
-
         var leftIdx = DockColumnIndices.TryParseLeft(columnIndex);
         if (leftIdx != null)
         {
@@ -96,8 +100,40 @@ public static class DockLayoutOps
             return layout.LeftColumns[leftIdx.Value];
         }
 
-        return layout.RightColumns[Math.Clamp(columnIndex, 0, layout.RightColumns.Count - 1)];
+        var bottomIdx = DockColumnIndices.TryParseBottom(columnIndex);
+        if (bottomIdx != null)
+        {
+            while (layout.BottomColumns.Count <= bottomIdx.Value)
+            {
+                layout.BottomColumns.Add(new DockColumnLayout
+                {
+                    Id = $"bottom-{layout.BottomColumns.Count}"
+                });
+            }
+
+            return layout.BottomColumns[bottomIdx.Value];
+        }
+
+        var rightIdx = Math.Clamp(columnIndex, 0, Math.Max(0, layout.RightColumns.Count - 1));
+        while (layout.RightColumns.Count <= rightIdx)
+        {
+            layout.RightColumns.Add(new DockColumnLayout
+            {
+                Id = $"right-{layout.RightColumns.Count}"
+            });
+        }
+
+        return layout.RightColumns[rightIdx];
     }
+
+    public static List<DockColumnLayout> ColumnsForZone(WorkspaceLayout layout, DockZone zone)
+        => zone switch
+        {
+            DockZone.Left => layout.LeftColumns,
+            DockZone.Right => layout.RightColumns,
+            DockZone.Bottom => layout.BottomColumns,
+            _ => layout.RightColumns
+        };
 
     public static void RemoveFromAllColumns(WorkspaceLayout layout, string panelId)
         => layout.RemovePanel(panelId);
@@ -106,7 +142,13 @@ public static class DockLayoutOps
     {
         RemoveFromAllColumns(layout, panelId);
         layout.HiddenPanelIds.Remove(panelId);
-        GetColumn(layout, columnIndex).PanelIds.Add(panelId);
+        var col = GetColumn(layout, columnIndex);
+        EnsureRowsModel(col);
+        if (col.Rows!.Count == 0)
+            col.Rows.Add(new DockRowLayout { PanelIds = [panelId] });
+        else
+            col.Rows[0].PanelIds.Add(panelId);
+
         if (layout.FloatingPanels.TryGetValue(panelId, out var f))
             f.IsFloating = false;
     }
@@ -116,9 +158,8 @@ public static class DockLayoutOps
         var p = FindPlacement(layout, panelId);
         if (p == null) return false;
 
-        if (p.IsTabMember)
+        if (p.IsTabMember && p.Column.TabGroups.TryGetValue(p.TabGroupKey!, out var tab))
         {
-            var tab = p.Column.TabGroups[p.TabGroupKey!];
             var target = p.IndexInTab + delta;
             if (target >= 0 && target < tab.PanelIds.Count)
             {
@@ -133,19 +174,19 @@ public static class DockLayoutOps
         }
 
         var col = p.Column;
-        var rowTarget = Math.Clamp(p.RowIndex + delta, 0, col.PanelIds.Count - 1);
+        EnsureRowsModel(col);
+        var rowTarget = Math.Clamp(p.RowIndex + delta, 0, col.Rows!.Count - 1);
         if (rowTarget == p.RowIndex) return false;
-        col.PanelIds.RemoveAt(p.RowIndex);
-        col.PanelIds.Insert(rowTarget, p.RowKey);
+        var row = col.Rows[rowTarget];
+        col.Rows.RemoveAt(p.RowIndex);
+        col.Rows.Insert(rowTarget, row);
         return true;
     }
 
     public static void ExtractToRow(WorkspaceLayout layout, string panelId, int columnIndex, int insertRowIndex)
     {
         RemoveFromAllColumns(layout, panelId);
-        var col = GetColumn(layout, columnIndex);
-        insertRowIndex = Math.Clamp(insertRowIndex, 0, col.PanelIds.Count);
-        col.PanelIds.Insert(insertRowIndex, panelId);
+        ApplyInsertRow(layout, panelId, columnIndex, insertRowIndex);
     }
 
     public static void EnsureRowsModel(DockColumnLayout col)
@@ -182,16 +223,15 @@ public static class DockLayoutOps
                 ApplyMergeTab(layout, panelId, columnIndex, mergeTabRowIndex);
                 break;
             case DockDropKind.InsertDockColumn:
-                ApplyInsertDockColumn(layout, panelId, columnIndex < 0, insertRowIndex);
+                ApplyInsertDockColumn(layout, panelId, DockColumnIndices.ZoneOf(columnIndex), insertRowIndex);
                 break;
         }
     }
 
-    /// <param name="insertColumnIndex">Index in <see cref="WorkspaceLayout.LeftColumns"/> or <see cref="WorkspaceLayout.RightColumns"/>.</param>
     public static void ApplyInsertDockColumn(
         WorkspaceLayout layout,
         string panelId,
-        bool onLeftSide,
+        DockZone zone,
         int insertColumnIndex)
     {
         PreparePanelForDock(layout, panelId);
@@ -202,19 +242,18 @@ public static class DockLayoutOps
             Rows = [new DockRowLayout { PanelIds = [panelId] }]
         };
 
-        if (onLeftSide)
-        {
-            insertColumnIndex = Math.Clamp(insertColumnIndex, 0, layout.LeftColumns.Count);
-            layout.LeftColumns.Insert(insertColumnIndex, newCol);
-            for (var i = 0; i < layout.LeftColumns.Count; i++)
-                layout.LeftColumns[i].Id = $"left-{i}";
-            return;
-        }
+        var columns = ColumnsForZone(layout, zone);
+        insertColumnIndex = Math.Clamp(insertColumnIndex, 0, columns.Count);
+        columns.Insert(insertColumnIndex, newCol);
 
-        insertColumnIndex = Math.Clamp(insertColumnIndex, 0, layout.RightColumns.Count);
-        layout.RightColumns.Insert(insertColumnIndex, newCol);
-        for (var i = 0; i < layout.RightColumns.Count; i++)
-            layout.RightColumns[i].Id = $"right-{i}";
+        var prefix = zone switch
+        {
+            DockZone.Left => "left",
+            DockZone.Bottom => "bottom",
+            _ => "right"
+        };
+        for (var i = 0; i < columns.Count; i++)
+            columns[i].Id = $"{prefix}-{i}";
     }
 
     public static void ApplyInsertRow(WorkspaceLayout layout, string panelId, int columnIndex, int insertRowIndex)
@@ -258,6 +297,9 @@ public static class DockLayoutOps
     /// <summary>Collapse single-panel tabs back to solo row keys.</summary>
     public static void CompactTabGroups(DockColumnLayout col)
     {
+        if (col.Rows is { Count: > 0 })
+            return;
+
         foreach (var (key, tab) in col.TabGroups.ToList())
         {
             if (tab.PanelIds.Count != 1) continue;

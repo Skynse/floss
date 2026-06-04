@@ -87,6 +87,17 @@ public class CanvasInputRouterTests
         void ICanvasInputHost.UnlockCursorPreview()
             => Operations.Add("UnlockCursor");
 
+        void ICanvasInputHost.SetBrushResizeEdgePreview(Point edgeCanvasPoint) { }
+        void ICanvasInputHost.ClearBrushResizePreview() { }
+        void ICanvasInputHost.RefreshCursorAfterInput() { }
+        bool ICanvasInputHost.TryCanvasPointToScreen(Point canvasPoint, out PixelPoint screen)
+        {
+            screen = default;
+            return false;
+        }
+
+        bool ICanvasInputHost.TryWarpCursorToCanvasPoint(Point canvasPoint) => false;
+
         double ICanvasInputHost.GetActiveToolSize() => 10;
         double ICanvasInputHost.GetActiveToolSizeMin() => 1;
         double ICanvasInputHost.GetActiveToolSizeMax() => 500;

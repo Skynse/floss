@@ -15,7 +15,7 @@ The red drop zone in screenshots is the **inner** edge: between the existing lef
 ## Model
 
 - `WorkspaceLayout.LeftColumns` — list of `DockColumnLayout`, same idea as `RightColumns`.
-- Column index: `DockColumnIndices.Left(i)` → `-(i+1)`; right `0,1,…`; bottom `DockColumnIndices.Bottom` (`-100`).
+- Column index: `DockColumnIndices.Left(i)` → `-(i+1)`; right `0,1,…`; bottom `DockColumnIndices.Bottom(i)` (`BottomBase - i`, `BottomBase = -10000`).
 - `LeftDockSplit` — fraction between two left columns (like `RightDockSplit`).
 
 ## UI

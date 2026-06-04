@@ -11,8 +11,8 @@ namespace Floss.App.Docking;
 /// </summary>
 public sealed class WorkspaceLayout
 {
-    /// <summary>4 = tools in tab:left. 3 = tabbed dock columns.</summary>
-    public int LayoutVersion { get; set; } = 4;
+    /// <summary>6 = BottomColumns list + ColumnProportions. 4 = tools in tab:left.</summary>
+    public int LayoutVersion { get; set; } = 6;
 
     /// <summary>Width of the left dock column (brush library, etc.).</summary>
     public double LeftRailWidth { get; set; } = 280;
@@ -73,7 +73,34 @@ public sealed class WorkspaceLayout
     }
 
     [JsonInclude]
-    public DockColumnLayout BottomColumn { get; set; } = new() { Id = "bottom", PanelIds = ["node-graph"] };
+    public List<DockColumnLayout> BottomColumns { get; set; } =
+    [
+        new() { Id = "bottom-0", PanelIds = ["node-graph"] }
+    ];
+
+    [JsonPropertyName("BottomColumn")]
+    public DockColumnLayout? BottomColumnImport
+    {
+        set
+        {
+            if (value == null) return;
+            if (BottomColumns.Count == 0)
+                BottomColumns.Add(value);
+            else
+                BottomColumns[0] = value;
+        }
+    }
+
+    [JsonIgnore]
+    public DockColumnLayout BottomColumn
+    {
+        get => BottomColumns[0];
+        set => BottomColumns[0] = value;
+    }
+
+    /// <summary>Relative sizes of dock columns on a side (key = column Id, e.g. left-0).</summary>
+    [JsonInclude]
+    public Dictionary<string, double> ColumnProportions { get; set; } = new();
 
     [JsonInclude]
     [JsonPropertyName("PanelHeights")] // Backward compat name; values now represent proportions
@@ -112,6 +139,7 @@ public sealed class WorkspaceLayout
         MigrateToTabbedDockV3();
         MigrateToDockableToolsV4();
         MigrateAwayFromForcedHorizontalV5();
+        MigrateToBottomColumnsV6();
 
         // Migrate old default or missing panels to the v1 right-stack layout.
         if (LayoutVersion < 2 &&
@@ -125,7 +153,8 @@ public sealed class WorkspaceLayout
         if (RightColumns.Count < 1)
             RightColumns = CreateDefault().RightColumns;
 
-        BottomColumn ??= CreateDefault().BottomColumn;
+        if (BottomColumns.Count == 0)
+            BottomColumns = CreateDefault().BottomColumns;
 
         var known = new HashSet<string>(knownIds);
 
@@ -145,18 +174,21 @@ public sealed class WorkspaceLayout
         }
         if (LeftColumns.Count == 0)
             LeftColumns = CreateDefault().LeftColumns;
-        BottomColumn.PanelIds = BottomColumn.PanelIds
-            .Where(id => IsKnownColumnPanelId(id, BottomColumn, known))
-            .Distinct()
-            .ToList();
-        BottomColumn.RepairTabGroupPanelIds();
+        foreach (var bottom in BottomColumns)
+        {
+            bottom.PanelIds = bottom.PanelIds
+                .Where(id => IsKnownColumnPanelId(id, bottom, known))
+                .Distinct()
+                .ToList();
+            bottom.RepairTabGroupPanelIds();
+        }
 
         // Ensure every known panel is placed somewhere
         foreach (var id in known)
         {
             if (RightColumns.Any(c => c.ContainsPanel(id))) continue;
             if (LeftColumns.Any(c => c.ContainsPanel(id))) continue;
-            if (BottomColumn.ContainsPanel(id)) continue;
+            if (BottomColumns.Any(c => c.ContainsPanel(id))) continue;
             if (FloatingPanels.ContainsKey(id)) continue;
             if (HiddenPanelIds.Contains(id)) continue;
 
@@ -166,7 +198,7 @@ public sealed class WorkspaceLayout
             if (zone == "left")
                 PlacePanelInLeftColumn(id);
             else if (zone == "bottom")
-                BottomColumn.PanelIds.Add(id);
+                PlacePanelInBottomColumn(id);
             else if (zone.StartsWith("right-") && int.TryParse(zone.AsSpan(6), out var rightIdx)
                      && rightIdx < RightColumns.Count)
                 RightColumns[rightIdx].PanelIds.Add(id);
@@ -263,7 +295,7 @@ public sealed class WorkspaceLayout
         if (!HiddenPanelIds.Contains("tools")
             && !LeftColumn.ContainsPanel("tools")
             && !RightColumns.Any(c => c.ContainsPanel("tools"))
-            && !BottomColumn.ContainsPanel("tools")
+            && !BottomColumns.Any(c => c.ContainsPanel("tools"))
             && !FloatingPanels.ContainsKey("tools"))
         {
             if (LeftColumn.TabGroups.TryGetValue("tab:left", out var tab)
@@ -332,6 +364,42 @@ public sealed class WorkspaceLayout
             LayoutVersion = 4;
     }
 
+    private void MigrateToBottomColumnsV6()
+    {
+        if (LayoutVersion >= 6)
+            return;
+
+        if (BottomColumns.Count == 0)
+        {
+            BottomColumns =
+            [
+                new DockColumnLayout
+                {
+                    Id = "bottom-0",
+                    PanelIds = ["node-graph"]
+                }
+            ];
+        }
+        else
+        {
+            for (var i = 0; i < BottomColumns.Count; i++)
+                BottomColumns[i].Id = $"bottom-{i}";
+        }
+
+        LayoutVersion = 6;
+    }
+
+    public IReadOnlyList<DockColumnLayout> ColumnsForZone(DockZone zone) => zone switch
+    {
+        DockZone.Left => LeftColumns,
+        DockZone.Right => RightColumns,
+        DockZone.Bottom => BottomColumns,
+        _ => RightColumns
+    };
+
+    public bool ContainsPanelInZone(string id, DockZone zone)
+        => ColumnsForZone(zone).Any(c => c.ContainsPanel(id));
+
     /// <summary>
     /// Returns the first panel ID that is referenced in a TabGroup but not accessible
     /// through PanelIds or Rows (orphaned). Returns null if layout is valid.
@@ -341,7 +409,7 @@ public sealed class WorkspaceLayout
         var allColumns = new List<DockColumnLayout>();
         allColumns.AddRange(LeftColumns);
         allColumns.AddRange(RightColumns);
-        allColumns.Add(BottomColumn);
+        allColumns.AddRange(BottomColumns);
 
         foreach (var col in allColumns)
         {
@@ -364,6 +432,24 @@ public sealed class WorkspaceLayout
         }
 
         return null; // Valid
+    }
+
+    private void PlacePanelInBottomColumn(string id)
+    {
+        if (BottomColumns.Count == 0)
+            BottomColumns.Add(new DockColumnLayout { Id = "bottom-0" });
+
+        var col = BottomColumns[0];
+        if (col.Rows is { Count: > 0 })
+        {
+            var row = col.Rows[^1];
+            if (!row.PanelIds.Contains(id))
+                row.PanelIds.Add(id);
+            return;
+        }
+
+        if (!col.PanelIds.Contains(id))
+            col.PanelIds.Add(id);
     }
 
     private void PlacePanelInLeftColumn(string id)
@@ -390,14 +476,14 @@ public sealed class WorkspaceLayout
         {
             var inRight = RightColumns.Where(c => c.ContainsPanel(id)).ToList();
             var inLeft = LeftColumns.Any(c => c.ContainsPanel(id));
-            var inBottom = BottomColumn.ContainsPanel(id);
+            var inBottom = BottomColumns.Any(c => c.ContainsPanel(id));
             if (inRight.Count + (inLeft ? 1 : 0) + (inBottom ? 1 : 0) <= 1) continue;
 
             var def = PanelRegistry.Get(id);
             var zone = def?.DefaultZone ?? "right-0";
 
             if (zone == "bottom" && inBottom) { foreach (var c in inRight) c.PanelIds.Remove(id); if (inLeft) foreach (var c in LeftColumns) c.RemovePanel(id); }
-            else if (zone == "left" && inLeft) { foreach (var c in inRight) c.PanelIds.Remove(id); if (inBottom) BottomColumn.PanelIds.Remove(id); }
+            else if (zone == "left" && inLeft) { foreach (var c in inRight) c.PanelIds.Remove(id); if (inBottom) foreach (var c in BottomColumns) c.RemovePanel(id); }
             else
             {
                 // Keep in first matching RightColumn; remove from all others
@@ -405,7 +491,7 @@ public sealed class WorkspaceLayout
                 if (keepCol == null)
                 {
                     // Panel is in both left and bottom — keep in left, remove from bottom
-                    if (inLeft && inBottom) BottomColumn.PanelIds.Remove(id);
+                    if (inLeft && inBottom) foreach (var c in BottomColumns) c.RemovePanel(id);
                     // Panel is only in left but doesn't belong there — move to right
                     else if (inLeft && !inRight.Any() && !inBottom)
                     {
@@ -415,7 +501,7 @@ public sealed class WorkspaceLayout
                     // Panel is only in bottom but doesn't belong there — move to right
                     else if (inBottom && !inRight.Any() && !inLeft)
                     {
-                        BottomColumn.PanelIds.Remove(id);
+                        foreach (var c in BottomColumns) c.RemovePanel(id);
                         RightColumns[0].PanelIds.Add(id);
                     }
                 }
@@ -424,7 +510,8 @@ public sealed class WorkspaceLayout
                     // Remove from non-RightColumn locations
                     if (inLeft)
                         foreach (var c in LeftColumns) c.RemovePanel(id);
-                    if (inBottom) BottomColumn.PanelIds.Remove(id);
+                    if (inBottom)
+                        foreach (var c in BottomColumns) c.RemovePanel(id);
                     foreach (var c in inRight)
                         if (c != keepCol) c.PanelIds.Remove(id);
                 }
@@ -449,13 +536,30 @@ public sealed class WorkspaceLayout
             }
         }
 
-        var bottomIdx = BottomColumn.PanelIds.IndexOf(id);
-        if (bottomIdx >= 0) return (DockColumnIndices.Bottom, bottomIdx);
+        for (var i = 0; i < BottomColumns.Count; i++)
+        {
+            var idx = BottomColumns[i].PanelIds.IndexOf(id);
+            if (idx >= 0) return (DockColumnIndices.Bottom(i), idx);
+            if (!BottomColumns[i].ContainsPanel(id)) continue;
+            var resolved = BottomColumns[i].ResolvedRows();
+            for (var ri = 0; ri < resolved.Count; ri++)
+            {
+                var ti = resolved[ri].PanelIds.ToList().IndexOf(id);
+                if (ti >= 0) return (DockColumnIndices.Bottom(i), ri);
+            }
+        }
 
         for (var i = 0; i < RightColumns.Count; i++)
         {
             var idx = RightColumns[i].PanelIds.IndexOf(id);
             if (idx >= 0) return (i, idx);
+            if (!RightColumns[i].ContainsPanel(id)) continue;
+            var resolved = RightColumns[i].ResolvedRows();
+            for (var ri = 0; ri < resolved.Count; ri++)
+            {
+                var ti = resolved[ri].PanelIds.ToList().IndexOf(id);
+                if (ti >= 0) return (i, ri);
+            }
         }
 
         return null;
@@ -465,7 +569,8 @@ public sealed class WorkspaceLayout
     {
         foreach (var col in LeftColumns)
             col.RemovePanel(id);
-        BottomColumn.RemovePanel(id);
+        foreach (var col in BottomColumns)
+            col.RemovePanel(id);
         foreach (var col in RightColumns)
             col.RemovePanel(id);
     }

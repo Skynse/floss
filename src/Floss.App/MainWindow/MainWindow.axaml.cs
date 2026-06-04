@@ -595,7 +595,7 @@ public partial class MainWindow : Window, Tools.IViewportController
             UpdateTabBar();
             SyncCanvasViewport();
             CaptureRootColumnWidths();
-            SetNodeGraphDockVisible(!App.Config.WorkspaceLayout.HiddenPanelIds.Contains("node-graph"), reload: false);
+            SyncBottomDockVisibility();
 
             if (App.Config.LayoutWasReset)
             {
@@ -690,7 +690,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         centerArea.Children.Add(_workspaceViewport);
         centerArea.Children.Add(footer);
         AttachBusyOverlay();
-        AttachNodeGraphDockToCenter(centerArea);
+        AttachBottomDockToCenter(centerArea);
 
         _dockerRows.Clear();
         _dockerSections.Clear();
@@ -1282,53 +1282,12 @@ public partial class MainWindow : Window, Tools.IViewportController
             .Select((column, index) => (Column: column, Index: index))
             .Where(entry => HasVisibleDockerRows(entry.Column))
             .ToList();
-        var grid = new Grid { ClipToBounds = true };
+
+        var grid = BuildMultiColumnDockHost(
+            columns.Select(c => (c.Column, DockColumnIndices.Left(c.Index))).ToList(),
+            BuildDockColumn,
+            PersistWorkspaceLayout);
         _leftDockerHostGrid = grid;
-
-        if (columns.Count == 0)
-        {
-            return new Border
-            {
-                Background = new SolidColorBrush(Color.Parse(Bg1)),
-                BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-                BorderThickness = new Thickness(0, 0, 1, 0),
-                ClipToBounds = true,
-                Child = grid
-            };
-        }
-
-        if (columns.Count == 1)
-        {
-            grid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
-            var dock = BuildDockColumn(columns[0].Column, DockColumnIndices.Left(columns[0].Index));
-            Grid.SetColumn(dock, 0);
-            grid.Children.Add(dock);
-        }
-        else
-        {
-            var fraction = 1.0 / columns.Count;
-            for (var i = 0; i < columns.Count; i++)
-            {
-                grid.ColumnDefinitions.Add(new ColumnDefinition(fraction, GridUnitType.Star));
-                var dock = BuildDockColumn(columns[i].Column, DockColumnIndices.Left(columns[i].Index));
-                Grid.SetColumn(dock, i * 2);
-                grid.Children.Add(dock);
-
-                if (i == columns.Count - 1) continue;
-
-                grid.ColumnDefinitions.Add(new ColumnDefinition(3, GridUnitType.Pixel));
-                var splitter = new GridSplitter
-                {
-                    Width = 3,
-                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
-                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
-                    Background = new SolidColorBrush(Color.Parse(Bg0))
-                };
-                splitter.DragCompleted += (_, _) => PersistWorkspaceLayout();
-                Grid.SetColumn(splitter, i * 2 + 1);
-                grid.Children.Add(splitter);
-            }
-        }
 
         return new Border
         {
@@ -1348,61 +1307,12 @@ public partial class MainWindow : Window, Tools.IViewportController
             .Select((column, index) => (Column: column, Index: index))
             .Where(entry => HasVisibleDockerRows(entry.Column))
             .ToList();
-        var grid = new Grid { ClipToBounds = true };
+
+        var grid = BuildMultiColumnDockHost(
+            columns.Select(c => (c.Column, DockColumnIndices.Right(c.Index))).ToList(),
+            BuildDockColumn,
+            PersistWorkspaceLayout);
         _dockerHostGrid = grid;
-
-        var count = columns.Count;
-        if (count == 0)
-        {
-            return new Border
-            {
-                Background = new SolidColorBrush(Color.Parse(Bg0)),
-                BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-                ClipToBounds = true,
-                Child = grid
-            };
-        }
-
-        if (count == 1)
-        {
-            // Single column — full width, no splitter
-            grid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
-            var dock = BuildDockColumn(columns[0].Column, columns[0].Index);
-            Grid.SetColumn(dock, 0);
-            grid.Children.Add(dock);
-            return new Border
-            {
-                Background = new SolidColorBrush(Color.Parse(Bg0)),
-                BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-                ClipToBounds = true,
-                Child = grid
-            };
-        }
-
-        // Multiple columns: equal star distribution + splitters
-        var fraction = 1.0 / count;
-        for (var i = 0; i < count; i++)
-        {
-            grid.ColumnDefinitions.Add(new ColumnDefinition(fraction, GridUnitType.Star));
-
-            var dock = BuildDockColumn(columns[i].Column, columns[i].Index);
-            Grid.SetColumn(dock, i * 2);
-            grid.Children.Add(dock);
-
-            if (i == count - 1) continue;
-
-            grid.ColumnDefinitions.Add(new ColumnDefinition(3, GridUnitType.Pixel));
-            var splitter = new GridSplitter
-            {
-                Width = 3,
-                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
-                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
-                Background = new SolidColorBrush(Color.Parse(Bg0))
-            };
-            splitter.DragCompleted += (_, _) => PersistWorkspaceLayout();
-            Grid.SetColumn(splitter, i * 2 + 1);
-            grid.Children.Add(splitter);
-        }
 
         return new Border
         {
@@ -1417,7 +1327,10 @@ public partial class MainWindow : Window, Tools.IViewportController
     private static int DockColumnIndexFromLayoutId(string columnId)
     {
         if (columnId == "bottom")
-            return DockColumnIndices.Bottom;
+            return DockColumnIndices.Bottom(0);
+        if (columnId.StartsWith("bottom-", StringComparison.Ordinal)
+            && int.TryParse(columnId.AsSpan(7), out var bi))
+            return DockColumnIndices.Bottom(bi);
         if (columnId.StartsWith("left-", StringComparison.Ordinal)
             && int.TryParse(columnId.AsSpan(5), out var li))
             return DockColumnIndices.Left(li);
@@ -1820,7 +1733,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         var layout = App.Config.WorkspaceLayout;
         var placement = DockLayoutOps.FindPlacement(layout, id);
         var isOnLeft = placement != null && DockColumnIndices.IsLeft(placement.ColumnIndex);
-        var isInBottom = placement?.ColumnIndex == DockColumnIndices.Bottom;
+        var isInBottom = placement != null && DockColumnIndices.IsBottom(placement.ColumnIndex);
         var isFloating = IsDockerFloating(id);
         var isDocked = placement != null && !isFloating;
 
@@ -1879,13 +1792,6 @@ public partial class MainWindow : Window, Tools.IViewportController
 
     private void ToggleDockerVisibility(string id)
     {
-        // Node graph has its own bottom dock — delegate visibility toggle
-        if (id == "node-graph")
-        {
-            SetNodeGraphDockVisible(!_nodeGraphDockVisible);
-            return;
-        }
-
         var layout = App.Config.WorkspaceLayout;
         if (layout.HiddenPanelIds.Contains(id))
             layout.HiddenPanelIds.Remove(id);
@@ -1893,15 +1799,13 @@ public partial class MainWindow : Window, Tools.IViewportController
             layout.HiddenPanelIds.Add(id);
 
         RebuildDockers();
+        if (id == "node-graph")
+            SyncBottomDockVisibility();
         App.Config.Save();
     }
 
     private bool IsDockerVisible(string id)
-    {
-        if (id == "node-graph")
-            return _nodeGraphDockVisible;
-        return !App.Config.WorkspaceLayout.HiddenPanelIds.Contains(id);
-    }
+        => !App.Config.WorkspaceLayout.HiddenPanelIds.Contains(id);
 
     private void RefreshRecentFilesMenu(bool force = false)
     {
@@ -2284,6 +2188,8 @@ public partial class MainWindow : Window, Tools.IViewportController
             UpdateRightPanelWidth();
         }
 
+        RebuildBottomDock();
+
         // Fix popup placement target
         if (_dockerPopup != null)
             _dockerPopup.PlacementTarget = _rightPanel;
@@ -2302,8 +2208,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         if (hasPanels)
         {
             dockCol.MinWidth = 200;
-            dockCol.MaxWidth = 720;
-            dockCol.Width = new GridLength(Math.Clamp(layout.LeftRailWidth, 200, 720), GridUnitType.Pixel);
+            dockCol.MaxWidth = 1600;
+            dockCol.Width = new GridLength(Math.Clamp(layout.LeftRailWidth, 200, 1600), GridUnitType.Pixel);
             splitCol.MinWidth = 3;
             splitCol.Width = new GridLength(3, GridUnitType.Pixel);
             _leftSplitter!.IsVisible = true;
@@ -2384,28 +2290,18 @@ public partial class MainWindow : Window, Tools.IViewportController
             if (_rootGrid.ColumnDefinitions[RootColRightDock].ActualWidth > 0)
                 layout.RightPanelWidth = Math.Max(240, _rootGrid.ColumnDefinitions[RootColRightDock].ActualWidth);
         }
-        // Save right-panel column split ratio (relevant for 2-column layouts)
-        if (_rightPanel is Border { Child: Grid rightDockGrid }
-            && layout.RightColumns.Count == 2
-            && rightDockGrid.ColumnDefinitions.Count >= 3)
-        {
-            var left = rightDockGrid.ColumnDefinitions[0].ActualWidth;
-            var right = rightDockGrid.ColumnDefinitions[2].ActualWidth;
-            if (left + right > 1)
-                layout.RightDockSplit = left / (left + right);
-        }
+        if (_leftDockerHostGrid != null)
+            SaveColumnProportionsFromHost(_leftDockerHostGrid,
+                layout.LeftColumns.Select(c => c.Id).ToList());
+        if (_dockerHostGrid != null)
+            SaveColumnProportionsFromHost(_dockerHostGrid,
+                layout.RightColumns.Select(c => c.Id).ToList());
+        if (_bottomDockerHostGrid != null)
+            SaveColumnProportionsFromHost(_bottomDockerHostGrid,
+                layout.BottomColumns.Select(c => c.Id).ToList());
 
-        if (_leftPanel is Border { Child: Grid leftDockGrid }
-            && layout.LeftColumns.Count == 2
-            && leftDockGrid.ColumnDefinitions.Count >= 3)
-        {
-            var outer = leftDockGrid.ColumnDefinitions[0].ActualWidth;
-            var inner = leftDockGrid.ColumnDefinitions[2].ActualWidth;
-            if (outer + inner > 1)
-                layout.LeftDockSplit = outer / (outer + inner);
-        }
+        UpdateBottomDockHeight();
 
-        // Save panel proportions by column (like Dock library's Proportion value)
         SavePanelProportions();
 
         foreach (var id in _floatingDockers.Keys.ToArray())
@@ -2422,9 +2318,11 @@ public partial class MainWindow : Window, Tools.IViewportController
             columnRows[DockColumnIndices.Left(lc)] = layout.LeftColumns[lc].ResolvedRows()
                 .Select(r => r.PanelIds[0]).ToList();
         for (var c = 0; c < layout.RightColumns.Count; c++)
-            columnRows[c] = layout.RightColumns[c].ResolvedRows().Select(r => r.PanelIds[0]).ToList();
-        columnRows[DockColumnIndices.Bottom] = layout.BottomColumn.ResolvedRows()
-            .Select(r => r.PanelIds[0]).ToList();
+            columnRows[DockColumnIndices.Right(c)] = layout.RightColumns[c].ResolvedRows()
+                .Select(r => r.PanelIds[0]).ToList();
+        for (var bc = 0; bc < layout.BottomColumns.Count; bc++)
+            columnRows[DockColumnIndices.Bottom(bc)] = layout.BottomColumns[bc].ResolvedRows()
+                .Select(r => r.PanelIds[0]).ToList();
 
         foreach (var (ci, rowIds) in columnRows)
         {

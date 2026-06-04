@@ -45,10 +45,11 @@ public partial class MainWindow
         string Label);
 
     private sealed record DockColumnEdgeMetric(
-        bool OnLeftSide,
+        DockZone Zone,
         int InsertColumnIndex,
         Rect Bounds,
-        string Label);
+        string Label,
+        bool HorizontalInsertLine);
 
     private void EnsureDockDropOverlay()
     {
@@ -192,6 +193,8 @@ public partial class MainWindow
             DockLayoutOps.CompactTabGroups(col);
         foreach (var col in layout.LeftColumns)
             DockLayoutOps.CompactTabGroups(col);
+        foreach (var col in layout.BottomColumns)
+            DockLayoutOps.CompactTabGroups(col);
 
         RebuildDockers();
         App.Config.Save();
@@ -206,7 +209,8 @@ public partial class MainWindow
         var layout = App.Config.WorkspaceLayout;
         var columnEntries = layout.LeftColumns
             .Select((c, i) => (ColumnIndex: DockColumnIndices.Left(i), Column: c))
-            .Concat(layout.RightColumns.Select((c, i) => (ColumnIndex: i, Column: c)))
+            .Concat(layout.RightColumns.Select((c, i) => (ColumnIndex: DockColumnIndices.Right(i), Column: c)))
+            .Concat(layout.BottomColumns.Select((c, i) => (ColumnIndex: DockColumnIndices.Bottom(i), Column: c)))
             .ToList();
 
         foreach (var (columnIndex, column) in columnEntries)
@@ -277,19 +281,40 @@ public partial class MainWindow
             var leftStrip = new Rect(centerRect.Value.Left - edgeWidth, centerRect.Value.Top, edgeWidth,
                 centerRect.Value.Height);
             _dockColumnEdgeMetrics.Add(new DockColumnEdgeMetric(
-                true,
+                DockZone.Left,
                 layout.LeftColumns.Count,
                 leftStrip,
-                "New left column (beside canvas)"));
+                "New left column (beside canvas)",
+                HorizontalInsertLine: false));
 
             var rightStrip = new Rect(centerRect.Value.Right, centerRect.Value.Top, edgeWidth,
                 centerRect.Value.Height);
             _dockColumnEdgeMetrics.Add(new DockColumnEdgeMetric(
-                false,
+                DockZone.Right,
                 0,
                 rightStrip,
-                "New right column (beside canvas)"));
+                "New right column (beside canvas)",
+                HorizontalInsertLine: false));
             break;
+        }
+
+        if (_workspaceViewport != null)
+        {
+            var viewportRect = ControlRectInOverlay(_workspaceViewport);
+            if (viewportRect != null)
+            {
+                var bottomStrip = new Rect(
+                    viewportRect.Value.Left,
+                    viewportRect.Value.Bottom - edgeWidth,
+                    viewportRect.Value.Width,
+                    edgeWidth);
+                _dockColumnEdgeMetrics.Add(new DockColumnEdgeMetric(
+                    DockZone.Bottom,
+                    layout.BottomColumns.Count,
+                    bottomStrip,
+                    "New bottom column (above footer)",
+                    HorizontalInsertLine: true));
+            }
         }
 
         if (_leftDockerHostGrid != null)
@@ -303,23 +328,37 @@ public partial class MainWindow
                 var rect = ControlRectInOverlay(splitControl);
                 if (rect == null) continue;
                 var zone = new Rect(rect.Value.Left - edgeWidth * 0.5, rect.Value.Top, edgeWidth, rect.Value.Height);
-                _dockColumnEdgeMetrics.Add(new DockColumnEdgeMetric(true, i + 1, zone, "Split left column"));
+                _dockColumnEdgeMetrics.Add(new DockColumnEdgeMetric(
+                    DockZone.Left, i + 1, zone, "Split left column", false));
             }
         }
 
         if (_dockerHostGrid != null)
+            AddHostSplitterEdgeMetrics(_dockerHostGrid, layout.RightColumns.Count, DockZone.Right);
+
+        if (_bottomDockerHostGrid != null)
+            AddHostSplitterEdgeMetrics(_bottomDockerHostGrid, layout.BottomColumns.Count, DockZone.Bottom);
+    }
+
+    private void AddHostSplitterEdgeMetrics(Grid hostGrid, int columnCount, DockZone zone)
+    {
+        const double edgeWidth = 28;
+        for (var i = 0; i < columnCount - 1; i++)
         {
-            for (var i = 0; i < layout.RightColumns.Count - 1; i++)
+            var splitCol = i * 2 + 1;
+            if (splitCol >= hostGrid.ColumnDefinitions.Count) continue;
+            var splitControl = hostGrid.Children.FirstOrDefault(c => Grid.GetColumn(c) == splitCol);
+            if (splitControl == null) continue;
+            var rect = ControlRectInOverlay(splitControl);
+            if (rect == null) continue;
+            var hit = new Rect(rect.Value.Left - edgeWidth * 0.5, rect.Value.Top, edgeWidth, rect.Value.Height);
+            var label = zone switch
             {
-                var splitCol = i * 2 + 1;
-                if (splitCol >= _dockerHostGrid.ColumnDefinitions.Count) continue;
-                var splitControl = _dockerHostGrid.Children.FirstOrDefault(c => Grid.GetColumn(c) == splitCol);
-                if (splitControl == null) continue;
-                var rect = ControlRectInOverlay(splitControl);
-                if (rect == null) continue;
-                var zone = new Rect(rect.Value.Left - edgeWidth * 0.5, rect.Value.Top, edgeWidth, rect.Value.Height);
-                _dockColumnEdgeMetrics.Add(new DockColumnEdgeMetric(false, i + 1, zone, "Split right column"));
-            }
+                DockZone.Bottom => "Split bottom column",
+                DockZone.Left => "Split left column",
+                _ => "Split right column"
+            };
+            _dockColumnEdgeMetrics.Add(new DockColumnEdgeMetric(zone, i + 1, hit, label, false));
         }
     }
 
@@ -328,8 +367,14 @@ public partial class MainWindow
         var leftIdx = DockColumnIndices.TryParseLeft(columnIndex);
         if (leftIdx != null)
             return FindLeftColumnGrid(leftIdx.Value);
-        if (columnIndex >= 0)
+
+        var bottomIdx = DockColumnIndices.TryParseBottom(columnIndex);
+        if (bottomIdx != null)
+            return FindBottomColumnGrid(bottomIdx.Value);
+
+        if (DockColumnIndices.IsRight(columnIndex))
             return FindRightColumnGrid(columnIndex);
+
         return null;
     }
 
@@ -366,6 +411,18 @@ public partial class MainWindow
         }
 
         return _dockerHostGrid.Children.OfType<Grid>().ElementAtOrDefault(columnIndex);
+    }
+
+    private Grid? FindBottomColumnGrid(int columnIndex)
+    {
+        if (_bottomDockerHostGrid == null) return null;
+        foreach (var child in _bottomDockerHostGrid.Children)
+        {
+            if (child is Grid g && Grid.GetColumn(g) == columnIndex * 2)
+                return g;
+        }
+
+        return _bottomDockerHostGrid.Children.OfType<Grid>().ElementAtOrDefault(columnIndex);
     }
 
     private void UpdateDockerDropPreview(string movingId, Point rootPt)
@@ -406,7 +463,10 @@ public partial class MainWindow
                     target.Bounds.X, target.Bounds.Y, target.Bounds.Width, DockDropOverlay.TabStripHeight);
                 break;
             case DockDropKind.InsertDockColumn:
-                _dockDropOverlay.ShowInsertLineVertical(target.LinePos, target.Bounds.Y, target.Bounds.Height);
+                if (target.HorizontalInsertLine)
+                    _dockDropOverlay.ShowInsertLine(target.Bounds.X, target.LinePos, target.Bounds.Width);
+                else
+                    _dockDropOverlay.ShowInsertLineVertical(target.LinePos, target.Bounds.Y, target.Bounds.Height);
                 break;
             default:
                 _dockDropOverlay.ShowInsertLine(target.Bounds.X, target.LinePos, target.Bounds.Width);
@@ -423,7 +483,8 @@ public partial class MainWindow
         DockDropKind Kind,
         double LinePos,
         Rect Bounds,
-        string Label);
+        string Label,
+        bool HorizontalInsertLine);
 
     private DropTargetState? ResolveDropTarget(Point rootPt)
     {
@@ -434,17 +495,31 @@ public partial class MainWindow
 
         if (edgeHit != null)
         {
-            var lineX = edgeHit.OnLeftSide
+            if (edgeHit.HorizontalInsertLine)
+            {
+                return new DropTargetState(
+                    DockColumnIndices.Bottom(0),
+                    edgeHit.InsertColumnIndex,
+                    -1,
+                    DockDropKind.InsertDockColumn,
+                    edgeHit.Bounds.Top,
+                    edgeHit.Bounds,
+                    edgeHit.Label,
+                    true);
+            }
+
+            var lineX = edgeHit.Zone == DockZone.Left
                 ? edgeHit.Bounds.Right
                 : edgeHit.Bounds.Left;
             return new DropTargetState(
-                edgeHit.OnLeftSide ? DockColumnIndices.Left(0) : 0,
+                DockColumnIndices.Encode(edgeHit.Zone, 0),
                 edgeHit.InsertColumnIndex,
                 -1,
                 DockDropKind.InsertDockColumn,
                 lineX,
                 edgeHit.Bounds,
-                edgeHit.Label);
+                edgeHit.Label,
+                false);
         }
 
         var panelHit = _dockPanelMetrics
@@ -463,37 +538,26 @@ public partial class MainWindow
                     DockDropKind.MergeTab,
                     panelHit.Bounds.Top,
                     panelHit.Bounds,
-                    $"Add to tab: {panelHit.Label}");
+                    $"Add to tab: {panelHit.Label}",
+                    false);
             }
 
             var leftEdge = panelHit.Bounds.X + panelHit.Bounds.Width * HorizontalSplitEdgeRatio;
             var rightEdge = panelHit.Bounds.Right - panelHit.Bounds.Width * HorizontalSplitEdgeRatio;
-            var leftIdx = DockColumnIndices.TryParseLeft(panelHit.ColumnIndex);
 
-            if (rootPt.X <= leftEdge)
+            if (rootPt.X <= leftEdge || rootPt.X >= rightEdge)
             {
-                var insertCol = leftIdx ?? panelHit.ColumnIndex;
+                var insertCol = ResolveInsertColumnIndex(panelHit.ColumnIndex, rootPt.X <= leftEdge);
+                var lineX = rootPt.X <= leftEdge ? panelHit.Bounds.Left : panelHit.Bounds.Right;
                 return new DropTargetState(
                     panelHit.ColumnIndex,
                     insertCol,
                     -1,
                     DockDropKind.InsertDockColumn,
-                    panelHit.Bounds.Left,
+                    lineX,
                     panelHit.Bounds,
-                    "New column (left of panel)");
-            }
-
-            if (rootPt.X >= rightEdge)
-            {
-                var insertCol = leftIdx != null ? leftIdx.Value + 1 : panelHit.ColumnIndex + 1;
-                return new DropTargetState(
-                    panelHit.ColumnIndex,
-                    insertCol,
-                    -1,
-                    DockDropKind.InsertDockColumn,
-                    panelHit.Bounds.Right,
-                    panelHit.Bounds,
-                    "New column (toward canvas)");
+                    "New dock column",
+                    false);
             }
 
             var above = rootPt.Y < panelHit.Bounds.Top + panelHit.Bounds.Height * 0.5;
@@ -506,7 +570,8 @@ public partial class MainWindow
                 DockDropKind.InsertRow,
                 lineY,
                 panelHit.Bounds,
-                $"New row ({panelHit.Label})");
+                $"New row ({panelHit.Label})",
+                false);
         }
 
         var rowHit = _dockRowMetrics
@@ -524,7 +589,8 @@ public partial class MainWindow
                     DockDropKind.MergeTab,
                     rowHit.Bounds.Top,
                     rowHit.Bounds,
-                    $"Add to tab: {rowHit.Label}");
+                    $"Add to tab: {rowHit.Label}",
+                    false);
             }
 
             var aboveRow = rootPt.Y < rowHit.Bounds.Top + rowHit.Bounds.Height * 0.5;
@@ -537,7 +603,8 @@ public partial class MainWindow
                 DockDropKind.InsertRow,
                 lineY,
                 rowHit.Bounds,
-                $"New row ({rowHit.Label})");
+                $"New row ({rowHit.Label})",
+                false);
         }
 
         var inColumn = _dockRowMetrics
@@ -561,7 +628,21 @@ public partial class MainWindow
             DockDropKind.InsertRow,
             edgeLineY,
             edgeRow.Bounds,
-            $"New row ({edgeRow.Label})");
+            $"New row ({edgeRow.Label})",
+            false);
+    }
+
+    private static int ResolveInsertColumnIndex(int columnIndex, bool insertBefore)
+    {
+        var leftIdx = DockColumnIndices.TryParseLeft(columnIndex);
+        if (leftIdx != null)
+            return insertBefore ? leftIdx.Value : leftIdx.Value + 1;
+
+        var bottomIdx = DockColumnIndices.TryParseBottom(columnIndex);
+        if (bottomIdx != null)
+            return insertBefore ? bottomIdx.Value : bottomIdx.Value + 1;
+
+        return insertBefore ? columnIndex : columnIndex + 1;
     }
 
     private double DistanceToColumn(int columnIndex, double x)
