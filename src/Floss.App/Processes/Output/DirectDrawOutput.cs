@@ -118,7 +118,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         if (!initialRegion.IsEmpty)
             ctx.Document.NotifyStrokeSuspendBegin(initialRegion, ctx.ActiveLayerIndex);
 
-        layer.Pixels.LiveStroke = true;
+        layer.ActivePixels.LiveStroke = true;
         return tx;
     }
 
@@ -309,14 +309,14 @@ public sealed class DirectDrawOutput : IOutputProcess
         var region = EstimateSegmentBatchRegion(tx, samples, startSegmentIndex, segmentCount);
         if (!region.IsEmpty)
         {
-            tx.Layer.Pixels.EnterPixelReadLock();
+            tx.Layer.ActivePixels.EnterPixelReadLock();
             try
             {
                 tx.Layer.CaptureTiles(region, tx.BeforeTiles);
             }
             finally
             {
-                tx.Layer.Pixels.ExitPixelReadLock();
+                tx.Layer.ActivePixels.ExitPixelReadLock();
             }
         }
 
@@ -331,14 +331,14 @@ public sealed class DirectDrawOutput : IOutputProcess
 
         if (!dirty.IsEmpty)
         {
-            tx.Layer.Pixels.EnterPixelWriteLock();
+            tx.Layer.ActivePixels.EnterPixelWriteLock();
             try
             {
                 RestoreUnselectedPixels(tx.Layer, dirty, tx.Ctx.Selection, tx.BeforeTiles);
             }
             finally
             {
-                tx.Layer.Pixels.ExitPixelWriteLock();
+                tx.Layer.ActivePixels.ExitPixelWriteLock();
             }
 
             var translatedDirty = dirty.Translate(tx.Layer.OffsetX, tx.Layer.OffsetY);
@@ -379,6 +379,8 @@ public sealed class DirectDrawOutput : IOutputProcess
                 if (!tileDirty.IsEmpty)
                 {
                     tx.Layer.MarkThumbnailDirty();
+                    if (tx.Layer.IsMaskEditing)
+                        tx.Layer.MarkMaskThumbnailDirty();
                     tx.Ctx.Document.CommitLayerTileMutation(tx.LayerIndex, tx.BeforeTiles, tileDirty);
                 }
             }
@@ -391,7 +393,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         }
         finally
         {
-            tx.Layer.Pixels.LiveStroke = false;
+            tx.Layer.ActivePixels.LiveStroke = false;
             tx.Ctx.Document.NotifyStrokeSuspendEnd();
         }
     }
@@ -516,7 +518,7 @@ public sealed class DirectDrawOutput : IOutputProcess
 
     private static void RestoreTransaction(StrokeTransaction tx)
     {
-        tx.Layer.Pixels.LiveStroke = false;
+        tx.Layer.ActivePixels.LiveStroke = false;
         try
         {
             if (tx.BeforeTiles.Count == 0)
@@ -637,7 +639,7 @@ public sealed class DirectDrawOutput : IOutputProcess
 
                         if (beforeTile != null)
                         {
-                            liveTile ??= layer.Pixels.GetOrCreateRawTile(tx, ty);
+                            liveTile ??= layer.ActivePixels.GetOrCreateRawTile(tx, ty);
                             liveTile[offset] = beforeTile[offset];
                             liveTile[offset + 1] = beforeTile[offset + 1];
                             liveTile[offset + 2] = beforeTile[offset + 2];
@@ -645,7 +647,7 @@ public sealed class DirectDrawOutput : IOutputProcess
                         }
                         else
                         {
-                            liveTile ??= layer.Pixels.GetOrCreateRawTile(tx, ty);
+                            liveTile ??= layer.ActivePixels.GetOrCreateRawTile(tx, ty);
                             liveTile[offset] = 0;
                             liveTile[offset + 1] = 0;
                             liveTile[offset + 2] = 0;

@@ -798,8 +798,38 @@ public sealed class DrawingDocument : IDisposable
     {
         if (index < 0 || index >= _layers.Count) return;
         var layer = _layers[index];
-        layer.IsMaskEditing = !layer.IsMaskEditing;
+        if (!layer.HasMask)
+        {
+            using (RenderLock.Write())
+                layer.CreateMask();
+            SetLayerMaskEditing(index, true);
+            return;
+        }
+
+        SetLayerMaskEditing(index, !layer.IsMaskEditing);
+    }
+
+    public void SetLayerMaskEditing(int index, bool editing)
+    {
+        if (index < 0 || index >= _layers.Count) return;
+        var layer = _layers[index];
+        if (editing && !layer.HasMask)
+        {
+            using (RenderLock.Write())
+                layer.CreateMask();
+        }
+
+        for (var i = 0; i < _layers.Count; i++)
+            _layers[i].IsMaskEditing = i == index && editing && _layers[i].HasMask;
+
         NotifyLayerMetadataChanged(null, index);
+    }
+
+    public void SetLayerContentEditing(int index)
+    {
+        if (index < 0 || index >= _layers.Count) return;
+        if (_layers[index].IsMaskEditing)
+            SetLayerMaskEditing(index, false);
     }
 
     public void ApplyLayerMask(int index)

@@ -89,9 +89,9 @@ internal sealed class LayerProjectionPlane
                                     clip.Width, clip.Height, clipItem.Layer,
                                     clip, originX, originY);
                             else if (clipItem.Layer.Adjustment != null)
-                                AdjustmentLayerProcessor.Apply(
+                                AdjustmentLayerProcessor.ApplyWithLayer(
                                     tp, clip.Width * 4, clip.Width, clip.Height,
-                                    clipItem.Layer.Adjustment,
+                                    clipItem.Layer,
                                     clipItem.Layer.Opacity, clip, originX, originY);
                             else
                                 LayerCompositorPixelOps.CompositeLayerAlphaPreserving(
@@ -117,8 +117,8 @@ internal sealed class LayerProjectionPlane
             }
             else if (item.Layer.Adjustment != null)
             {
-                AdjustmentLayerProcessor.Apply(dst, dstStride, width, height,
-                    item.Layer.Adjustment, item.Layer.Opacity * opacityScale,
+                AdjustmentLayerProcessor.ApplyWithLayer(dst, dstStride, width, height,
+                    item.Layer, item.Layer.Opacity * opacityScale,
                     clip, originX, originY);
             }
             else
@@ -151,8 +151,8 @@ internal sealed class LayerProjectionPlane
                         dst, dstStride, width, height,
                         item.Layer, clip, originX, originY);
                 else if (item.Layer.Adjustment != null)
-                    AdjustmentLayerProcessor.Apply(dst, dstStride, width, height,
-                        item.Layer.Adjustment, item.Layer.Opacity,
+                    AdjustmentLayerProcessor.ApplyWithLayer(dst, dstStride, width, height,
+                        item.Layer, item.Layer.Opacity,
                         clip, originX, originY);
                 else
                     LayerCompositorPixelOps.CompositeLayerAlphaPreserving(
@@ -181,8 +181,8 @@ internal sealed class LayerProjectionPlane
                             CompositeGroupNode(tp, clip.Width * 4, clip.Width, clip.Height,
                                 item.Layer, 1.0, clip, clip.X, clip.Y);
                         else if (item.Layer.Adjustment != null)
-                            AdjustmentLayerProcessor.Apply(tp, clip.Width * 4, clip.Width, clip.Height,
-                                item.Layer.Adjustment, item.Layer.Opacity,
+                            AdjustmentLayerProcessor.ApplyWithLayer(tp, clip.Width * 4, clip.Width, clip.Height,
+                                item.Layer, item.Layer.Opacity,
                                 clip, clip.X, clip.Y);
                         else
                             _host.CompositePaintLayer(tp, clip.Width * 4, clip.Width, clip.Height,

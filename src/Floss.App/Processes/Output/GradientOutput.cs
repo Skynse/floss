@@ -33,17 +33,18 @@ public sealed class GradientOutput : IOutputProcess
         var blendMode = BlendMode;
         var effectiveA = (byte)Math.Round(color.A * Math.Clamp(Opacity, 0.0, 1.0));
 
-        var beforeTiles = layer.Pixels.CaptureTiles(layer.Pixels.Bounds);
+        var pixelBuf = layer.ActivePixels;
+        var beforeTiles = pixelBuf.CaptureTiles(pixelBuf.Bounds);
         bool changed = false;
 
         using var bitmap = new SKBitmap(layer.Width, layer.Height, SKColorType.Bgra8888, SKAlphaType.Unpremul);
         using var canvas = new SKCanvas(bitmap);
         canvas.Clear(SKColors.Transparent);
 
-        using var paint = new SKPaint { IsAntialias = Antialiasing };
+        using var skPaint = new SKPaint { IsAntialias = Antialiasing };
         if (GradientType == GradientType.Linear)
         {
-            paint.Shader = SKShader.CreateLinearGradient(
+            skPaint.Shader = SKShader.CreateLinearGradient(
                 new SKPoint((float)(x1 - layer.OffsetX), (float)(y1 - layer.OffsetY)),
                 new SKPoint((float)(x2 - layer.OffsetX), (float)(y2 - layer.OffsetY)),
                 new[] { new SKColor(color.R, color.G, color.B, effectiveA), SKColors.Transparent },
@@ -56,14 +57,14 @@ public sealed class GradientOutput : IOutputProcess
             var cy = (float)(y1 - layer.OffsetY);
             var radius = (float)Math.Sqrt(
                 Math.Pow(x2 - x1, 2) + Math.Pow(y2 - y1, 2));
-            paint.Shader = SKShader.CreateRadialGradient(
+            skPaint.Shader = SKShader.CreateRadialGradient(
                 new SKPoint(cx, cy), radius,
                 new[] { new SKColor(color.R, color.G, color.B, effectiveA), SKColors.Transparent },
                 new[] { 0f, 1f },
                 SKShaderTileMode.Clamp);
         }
 
-        canvas.DrawRect(0, 0, layer.Width, layer.Height, paint);
+        canvas.DrawRect(0, 0, layer.Width, layer.Height, skPaint);
 
         // Copy to layer with selection/alpha-lock awareness
         for (int ly = 0; ly < layer.Height; ly++)
@@ -77,7 +78,7 @@ public sealed class GradientOutput : IOutputProcess
                 var skColor = bitmap.GetPixel(lx, ly);
                 if (skColor.Alpha == 0) continue;
 
-                if (AlphaLockPixelOps.TryWriteColor(layer.Pixels, lx, ly,
+                if (AlphaLockPixelOps.TryWriteColor(pixelBuf, lx, ly,
                         skColor.Blue, skColor.Green, skColor.Red, skColor.Alpha, layer.IsAlphaLocked, blendMode))
                     changed = true;
             }

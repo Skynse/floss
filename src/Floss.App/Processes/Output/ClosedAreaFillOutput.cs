@@ -42,7 +42,8 @@ public sealed class ClosedAreaFillOutput : IOutputProcess
         int x2 = Math.Clamp((int)Math.Ceiling(bounds.Right), 0, ctx.Document.Width - 1);
         int y2 = Math.Clamp((int)Math.Ceiling(bounds.Bottom), 0, ctx.Document.Height - 1);
 
-        var beforeTiles = layer.Pixels.CaptureTiles(layer.Pixels.Bounds);
+        var pixelBuf = layer.ActivePixels;
+        var beforeTiles = pixelBuf.CaptureTiles(pixelBuf.Bounds);
         bool changed = false;
         int minX = int.MaxValue, minY = int.MaxValue, maxX = int.MinValue, maxY = int.MinValue;
 
@@ -79,7 +80,7 @@ public sealed class ClosedAreaFillOutput : IOutputProcess
                         var skColor = bitmap.GetPixel(docX - x1, docY - y1);
                         if (skColor.Alpha == 0) continue;
 
-                        if (AlphaLockPixelOps.TryWriteColor(layer.Pixels, lx, ly,
+                        if (AlphaLockPixelOps.TryWriteColor(pixelBuf, lx, ly,
                                 skColor.Blue, skColor.Green, skColor.Red, skColor.Alpha, layer.IsAlphaLocked, blendMode))
                         {
                             changed = true;
@@ -107,7 +108,7 @@ public sealed class ClosedAreaFillOutput : IOutputProcess
                     int lx = docX - layer.OffsetX;
                     int ly = docY - layer.OffsetY;
 
-                    if (AlphaLockPixelOps.TryWriteColor(layer.Pixels, lx, ly,
+                    if (AlphaLockPixelOps.TryWriteColor(pixelBuf, lx, ly,
                             color.B, color.G, color.R, effectiveA, layer.IsAlphaLocked, blendMode))
                     {
                         changed = true;

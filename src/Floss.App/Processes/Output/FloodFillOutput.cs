@@ -56,7 +56,8 @@ public sealed class FloodFillOutput : IOutputProcess
         var effectiveA = (byte)Math.Round(fillColor.A * Math.Clamp(Opacity, 0.0, 1.0));
         var toleranceSq = (int)(Tolerance * 255 * Tolerance * 255 * 4);
 
-        var beforeTiles = layer.Pixels.CaptureTiles(layer.Pixels.Bounds);
+        var paint = layer.ActivePixels;
+        var beforeTiles = paint.CaptureTiles(paint.Bounds);
 
         // Cap total flood-fill pixels to avoid OOM on huge canvases.
         // 64M pixels (8k×8k) is ~256MB for visited array + queue.
@@ -101,7 +102,7 @@ public sealed class FloodFillOutput : IOutputProcess
 
             var lx = x - layer.OffsetX;
             var ly = y - layer.OffsetY;
-            if (AlphaLockPixelOps.TryWriteColor(layer.Pixels, lx, ly,
+            if (AlphaLockPixelOps.TryWriteColor(paint, lx, ly,
                     fillColor.B, fillColor.G, fillColor.R, effectiveA, layer.IsAlphaLocked, blendMode))
             {
                 changed = true;

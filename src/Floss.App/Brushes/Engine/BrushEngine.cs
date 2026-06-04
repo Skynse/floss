@@ -36,6 +36,11 @@ public readonly record struct BrushRenderStats(
 
 public sealed class BrushEngine : IDisposable
 {
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static TiledPixelBuffer PaintBuf(DrawingLayer layer) => layer.ActivePixels;
+
+    private static bool MaskPaint(DrawingLayer layer) => layer.IsMaskEditing && layer.HasMask;
+
     private const int MaxPrecomputedGrainPixels = 1024 * 1024;
     private const int MaxColorMixScratchPixels = 2048 * 2048;
 
@@ -353,7 +358,7 @@ public sealed class BrushEngine : IDisposable
                         var smearResult = TryRenderSpatialSmearStamp(layer, stroke, brush, stamp, stampDirty);
                         if (smearResult == SpatialSmearResult.Rendered)
                         {
-                            layer.Pixels.PruneRegion(stampDirty);
+                            PaintBuf(layer).PruneRegion(stampDirty);
                         }
                         else if (smearResult == SpatialSmearResult.Failed)
                         {
@@ -461,6 +466,11 @@ public sealed class BrushEngine : IDisposable
         }
 
 
+        if (!dirty.IsEmpty && MaskPaint(layer))
+            SyncMaskRgbFromAlpha(PaintBuf(layer), dirty);
+
+        MarkPaintThumbnailsDirty(layer);
+
         LastStats = BrushRenderStats.From(
             _lastRasterPath,
             _stamps.Count,
@@ -469,6 +479,46 @@ public sealed class BrushEngine : IDisposable
             dirty.Width * dirty.Height,
             ElapsedMs(started));
         return dirty;
+    }
+
+    private static void SyncMaskRgbFromAlpha(TiledPixelBuffer mask, PixelRegion dirty)
+    {
+        if (dirty.IsEmpty) return;
+        const int tsz = TiledPixelBuffer.TileSize;
+        var firstTx = FloorDiv(dirty.X, tsz);
+        var firstTy = FloorDiv(dirty.Y, tsz);
+        var lastTx = FloorDiv(dirty.Right - 1, tsz);
+        var lastTy = FloorDiv(dirty.Bottom - 1, tsz);
+        mask.EnterPixelWriteLock();
+        try
+        {
+            for (var ty = firstTy; ty <= lastTy; ty++)
+            for (var tx = firstTx; tx <= lastTx; tx++)
+            {
+                var tile = mask.GetTileOrNull(tx, ty);
+                if (tile == null) continue;
+                var pxMinX = Math.Max(dirty.X, tx * tsz);
+                var pxMinY = Math.Max(dirty.Y, ty * tsz);
+                var pxMaxX = Math.Min(dirty.Right, tx * tsz + tsz);
+                var pxMaxY = Math.Min(dirty.Bottom, ty * tsz + tsz);
+                for (var py = pxMinY; py < pxMaxY; py++)
+                {
+                    var rowBase = (py - ty * tsz) * tsz * 4;
+                    for (var px = pxMinX; px < pxMaxX; px++)
+                    {
+                        var off = rowBase + (px - tx * tsz) * 4;
+                        var a = tile[off + 3];
+                        tile[off] = a;
+                        tile[off + 1] = a;
+                        tile[off + 2] = a;
+                    }
+                }
+            }
+        }
+        finally
+        {
+            mask.ExitPixelWriteLock();
+        }
     }
 
     private unsafe void RenderCurrentStamps(DrawingLayer layer, ActiveStroke stroke, BrushPreset brush, PixelRegion dirty)
@@ -499,7 +549,7 @@ public sealed class BrushEngine : IDisposable
                     brushGrain, texPx, texW, texH, texStride, dirty, grainTable))
             {
                 _lastRasterPath = "CachedColorTileMajor";
-                layer.Pixels.PruneRegion(dirty);
+                PaintBuf(layer).PruneRegion(dirty);
                 return;
             }
 
@@ -509,7 +559,7 @@ public sealed class BrushEngine : IDisposable
                     brushGrain, texPx, texW, texH, texStride, dirty, grainTable))
             {
                 _lastRasterPath = "CachedTileMajor";
-                layer.Pixels.PruneRegion(dirty);
+                PaintBuf(layer).PruneRegion(dirty);
                 return;
             }
         }
@@ -1126,7 +1176,9 @@ public sealed class BrushEngine : IDisposable
         // Composite the scratch result onto layer tiles directly — avoids
         // RenderWithSkia's per-tile Skia canvas setup overhead.
         var scratchPtr = (byte*)_scratch.GetPixels().ToPointer();
-        CompositeScratchBgraOntoLayer(layer.Pixels, dirty, scratchPtr, _scratch.RowBytes, layer.IsAlphaLocked, SKBlendMode.SrcOver);
+        CompositeScratchBgraOntoLayer(PaintBuf(layer), dirty, scratchPtr, _scratch.RowBytes,
+            layer.IsAlphaLocked && !MaskPaint(layer), SKBlendMode.SrcOver, MaskPaint(layer));
+        MarkPaintThumbnailsDirty(layer);
     }
 
     private unsafe void RenderColorMixStampsViaScratch(DrawingLayer layer, ActiveStroke stroke, BrushPreset brush, PixelRegion dirty)
@@ -1367,7 +1419,9 @@ public sealed class BrushEngine : IDisposable
             if (!renderedAny)
                 return;
 
-            CompositeScratchBgraOntoLayer(layer.Pixels, dirty, ptr, stride, layer.IsAlphaLocked, SKBlendMode.SrcOver);
+            CompositeScratchBgraOntoLayer(PaintBuf(layer), dirty, ptr, stride,
+                layer.IsAlphaLocked && !MaskPaint(layer), SKBlendMode.SrcOver, MaskPaint(layer));
+            MarkPaintThumbnailsDirty(layer);
         }
         catch (Exception ex)
         {
@@ -1450,7 +1504,7 @@ public sealed class BrushEngine : IDisposable
         float halfBms = baseMaskSize * 0.5f;
         const int tsz = TiledPixelBuffer.TileSize;
 
-        layer.Pixels.EnterPixelWriteLock();
+        PaintBuf(layer).EnterPixelWriteLock();
         try
         {
             for (int si = 0; si < _stamps.Count; si++)
@@ -1553,7 +1607,7 @@ public sealed class BrushEngine : IDisposable
                             int pxMaxX = Math.Min(bRight, tilePixX + tsz);
                             if (pxMinX >= pxMaxX) continue;
 
-                            var tile = layer.Pixels.GetOrCreateRawTile(tx, ty);
+                            var tile = PaintBuf(layer).GetOrCreateRawTile(tx, ty);
 
                             for (int py = pxMinY; py < pxMaxY; py++)
                             {
@@ -1674,10 +1728,10 @@ public sealed class BrushEngine : IDisposable
         }
         finally
         {
-            layer.Pixels.ExitPixelWriteLock();
+            PaintBuf(layer).ExitPixelWriteLock();
         }
 
-        layer.Pixels.PruneRegion(dirty);
+        PaintBuf(layer).PruneRegion(dirty);
     }
 
     private unsafe bool TryRasterizeCachedDabsTileMajor(
@@ -1770,14 +1824,14 @@ public sealed class BrushEngine : IDisposable
                 return true;
             _lastTileBucketCount = buckets.Count;
 
-            layer.Pixels.EnterPixelWriteLock();
+            PaintBuf(layer).EnterPixelWriteLock();
             try
             {
                 foreach (var (key, dabs) in buckets)
                 {
                     int tx = (short)key;
                     int ty = (short)(key >> 16);
-                    var tile = layer.Pixels.GetOrCreateRawTile(tx, ty);
+                    var tile = PaintBuf(layer).GetOrCreateRawTile(tx, ty);
                     var tilePixX = tx * tsz;
                     var tilePixY = ty * tsz;
 
@@ -1791,7 +1845,7 @@ public sealed class BrushEngine : IDisposable
                     }
                 }
             }
-            finally { layer.Pixels.ExitPixelWriteLock(); }
+            finally { PaintBuf(layer).ExitPixelWriteLock(); }
 
             return true;
         }
@@ -1872,14 +1926,14 @@ public sealed class BrushEngine : IDisposable
                 return true;
             _lastTileBucketCount = buckets.Count;
 
-            layer.Pixels.EnterPixelWriteLock();
+            PaintBuf(layer).EnterPixelWriteLock();
             try
             {
                 foreach (var (key, dabs) in buckets)
                 {
                     int tx = (short)key;
                     int ty = (short)(key >> 16);
-                    var tile = layer.Pixels.GetOrCreateRawTile(tx, ty);
+                    var tile = PaintBuf(layer).GetOrCreateRawTile(tx, ty);
                     var tilePixX = tx * tsz;
                     var tilePixY = ty * tsz;
 
@@ -1893,7 +1947,7 @@ public sealed class BrushEngine : IDisposable
                     }
                 }
             }
-            finally { layer.Pixels.ExitPixelWriteLock(); }
+            finally { PaintBuf(layer).ExitPixelWriteLock(); }
 
             return true;
         }
@@ -2216,7 +2270,7 @@ public sealed class BrushEngine : IDisposable
         int lastTx = (int)Math.Floor((double)(right - 1) / tsz);
         int lastTy = (int)Math.Floor((double)(bottom - 1) / tsz);
 
-        layer.Pixels.EnterPixelWriteLock();
+        PaintBuf(layer).EnterPixelWriteLock();
         try
         {
             for (int ty = firstTy; ty <= lastTy; ty++)
@@ -2233,7 +2287,7 @@ public sealed class BrushEngine : IDisposable
                     int pxMaxX = Math.Min(right, tilePixX + tsz);
                     if (pxMinX >= pxMaxX) continue;
 
-                    var tile = layer.Pixels.GetOrCreateRawTile(tx, ty);
+                    var tile = PaintBuf(layer).GetOrCreateRawTile(tx, ty);
 
                     for (int py = pxMinY; py < pxMaxY; py++)
                     {
@@ -2284,7 +2338,7 @@ public sealed class BrushEngine : IDisposable
                 }
             }
         }
-        finally { layer.Pixels.ExitPixelWriteLock(); }
+        finally { PaintBuf(layer).ExitPixelWriteLock(); }
 
         return true;
     }
@@ -2784,7 +2838,7 @@ public sealed class BrushEngine : IDisposable
             {
                 int key = (tx & 0xFFFF) | ((ty & 0xFFFF) << 16);
                 if (srcSnapshots.ContainsKey(key)) continue;
-                var raw = layer.Pixels.GetTileOrNull(tx, ty);
+                var raw = PaintBuf(layer).GetTileOrNull(tx, ty);
                 if (raw == null)
                 {
                     srcSnapshots[key] = null;
@@ -2797,7 +2851,7 @@ public sealed class BrushEngine : IDisposable
             }
         }
 
-        layer.Pixels.EnterPixelWriteLock();
+        PaintBuf(layer).EnterPixelWriteLock();
         try
         {
             var firstTx = FloorDiv(pxMinX, tsz);
@@ -2811,7 +2865,7 @@ public sealed class BrushEngine : IDisposable
                 for (var tx = firstTx; tx <= lastTx; tx++)
                 {
                     var tilePixX = tx * tsz;
-                    var dstTile = layer.Pixels.GetOrCreateRawTile(tx, ty);
+                    var dstTile = PaintBuf(layer).GetOrCreateRawTile(tx, ty);
 
                     var tilePxMinX = Math.Max(pxMinX, tilePixX);
                     var tilePxMinY = Math.Max(pxMinY, tilePixY);
@@ -2901,7 +2955,7 @@ public sealed class BrushEngine : IDisposable
         }
         finally
         {
-            layer.Pixels.ExitPixelWriteLock();
+            PaintBuf(layer).ExitPixelWriteLock();
         }
 
         return renderedAny ? SpatialSmearResult.Rendered : SpatialSmearResult.Failed;
@@ -2932,8 +2986,16 @@ public sealed class BrushEngine : IDisposable
         a = tile[offset + 3];
     }
 
+    private static void MarkPaintThumbnailsDirty(DrawingLayer layer)
+    {
+        layer.MarkThumbnailDirty();
+        if (MaskPaint(layer))
+            layer.MarkMaskThumbnailDirty();
+    }
+
     private static unsafe void CompositeScratchBgraOntoLayer(
-        TiledPixelBuffer pixels, PixelRegion dirty, byte* scratch, int scratchStride, bool alphaLocked, SKBlendMode blendMode)
+        TiledPixelBuffer pixels, PixelRegion dirty, byte* scratch, int scratchStride,
+        bool alphaLocked, SKBlendMode blendMode, bool maskMode = false)
     {
         if (dirty.IsEmpty) return;
 
@@ -2975,7 +3037,7 @@ public sealed class BrushEngine : IDisposable
                                 scratchRow[scratchOffset + 0],
                                 scratchRow[scratchOffset + 1],
                                 scratchRow[scratchOffset + 2],
-                                srcA, alphaLocked, blendMode);
+                                srcA, alphaLocked, blendMode, maskMode);
                         }
                     }
                 }
@@ -2990,8 +3052,25 @@ public sealed class BrushEngine : IDisposable
     private static void WriteCompositeStamp(
         byte[] tile, int offset,
         byte srcB, byte srcG, byte srcR, byte stampA,
-        bool alphaLocked, SKBlendMode blendMode)
+        bool alphaLocked, SKBlendMode blendMode, bool maskMode = false)
     {
+        if (maskMode)
+        {
+            var dstA = tile[offset + 3];
+            var effA = UsesMaskOpacity(blendMode) ? stampA : (byte)((stampA * Math.Max(srcB, Math.Max(srcG, srcR)) + 127) / 255);
+            if (effA == 0) return;
+            byte outA = blendMode switch
+            {
+                SKBlendMode.DstOut or SKBlendMode.Clear => (byte)(dstA * (255 - effA) / 255),
+                _ => (byte)(effA + (dstA * (255 - effA) + 127) / 255)
+            };
+            tile[offset] = outA;
+            tile[offset + 1] = outA;
+            tile[offset + 2] = outA;
+            tile[offset + 3] = outA;
+            return;
+        }
+
         byte db = tile[offset], dg = tile[offset + 1], dr = tile[offset + 2], da = tile[offset + 3];
         AlphaLockPixelOps.CompositeBrushPixel(ref db, ref dg, ref dr, ref da, srcB, srcG, srcR, stampA, alphaLocked, blendMode);
         tile[offset] = db;
@@ -3017,20 +3096,20 @@ public sealed class BrushEngine : IDisposable
     {
         if (!layer.IsAlphaLocked)
         {
-            layer.Pixels.RenderWithSkia(dirty, render);
+            PaintBuf(layer).RenderWithSkia(dirty, render);
             return;
         }
 
-        var before = layer.Pixels.CaptureTiles(dirty);
-        layer.Pixels.RenderWithSkia(dirty, render);
-        layer.Pixels.EnterPixelWriteLock();
+        var before = PaintBuf(layer).CaptureTiles(dirty);
+        PaintBuf(layer).RenderWithSkia(dirty, render);
+        PaintBuf(layer).EnterPixelWriteLock();
         try
         {
-            AlphaLockPixelOps.RestoreLockedTransparentPixels(layer.Pixels, dirty, before);
+            AlphaLockPixelOps.RestoreLockedTransparentPixels(PaintBuf(layer), dirty, before);
         }
         finally
         {
-            layer.Pixels.ExitPixelWriteLock();
+            PaintBuf(layer).ExitPixelWriteLock();
         }
     }
 
@@ -3162,7 +3241,7 @@ public sealed class BrushEngine : IDisposable
             return;
         }
 
-        layer.Pixels.GetPixel(x, y, out b, out g, out r, out a);
+        PaintBuf(layer).GetPixel(x, y, out b, out g, out r, out a);
     }
 
     // Simplified RGB <-> LCh conversion for perceptual mixing

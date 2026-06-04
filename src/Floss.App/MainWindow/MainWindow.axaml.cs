@@ -2998,11 +2998,18 @@ public partial class MainWindow : Window, Tools.IViewportController
         _moveLayerUpButton.IsEnabled = activeIdx < layers.Count - 1;
         _moveLayerDownButton.IsEnabled = activeIdx > 0;
 
-        if (_layerRows.TryGetValue(activeIdx, out var refs) && refs.PreviewImage != null)
+        if (_layerRows.TryGetValue(activeIdx, out var refs))
         {
             layer.MarkThumbnailDirty();
             layer.RefreshThumbnail();
-            refs.PreviewImage.Source = layer.GetThumbnail();
+            if (refs.PreviewImage != null)
+                refs.PreviewImage.Source = layer.GetThumbnail();
+            if (refs.MaskPreviewImage != null && layer.HasMask)
+            {
+                layer.MarkMaskThumbnailDirty();
+                layer.RefreshMaskThumbnail();
+                refs.MaskPreviewImage.Source = layer.GetMaskThumbnail();
+            }
         }
     }
 

@@ -223,7 +223,12 @@ public partial class MainWindow
         _lockLayerBtn.Click += (_, _) => { _canvas.ToggleLayerLock(_canvas.ActiveLayerIndex); BuildLayerList(); };
         _alphaLockLayerBtn.Click += (_, _) => { _canvas.ToggleLayerAlphaLock(_canvas.ActiveLayerIndex); BuildLayerList(); };
         _clipLayerBtn.Click += (_, _) => { _canvas.ToggleLayerClipping(_canvas.ActiveLayerIndex); BuildLayerList(); };
-        _maskLayerBtn.Click += (_, _) => { _canvas.ToggleLayerMaskEditing(_canvas.ActiveLayerIndex); BuildLayerList(); };
+        _maskLayerBtn.Click += (_, _) =>
+        {
+            var idx = _canvas.ActiveLayerIndex;
+            _canvas.ToggleLayerMaskEditing(idx);
+            BuildLayerList();
+        };
         _refLayerBtn.Click += (_, _) => { _canvas.ToggleLayerReference(_canvas.ActiveLayerIndex); BuildLayerList(); };
 
         var toggleRow = new StackPanel
@@ -477,7 +482,7 @@ public partial class MainWindow
         SetToggleActive(_lockLayerBtn, layer.IsLocked);
         SetToggleActive(_alphaLockLayerBtn, layer.IsAlphaLocked);
         SetToggleActive(_clipLayerBtn, layer.IsClipping);
-        SetToggleActive(_maskLayerBtn, layer.IsMaskEditing);
+        SetToggleActive(_maskLayerBtn, layer.HasMask && layer.IsMaskEditing);
         SetToggleActive(_refLayerBtn, layer.IsReference);
     }
 
@@ -555,8 +560,12 @@ public partial class MainWindow
         row.AddHandler(DragDrop.DragOverEvent, LayerRowDragOver);
         row.AddHandler(DragDrop.DropEvent, LayerRowDrop);
 
-        // cols: clip-strip | disclosure | visibility | thumbnail | name/status
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("3,16,20,48,*") };
+        var showMaskSlot = !layer.IsGroup && !layer.IsPaper;
+        // cols: clip-strip | disclosure | visibility | content thumb | mask thumb | name/status
+        var grid = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions(showMaskSlot ? "3,16,20,44,44,*" : "3,16,20,48,*")
+        };
 
         // Thin pink strip on the left edge to signal "clipped to layer below"
         var clipStrip = new Border
@@ -573,48 +582,52 @@ public partial class MainWindow
             layer.IsVisible ? IconVisOn : IconOff, i);
         visBtn.Click += (_, _) => _canvas.ToggleLayerVisibility((int)visBtn.Tag!);
 
-        var (preview, previewImage) = BuildLayerPreview(layer, isActive || isSelected, layer.IsPaper ? _canvas.Document.PaperColor : null);
+        var (preview, previewImage) = BuildLayerPreview(layer,
+            (isActive || isSelected) && !layer.IsMaskEditing,
+            layer.IsPaper ? _canvas.Document.PaperColor : null);
         preview.PointerPressed += (_, e) =>
         {
-            if (layer.IsGroup && e.GetCurrentPoint(preview).Properties.IsLeftButtonPressed)
+            if (!e.GetCurrentPoint(preview).Properties.IsLeftButtonPressed) return;
+            if (layer.IsGroup)
             {
                 _canvas.ToggleLayerOpen(i);
                 BuildLayerList();
                 e.Handled = true;
+                return;
             }
+
+            FocusLayerForAction(i);
+            _canvas.SetLayerContentEditing(i);
+            BuildLayerList();
+            e.Handled = true;
         };
         if (layer.IsPaper)
-        {
             preview.DoubleTapped += (_, _) => ShowPaperColorPicker();
-        }
 
-        // Mask indicator overlay on the preview
-        var previewHost = new Grid();
-        previewHost.Children.Add(preview);
-        if (layer.HasMask)
+        Control thumbHost = preview;
+        Image? maskPreviewImage = null;
+        if (showMaskSlot)
         {
-            var maskBadge = new Border
+            var (maskPreview, maskImg) = BuildLayerMaskPreview(layer, isActive || isSelected);
+            maskPreviewImage = maskImg;
+            maskPreview.PointerPressed += (_, e) =>
             {
-                Width = 14,
-                Height = 14,
-                Background = layer.IsMaskEditing ? MaskEditBorderBrush : MaskThumbBg,
-                BorderBrush = layer.IsMaskEditing ? MaskEditBorderBrush : MaskThumbBorder,
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(3),
-                Child = new TextBlock
-                {
-                    Text = "M",
-                    FontSize = 8,
-                    FontWeight = FontWeight.Bold,
-                    Foreground = layer.IsMaskEditing ? Avalonia.Media.Brushes.White : MaskThumbText,
-                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
-                },
-                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
-                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom,
-                Margin = new Thickness(0, 0, 1, 1)
+                if (!e.GetCurrentPoint(maskPreview).Properties.IsLeftButtonPressed) return;
+                FocusLayerForAction(i);
+                if (!layer.HasMask)
+                    _canvas.CreateLayerMask(i);
+                _canvas.SetLayerMaskEditing(i, true);
+                BuildLayerList();
+                e.Handled = true;
             };
-            previewHost.Children.Add(maskBadge);
+
+            var thumbs = new StackPanel
+            {
+                Orientation = Avalonia.Layout.Orientation.Horizontal,
+                Spacing = 2,
+                Children = { preview, maskPreview }
+            };
+            thumbHost = thumbs;
         }
 
         var nameText = new TextBlock
@@ -654,15 +667,15 @@ public partial class MainWindow
         Grid.SetColumn(clipStrip, 0);
         Grid.SetColumn(disclosureBtn, 1);
         Grid.SetColumn(visBtn, 2);
-        Grid.SetColumn(previewHost, 3);
-        Grid.SetColumn(nameHost, 4);
+        Grid.SetColumn(thumbHost, 3);
+        Grid.SetColumn(nameHost, showMaskSlot ? 5 : 4);
         grid.Children.Add(clipStrip);
         grid.Children.Add(disclosureBtn);
         grid.Children.Add(visBtn);
-        grid.Children.Add(previewHost);
+        grid.Children.Add(thumbHost);
         grid.Children.Add(nameHost);
         row.Child = grid;
-        return (row, new LayerRowRefs(row, disclosureBtn, visBtn, nameHost, previewImage, clipStrip));
+        return (row, new LayerRowRefs(row, disclosureBtn, visBtn, nameHost, previewImage, maskPreviewImage, clipStrip));
     }
 
     private static string LayerStatusText(DrawingLayer layer)
@@ -684,6 +697,8 @@ public partial class MainWindow
         if (layer.IsAlphaLocked) flags.Add("Alpha");
         if (layer.IsReference) flags.Add("Ref");
         if (layer.IsClipping) flags.Add("Clip");
+        if (layer.IsMaskEditing) flags.Add("Mask");
+        if (layer.HasMask && !layer.IsMaskVisible) flags.Add("MaskOff");
         if (layer.IsPaper) flags.Add("Paper");
         var suffix = flags.Count == 0 ? "" : "  " + string.Join(" ", flags);
         return $"{Math.Round(layer.Opacity * 100):0}%  {layer.BlendMode}{suffix}";
@@ -824,7 +839,15 @@ public partial class MainWindow
             Item(layer.IsAlphaLocked ? "Disable Alpha Lock" : "Enable Alpha Lock", () => _canvas.ToggleLayerAlphaLock(index)),
             Item(layer.IsReference ? "Disable Reference Layer" : "Enable Reference Layer", () => _canvas.ToggleLayerReference(index)),
             Item(layer.IsClipping ? "Disable Clipping Mask" : "Enable Clipping Mask", () => _canvas.ToggleLayerClipping(index)),
-            Item(layer.HasMask ? (layer.IsMaskEditing ? "Exit Mask Edit" : "Edit Mask") : "Create Mask", () => _canvas.ToggleLayerMaskEditing(index)),
+            Item(layer.HasMask ? (layer.IsMaskEditing ? "Edit Layer (exit mask)" : "Edit Mask") : "Create Mask",
+                () =>
+                {
+                    if (layer.HasMask && layer.IsMaskEditing)
+                        _canvas.SetLayerContentEditing(index);
+                    else
+                        _canvas.ToggleLayerMaskEditing(index);
+                    BuildLayerList();
+                }),
             Item(layer.IsMaskVisible ? "Disable Mask" : "Enable Mask", () => _canvas.ToggleLayerMask(index)),
             Item("Delete Mask", () => _canvas.DeleteLayerMask(index)),
             Item("Apply Mask", () => _canvas.ApplyLayerMask(index))
@@ -1548,11 +1571,46 @@ public partial class MainWindow
             _canvas.PreviewLayerAdjustmentParams(layerIndex, snapshot);
     }
 
+    private static (Border Frame, Image? PreviewImage) BuildLayerMaskPreview(DrawingLayer layer, bool highlighted)
+    {
+        var (thumbW, thumbH) = DrawingLayer.ComputeThumbnailPixelSize(layer.Width, layer.Height);
+        var editing = layer.IsMaskEditing;
+        var frame = new Border
+        {
+            Width = thumbW,
+            Height = thumbH,
+            Margin = new Thickness(1, 0, 1, 0),
+            Background = MaskThumbBg,
+            BorderBrush = editing ? MaskEditBorderBrush : highlighted ? new SolidColorBrush(Color.Parse(Accent)) : MaskThumbBorder,
+            BorderThickness = editing ? new Thickness(2) : new Thickness(1),
+            CornerRadius = new CornerRadius(3),
+            ClipToBounds = true,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+        };
+        ToolTip.SetTip(frame, layer.HasMask ? "Layer mask (click to edit)" : "Add layer mask");
+
+        if (!layer.HasMask)
+        {
+            frame.Child = Icons.Make(Icons.RectangleOutline, Math.Min(16, Math.Min(thumbW, thumbH) - 4), MaskThumbText);
+            return (frame, null);
+        }
+
+        var image = new Image
+        {
+            Source = layer.GetMaskThumbnail(),
+            Stretch = Stretch.Fill
+        };
+        RenderOptions.SetBitmapInterpolationMode(image, Avalonia.Media.Imaging.BitmapInterpolationMode.None);
+        frame.Child = image;
+        return (frame, image);
+    }
+
     private sealed record LayerRowRefs(
         Border Row,
         Button DisclosureButton,
         Button VisibilityButton,
         ContentControl NameHost,
         Image? PreviewImage,
+        Image? MaskPreviewImage,
         Border ClipStrip);
 }

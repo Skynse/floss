@@ -13,9 +13,11 @@ public sealed class DrawingLayer : IDisposable
     public const int ThumbnailMaxLongEdge = 44;
 
     private WriteableBitmap? _thumbnail;
+    private WriteableBitmap? _maskThumbnail;
     private int _thumbnailWidth;
     private int _thumbnailHeight;
     private bool _thumbnailDirty = true;
+    private bool _maskThumbnailDirty = true;
 
     public DrawingLayer(string name, int width, int height)
     {
@@ -73,6 +75,7 @@ public sealed class DrawingLayer : IDisposable
         if (MaskPixels != null) return;
         MaskPixels = new TiledPixelBuffer(Width, Height);
         MaskPixels.FillSolid(MaskPixels.Bounds, 255, 255, 255, 255);
+        _maskThumbnailDirty = true;
     }
 
     public void DeleteMask()
@@ -80,7 +83,12 @@ public sealed class DrawingLayer : IDisposable
         MaskPixels?.Dispose();
         MaskPixels = null;
         IsMaskEditing = false;
+        _maskThumbnail?.Dispose();
+        _maskThumbnail = null;
+        _maskThumbnailDirty = true;
     }
+
+    public void MarkMaskThumbnailDirty() => _maskThumbnailDirty = true;
 
     public void ApplyMask()
     {
@@ -127,6 +135,7 @@ public sealed class DrawingLayer : IDisposable
     public void Dispose()
     {
         _thumbnail?.Dispose();
+        _maskThumbnail?.Dispose();
         Pixels?.Dispose();
         MaskPixels?.Dispose();
     }
@@ -167,6 +176,72 @@ public sealed class DrawingLayer : IDisposable
     }
 
     public void MarkThumbnailDirty() => _thumbnailDirty = true;
+
+    public WriteableBitmap? GetMaskThumbnail()
+    {
+        if (!HasMask) return null;
+        var (tw, th) = ComputeThumbnailPixelSize(Width, Height);
+        if (_maskThumbnail == null || _thumbnailWidth != tw || _thumbnailHeight != th)
+        {
+            _maskThumbnail?.Dispose();
+            _maskThumbnail = new WriteableBitmap(
+                new PixelSize(tw, th),
+                new Vector(96, 96),
+                PixelFormat.Bgra8888,
+                AlphaFormat.Unpremul);
+            _maskThumbnailDirty = true;
+        }
+
+        if (_maskThumbnailDirty)
+            RefreshMaskThumbnail();
+        return _maskThumbnail;
+    }
+
+    public void RefreshMaskThumbnail()
+    {
+        if (_maskThumbnail == null || MaskPixels == null) return;
+
+        using var dstFrame = _maskThumbnail.Lock();
+        unsafe
+        {
+            var dst = (byte*)dstFrame.Address;
+            var dstW = _maskThumbnail.PixelSize.Width;
+            var dstH = _maskThumbnail.PixelSize.Height;
+            const int ts = TiledPixelBuffer.TileSize;
+            var docW = Math.Max(1, Width);
+            var docH = Math.Max(1, Height);
+
+            for (var y = 0; y < dstH; y++)
+            {
+                var dstRow = dst + y * dstFrame.RowBytes;
+                var docY = Math.Clamp((int)((y + 0.5) * docH / dstH), 0, docH - 1);
+                var tilY = FloorDiv(docY, ts);
+                var tilLocalY = docY - tilY * ts;
+
+                for (var x = 0; x < dstW; x++)
+                {
+                    var dstPx = dstRow + x * 4;
+                    var docX = Math.Clamp((int)((x + 0.5) * docW / dstW), 0, docW - 1);
+                    var tilX = FloorDiv(docX, ts);
+                    var tilLocalX = docX - tilX * ts;
+                    var maskTile = MaskPixels.GetTileOrNull(tilX, tilY);
+                    byte v = 0;
+                    if (maskTile != null && tilLocalX is >= 0 and < ts && tilLocalY is >= 0 and < ts)
+                    {
+                        var off = (tilLocalY * ts + tilLocalX) * 4;
+                        v = maskTile[off + 3];
+                    }
+
+                    dstPx[0] = v;
+                    dstPx[1] = v;
+                    dstPx[2] = v;
+                    dstPx[3] = 255;
+                }
+            }
+        }
+
+        _maskThumbnailDirty = false;
+    }
 
     public void RefreshThumbnail()
     {

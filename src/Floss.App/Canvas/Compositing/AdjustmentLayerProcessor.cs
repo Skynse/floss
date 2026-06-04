@@ -5,6 +5,68 @@ namespace Floss.App.Canvas.Compositing;
 
 internal static unsafe class AdjustmentLayerProcessor
 {
+    public static void ApplyWithLayer(
+        byte* dst, int dstStride, int width, int height,
+        DrawingLayer layer, double opacityScale,
+        PixelRegion clip, int originX, int originY)
+    {
+        var adj = layer.Adjustment;
+        if (adj == null || opacityScale <= 0) return;
+
+        if (!layer.HasMask || !layer.IsMaskVisible)
+        {
+            Apply(dst, dstStride, width, height, adj, opacityScale, clip, originX, originY);
+            return;
+        }
+
+        var bufLen = clip.Width * clip.Height * 4;
+        var buf = new byte[bufLen];
+        fixed (byte* bufPtr = buf)
+        {
+            for (var y = clip.Y; y < clip.Bottom; y++)
+            {
+                var srcRow = dst + (y - originY) * dstStride + (clip.X - originX) * 4;
+                var dstRow = bufPtr + (y - clip.Y) * clip.Width * 4;
+                Buffer.MemoryCopy(srcRow, dstRow, clip.Width * 4, clip.Width * 4);
+            }
+
+            Apply(bufPtr, clip.Width * 4, clip.Width, clip.Height, adj, 1.0, clip, clip.X, clip.Y);
+
+            var mask = layer.MaskPixels!;
+            const int ts = TiledPixelBuffer.TileSize;
+            var op = (float)Math.Clamp(opacityScale, 0.0, 1.0);
+            mask.EnterPixelReadLock();
+            try
+            {
+                for (var y = clip.Y; y < clip.Bottom; y++)
+                {
+                    var dstRow = dst + (y - originY) * dstStride + (clip.X - originX) * 4;
+                    var adjRow = bufPtr + (y - clip.Y) * clip.Width * 4;
+                    for (var x = clip.X; x < clip.Right; x++, dstRow += 4, adjRow += 4)
+                    {
+                        var mx = x - layer.OffsetX;
+                        var my = y - layer.OffsetY;
+                        if (mx < 0 || mx >= layer.Width || my < 0 || my >= layer.Height) continue;
+                        var tileX = LayerCompositorPixelOps.FloorDiv(mx, ts);
+                        var tileY = LayerCompositorPixelOps.FloorDiv(my, ts);
+                        var maskTile = mask.GetTileOrNull(tileX, tileY);
+                        if (maskTile == null) continue;
+                        var localX = mx - tileX * ts;
+                        var localY = my - tileY * ts;
+                        var maskA = maskTile[(localY * ts + localX) * 4 + 3];
+                        if (maskA == 0) continue;
+                        var eff = op * (maskA / 255f);
+                        BlendPx(dstRow, adjRow[0], adjRow[1], adjRow[2], eff);
+                    }
+                }
+            }
+            finally
+            {
+                mask.ExitPixelReadLock();
+            }
+        }
+    }
+
     public static void Apply(
         byte* dst, int dstStride, int width, int height,
         AdjustmentLayerData adj, double opacityScale,

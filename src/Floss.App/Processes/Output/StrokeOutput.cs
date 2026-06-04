@@ -108,7 +108,8 @@ public sealed class StrokeOutput : IOutputProcess
             canvas.DrawPath(path, strokePaint);
         }
 
-        var beforeTiles = layer.Pixels.CaptureTiles(layer.Pixels.Bounds);
+        var paint = layer.ActivePixels;
+        var beforeTiles = paint.CaptureTiles(paint.Bounds);
         bool changed = false;
 
         for (int ly = 0; ly < layer.Height; ly++)
@@ -122,7 +123,7 @@ public sealed class StrokeOutput : IOutputProcess
                 var skColor = bitmap.GetPixel(lx, ly);
                 if (skColor.Alpha == 0) continue;
 
-                if (AlphaLockPixelOps.TryWriteColor(layer.Pixels, lx, ly,
+                if (AlphaLockPixelOps.TryWriteColor(paint, lx, ly,
                         skColor.Blue, skColor.Green, skColor.Red, skColor.Alpha, layer.IsAlphaLocked, blendMode))
                     changed = true;
             }
