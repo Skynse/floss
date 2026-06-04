@@ -9,7 +9,7 @@ internal sealed class CheckerboardOverlay : Control
 {
     internal DrawingCanvas Canvas { get; set; }
 
-    internal static readonly ISolidColorBrush BackgroundBrush = new SolidColorBrush(Color.Parse("#ECECEC"));
+    internal static readonly ISolidColorBrush BackgroundBrush = new SolidColorBrush(Color.Parse("#323232"));
 
     public CheckerboardOverlay(DrawingCanvas canvas)
     {

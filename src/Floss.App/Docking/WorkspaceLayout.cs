@@ -11,14 +11,15 @@ namespace Floss.App.Docking;
 /// </summary>
 public sealed class WorkspaceLayout
 {
-    /// <summary>3 = tabbed dock columns. See notes/ui-visual-refresh.md.</summary>
-    public int LayoutVersion { get; set; } = 3;
+    /// <summary>4 = tools in tab:left. 3 = tabbed dock columns.</summary>
+    public int LayoutVersion { get; set; } = 4;
 
-    /// <summary>Width of the left dock column (brush library, etc.), not the 48px tool rail.</summary>
+    /// <summary>Width of the left dock column (brush library, etc.).</summary>
     public double LeftRailWidth { get; set; } = 280;
 
     public double RightPanelWidth { get; set; } = 320;
     public double RightDockSplit { get; set; } = 0.5;
+    public double LeftDockSplit { get; set; } = 0.5;
     public double BottomDockHeight { get; set; } = 320;
 
     [JsonInclude]
@@ -37,15 +38,39 @@ public sealed class WorkspaceLayout
     ];
 
     [JsonInclude]
-    public DockColumnLayout LeftColumn { get; set; } = new()
-    {
-        Id = "left",
-        PanelIds = ["tab:left"],
-        TabGroups = new Dictionary<string, TabGroupLayout>
+    public List<DockColumnLayout> LeftColumns { get; set; } =
+    [
+        new()
         {
-            ["tab:left"] = new() { PanelIds = ["brush", "tool-properties"], ActiveIndex = 0 }
+            Id = "left-0",
+            PanelIds = ["tab:left"],
+            TabGroups = new Dictionary<string, TabGroupLayout>
+            {
+                ["tab:left"] = new() { PanelIds = ["tools", "brush", "tool-properties"], ActiveIndex = 1 }
+            }
         }
-    };
+    ];
+
+    /// <summary>Legacy single left column in saved layouts.</summary>
+    [JsonPropertyName("LeftColumn")]
+    public DockColumnLayout? LeftColumnImport
+    {
+        set
+        {
+            if (value == null) return;
+            if (LeftColumns.Count == 0)
+                LeftColumns.Add(value);
+            else
+                LeftColumns[0] = value;
+        }
+    }
+
+    [JsonIgnore]
+    public DockColumnLayout LeftColumn
+    {
+        get => LeftColumns[0];
+        set => LeftColumns[0] = value;
+    }
 
     [JsonInclude]
     public DockColumnLayout BottomColumn { get; set; } = new() { Id = "bottom", PanelIds = ["node-graph"] };
@@ -81,12 +106,12 @@ public sealed class WorkspaceLayout
         HiddenPanelIds.Remove("tool-properties");
         HiddenPanelIds.Remove("layer-properties");
 
-        // Tools live on the fixed left rail (v2), not as a docked panel
         HiddenPanelIds.Remove("tools");
-        LeftColumn.PanelIds.Remove("tools");
 
         MigrateToWideDockLayoutV2();
         MigrateToTabbedDockV3();
+        MigrateToDockableToolsV4();
+        MigrateAwayFromForcedHorizontalV5();
 
         // Migrate old default or missing panels to the v1 right-stack layout.
         if (LayoutVersion < 2 &&
@@ -110,11 +135,16 @@ public sealed class WorkspaceLayout
             col.PanelIds = col.PanelIds.Where(id => IsKnownColumnPanelId(id, col, known)).Distinct().ToList();
             col.RepairTabGroupPanelIds();
         }
-        LeftColumn.PanelIds = LeftColumn.PanelIds
-            .Where(id => IsKnownColumnPanelId(id, LeftColumn, known))
-            .Distinct()
-            .ToList();
-        LeftColumn.RepairTabGroupPanelIds();
+        foreach (var left in LeftColumns)
+        {
+            left.PanelIds = left.PanelIds
+                .Where(id => IsKnownColumnPanelId(id, left, known))
+                .Distinct()
+                .ToList();
+            left.RepairTabGroupPanelIds();
+        }
+        if (LeftColumns.Count == 0)
+            LeftColumns = CreateDefault().LeftColumns;
         BottomColumn.PanelIds = BottomColumn.PanelIds
             .Where(id => IsKnownColumnPanelId(id, BottomColumn, known))
             .Distinct()
@@ -124,10 +154,8 @@ public sealed class WorkspaceLayout
         // Ensure every known panel is placed somewhere
         foreach (var id in known)
         {
-            if (id == "tools")
-                continue; // fixed tool rail — not a dock column panel
             if (RightColumns.Any(c => c.ContainsPanel(id))) continue;
-            if (LeftColumn.ContainsPanel(id)) continue;
+            if (LeftColumns.Any(c => c.ContainsPanel(id))) continue;
             if (BottomColumn.ContainsPanel(id)) continue;
             if (FloatingPanels.ContainsKey(id)) continue;
             if (HiddenPanelIds.Contains(id)) continue;
@@ -136,7 +164,7 @@ public sealed class WorkspaceLayout
             var zone = def?.DefaultZone ?? "right-0";
 
             if (zone == "left")
-                LeftColumn.PanelIds.Add(id);
+                PlacePanelInLeftColumn(id);
             else if (zone == "bottom")
                 BottomColumn.PanelIds.Add(id);
             else if (zone.StartsWith("right-") && int.TryParse(zone.AsSpan(6), out var rightIdx)
@@ -227,13 +255,91 @@ public sealed class WorkspaceLayout
         LayoutVersion = 3;
     }
 
+    private void MigrateToDockableToolsV4()
+    {
+        if (LayoutVersion >= 4)
+            return;
+
+        if (!HiddenPanelIds.Contains("tools")
+            && !LeftColumn.ContainsPanel("tools")
+            && !RightColumns.Any(c => c.ContainsPanel("tools"))
+            && !BottomColumn.ContainsPanel("tools")
+            && !FloatingPanels.ContainsKey("tools"))
+        {
+            if (LeftColumn.TabGroups.TryGetValue("tab:left", out var tab)
+                && !tab.PanelIds.Contains("tools"))
+            {
+                tab.PanelIds.Insert(0, "tools");
+            }
+            else if (!LeftColumn.PanelIds.Contains("tools"))
+            {
+                LeftColumn.PanelIds.Insert(0, "tools");
+            }
+        }
+
+        LayoutVersion = 4;
+    }
+
+    /// <summary>Undo layout v5 that forced tools/brush/settings into one horizontal row.</summary>
+    private void MigrateAwayFromForcedHorizontalV5()
+    {
+        static bool IsToolkitSet(IEnumerable<string> ids)
+        {
+            var set = ids.OrderBy(static x => x, StringComparer.Ordinal).ToArray();
+            return set.Length == 3
+                   && set[0] == "brush"
+                   && set[1] == "tool-properties"
+                   && set[2] == "tools";
+        }
+
+        static bool TryGetForcedHorizontalToolkitRow(DockColumnLayout col, out List<string> panelIds)
+        {
+            panelIds = [];
+            if (col.Rows is not { Count: 1 })
+                return false;
+            var row = col.Rows[0];
+            if (row.Orientation != DockOrientation.Horizontal || !IsToolkitSet(row.PanelIds))
+                return false;
+            panelIds = row.PanelIds.ToList();
+            return true;
+        }
+
+        // Only undo the automatic v5 default/migration — not user-arranged horizontal docks.
+        if (LayoutVersion != 5)
+            return;
+
+        for (var i = 0; i < LeftColumns.Count; i++)
+        {
+            if (!TryGetForcedHorizontalToolkitRow(LeftColumns[i], out var toolkit))
+                continue;
+
+            LeftColumns[i].Rows = null;
+            LeftColumns[i].PanelIds = ["tab:left"];
+            LeftColumns[i].TabGroups = new Dictionary<string, TabGroupLayout>
+            {
+                ["tab:left"] = new()
+                {
+                    PanelIds = toolkit,
+                    ActiveIndex = Math.Clamp(toolkit.IndexOf("brush"), 0, toolkit.Count - 1)
+                }
+            };
+        }
+
+        if (LeftRailWidth > 400)
+            LeftRailWidth = 280;
+
+        if (LayoutVersion >= 5)
+            LayoutVersion = 4;
+    }
+
     /// <summary>
     /// Returns the first panel ID that is referenced in a TabGroup but not accessible
     /// through PanelIds or Rows (orphaned). Returns null if layout is valid.
     /// </summary>
     public string? FindOrphanedPanel()
     {
-        var allColumns = new List<DockColumnLayout> { LeftColumn };
+        var allColumns = new List<DockColumnLayout>();
+        allColumns.AddRange(LeftColumns);
         allColumns.AddRange(RightColumns);
         allColumns.Add(BottomColumn);
 
@@ -260,19 +366,37 @@ public sealed class WorkspaceLayout
         return null; // Valid
     }
 
+    private void PlacePanelInLeftColumn(string id)
+    {
+        if (LeftColumns.Count == 0)
+            LeftColumns.Add(new DockColumnLayout { Id = "left-0" });
+
+        var col = LeftColumns[0];
+        if (col.Rows is { Count: > 0 })
+        {
+            var row = col.Rows[^1];
+            if (!row.PanelIds.Contains(id))
+                row.PanelIds.Add(id);
+            return;
+        }
+
+        if (!col.PanelIds.Contains(id))
+            col.PanelIds.Add(id);
+    }
+
     private void DeduplicateColumns(HashSet<string> known)
     {
         foreach (var id in known)
         {
             var inRight = RightColumns.Where(c => c.ContainsPanel(id)).ToList();
-            var inLeft = LeftColumn.ContainsPanel(id);
+            var inLeft = LeftColumns.Any(c => c.ContainsPanel(id));
             var inBottom = BottomColumn.ContainsPanel(id);
             if (inRight.Count + (inLeft ? 1 : 0) + (inBottom ? 1 : 0) <= 1) continue;
 
             var def = PanelRegistry.Get(id);
             var zone = def?.DefaultZone ?? "right-0";
 
-            if (zone == "bottom" && inBottom) { foreach (var c in inRight) c.PanelIds.Remove(id); if (inLeft) LeftColumn.PanelIds.Remove(id); }
+            if (zone == "bottom" && inBottom) { foreach (var c in inRight) c.PanelIds.Remove(id); if (inLeft) foreach (var c in LeftColumns) c.RemovePanel(id); }
             else if (zone == "left" && inLeft) { foreach (var c in inRight) c.PanelIds.Remove(id); if (inBottom) BottomColumn.PanelIds.Remove(id); }
             else
             {
@@ -285,7 +409,7 @@ public sealed class WorkspaceLayout
                     // Panel is only in left but doesn't belong there — move to right
                     else if (inLeft && !inRight.Any() && !inBottom)
                     {
-                        LeftColumn.PanelIds.Remove(id);
+                        foreach (var c in LeftColumns) c.RemovePanel(id);
                         RightColumns[0].PanelIds.Add(id);
                     }
                     // Panel is only in bottom but doesn't belong there — move to right
@@ -298,7 +422,8 @@ public sealed class WorkspaceLayout
                 else
                 {
                     // Remove from non-RightColumn locations
-                    if (inLeft) LeftColumn.PanelIds.Remove(id);
+                    if (inLeft)
+                        foreach (var c in LeftColumns) c.RemovePanel(id);
                     if (inBottom) BottomColumn.PanelIds.Remove(id);
                     foreach (var c in inRight)
                         if (c != keepCol) c.PanelIds.Remove(id);
@@ -309,15 +434,27 @@ public sealed class WorkspaceLayout
 
     public (int ColumnIndex, int PanelIndex)? FindPanel(string id)
     {
-        var idx = LeftColumn.PanelIds.IndexOf(id);
-        if (idx >= 0) return (-1, idx);
+        for (var i = 0; i < LeftColumns.Count; i++)
+        {
+            var idx = LeftColumns[i].PanelIds.IndexOf(id);
+            if (idx >= 0) return (DockColumnIndices.Left(i), idx);
+            if (LeftColumns[i].ContainsPanel(id))
+            {
+                var resolved = LeftColumns[i].ResolvedRows();
+                for (var ri = 0; ri < resolved.Count; ri++)
+                {
+                    var ti = resolved[ri].PanelIds.ToList().IndexOf(id);
+                    if (ti >= 0) return (DockColumnIndices.Left(i), ri);
+                }
+            }
+        }
 
-        idx = BottomColumn.PanelIds.IndexOf(id);
-        if (idx >= 0) return (-2, idx);
+        var bottomIdx = BottomColumn.PanelIds.IndexOf(id);
+        if (bottomIdx >= 0) return (DockColumnIndices.Bottom, bottomIdx);
 
         for (var i = 0; i < RightColumns.Count; i++)
         {
-            idx = RightColumns[i].PanelIds.IndexOf(id);
+            var idx = RightColumns[i].PanelIds.IndexOf(id);
             if (idx >= 0) return (i, idx);
         }
 
@@ -326,7 +463,8 @@ public sealed class WorkspaceLayout
 
     public void RemovePanel(string id)
     {
-        LeftColumn.RemovePanel(id);
+        foreach (var col in LeftColumns)
+            col.RemovePanel(id);
         BottomColumn.RemovePanel(id);
         foreach (var col in RightColumns)
             col.RemovePanel(id);

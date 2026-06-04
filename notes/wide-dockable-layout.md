@@ -2,8 +2,8 @@
 
 ## Reference (Photoshop / CSP)
 
-- **Fixed tool rail** on the far left (~48px): vertical icons, color well at bottom.
-- **Wide dock columns** on left and/or right for brushes, color, layers (resizable, not capped at ~440px).
+- **Tools** dockable on the left (tab or stacked row), not a hardcoded root column.
+- **Wide dock columns** on left and/or right for tools, brushes, color, layers (resizable, not capped at ~440px).
 - **Canvas** maximized in the center; no floating tool pill over the viewport.
 - **Viewport background**: `CheckerboardOverlay` dot pattern — do not change.
 
@@ -20,20 +20,18 @@
 
 | Index | Role | Width |
 |-------|------|-------|
-| 0 | Tool rail | 48px fixed (hidden when Tools docker toggled off) |
-| 1 | Left dock | 0 or `LeftRailWidth` (200–480px) when left panels visible |
-| 2 | Left splitter | 3px |
-| 3 | Canvas | `*` |
-| 4 | Right splitter | 3px when right dock visible |
-| 5 | Right dock | `RightPanelWidth` (240–600px) |
+| 0 | Left dock | 0 or `LeftRailWidth` (200–720px) when left panels visible |
+| 1 | Left splitter | 3px |
+| 2 | Canvas | `*` |
+| 3 | Right splitter | 3px when right dock visible |
+| 4 | Right dock | `RightPanelWidth` (240–600px) |
 
-`WorkspaceLayout.LeftRailWidth` stores **left dock** width (not the 48px tool rail).
+`WorkspaceLayout.LeftRailWidth` stores left dock width (includes Tools when docked there).
 
 ## Default panel zones (`PanelRegistry`)
 
-- `brush`, `tool-properties` → `left`
+- `tools`, `brush`, `tool-properties` → `left` (default tab `tab:left`; horizontal via drag — `notes/horizontal-dock-drag.md`)
 - `color`, `color-slider`, `layer-properties`, `layers` → `right-0`
-- `tools` → fixed rail only (not placed in `LeftColumn` by default)
 
 ## Default `WorkspaceLayout` (v2)
 
@@ -54,9 +52,10 @@ Only auto-rearrange when layout matches the old factory default (left empty, bru
 
 - `src/Floss.App/Docking/WorkspaceLayout.cs` — defaults, `LayoutVersion`, migration
 - `src/Floss.App/Docking/PanelRegistry.cs` — default zones
-- `src/Floss.App/MainWindow/MainWindow.axaml.cs` — root grid, rail, width helpers
+- `src/Floss.App/MainWindow/MainWindow.axaml.cs` — root grid, width helpers
 - `src/Floss.App/MainWindow/MainWindow.Viewport.cs` — canvas-only column index
-- `src/Floss.App/MainWindow/MainWindow.ToolRail.cs` — `BuildToolsContent` uses vertical rail
+- `src/Floss.App/MainWindow/MainWindow.ToolRail.cs` — `BuildToolsContent` panel body
+- `notes/tools-panel-dockable.md` — tools no longer hardcoded
 
 ## Explicitly unchanged
 

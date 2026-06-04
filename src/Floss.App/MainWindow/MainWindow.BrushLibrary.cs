@@ -21,6 +21,11 @@ using static Floss.App.Config.AppColors;
 public partial class MainWindow : Window
 {
     // ── Brush section ─────────────────────────────────────────────────────────
+    /// <summary>Fixed tile width for wrap layout (CSP-style adaptive columns).</summary>
+    private const double BrushPresetTileWidth = 136;
+    private const double BrushPresetPreviewRenderWidth = 128;
+    private const double BrushPresetPreviewRenderHeight = 44;
+
     private const int BrushPresetAutosaveDebounceMs = 700;
     private const int ToolGroupsSaveDebounceMs = 400;
     private DispatcherTimer? _brushPresetAutosaveTimer;
@@ -84,25 +89,33 @@ public partial class MainWindow : Window
         headerRow.Children.Add(_saveBrushButton);
         headerRow.Children.Add(_activeBrushLabel);
 
-        // Category strip — equal-width columns across the dock
-        _brushCategoryPanel = new Grid
+        // Category strip — wraps like preset tiles (readable labels, no equal-width squeeze)
+        _brushCategoryPanel = new WrapPanel
         {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            ItemSpacing = 4,
+            LineSpacing = 4,
             Margin = new Thickness(0, 0, 0, 6),
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
         };
 
-        _presetPanel = new StackPanel
+        _presetPanel = new WrapPanel
         {
-            Orientation = Avalonia.Layout.Orientation.Vertical,
-            Spacing = 4
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            ItemWidth = BrushPresetTileWidth,
+            ItemSpacing = 4,
+            LineSpacing = 4,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
         };
         var presetScroll = ScrollHelper.Create(sv =>
         {
             ScrollHelper.UseVisibleScrollBars(sv, horizontal: false, vertical: true);
+            sv.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
             sv.Content = _presetPanel;
         });
         _brushPresetScroll = presetScroll;
         presetScroll.CacheMode = new Avalonia.Media.BitmapCache();
+        presetScroll.SizeChanged += (_, _) => QueueSyncBrushPresetPanelLayout();
 
         var listArea = new Grid
         {
@@ -140,7 +153,6 @@ public partial class MainWindow : Window
             return;
 
         _brushCategoryPanel.Children.Clear();
-        _brushCategoryPanel.ColumnDefinitions.Clear();
         _presetPanel.Children.Clear();
 
         var group = _activeToolGroup;
@@ -149,14 +161,8 @@ public partial class MainWindow : Window
         if (_selectedCategory == null)
             _selectedCategory = group.Categories.FirstOrDefault()?.Name;
 
-        var catCount = group.Categories.Count;
-        for (var i = 0; i < catCount; i++)
-            _brushCategoryPanel.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
-        _brushCategoryPanel.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
-
-        for (var ci = 0; ci < catCount; ci++)
+        foreach (var cat in group.Categories)
         {
-            var cat = group.Categories[ci];
             var selected = cat.Name == _selectedCategory;
             var catName = cat.Name;
             var btn = new Button
@@ -166,18 +172,17 @@ public partial class MainWindow : Window
                     Text = catName,
                     FontSize = 11,
                     TextWrapping = Avalonia.Media.TextWrapping.NoWrap,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
                     HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
                 },
-                Padding = new Thickness(6, 5),
+                Padding = new Thickness(8, 5),
                 MinHeight = 28,
-                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
-                HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+                HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
                 Background = new SolidColorBrush(Color.Parse(selected ? Bg3 : Bg2)),
                 Foreground = new SolidColorBrush(Color.Parse(selected ? TextPrimary : TextSecondary)),
                 BorderBrush = new SolidColorBrush(Color.Parse(selected ? Accent : Stroke)),
-                BorderThickness = new Thickness(0, 0, 1, selected ? 2 : 1),
-                CornerRadius = new CornerRadius(0),
+                BorderThickness = new Thickness(1, 1, 1, selected ? 2 : 1),
+                CornerRadius = new CornerRadius(3),
                 Tag = catName,
             };
             btn.Click += (_, _) =>
@@ -208,7 +213,6 @@ public partial class MainWindow : Window
             btn.ContextMenu = BuildCategoryContextMenu(group, cat);
             EnableCategoryDrop(btn, group, catName);
             EnableCategoryReorder(btn, group, catName);
-            Grid.SetColumn(btn, ci);
             _brushCategoryPanel.Children.Add(btn);
         }
 
@@ -218,12 +222,13 @@ public partial class MainWindow : Window
             MinHeight = 28,
             MinWidth = 36,
             Width = 36,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             Padding = new Thickness(0, 5),
             Background = new SolidColorBrush(Color.Parse(Bg2)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1, 0, 0, 1),
-            CornerRadius = new CornerRadius(0),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(3),
         };
         newCatBtn.Click += async (_, _) =>
         {
@@ -237,7 +242,6 @@ public partial class MainWindow : Window
             }
         };
         EnableNewCategoryDrop(newCatBtn, group);
-        Grid.SetColumn(newCatBtn, catCount);
         _brushCategoryPanel.Children.Add(newCatBtn);
 
         if (_selectedCategory == null)
@@ -289,7 +293,46 @@ public partial class MainWindow : Window
         foreach (var staleId in _brushPresetRowCache.Keys.Where(id => !visiblePresetIds.Contains(id)).ToList())
             _brushPresetRowCache.Remove(staleId);
 
+        QueueSyncBrushPresetPanelLayout();
         _brushPresetScroll?.InvalidateVisual();
+    }
+
+    private void QueueSyncBrushPresetPanelLayout()
+    {
+        if (_brushPresetScroll is null)
+            return;
+
+        Dispatcher.UIThread.Post(SyncBrushPresetPanelLayout, DispatcherPriority.Loaded);
+    }
+
+    /// <summary>
+    /// ScrollViewer gives content infinite width; constrain to viewport so WrapPanel wraps full tiles only.
+    /// </summary>
+    private void SyncBrushPresetPanelLayout()
+    {
+        if (_brushPresetScroll is null)
+            return;
+
+        var viewportW = _brushPresetScroll.Viewport.Width;
+        if (viewportW <= 1 || double.IsInfinity(viewportW) || double.IsNaN(viewportW))
+            viewportW = _brushPresetScroll.Bounds.Width;
+        if (viewportW <= 1)
+            return;
+
+        const double listRightMargin = 8;
+        var contentW = Math.Max(BrushPresetTileWidth, viewportW - listRightMargin);
+
+        _brushCategoryPanel.Width = contentW;
+        _brushCategoryPanel.MaxWidth = contentW;
+
+        _presetPanel.Width = contentW;
+        _presetPanel.MaxWidth = contentW;
+
+        var spacing = _presetPanel.ItemSpacing;
+        var columns = Math.Max(1, (int)((contentW + spacing) / (BrushPresetTileWidth + spacing)));
+        _presetPanel.ItemWidth = (contentW - (columns - 1) * spacing) / columns;
+        _presetPanel.InvalidateMeasure();
+        _brushCategoryPanel.InvalidateMeasure();
     }
 
     private Button GetOrUpdateBrushPresetRow(ToolGroup group, ToolPreset preset, BrushPreset brushPreset, bool isActive)
@@ -348,7 +391,8 @@ public partial class MainWindow : Window
         {
             Brush = brushPreset,
             CompactPreview = true,
-            Height = 44,
+            FixedRenderWidth = (int)BrushPresetPreviewRenderWidth,
+            FixedRenderHeight = (int)BrushPresetPreviewRenderHeight,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
         };
@@ -368,7 +412,8 @@ public partial class MainWindow : Window
 
         var previewHost = new Grid
         {
-            Height = 44,
+            Height = BrushPresetPreviewRenderHeight,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             ClipToBounds = true,
             Background = new SolidColorBrush(Color.Parse(Bg0))
         };
@@ -387,11 +432,13 @@ public partial class MainWindow : Window
         var nameRow = new Border
         {
             Padding = new Thickness(8, 4),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             Child = nameText
         };
 
         var content = new Grid
         {
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             RowDefinitions = new RowDefinitions("Auto,Auto")
         };
         Grid.SetRow(previewHost, 0);
@@ -444,8 +491,8 @@ public partial class MainWindow : Window
         var row = new Button
         {
             Height = 34,
-            MinWidth = 176,
             Padding = new Thickness(0),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
             Background = new SolidColorBrush(Color.Parse(isActive ? Accent : Bg2)),

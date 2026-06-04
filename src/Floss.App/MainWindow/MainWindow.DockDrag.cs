@@ -15,22 +15,39 @@ public partial class MainWindow
 {
     private const int DockDragThreshold = 6;
     private const double DropHysteresisPx = 12;
+    private const double HorizontalSplitEdgeRatio = 0.35;
 
     private DockDropOverlay? _dockDropOverlay;
     private string? _dockDragPanelId;
     private Point _dockDragStart;
     private bool _dockDragActive;
     private int _dockDropColumn = -99;
-    private int _dockDropRow = -1;
-    private readonly List<DockRowMetric> _dockRowMetrics = [];
+    private DockDropKind _dockDropKind = DockDropKind.InsertRow;
+    private int _dockDropRowIndex;
+    private readonly List<DockPanelMetric> _dockPanelMetrics = [];
+    private readonly List<DockRowContainerMetric> _dockRowMetrics = [];
+    private readonly List<DockColumnEdgeMetric> _dockColumnEdgeMetrics = [];
     private DropTargetState? _stickyTarget;
 
-    private sealed record DockRowMetric(
+    private sealed record DockPanelMetric(
         int ColumnIndex,
         int RowIndex,
-        int RowCode,
+        string PanelId,
         Rect Bounds,
         bool IsTabGroup,
+        string Label);
+
+    private sealed record DockRowContainerMetric(
+        int ColumnIndex,
+        int RowIndex,
+        Rect Bounds,
+        bool IsTabGroup,
+        string Label);
+
+    private sealed record DockColumnEdgeMetric(
+        bool OnLeftSide,
+        int InsertColumnIndex,
+        Rect Bounds,
         string Label);
 
     private void EnsureDockDropOverlay()
@@ -115,9 +132,12 @@ public partial class MainWindow
         _dockDragStart = rootPt;
         _dockDragActive = false;
         _dockDropColumn = -99;
-        _dockDropRow = -1;
+        _dockDropKind = DockDropKind.InsertRow;
+        _dockDropRowIndex = -1;
         _stickyTarget = null;
+        _dockPanelMetrics.Clear();
         _dockRowMetrics.Clear();
+        _dockColumnEdgeMetrics.Clear();
     }
 
     private void ContinueDockerDrag(string panelId, Point rootPt, PointerEventArgs e)
@@ -128,7 +148,7 @@ public partial class MainWindow
         if (!_dockDragActive)
         {
             _dockDragActive = true;
-            CacheDockRowMetrics(panelId);
+            CacheDockDropMetrics(panelId);
         }
 
         UpdateDockerDropPreview(panelId, rootPt);
@@ -137,8 +157,8 @@ public partial class MainWindow
 
     private void FinishDockerDrag()
     {
-        if (_dockDragActive && _dockDropColumn >= -2 && _dockDragPanelId != null)
-            CommitDockerDrop(_dockDragPanelId, _dockDropColumn, _dockDropRow);
+        if (_dockDragActive && _dockDragPanelId != null && _stickyTarget != null)
+            CommitDockerDrop(_dockDragPanelId);
         CancelDockerDrag();
     }
 
@@ -147,76 +167,193 @@ public partial class MainWindow
         _dockDragPanelId = null;
         _dockDragActive = false;
         _dockDropColumn = -99;
-        _dockDropRow = -1;
+        _dockDropRowIndex = -1;
         _stickyTarget = null;
+        _dockPanelMetrics.Clear();
         _dockRowMetrics.Clear();
+        _dockColumnEdgeMetrics.Clear();
         _dockDropOverlay?.Clear();
     }
 
-    private void CommitDockerDrop(string panelId, int columnIndex, int dropCode)
+    private void CommitDockerDrop(string panelId)
     {
         SaveWorkspaceLayoutFromUi();
         var layout = App.Config.WorkspaceLayout;
 
-        if (dropCode < 0)
-        {
-            var mergeRow = -dropCode - 1;
-            DockLayoutOps.ApplyDrop(layout, panelId, columnIndex, mergeRow, DockDropKind.MergeTab, mergeRow);
-        }
-        else
-            DockLayoutOps.ApplyDrop(layout, panelId, columnIndex, dropCode, DockDropKind.InsertRow);
+        DockLayoutOps.ApplyDrop(
+            layout,
+            panelId,
+            _dockDropColumn,
+            _dockDropRowIndex,
+            _dockDropKind,
+            mergeTabRowIndex: _dockDropRowIndex);
 
         foreach (var col in layout.RightColumns)
             DockLayoutOps.CompactTabGroups(col);
-        DockLayoutOps.CompactTabGroups(layout.LeftColumn);
+        foreach (var col in layout.LeftColumns)
+            DockLayoutOps.CompactTabGroups(col);
 
         RebuildDockers();
         App.Config.Save();
     }
 
-    private void CacheDockRowMetrics(string movingId)
+    private void CacheDockDropMetrics(string movingId)
     {
+        _dockPanelMetrics.Clear();
         _dockRowMetrics.Clear();
         if (_dockDropOverlay == null) return;
 
-        Grid? ColumnGrid(int col) => col < 0
-            ? (_leftPanel is Border { Child: Grid g } ? g : null)
-            : FindRightColumnGrid(col);
+        var layout = App.Config.WorkspaceLayout;
+        var columnEntries = layout.LeftColumns
+            .Select((c, i) => (ColumnIndex: DockColumnIndices.Left(i), Column: c))
+            .Concat(layout.RightColumns.Select((c, i) => (ColumnIndex: i, Column: c)))
+            .ToList();
 
-        foreach (var col in new[] { -1 }.Concat(Enumerable.Range(0, App.Config.WorkspaceLayout.RightColumns.Count)))
+        foreach (var (columnIndex, column) in columnEntries)
         {
-            var grid = ColumnGrid(col);
+            var grid = ColumnGrid(columnIndex);
             if (grid == null) continue;
 
-            var layout = col < 0
-                ? App.Config.WorkspaceLayout.LeftColumn
-                : App.Config.WorkspaceLayout.RightColumns[col];
-
-            var resolved = layout.ResolvedRows()
+            var resolved = column.ResolvedRows()
                 .Where(r => r.PanelIds.Count > 1 || !r.PanelIds.Contains(movingId))
                 .ToList();
 
-            for (var i = 0; i < resolved.Count; i++)
+            for (var ri = 0; ri < resolved.Count; ri++)
             {
-                var row = resolved[i];
-                var control = FindRowControl(grid, row);
-                if (control == null) continue;
+                var row = resolved[ri];
+                var rowControl = FindRowContainer(grid, row);
+                if (rowControl == null) continue;
 
-                var bounds = control.Bounds;
-                var matrix = control.TransformToVisual(_dockDropOverlay);
-                if (matrix == null) continue;
+                var rowRect = ControlRectInOverlay(rowControl);
+                if (rowRect == null) continue;
 
-                var topLeft = matrix.Value.Transform(new Point(0, 0));
-                var rect = new Rect(topLeft, bounds.Size);
-                if (rect.Width <= 0 || rect.Height <= 0) continue;
-
+                var isTabGroup = row.Orientation == DockOrientation.Vertical && row.PanelIds.Count > 1;
                 var label = row.PanelIds.Count > 1
                     ? string.Join(" · ", row.PanelIds.Select(DockerTitle))
                     : DockerTitle(row.PanelIds[0]);
 
-                _dockRowMetrics.Add(new DockRowMetric(col, i, i, rect, row.PanelIds.Count > 1, label));
+                _dockRowMetrics.Add(new DockRowContainerMetric(columnIndex, ri, rowRect.Value, isTabGroup, label));
+
+                if (isTabGroup)
+                    continue;
+
+                foreach (var pid in row.PanelIds)
+                {
+                    if (string.Equals(pid, movingId, StringComparison.Ordinal))
+                        continue;
+                    if (!IsDockerVisible(pid) || IsDockerFloating(pid))
+                        continue;
+
+                    var section = FindPanelSection(rowControl, pid);
+                    if (section == null) continue;
+
+                    var panelRect = ControlRectInOverlay(section);
+                    if (panelRect == null) continue;
+
+                    _dockPanelMetrics.Add(new DockPanelMetric(columnIndex, ri, pid, panelRect.Value, false, DockerTitle(pid)));
+                }
             }
         }
+
+        CacheDockColumnEdgeMetrics();
+    }
+
+    private void CacheDockColumnEdgeMetrics()
+    {
+        _dockColumnEdgeMetrics.Clear();
+        if (_dockDropOverlay == null || _rootGrid == null) return;
+
+        const double edgeWidth = 28;
+        var layout = App.Config.WorkspaceLayout;
+
+        foreach (var child in _rootGrid.Children)
+        {
+            if (Grid.GetColumn(child) != RootColCenter || child is not Control center)
+                continue;
+
+            var centerRect = ControlRectInOverlay(center);
+            if (centerRect == null) continue;
+
+            var leftStrip = new Rect(centerRect.Value.Left - edgeWidth, centerRect.Value.Top, edgeWidth,
+                centerRect.Value.Height);
+            _dockColumnEdgeMetrics.Add(new DockColumnEdgeMetric(
+                true,
+                layout.LeftColumns.Count,
+                leftStrip,
+                "New left column (beside canvas)"));
+
+            var rightStrip = new Rect(centerRect.Value.Right, centerRect.Value.Top, edgeWidth,
+                centerRect.Value.Height);
+            _dockColumnEdgeMetrics.Add(new DockColumnEdgeMetric(
+                false,
+                0,
+                rightStrip,
+                "New right column (beside canvas)"));
+            break;
+        }
+
+        if (_leftDockerHostGrid != null)
+        {
+            for (var i = 0; i < layout.LeftColumns.Count - 1; i++)
+            {
+                var splitCol = i * 2 + 1;
+                if (splitCol >= _leftDockerHostGrid.ColumnDefinitions.Count) continue;
+                var splitControl = _leftDockerHostGrid.Children.FirstOrDefault(c => Grid.GetColumn(c) == splitCol);
+                if (splitControl == null) continue;
+                var rect = ControlRectInOverlay(splitControl);
+                if (rect == null) continue;
+                var zone = new Rect(rect.Value.Left - edgeWidth * 0.5, rect.Value.Top, edgeWidth, rect.Value.Height);
+                _dockColumnEdgeMetrics.Add(new DockColumnEdgeMetric(true, i + 1, zone, "Split left column"));
+            }
+        }
+
+        if (_dockerHostGrid != null)
+        {
+            for (var i = 0; i < layout.RightColumns.Count - 1; i++)
+            {
+                var splitCol = i * 2 + 1;
+                if (splitCol >= _dockerHostGrid.ColumnDefinitions.Count) continue;
+                var splitControl = _dockerHostGrid.Children.FirstOrDefault(c => Grid.GetColumn(c) == splitCol);
+                if (splitControl == null) continue;
+                var rect = ControlRectInOverlay(splitControl);
+                if (rect == null) continue;
+                var zone = new Rect(rect.Value.Left - edgeWidth * 0.5, rect.Value.Top, edgeWidth, rect.Value.Height);
+                _dockColumnEdgeMetrics.Add(new DockColumnEdgeMetric(false, i + 1, zone, "Split right column"));
+            }
+        }
+    }
+
+    private Grid? ColumnGrid(int columnIndex)
+    {
+        var leftIdx = DockColumnIndices.TryParseLeft(columnIndex);
+        if (leftIdx != null)
+            return FindLeftColumnGrid(leftIdx.Value);
+        if (columnIndex >= 0)
+            return FindRightColumnGrid(columnIndex);
+        return null;
+    }
+
+    private Grid? FindLeftColumnGrid(int columnIndex)
+    {
+        if (_leftDockerHostGrid == null) return null;
+        foreach (var child in _leftDockerHostGrid.Children)
+        {
+            if (child is Grid g && Grid.GetColumn(g) == columnIndex * 2)
+                return g;
+        }
+
+        return _leftDockerHostGrid.Children.OfType<Grid>().ElementAtOrDefault(columnIndex);
+    }
+
+    private Rect? ControlRectInOverlay(Control control)
+    {
+        if (_dockDropOverlay == null) return null;
+        var bounds = control.Bounds;
+        var matrix = control.TransformToVisual(_dockDropOverlay);
+        if (matrix == null) return null;
+        var topLeft = matrix.Value.Transform(new Point(0, 0));
+        var rect = new Rect(topLeft, bounds.Size);
+        return rect.Width > 0 && rect.Height > 0 ? rect : null;
     }
 
     private Grid? FindRightColumnGrid(int columnIndex)
@@ -240,83 +377,191 @@ public partial class MainWindow
         if (target == null)
         {
             _dockDropColumn = -99;
-            _dockDropRow = -1;
+            _dockDropRowIndex = -1;
             _stickyTarget = null;
             _dockDropOverlay.Clear();
             return;
         }
 
         if (_stickyTarget is { } sticky
+            && target.Kind == sticky.Kind
             && target.ColumnIndex == sticky.ColumnIndex
-            && target.RowCode == sticky.RowCode
-            && Math.Abs(target.LineY - sticky.LineY) < DropHysteresisPx)
+            && target.InsertColumnIndex == sticky.InsertColumnIndex
+            && target.RowIndex == sticky.RowIndex
+            && Math.Abs(target.LinePos - sticky.LinePos) < DropHysteresisPx)
             target = sticky;
         else
             _stickyTarget = target;
 
         _dockDropColumn = target.ColumnIndex;
-        _dockDropRow = target.RowCode;
+        _dockDropRowIndex = target.Kind == DockDropKind.InsertDockColumn
+            ? target.InsertColumnIndex
+            : target.RowIndex;
+        _dockDropKind = target.Kind;
 
-        if (target.IsTabMerge)
+        switch (target.Kind)
         {
-            _dockDropOverlay.ShowTabTarget(
-                target.Bounds.X, target.Bounds.Y, target.Bounds.Width, DockDropOverlay.TabStripHeight);
-        }
-        else
-        {
-            _dockDropOverlay.ShowInsertLine(target.Bounds.X, target.LineY, target.Bounds.Width);
+            case DockDropKind.MergeTab:
+                _dockDropOverlay.ShowTabTarget(
+                    target.Bounds.X, target.Bounds.Y, target.Bounds.Width, DockDropOverlay.TabStripHeight);
+                break;
+            case DockDropKind.InsertDockColumn:
+                _dockDropOverlay.ShowInsertLineVertical(target.LinePos, target.Bounds.Y, target.Bounds.Height);
+                break;
+            default:
+                _dockDropOverlay.ShowInsertLine(target.Bounds.X, target.LinePos, target.Bounds.Width);
+                break;
         }
 
-        var columnName = target.ColumnIndex < 0 ? "Left" : "Right";
-        var hint = target.IsTabMerge
-            ? $"{columnName} — Add to tab: {target.Label}"
-            : $"{columnName} — New row ({target.Label})";
-        _dockDropOverlay.ShowHint(hint, rootPt.X, rootPt.Y);
+        _dockDropOverlay.ShowHint(target.Label, rootPt.X, rootPt.Y);
     }
 
     private sealed record DropTargetState(
         int ColumnIndex,
-        int RowCode,
-        double LineY,
+        int InsertColumnIndex,
+        int RowIndex,
+        DockDropKind Kind,
+        double LinePos,
         Rect Bounds,
-        bool IsTabMerge,
         string Label);
 
     private DropTargetState? ResolveDropTarget(Point rootPt)
     {
-        if (_dockRowMetrics.Count == 0)
-            return null;
+        var edgeHit = _dockColumnEdgeMetrics
+            .Where(m => m.Bounds.Contains(rootPt))
+            .OrderBy(m => m.Bounds.Width * m.Bounds.Height)
+            .FirstOrDefault();
 
-        DockRowMetric? hit = null;
-        foreach (var m in _dockRowMetrics)
+        if (edgeHit != null)
         {
-            if (!m.Bounds.Contains(rootPt)) continue;
-            hit = m;
-            break;
+            var lineX = edgeHit.OnLeftSide
+                ? edgeHit.Bounds.Right
+                : edgeHit.Bounds.Left;
+            return new DropTargetState(
+                edgeHit.OnLeftSide ? DockColumnIndices.Left(0) : 0,
+                edgeHit.InsertColumnIndex,
+                -1,
+                DockDropKind.InsertDockColumn,
+                lineX,
+                edgeHit.Bounds,
+                edgeHit.Label);
         }
 
-        if (hit == null)
+        var panelHit = _dockPanelMetrics
+            .Where(m => m.Bounds.Contains(rootPt))
+            .OrderBy(m => m.Bounds.Width * m.Bounds.Height)
+            .FirstOrDefault();
+
+        if (panelHit != null)
         {
-            var inColumn = _dockRowMetrics
-                .GroupBy(m => m.ColumnIndex)
-                .OrderBy(g => DistanceToColumn(g.Key, rootPt.X))
-                .FirstOrDefault();
+            if (panelHit.IsTabGroup && rootPt.Y < panelHit.Bounds.Top + DockDropOverlay.TabStripHeight)
+            {
+                return new DropTargetState(
+                    panelHit.ColumnIndex,
+                    0,
+                    panelHit.RowIndex,
+                    DockDropKind.MergeTab,
+                    panelHit.Bounds.Top,
+                    panelHit.Bounds,
+                    $"Add to tab: {panelHit.Label}");
+            }
 
-            if (inColumn == null) return null;
+            var leftEdge = panelHit.Bounds.X + panelHit.Bounds.Width * HorizontalSplitEdgeRatio;
+            var rightEdge = panelHit.Bounds.Right - panelHit.Bounds.Width * HorizontalSplitEdgeRatio;
+            var leftIdx = DockColumnIndices.TryParseLeft(panelHit.ColumnIndex);
 
-            hit = rootPt.Y < inColumn.Min(m => m.Bounds.Top)
-                ? inColumn.OrderBy(m => m.Bounds.Top).First()
-                : inColumn.OrderByDescending(m => m.Bounds.Bottom).First();
+            if (rootPt.X <= leftEdge)
+            {
+                var insertCol = leftIdx ?? panelHit.ColumnIndex;
+                return new DropTargetState(
+                    panelHit.ColumnIndex,
+                    insertCol,
+                    -1,
+                    DockDropKind.InsertDockColumn,
+                    panelHit.Bounds.Left,
+                    panelHit.Bounds,
+                    "New column (left of panel)");
+            }
+
+            if (rootPt.X >= rightEdge)
+            {
+                var insertCol = leftIdx != null ? leftIdx.Value + 1 : panelHit.ColumnIndex + 1;
+                return new DropTargetState(
+                    panelHit.ColumnIndex,
+                    insertCol,
+                    -1,
+                    DockDropKind.InsertDockColumn,
+                    panelHit.Bounds.Right,
+                    panelHit.Bounds,
+                    "New column (toward canvas)");
+            }
+
+            var above = rootPt.Y < panelHit.Bounds.Top + panelHit.Bounds.Height * 0.5;
+            var lineY = above ? panelHit.Bounds.Top : panelHit.Bounds.Bottom;
+            var insertIdx = above ? panelHit.RowIndex : panelHit.RowIndex + 1;
+            return new DropTargetState(
+                panelHit.ColumnIndex,
+                0,
+                insertIdx,
+                DockDropKind.InsertRow,
+                lineY,
+                panelHit.Bounds,
+                $"New row ({panelHit.Label})");
         }
 
-        if (hit.IsTabGroup && rootPt.Y < hit.Bounds.Top + DockDropOverlay.TabStripHeight)
-            return new DropTargetState(hit.ColumnIndex, -(hit.RowIndex + 1), hit.Bounds.Top,
-                hit.Bounds, true, hit.Label);
+        var rowHit = _dockRowMetrics
+            .Where(m => m.Bounds.Contains(rootPt))
+            .FirstOrDefault();
 
-        var above = rootPt.Y < hit.Bounds.Top + hit.Bounds.Height * 0.5;
-        var insertIdx = above ? hit.RowIndex : hit.RowIndex + 1;
-        var lineY = above ? hit.Bounds.Top : hit.Bounds.Bottom;
-        return new DropTargetState(hit.ColumnIndex, insertIdx, lineY, hit.Bounds, false, hit.Label);
+        if (rowHit != null)
+        {
+            if (rowHit.IsTabGroup && rootPt.Y < rowHit.Bounds.Top + DockDropOverlay.TabStripHeight)
+            {
+                return new DropTargetState(
+                    rowHit.ColumnIndex,
+                    0,
+                    rowHit.RowIndex,
+                    DockDropKind.MergeTab,
+                    rowHit.Bounds.Top,
+                    rowHit.Bounds,
+                    $"Add to tab: {rowHit.Label}");
+            }
+
+            var aboveRow = rootPt.Y < rowHit.Bounds.Top + rowHit.Bounds.Height * 0.5;
+            var lineY = aboveRow ? rowHit.Bounds.Top : rowHit.Bounds.Bottom;
+            var insertIdx = aboveRow ? rowHit.RowIndex : rowHit.RowIndex + 1;
+            return new DropTargetState(
+                rowHit.ColumnIndex,
+                0,
+                insertIdx,
+                DockDropKind.InsertRow,
+                lineY,
+                rowHit.Bounds,
+                $"New row ({rowHit.Label})");
+        }
+
+        var inColumn = _dockRowMetrics
+            .GroupBy(m => m.ColumnIndex)
+            .OrderBy(g => DistanceToColumn(g.Key, rootPt.X))
+            .FirstOrDefault();
+
+        if (inColumn == null) return null;
+
+        var edgeRow = rootPt.Y < inColumn.Min(m => m.Bounds.Top)
+            ? inColumn.OrderBy(m => m.Bounds.Top).First()
+            : inColumn.OrderByDescending(m => m.Bounds.Bottom).First();
+
+        var aboveEdge = rootPt.Y < edgeRow.Bounds.Top + edgeRow.Bounds.Height * 0.5;
+        var edgeLineY = aboveEdge ? edgeRow.Bounds.Top : edgeRow.Bounds.Bottom;
+        var edgeInsert = aboveEdge ? edgeRow.RowIndex : edgeRow.RowIndex + 1;
+        return new DropTargetState(
+            edgeRow.ColumnIndex,
+            0,
+            edgeInsert,
+            DockDropKind.InsertRow,
+            edgeLineY,
+            edgeRow.Bounds,
+            $"New row ({edgeRow.Label})");
     }
 
     private double DistanceToColumn(int columnIndex, double x)
@@ -329,23 +574,38 @@ public partial class MainWindow
         return Math.Min(Math.Abs(x - left), Math.Abs(x - right));
     }
 
-    private static Control? FindRowControl(Grid hostGrid, ResolvedRow row)
+    private static Control? FindRowContainer(Grid hostGrid, ResolvedRow row)
     {
         foreach (var child in hostGrid.Children)
         {
             if (child is DockTabGroup tg && tg.PanelIds.SequenceEqual(row.PanelIds))
                 return tg;
 
-            if (child is Border b && b.Tag is string tag && row.PanelIds.Count == 1 && tag == row.PanelIds[0])
-                return b;
+            if (row.Orientation == DockOrientation.Horizontal && child is Grid hg
+                && RowContainsPanelSections(hg, row.PanelIds))
+                return hg;
 
-            if (child is Grid inner)
+            if (row.PanelIds.Count == 1 && child is Border b && b.Tag is string t && t == row.PanelIds[0])
+                return b;
+        }
+
+        return null;
+    }
+
+    private static bool RowContainsPanelSections(Grid grid, IReadOnlyList<string> panelIds)
+        => panelIds.Any(id => grid.Children.OfType<Border>().Any(b => b.Tag is string t && t == id));
+
+    private static Border? FindPanelSection(Control rowContainer, string panelId)
+    {
+        if (rowContainer is Border b && b.Tag is string t && t == panelId)
+            return b;
+
+        if (rowContainer is Grid g)
+        {
+            foreach (var child in g.Children.OfType<Border>())
             {
-                foreach (var ic in inner.Children)
-                {
-                    if (ic is Border ib && ib.Tag is string it && row.PanelIds.Count == 1 && it == row.PanelIds[0])
-                        return ib;
-                }
+                if (child.Tag is string tag && tag == panelId)
+                    return child;
             }
         }
 

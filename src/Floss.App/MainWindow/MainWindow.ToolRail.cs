@@ -6,6 +6,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Threading;
 
 namespace Floss.App;
 
@@ -13,7 +14,10 @@ using static Floss.App.Config.AppColors;
 
 public partial class MainWindow
 {
-    // ── Tools docker content (fixed rail + optional dock) ─────────────────────
+    // ── Tools docker content (dockable panel — Window → Dockers, drag to float) ──
+    private const double ToolRailIconWidth = 40;
+    private const double ToolRailIconSpacing = 4;
+
     private Control BuildToolsContent() => BuildLeftRail();
 
     // ── Left rail ─────────────────────────────────────────────────────────────
@@ -43,11 +47,13 @@ public partial class MainWindow
         ToolTip.SetTip(colorBtn, "Cycle color  (X)");
         colorBtn.Click += (_, _) => CycleColor();
 
-        _toolRailStack = new StackPanel
+        _toolRailStack = new WrapPanel
         {
-            Spacing = 3,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 6, 0, 4)
+            Orientation = Orientation.Horizontal,
+            ItemSpacing = ToolRailIconSpacing,
+            LineSpacing = ToolRailIconSpacing,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Margin = new Thickness(4, 6, 4, 4)
         };
 
         BuildToolRail();
@@ -62,24 +68,56 @@ public partial class MainWindow
         var outerStack = new StackPanel
         {
             Orientation = Orientation.Vertical,
-            HorizontalAlignment = HorizontalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
         };
         outerStack.Children.Add(_toolRailStack);
         outerStack.Children.Add(colorBar);
+
+        _toolRailScroll = ScrollHelper.Create(sv =>
+        {
+            ScrollHelper.UseVisibleScrollBars(sv, horizontal: false, vertical: true);
+            sv.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+            sv.Content = outerStack;
+        });
+        _toolRailScroll.SizeChanged += (_, _) => QueueSyncToolRailLayout();
 
         return new Border
         {
             Background = new SolidColorBrush(Color.Parse(BgSidebar)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0, 0, 1, 0),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
             CacheMode = new BitmapCache(),
-            Child = new ScrollViewer
-            {
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
-                Content = outerStack
-            }
+            Child = _toolRailScroll
         };
+    }
+
+    private void QueueSyncToolRailLayout()
+    {
+        if (_toolRailScroll is null)
+            return;
+
+        Dispatcher.UIThread.Post(SyncToolRailLayout, DispatcherPriority.Loaded);
+    }
+
+    /// <summary>Clip Studio–style: icon size fixed; wrap into more columns when the tools panel is wide.</summary>
+    private void SyncToolRailLayout()
+    {
+        if (_toolRailScroll is null)
+            return;
+
+        var viewportW = _toolRailScroll.Viewport.Width;
+        if (viewportW <= 1 || double.IsInfinity(viewportW) || double.IsNaN(viewportW))
+            viewportW = _toolRailScroll.Bounds.Width;
+        if (viewportW <= 1)
+            return;
+
+        const double horizontalInset = 8;
+        var contentW = Math.Max(ToolRailIconWidth, viewportW - horizontalInset);
+
+        _toolRailStack.Width = contentW;
+        _toolRailStack.MaxWidth = contentW;
+        _toolRailStack.InvalidateMeasure();
     }
 
     private void BuildToolRail()
@@ -105,6 +143,7 @@ public partial class MainWindow
         addBtn.Click += (_, _) => ShowAddToolGroupDialog();
         EnableCategoryPromoteDrop(addBtn, null);
         _toolRailStack.Children.Add(addBtn);
+        QueueSyncToolRailLayout();
     }
 
     private Button MakeToolGroupButton(ToolGroup group)

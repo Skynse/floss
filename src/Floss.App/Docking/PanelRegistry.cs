@@ -37,7 +37,7 @@ public static class PanelRegistry
     {
         Register(new DockPanelDef("tools", "Tools",
             buildContent("tools"),
-            Proportion: 0.50, MinHeight: 120, DefaultZone: "left"));
+            Proportion: 0.22, MinHeight: 80, DefaultZone: "left"));
 
         Register(new DockPanelDef("brush", "Brushes",
             buildContent("brush"),

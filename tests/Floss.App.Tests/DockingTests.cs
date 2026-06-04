@@ -180,7 +180,7 @@ public class DockingTests
     {
         var layout = WorkspaceLayout.CreateDefault();
         Assert.Single(layout.RightColumns);
-        Assert.Equal("left", layout.LeftColumn.Id);
+        Assert.Equal("left-0", layout.LeftColumns[0].Id);
         Assert.Equal("bottom", layout.BottomColumn.Id);
     }
 
@@ -1671,6 +1671,13 @@ public class DockingTests
     public void DockLayoutOps_FindPlacement_TabMember()
     {
         var layout = WorkspaceLayout.CreateDefault();
+        layout.LayoutVersion = 5;
+        layout.LeftColumn.Rows = null;
+        layout.LeftColumn.PanelIds = ["tab:left"];
+        layout.LeftColumn.TabGroups = new Dictionary<string, TabGroupLayout>
+        {
+            ["tab:left"] = new() { PanelIds = ["brush", "tool-properties"], ActiveIndex = 0 }
+        };
         layout.Normalize(PanelRegistry.AllIds);
 
         var brush = DockLayoutOps.FindPlacement(layout, "brush");
@@ -1682,6 +1689,48 @@ public class DockingTests
         var after = DockLayoutOps.FindPlacement(layout, "brush");
         Assert.NotNull(after);
         Assert.Equal(1, after!.IndexInTab);
+    }
+
+    [Fact]
+    public void Normalize_RevertsForcedHorizontalV5ToTabLeft()
+    {
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.LayoutVersion = 5;
+        layout.LeftColumn.PanelIds = [];
+        layout.LeftColumn.TabGroups = new Dictionary<string, TabGroupLayout>();
+        layout.LeftColumn.Rows =
+        [
+            new DockRowLayout
+            {
+                Orientation = DockOrientation.Horizontal,
+                PanelIds = ["tools", "brush", "tool-properties"]
+            }
+        ];
+
+        layout.Normalize(PanelRegistry.AllIds);
+
+        Assert.Equal(4, layout.LayoutVersion);
+        Assert.Contains("tab:left", layout.LeftColumn.PanelIds);
+        Assert.True(layout.LeftColumn.TabGroups["tab:left"].PanelIds.Contains("brush"));
+    }
+
+    [Fact]
+    public void DockLayoutOps_ApplyInsertDockColumn_AddsLeftStackBesideCanvas()
+    {
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.LeftColumns =
+        [
+            new DockColumnLayout
+            {
+                Id = "left-0",
+                Rows = [new DockRowLayout { PanelIds = ["tools"] }]
+            }
+        ];
+
+        DockLayoutOps.ApplyInsertDockColumn(layout, "brush", onLeftSide: true, insertColumnIndex: 1);
+
+        Assert.Equal(2, layout.LeftColumns.Count);
+        Assert.Contains("brush", layout.LeftColumns[1].Rows![0].PanelIds);
     }
 
     [Fact]

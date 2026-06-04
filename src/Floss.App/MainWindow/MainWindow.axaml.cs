@@ -142,8 +142,8 @@ public partial class MainWindow : Window, Tools.IViewportController
     private Slider _rgbBSlider = null!;
     private Border _colorWell = null!;
     private WrapPanel _swatchPanel = null!;
-    private Grid _brushCategoryPanel = null!;
-    private Panel _presetPanel = null!;
+    private WrapPanel _brushCategoryPanel = null!;
+    private WrapPanel _presetPanel = null!;
     private ScrollViewer? _brushPresetScroll;
     private Control? _toolPropertiesContent;
     private StackPanel _toolPropertyPanel = null!;
@@ -226,6 +226,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private bool _suppressFloatingDockerClosed;
     private bool _suppressFloatingDockerSnap;
     private Grid? _dockerHostGrid;
+    private Grid? _leftDockerHostGrid;
     private Popup? _dockerPopup;
     private string? _popupContentId;
     private Control? _cachedToolContent;
@@ -249,7 +250,8 @@ public partial class MainWindow : Window, Tools.IViewportController
     private ToolGroup? _recordingToolGroup;
     private Button? _recordingToolGroupButton;
 
-    private Panel _toolRailStack = null!;
+    private WrapPanel _toolRailStack = null!;
+    private ScrollViewer? _toolRailScroll;
     private SettingsWindow? _settingsWindow;
     private Floss.App.Windows.ModifierKeySettingsWindow? _modifierKeySettingsWindow;
     private Floss.App.Windows.PenPressureSettingsWindow? _penPressureSettingsWindow;
@@ -533,18 +535,15 @@ public partial class MainWindow : Window, Tools.IViewportController
     private bool _syncingBrushUi;
     private Control? _rightPanel;
     private Control? _leftPanel;
-    private Control? _toolRailPanel;
     private GridSplitter? _leftSplitter;
     private GridSplitter? _rightSplitter;
 
     // Root grid columns — see notes/wide-dockable-layout.md
-    private const int RootColToolRail = 0;
-    private const int RootColLeftDock = 1;
-    private const int RootColLeftSplitter = 2;
-    private const int RootColCenter = 3;
-    private const int RootColRightSplitter = 4;
-    private const int RootColRightDock = 5;
-    private const double ToolRailWidthPx = 52;
+    private const int RootColLeftDock = 0;
+    private const int RootColLeftSplitter = 1;
+    private const int RootColCenter = 2;
+    private const int RootColRightSplitter = 3;
+    private const int RootColRightDock = 4;
     private Control? _shellMenu;
     private MenuItem? _openRecentMenu;
     private string[] _recentMenuSnapshot = [];
@@ -695,12 +694,10 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         _dockerRows.Clear();
         _dockerSections.Clear();
-        var toolRail = BuildLeftRail();
         var leftPanel = BuildLeftDockColumn();
         var rightPanel = BuildRightPanel();
 
         var root = new Grid();
-        root.ColumnDefinitions.Add(new ColumnDefinition(ToolRailWidthPx, GridUnitType.Pixel) { MinWidth = 36, MaxWidth = 56 });
         root.ColumnDefinitions.Add(new ColumnDefinition(0, GridUnitType.Pixel));
         root.ColumnDefinitions.Add(new ColumnDefinition(0, GridUnitType.Pixel));
         root.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 260 });
@@ -757,13 +754,11 @@ public partial class MainWindow : Window, Tools.IViewportController
             }
         };
 
-        Grid.SetColumn(toolRail, RootColToolRail);
         Grid.SetColumn(leftPanel, RootColLeftDock);
         Grid.SetColumn(leftSplitter, RootColLeftSplitter);
         Grid.SetColumn(centerArea, RootColCenter);
         Grid.SetColumn(rightSplitter, RootColRightSplitter);
         Grid.SetColumn(rightPanel, RootColRightDock);
-        root.Children.Add(toolRail);
         root.Children.Add(leftPanel);
         root.Children.Add(leftSplitter);
         root.Children.Add(centerArea);
@@ -781,12 +776,10 @@ public partial class MainWindow : Window, Tools.IViewportController
         shell.Children.Add(root);
 
         _shellMenu = menu;
-        _toolRailPanel = toolRail;
         _leftPanel = leftPanel;
         _rightPanel = rightPanel;
         _statusBar = statusBar;
         _footer = footer;
-        UpdateToolRailVisibility();
         UpdateLeftColumnWidth();
         UpdateRightPanelWidth();
 
@@ -1281,19 +1274,60 @@ public partial class MainWindow : Window, Tools.IViewportController
         return item;
     }
 
-    // ── Left dock column ───────────────────────────────────────────────────────
+    // ── Left dock (one or more columns beside the canvas) ─────────────────────
     private Border BuildLeftDockColumn()
     {
         var layout = App.Config.WorkspaceLayout;
+        var columns = layout.LeftColumns
+            .Select((column, index) => (Column: column, Index: index))
+            .Where(entry => HasVisibleDockerRows(entry.Column))
+            .ToList();
         var grid = new Grid { ClipToBounds = true };
+        _leftDockerHostGrid = grid;
 
-        var resolved = layout.LeftColumn.ResolvedRows();
-        if (resolved.Count > 0)
+        if (columns.Count == 0)
         {
-            grid.RowDefinitions.Add(new RowDefinition(1, GridUnitType.Star));
-            var dock = BuildDockColumn(layout.LeftColumn, -1);
-            Grid.SetRow(dock, 0);
+            return new Border
+            {
+                Background = new SolidColorBrush(Color.Parse(Bg1)),
+                BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+                BorderThickness = new Thickness(0, 0, 1, 0),
+                ClipToBounds = true,
+                Child = grid
+            };
+        }
+
+        if (columns.Count == 1)
+        {
+            grid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
+            var dock = BuildDockColumn(columns[0].Column, DockColumnIndices.Left(columns[0].Index));
+            Grid.SetColumn(dock, 0);
             grid.Children.Add(dock);
+        }
+        else
+        {
+            var fraction = 1.0 / columns.Count;
+            for (var i = 0; i < columns.Count; i++)
+            {
+                grid.ColumnDefinitions.Add(new ColumnDefinition(fraction, GridUnitType.Star));
+                var dock = BuildDockColumn(columns[i].Column, DockColumnIndices.Left(columns[i].Index));
+                Grid.SetColumn(dock, i * 2);
+                grid.Children.Add(dock);
+
+                if (i == columns.Count - 1) continue;
+
+                grid.ColumnDefinitions.Add(new ColumnDefinition(3, GridUnitType.Pixel));
+                var splitter = new GridSplitter
+                {
+                    Width = 3,
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
+                    Background = new SolidColorBrush(Color.Parse(Bg0))
+                };
+                splitter.DragCompleted += (_, _) => PersistWorkspaceLayout();
+                Grid.SetColumn(splitter, i * 2 + 1);
+                grid.Children.Add(splitter);
+            }
         }
 
         return new Border
@@ -1380,6 +1414,21 @@ public partial class MainWindow : Window, Tools.IViewportController
         };
     }
 
+    private static int DockColumnIndexFromLayoutId(string columnId)
+    {
+        if (columnId == "bottom")
+            return DockColumnIndices.Bottom;
+        if (columnId.StartsWith("left-", StringComparison.Ordinal)
+            && int.TryParse(columnId.AsSpan(5), out var li))
+            return DockColumnIndices.Left(li);
+        if (columnId == "left")
+            return DockColumnIndices.Left(0);
+        if (columnId.StartsWith("right-", StringComparison.Ordinal)
+            && int.TryParse(columnId.AsSpan(6), out var ri))
+            return ri;
+        return 0;
+    }
+
     private bool HasVisibleDockerRows(DockColumnLayout column)
         => column.ResolvedRows()
             .Any(row => row.PanelIds.Any(id => GetDockerInfo(id) != null && !IsDockerFloating(id) && IsDockerVisible(id)));
@@ -1455,13 +1504,28 @@ public partial class MainWindow : Window, Tools.IViewportController
             {
                 // Side-by-side horizontal layout within this row
                 var horizontalGrid = new Grid { ClipToBounds = true };
-                var count = rowPanelIds.Count;
+                var visibleInRow = rowPanelIds
+                    .Where(id => GetDockerInfo(id) != null && !IsDockerFloating(id) && IsDockerVisible(id))
+                    .ToList();
+                var count = visibleInRow.Count;
+                var colProps = new double[count];
+                var colSum = 0.0;
                 for (var ci = 0; ci < count; ci++)
                 {
-                    var frac = 1.0 / count;
-                    horizontalGrid.ColumnDefinitions.Add(new ColumnDefinition(frac, GridUnitType.Star));
-                    var section = GetOrCreatePanelSection(rowPanelIds[ci]);
-                    _dockerSections[rowPanelIds[ci]] = section;
+                    var pid = visibleInRow[ci];
+                    var prop = App.Config.WorkspaceLayout.PanelProportions.TryGetValue(pid, out var saved)
+                        ? Math.Max(0.05, saved)
+                        : (PanelRegistry.Get(pid)?.Proportion ?? 1.0 / count);
+                    colProps[ci] = prop;
+                    colSum += prop;
+                }
+                colSum = Math.Max(colSum, 0.01);
+                for (var ci = 0; ci < count; ci++)
+                {
+                    horizontalGrid.ColumnDefinitions.Add(
+                        new ColumnDefinition(colProps[ci] / colSum, GridUnitType.Star));
+                    var section = GetOrCreatePanelSection(visibleInRow[ci]);
+                    _dockerSections[visibleInRow[ci]] = section;
                     Grid.SetColumn(section, ci);
                     horizontalGrid.Children.Add(section);
 
@@ -1554,12 +1618,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         var content = new Dictionary<string, Control>();
         var titles = new Dictionary<string, string>();
 
-        var colIdx = column.Id switch
-        {
-            "left" => -1,
-            "bottom" => -2,
-            _ => int.TryParse(column.Id.StartsWith("right-") ? column.Id.AsSpan(6) : column.Id, out var ci) ? ci : 0
-        };
+        var colIdx = DockColumnIndexFromLayoutId(column.Id);
 
         foreach (var id in panelIds)
         {
@@ -1760,8 +1819,8 @@ public partial class MainWindow : Window, Tools.IViewportController
     {
         var layout = App.Config.WorkspaceLayout;
         var placement = DockLayoutOps.FindPlacement(layout, id);
-        var isOnLeft = placement?.ColumnIndex == -1;
-        var isInBottom = placement?.ColumnIndex == -2;
+        var isOnLeft = placement != null && DockColumnIndices.IsLeft(placement.ColumnIndex);
+        var isInBottom = placement?.ColumnIndex == DockColumnIndices.Bottom;
         var isFloating = IsDockerFloating(id);
         var isDocked = placement != null && !isFloating;
 
@@ -1833,8 +1892,6 @@ public partial class MainWindow : Window, Tools.IViewportController
         else
             layout.HiddenPanelIds.Add(id);
 
-        if (id == "tools")
-            UpdateToolRailVisibility();
         RebuildDockers();
         App.Config.Save();
     }
@@ -1930,7 +1987,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         DockLayoutOps.RemoveFromAllColumns(layout, id);
         var columnIndex = placement.ColumnIndex;
 
-        if (columnIndex < 0)
+        if (DockColumnIndices.IsLeft(columnIndex))
         {
             layout.RightColumns[0].PanelIds.Add(id);
         }
@@ -1941,7 +1998,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         }
         else
         {
-            layout.LeftColumn.PanelIds.Add(id);
+            layout.LeftColumns[0].PanelIds.Add(id);
         }
 
         RebuildDockers();
@@ -1952,7 +2009,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     {
         SaveWorkspaceLayoutFromUi();
         var layout = App.Config.WorkspaceLayout;
-        DockLayoutOps.DockToColumn(layout, id, columnIndex <= -2 ? -2 : columnIndex < 0 ? -1 : columnIndex);
+        DockLayoutOps.DockToColumn(layout, id, columnIndex);
 
         if (layout.FloatingPanels.TryGetValue(id, out var floating))
             floating.IsFloating = false;
@@ -2234,30 +2291,19 @@ public partial class MainWindow : Window, Tools.IViewportController
         RefreshDockerContentAfterRebuild();
     }
 
-    private void UpdateToolRailVisibility()
-    {
-        if (_rootGrid == null || _toolRailPanel == null) return;
-        var visible = IsDockerVisible("tools");
-        var col = _rootGrid.ColumnDefinitions[RootColToolRail];
-        col.Width = visible ? new GridLength(ToolRailWidthPx, GridUnitType.Pixel) : new GridLength(0);
-        col.MinWidth = visible ? 36 : 0;
-        col.MaxWidth = visible ? 56 : double.PositiveInfinity;
-        _toolRailPanel.IsVisible = visible;
-    }
-
     private void UpdateLeftColumnWidth()
     {
         if (_rootGrid == null || _rootGrid.ColumnDefinitions.Count <= RootColLeftSplitter) return;
         var layout = App.Config.WorkspaceLayout;
-        var hasPanels = layout.LeftColumn.ResolvedRows().Count > 0;
+        var hasPanels = layout.LeftColumns.Any(HasVisibleDockerRows);
         var dockCol = _rootGrid.ColumnDefinitions[RootColLeftDock];
         var splitCol = _rootGrid.ColumnDefinitions[RootColLeftSplitter];
 
         if (hasPanels)
         {
             dockCol.MinWidth = 200;
-            dockCol.MaxWidth = 480;
-            dockCol.Width = new GridLength(Math.Clamp(layout.LeftRailWidth, 200, 480), GridUnitType.Pixel);
+            dockCol.MaxWidth = 720;
+            dockCol.Width = new GridLength(Math.Clamp(layout.LeftRailWidth, 200, 720), GridUnitType.Pixel);
             splitCol.MinWidth = 3;
             splitCol.Width = new GridLength(3, GridUnitType.Pixel);
             _leftSplitter!.IsVisible = true;
@@ -2314,6 +2360,7 @@ public partial class MainWindow : Window, Tools.IViewportController
 
     private void RefreshDockerContentAfterRebuild()
     {
+        QueueSyncToolRailLayout();
         RefreshGroupPresets();
         RefreshToolProperties();
         RefreshLayerProperties();
@@ -2338,14 +2385,24 @@ public partial class MainWindow : Window, Tools.IViewportController
                 layout.RightPanelWidth = Math.Max(240, _rootGrid.ColumnDefinitions[RootColRightDock].ActualWidth);
         }
         // Save right-panel column split ratio (relevant for 2-column layouts)
-        if (_rightPanel is Border { Child: Grid dockGrid }
+        if (_rightPanel is Border { Child: Grid rightDockGrid }
             && layout.RightColumns.Count == 2
-            && dockGrid.ColumnDefinitions.Count >= 3)
+            && rightDockGrid.ColumnDefinitions.Count >= 3)
         {
-            var left = dockGrid.ColumnDefinitions[0].ActualWidth;
-            var right = dockGrid.ColumnDefinitions[2].ActualWidth;
+            var left = rightDockGrid.ColumnDefinitions[0].ActualWidth;
+            var right = rightDockGrid.ColumnDefinitions[2].ActualWidth;
             if (left + right > 1)
                 layout.RightDockSplit = left / (left + right);
+        }
+
+        if (_leftPanel is Border { Child: Grid leftDockGrid }
+            && layout.LeftColumns.Count == 2
+            && leftDockGrid.ColumnDefinitions.Count >= 3)
+        {
+            var outer = leftDockGrid.ColumnDefinitions[0].ActualWidth;
+            var inner = leftDockGrid.ColumnDefinitions[2].ActualWidth;
+            if (outer + inner > 1)
+                layout.LeftDockSplit = outer / (outer + inner);
         }
 
         // Save panel proportions by column (like Dock library's Proportion value)
@@ -2361,10 +2418,13 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         // Collect all visible row IDs per column (solo panel IDs + tab group first-panel IDs)
         var columnRows = new Dictionary<int, List<string>>();
-        columnRows[-1] = layout.LeftColumn.ResolvedRows().Select(r => r.PanelIds[0]).ToList();
+        for (var lc = 0; lc < layout.LeftColumns.Count; lc++)
+            columnRows[DockColumnIndices.Left(lc)] = layout.LeftColumns[lc].ResolvedRows()
+                .Select(r => r.PanelIds[0]).ToList();
         for (var c = 0; c < layout.RightColumns.Count; c++)
             columnRows[c] = layout.RightColumns[c].ResolvedRows().Select(r => r.PanelIds[0]).ToList();
-        columnRows[-2] = layout.BottomColumn.ResolvedRows().Select(r => r.PanelIds[0]).ToList();
+        columnRows[DockColumnIndices.Bottom] = layout.BottomColumn.ResolvedRows()
+            .Select(r => r.PanelIds[0]).ToList();
 
         foreach (var (ci, rowIds) in columnRows)
         {
@@ -2489,7 +2549,6 @@ public partial class MainWindow : Window, Tools.IViewportController
             window.Close();
         _suppressFloatingDockerClosed = false;
         _floatingDockers.Clear();
-        UpdateToolRailVisibility();
         UpdateLeftColumnWidth();
         UpdateRightPanelWidth();
         RebuildDockers();
@@ -2619,7 +2678,6 @@ public partial class MainWindow : Window, Tools.IViewportController
         cfg.WorkspaceLayout ??= WorkspaceLayout.CreateDefault();
         if (_rootGrid != null && _rootGrid.ColumnDefinitions.Count > RootColRightDock)
         {
-            UpdateToolRailVisibility();
             UpdateLeftColumnWidth();
             UpdateRightPanelWidth();
             CaptureRootColumnWidths();

@@ -28,6 +28,13 @@ public sealed class BrushStrokePreview : Control
     /// </summary>
     public bool CompactPreview { get; set; }
 
+    /// <summary>
+    /// When set, rasterize at this size even if the control is wider (CSP-style: dock resize does not rebuild).
+    /// </summary>
+    public int FixedRenderWidth { get; set; }
+
+    public int FixedRenderHeight { get; set; }
+
     public BrushPreset? Brush
     {
         get => _brush;
@@ -64,15 +71,22 @@ public sealed class BrushStrokePreview : Control
         context.FillRectangle(new SolidColorBrush(Color.FromRgb(0x28, 0x24, 0x28)), new Rect(0, 0, w, h));
         if (_brush == null) return;
 
-        if (_bitmap == null || _renderedW != w || _renderedH != h)
+        var rw = FixedRenderWidth > 0 ? FixedRenderWidth : w;
+        var rh = FixedRenderHeight > 0 ? FixedRenderHeight : h;
+        if (rw < 2 || rh < 2) return;
+
+        if (_bitmap == null || _renderedW != rw || _renderedH != rh)
         {
             _bitmap?.Dispose();
-            _bitmap = RenderPreview(w, h, _brush, CompactPreview);
-            _renderedW = w;
-            _renderedH = h;
+            _bitmap = RenderPreview(rw, rh, _brush, CompactPreview);
+            _renderedW = rw;
+            _renderedH = rh;
         }
 
-        context.DrawImage(_bitmap, new Rect(0, 0, w, h));
+        var dest = FixedRenderWidth > 0 && FixedRenderHeight > 0
+            ? new Rect((w - rw) * 0.5, (h - rh) * 0.5, rw, rh)
+            : new Rect(0, 0, w, h);
+        context.DrawImage(_bitmap, dest);
     }
 
     private static unsafe WriteableBitmap RenderPreview(int w, int h, BrushPreset brush, bool compact)

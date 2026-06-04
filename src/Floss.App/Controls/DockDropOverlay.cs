@@ -14,6 +14,7 @@ using static Config.AppColors;
 public sealed class DockDropOverlay : Avalonia.Controls.Canvas
 {
     private readonly Border _insertLine;
+    private readonly Border _insertLineVertical;
     private readonly Border _tabHighlight;
     private readonly Border _hintCard;
     private readonly TextBlock _hintText;
@@ -26,6 +27,14 @@ public sealed class DockDropOverlay : Avalonia.Controls.Canvas
         _insertLine = new Border
         {
             Height = 2,
+            Background = new SolidColorBrush(Color.Parse(Accent)),
+            IsVisible = false,
+            IsHitTestVisible = false
+        };
+
+        _insertLineVertical = new Border
+        {
+            Width = 2,
             Background = new SolidColorBrush(Color.Parse(Accent)),
             IsVisible = false,
             IsHitTestVisible = false
@@ -63,12 +72,14 @@ public sealed class DockDropOverlay : Avalonia.Controls.Canvas
 
         Children.Add(_tabHighlight);
         Children.Add(_insertLine);
+        Children.Add(_insertLineVertical);
         Children.Add(_hintCard);
     }
 
     public void Clear()
     {
         _insertLine.IsVisible = false;
+        _insertLineVertical.IsVisible = false;
         _tabHighlight.IsVisible = false;
         _hintCard.IsVisible = false;
     }
@@ -76,15 +87,27 @@ public sealed class DockDropOverlay : Avalonia.Controls.Canvas
     public void ShowInsertLine(double x, double y, double width)
     {
         _tabHighlight.IsVisible = false;
+        _insertLineVertical.IsVisible = false;
         _insertLine.IsVisible = true;
         SetLeft(_insertLine, x);
         SetTop(_insertLine, y - 1);
         _insertLine.Width = Math.Max(40, width);
     }
 
+    public void ShowInsertLineVertical(double x, double y, double height)
+    {
+        _tabHighlight.IsVisible = false;
+        _insertLine.IsVisible = false;
+        _insertLineVertical.IsVisible = true;
+        SetLeft(_insertLineVertical, x - 1);
+        SetTop(_insertLineVertical, y);
+        _insertLineVertical.Height = Math.Max(40, height);
+    }
+
     public void ShowTabTarget(double x, double y, double width, double height)
     {
         _insertLine.IsVisible = false;
+        _insertLineVertical.IsVisible = false;
         _tabHighlight.IsVisible = true;
         SetLeft(_tabHighlight, x);
         SetTop(_tabHighlight, y);

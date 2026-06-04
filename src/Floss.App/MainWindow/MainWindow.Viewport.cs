@@ -274,7 +274,7 @@ public partial class MainWindow : ICanvasInputHost
             var col = _rootGrid.ColumnDefinitions[i];
             if (canvasOnly)
             {
-                col.Width = i == 3 // RootColCenter — see notes/wide-dockable-layout.md
+                col.Width = i == 2 // RootColCenter — see notes/wide-dockable-layout.md
                     ? new GridLength(1, GridUnitType.Star)
                     : new GridLength(0);
                 col.MinWidth = 0;
@@ -283,13 +283,10 @@ public partial class MainWindow : ICanvasInputHost
             else
             {
                 col.Width = _rootColumnWidths[i];
-                col.MinWidth = i == 3 ? 320 : 0;
+                col.MinWidth = i == 2 ? 320 : 0;
                 col.MaxWidth = double.PositiveInfinity;
             }
         }
-
-        if (_toolRailPanel != null)
-            _toolRailPanel.IsVisible = !canvasOnly && !App.Config.WorkspaceLayout.HiddenPanelIds.Contains("tools");
     }
 
     private void EnterCanvasOnlyMode()
