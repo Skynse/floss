@@ -36,6 +36,8 @@ public sealed record BrushPreset(
     public double Grain { get; init; } = 0.0;
     public string? Texture { get; init; } = null;
     public double Smoothing { get; init; } = 0.3;
+    /// <summary>When true, stabilizer window shrinks at high stroke speed (Krita-style).</summary>
+    public bool SpeedAdaptiveStabilizer { get; init; } = true;
 
     // ── MyPaint-style dynamics (stateful brush engine) ───────────────────────
     public double SlowTracking { get; init; } = 0.0;

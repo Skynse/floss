@@ -85,13 +85,25 @@ public partial class MainWindow : ICanvasInputHost
     {
         ActivateCanvasKeyboardRegion();
         _workspaceViewport.Focus();
+        UpdateViewportPointerFromEvent(e);
+        ApplyViewportOsCursorHidden();
         _inputRouter.PointerPressed(e);
+        RefreshViewportCursorAfterInput();
     }
 
     private void Workspace_OnPointerMoved(object? sender, PointerEventArgs e)
     {
-        _canvas.TrackViewportPointer(e.GetCurrentPoint(_canvas));
+        var canvasPoint = e.GetCurrentPoint(_canvas);
+        _canvas.TrackViewportPointer(
+            e.GetCurrentPoint(_workspaceViewport!),
+            canvasPoint);
+        SyncViewportOsCursor();
+
+        if (_inputRouter.State != RouterState.Running)
+            _canvas.HandlePointerInput(ToolInputEventKind.Move, canvasPoint);
+
         _inputRouter.PointerMoved(e);
+        RefreshViewportCursorAfterInput();
     }
 
     private void Workspace_OnPointerReleased(object? sender, PointerReleasedEventArgs e)
@@ -103,6 +115,7 @@ public partial class MainWindow : ICanvasInputHost
     private void Workspace_OnPointerExited(object? sender, PointerEventArgs e)
     {
         _canvas.ClearViewportPointer();
+        SyncViewportOsCursor();
     }
 
     private void Workspace_OnPointerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
@@ -261,7 +274,7 @@ public partial class MainWindow : ICanvasInputHost
             var col = _rootGrid.ColumnDefinitions[i];
             if (canvasOnly)
             {
-                col.Width = i == 2
+                col.Width = i == 3 // RootColCenter — see notes/wide-dockable-layout.md
                     ? new GridLength(1, GridUnitType.Star)
                     : new GridLength(0);
                 col.MinWidth = 0;
@@ -270,10 +283,13 @@ public partial class MainWindow : ICanvasInputHost
             else
             {
                 col.Width = _rootColumnWidths[i];
-                col.MinWidth = i == 2 ? 320 : 0;
+                col.MinWidth = i == 3 ? 320 : 0;
                 col.MaxWidth = double.PositiveInfinity;
             }
         }
+
+        if (_toolRailPanel != null)
+            _toolRailPanel.IsVisible = !canvasOnly && !App.Config.WorkspaceLayout.HiddenPanelIds.Contains("tools");
     }
 
     private void EnterCanvasOnlyMode()
@@ -330,6 +346,7 @@ public partial class MainWindow : ICanvasInputHost
         _checkerboardOverlay?.InvalidateVisual();
         _resizeOverlay?.InvalidateVisual();
         _selectionOutlineOverlay?.InvalidateVisual();
+        _viewportCursorOverlay?.InvalidateVisual();
     }
 
     private void ClampCanvasPan()
@@ -468,6 +485,40 @@ public partial class MainWindow : ICanvasInputHost
     void ICanvasInputHost.UnlockCursorPreview()
         => _canvas.UnlockCursorPreview();
 
+    void ICanvasInputHost.SetBrushResizeEdgePreview(Point edgeCanvasPoint)
+        => _canvas.SetBrushResizeEdgePreview(edgeCanvasPoint);
+
+    void ICanvasInputHost.ClearBrushResizePreview()
+        => _canvas.ClearBrushResizePreview();
+
+    void ICanvasInputHost.RefreshCursorAfterInput()
+        => RefreshViewportCursorAfterInput();
+
+    bool ICanvasInputHost.TryCanvasPointToScreen(Point canvasPoint, out PixelPoint screen)
+    {
+        screen = default;
+        if (_canvas == null)
+            return false;
+
+        try
+        {
+            screen = _canvas.PointToScreen(canvasPoint);
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    bool ICanvasInputHost.TryWarpCursorToCanvasPoint(Point canvasPoint)
+    {
+        if (!((ICanvasInputHost)this).TryCanvasPointToScreen(canvasPoint, out var screen))
+            return false;
+
+        return PlatformCursorWarp.TrySet(screen);
+    }
+
     double ICanvasInputHost.GetActiveToolSize() => GetActiveToolSize();
 
     double ICanvasInputHost.GetActiveToolSizeMin() => GetActiveToolSizeMinimum();
@@ -531,15 +582,9 @@ public partial class MainWindow : ICanvasInputHost
         return false;
     }
 
-    void ICanvasInputHost.SetCursorNone()
-    {
-        this.Cursor = new Cursor(StandardCursorType.None);
-    }
+    void ICanvasInputHost.SetCursorNone() => ApplyViewportOsCursorHidden();
 
-    void ICanvasInputHost.ResetCursor()
-    {
-        this.Cursor = null;
-    }
+    void ICanvasInputHost.ResetCursor() => SyncViewportOsCursor();
 
     // ── Keyboard ──────────────────────────────────────────────────────────────
     private void OnKeyDownTunnel(object? sender, KeyEventArgs e)
@@ -619,8 +664,7 @@ public partial class MainWindow : ICanvasInputHost
             PopTemporaryPreset();
         _inputRouter.ResetAllState();
         _canvas.RecoverInputState();
-        if (_workspaceViewport != null)
-            this.Cursor = null;
+        SyncViewportOsCursor();
         ActivateCanvasKeyboardRegion();
     }
 

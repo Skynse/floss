@@ -245,6 +245,7 @@ public partial class MainWindow
         _canvasFrame.IsVisible = true;
         SetDocumentPanelsVisible(true);
         App.Config.AddRecentFile(path);
+        RefreshRecentFilesMenu(force: true);
         _currentFilePath = CanSaveInPlace(path) ? path : null;
         if (_activeTab != null)
         {
@@ -345,6 +346,7 @@ public partial class MainWindow
                 _activeTab.Timelapse?.BindDocumentPath(path);
             }
             App.Config.AddRecentFile(path);
+            RefreshRecentFilesMenu(force: true);
             _canvas.Document.MarkAsSaved(); // Clears IsDirty
             _footerStatusText.Text = $"Saved {Path.GetFileName(path)}";
         }
@@ -385,6 +387,7 @@ public partial class MainWindow
                 _activeTab.DocumentName = Path.GetFileNameWithoutExtension(path);
             }
             App.Config.AddRecentFile(path);
+            RefreshRecentFilesMenu(force: true);
             _canvas.Document.MarkAsSaved(); // Clears IsDirty
             _footerStatusText.Text = $"Saved PSD {Path.GetFileName(path)}";
         }

@@ -84,33 +84,35 @@ public partial class MainWindow : Window
         headerRow.Children.Add(_saveBrushButton);
         headerRow.Children.Add(_activeBrushLabel);
 
-        // Left: category list
-        _brushCategoryPanel = new StackPanel { Orientation = Avalonia.Layout.Orientation.Vertical };
-        var catScroll = ScrollHelper.Create(sv =>
+        // Category strip — equal-width columns across the dock
+        _brushCategoryPanel = new Grid
         {
-            sv.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
-            sv.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
-            sv.Content = _brushCategoryPanel;
-            sv.MinWidth = 88;
-            sv.MaxWidth = 116;
-        });
+            Margin = new Thickness(0, 0, 0, 6),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch
+        };
 
-        // Right: brush list
-        _presetPanel = new StackPanel { Orientation = Avalonia.Layout.Orientation.Vertical };
+        _presetPanel = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Vertical,
+            Spacing = 4
+        };
         var presetScroll = ScrollHelper.Create(sv =>
         {
-            sv.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
-            sv.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+            ScrollHelper.UseVisibleScrollBars(sv, horizontal: false, vertical: true);
             sv.Content = _presetPanel;
         });
         _brushPresetScroll = presetScroll;
         presetScroll.CacheMode = new Avalonia.Media.BitmapCache();
 
-        var columns = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), Margin = new Thickness(0, 0, 8, 8) };
-        Grid.SetColumn(catScroll, 0);
-        Grid.SetColumn(presetScroll, 1);
-        columns.Children.Add(catScroll);
-        columns.Children.Add(presetScroll);
+        var listArea = new Grid
+        {
+            RowDefinitions = new RowDefinitions("Auto,*"),
+            Margin = new Thickness(0, 0, 8, 8)
+        };
+        Grid.SetRow(_brushCategoryPanel, 0);
+        Grid.SetRow(presetScroll, 1);
+        listArea.Children.Add(_brushCategoryPanel);
+        listArea.Children.Add(presetScroll);
 
         var root = new Grid();
         root.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
@@ -119,10 +121,10 @@ public partial class MainWindow : Window
 
         Grid.SetRow(_strokePreview, 0);
         Grid.SetRow(headerRow, 1);
-        Grid.SetRow(columns, 2);
+        Grid.SetRow(listArea, 2);
         root.Children.Add(_strokePreview);
         root.Children.Add(headerRow);
-        root.Children.Add(columns);
+        root.Children.Add(listArea);
 
         return root;
     }
@@ -134,7 +136,11 @@ public partial class MainWindow : Window
     // ── Preset panel ──────────────────────────────────────────────────────────
     internal void RefreshGroupPresets()
     {
+        if (_brushCategoryPanel is null || _presetPanel is null)
+            return;
+
         _brushCategoryPanel.Children.Clear();
+        _brushCategoryPanel.ColumnDefinitions.Clear();
         _presetPanel.Children.Clear();
 
         var group = _activeToolGroup;
@@ -143,8 +149,14 @@ public partial class MainWindow : Window
         if (_selectedCategory == null)
             _selectedCategory = group.Categories.FirstOrDefault()?.Name;
 
-        foreach (var cat in group.Categories)
+        var catCount = group.Categories.Count;
+        for (var i = 0; i < catCount; i++)
+            _brushCategoryPanel.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
+        _brushCategoryPanel.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+
+        for (var ci = 0; ci < catCount; ci++)
         {
+            var cat = group.Categories[ci];
             var selected = cat.Name == _selectedCategory;
             var catName = cat.Name;
             var btn = new Button
@@ -153,17 +165,18 @@ public partial class MainWindow : Window
                 {
                     Text = catName,
                     FontSize = 11,
-                    TextWrapping = Avalonia.Media.TextWrapping.Wrap,
-                    TextAlignment = Avalonia.Media.TextAlignment.Left,
+                    TextWrapping = Avalonia.Media.TextWrapping.NoWrap,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
                 },
+                Padding = new Thickness(6, 5),
+                MinHeight = 28,
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
-                HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Left,
-                Padding = new Thickness(12, 7),
-                MinHeight = 34,
-                Background = new SolidColorBrush(Color.Parse(selected ? Accent : "Transparent")),
+                HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                Background = new SolidColorBrush(Color.Parse(selected ? Bg3 : Bg2)),
                 Foreground = new SolidColorBrush(Color.Parse(selected ? TextPrimary : TextSecondary)),
-                BorderBrush = new SolidColorBrush(selected ? Color.Parse(Accent) : Colors.Transparent),
-                BorderThickness = new Thickness(2, 0, 0, 0),
+                BorderBrush = new SolidColorBrush(Color.Parse(selected ? Accent : Stroke)),
+                BorderThickness = new Thickness(0, 0, 1, selected ? 2 : 1),
                 CornerRadius = new CornerRadius(0),
                 Tag = catName,
             };
@@ -195,17 +208,21 @@ public partial class MainWindow : Window
             btn.ContextMenu = BuildCategoryContextMenu(group, cat);
             EnableCategoryDrop(btn, group, catName);
             EnableCategoryReorder(btn, group, catName);
+            Grid.SetColumn(btn, ci);
             _brushCategoryPanel.Children.Add(btn);
         }
 
         var newCatBtn = new Button
         {
             Content = Icons.Make(Icons.Plus, 11, new SolidColorBrush(Color.Parse(TextMuted))),
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+            MinHeight = 28,
+            MinWidth = 36,
+            Width = 36,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            Padding = new Thickness(8, 5),
-            Background = Avalonia.Media.Brushes.Transparent,
-            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0, 5),
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(1, 0, 0, 1),
             CornerRadius = new CornerRadius(0),
         };
         newCatBtn.Click += async (_, _) =>
@@ -220,6 +237,7 @@ public partial class MainWindow : Window
             }
         };
         EnableNewCategoryDrop(newCatBtn, group);
+        Grid.SetColumn(newCatBtn, catCount);
         _brushCategoryPanel.Children.Add(newCatBtn);
 
         if (_selectedCategory == null)
@@ -290,7 +308,7 @@ public partial class MainWindow : Window
             host.PreviewKey = previewKey;
         }
 
-        host.Row.BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke));
+        ApplyBrushPresetRowActive(host.Row, isActive);
         if (host.Row.Parent is Panel staleParent && !ReferenceEquals(staleParent, _presetPanel))
             staleParent.Children.Remove(host.Row);
         return host.Row;
@@ -299,7 +317,8 @@ public partial class MainWindow : Window
     private BrushPresetRowHost BuildBrushPresetRowHost(ToolGroup group, ToolPreset preset, BrushPreset brushPreset, bool isActive)
     {
         var row = BuildBrushPresetRow(group, preset, brushPreset, isActive);
-        var preview = (BrushStrokePreview)((Panel)row.Content!).Children[0];
+        var previewHost = (Grid)((Grid)row.Content!).Children[0];
+        var preview = (BrushStrokePreview)previewHost.Children[0];
         return new BrushPresetRowHost
         {
             Row = row,
@@ -311,63 +330,86 @@ public partial class MainWindow : Window
     private static string BuildBrushPreviewKey(BrushPreset brushPreset)
         => $"{GraphForBrushTip(brushPreset.Tip).CacheKey()}|{brushPreset.Size:F2}|{brushPreset.Hardness:F3}|{brushPreset.Opacity:F3}|{brushPreset.Flow:F3}";
 
+    private static void ApplyBrushPresetRowActive(Button row, bool isActive)
+    {
+        row.BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke));
+        row.BorderThickness = new Thickness(isActive ? 2 : 1);
+        row.Background = new SolidColorBrush(Color.Parse(Bg2));
+        if (row.Content is Grid grid && grid.Children.Count >= 2
+            && grid.Children[1] is Border nameRow)
+        {
+            nameRow.Background = new SolidColorBrush(Color.Parse(isActive ? AccentSoft : Bg1));
+        }
+    }
+
     private Button BuildBrushPresetRow(ToolGroup group, ToolPreset preset, BrushPreset brushPreset, bool isActive)
     {
         var strokePreview = new BrushStrokePreview
         {
             Brush = brushPreset,
             CompactPreview = true,
+            Height = 44,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
         };
+        Avalonia.Media.RenderOptions.SetEdgeMode(strokePreview, Avalonia.Media.EdgeMode.Aliased);
+
+        var iconPath = preset.PresetIcon ?? Icons.DefaultIcon(preset.Engine);
+        var iconOverlay = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(140, 0, 0, 0)),
+            CornerRadius = new CornerRadius(3),
+            Padding = new Thickness(3, 2),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom,
+            Margin = new Thickness(4, 0, 0, 4),
+            Child = FlossUi.Icon(iconPath, FlossUi.IconDense)
+        };
+
+        var previewHost = new Grid
+        {
+            Height = 44,
+            ClipToBounds = true,
+            Background = new SolidColorBrush(Color.Parse(Bg0))
+        };
+        previewHost.Children.Add(strokePreview);
+        previewHost.Children.Add(iconOverlay);
+
         var nameText = new TextBlock
         {
             Text = preset.Name,
             FontSize = 11,
             FontWeight = FontWeight.SemiBold,
-            Foreground = new SolidColorBrush(Colors.White),
+            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
             TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxWidth = 150,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
-        var namePill = new Border
+        var nameRow = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(160, 15, 13, 18)),
-            Padding = new Thickness(6, 1),
-            CornerRadius = new CornerRadius(3),
-            Child = nameText,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 7, 0),
+            Padding = new Thickness(8, 4),
+            Child = nameText
         };
-        var iconPath = preset.PresetIcon ?? Icons.DefaultIcon(preset.Engine);
-        var iconOverlay = new Border
+
+        var content = new Grid
         {
-            Background = new SolidColorBrush(Color.FromArgb(120, 0, 0, 0)),
-            CornerRadius = new CornerRadius(0, 0, 3, 0),
-            Padding = new Thickness(4, 3),
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom,
-            Child = Icons.Make(iconPath, 11, new SolidColorBrush(Color.FromArgb(210, 255, 255, 255)))
+            RowDefinitions = new RowDefinitions("Auto,Auto")
         };
-        var panel = new Panel { ClipToBounds = true };
-        panel.Children.Add(strokePreview);
-        panel.Children.Add(namePill);
-        panel.Children.Add(iconOverlay);
+        Grid.SetRow(previewHost, 0);
+        Grid.SetRow(nameRow, 1);
+        content.Children.Add(previewHost);
+        content.Children.Add(nameRow);
 
         var row = new Button
         {
-            Height = 46,
-            MinWidth = 176,
             Padding = new Thickness(0),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
-            Background = new SolidColorBrush(Color.Parse(isActive ? Accent : Bg2)),
-            BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke)),
-            BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(4),
-            Content = panel,
+            Content = content,
             Tag = preset.Id,
         };
+        ApplyBrushPresetRowActive(row, isActive);
         row.Click += (_, _) => ActivatePreset(group, preset);
         EnablePresetDragAndReorder(row, group, preset);
         row.ContextMenu = BuildPresetContextMenu(group, preset);
@@ -1811,6 +1853,7 @@ public partial class MainWindow : Window
         }
         ScheduleBrushPresetAutosave();
         ApplyBrushSettings(updated, syncSliders: false, syncToolPropertiesWindow: false);
+        SyncBrushScalarControls(updated);
         RefreshGroupPresets();
         RefreshNodeGraphImageOptions();
     }
@@ -1871,9 +1914,11 @@ public partial class MainWindow : Window
             if (_activeToolGroup?.ActivePreset == tp && tp.OutputProcess != OutputProcessType.DirectDraw)
                 _canvas.SetActiveTool(ToolForPreset(tp), tp);
 
+            if (brushUpdate == null)
+                App.ToolGroups.Save();
+
             RefreshToolProperties();
         }, SaveNodeGraphAsNewBrushPreset, OpenBrushTipGraphEditor);
-        _toolPropsWindow.OnSpeedAdaptiveChanged = enabled => _canvas?.SetStabilizerSpeedAdaptive(enabled);
         _toolPropsWindow.Closed += (_, _) => _toolPropsWindow = null;
         _toolPropsWindow.Show(this);
     }
@@ -2203,6 +2248,7 @@ public partial class MainWindow : Window
             preset.Flow.ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
             preset.Grain.ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
             preset.Smoothing.ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
+            preset.SpeedAdaptiveStabilizer.ToString(),
             preset.Angle.ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
             preset.TipDensity.ToString("F4", System.Globalization.CultureInfo.InvariantCulture),
             preset.TipThickness.ToString("F4", System.Globalization.CultureInfo.InvariantCulture),

@@ -64,8 +64,7 @@ public sealed class ToolPropertiesWindow : Window
         IsChecked = true,
     };
     private readonly Slider _smoothingSlider = MkSlider(0, 0.95, 0.3, "Input stabilization");
-    private bool _speedAdaptiveStabilizer = true;
-    public Action<bool>? OnSpeedAdaptiveChanged;
+    private CheckBox? _speedAdaptiveCheck;
     private readonly Slider _angleSlider = MkSlider(0, 360, 0, "Base angle in degrees");
     private readonly Slider _grainSlider = MkSlider(0, 1, 0.0, "Noise texture strength");
     private readonly Slider _tipDensitySlider = MkSlider(0, 1, 1.0, "Brush tip density (0=none, 1=full)");
@@ -521,7 +520,7 @@ public sealed class ToolPropertiesWindow : Window
 
         var galleryScroll = new ScrollViewer
         {
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Visible,
             VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
             Content = galleryPanel,
             Margin = new Thickness(0, 0, 0, 2)
@@ -1310,26 +1309,27 @@ public sealed class ToolPropertiesWindow : Window
 
     private Control BuildStrokeContent()
     {
-        var cb = new CheckBox
+        _speedAdaptiveCheck = new CheckBox
         {
             Content = new TextBlock { Text = "Adjust by speed", FontSize = 11 },
             Margin = new Thickness(0, 2, 0, 0),
-            IsChecked = _speedAdaptiveStabilizer,
+            IsChecked = _brushPreset.SpeedAdaptiveStabilizer,
         };
-        cb.IsCheckedChanged += (_, _) =>
+        _speedAdaptiveCheck.IsCheckedChanged += (_, _) =>
         {
-            _speedAdaptiveStabilizer = cb.IsChecked ?? true;
-            OnSpeedAdaptiveChanged?.Invoke(_speedAdaptiveStabilizer);
+            if (_syncing) return;
+            Commit(p => p with { SpeedAdaptiveStabilizer = _speedAdaptiveCheck?.IsChecked ?? true });
         };
+        var speedAdaptiveRow = AddEyeButton(_speedAdaptiveCheck, "brush.speedAdaptive");
         return new StackPanel
         {
             Spacing = 0,
             Children =
             {
                 DynSliderRow("Spacing",   _spacingSlider,   "%", () => OpenSpacingDynamics(), "brush.spacing"),
-                _autoSpacingCheck,
+                AddEyeButton(_autoSpacingCheck, "brush.autoSpacing"),
                 PlainSliderRow("Stabilization", _smoothingSlider, "%", "brush.smoothing"),
-                cb
+                speedAdaptiveRow
             }
         };
     }
@@ -1666,10 +1666,8 @@ public sealed class ToolPropertiesWindow : Window
 
         eyeBtn.Click += (_, _) =>
         {
-            var newVisible = !App.Config.ToolPropertyDockerVisibility.TryGetValue(toolPropId, out var cur) || !cur;
-            App.Config.ToolPropertyDockerVisibility[toolPropId] = newVisible;
-            App.Config.Save();
-            AppConfig.NotifyToolPropertyVisibilityChanged();
+            App.Config.ToggleToolPropertyDockerVisible(toolPropId);
+            var newVisible = App.Config.IsToolPropertyDockerVisible(toolPropId);
             eyeBtn.Foreground = new SolidColorBrush(Color.Parse(newVisible ? Accent : TextMuted));
         };
 
@@ -1785,10 +1783,8 @@ public sealed class ToolPropertiesWindow : Window
             ToolTip.SetTip(eyeBtn, visible ? "Hide from tool property docker" : "Show in tool property docker");
             eyeBtn.Click += (_, _) =>
             {
-                var newVisible = !App.Config.IsToolPropertyDockerVisible(toolPropId);
-                App.Config.ToolPropertyDockerVisibility[toolPropId] = newVisible;
-                App.Config.Save();
-                AppConfig.NotifyToolPropertyVisibilityChanged();
+                App.Config.ToggleToolPropertyDockerVisible(toolPropId);
+                var newVisible = App.Config.IsToolPropertyDockerVisible(toolPropId);
                 eyeBtn.Content = newVisible ? "◉" : "○";
                 eyeBtn.Foreground = new SolidColorBrush(Color.Parse(newVisible ? Accent : TextMuted));
                 ToolTip.SetTip(eyeBtn, newVisible ? "Hide from tool property docker" : "Show in tool property docker");
@@ -2104,6 +2100,8 @@ public sealed class ToolPropertiesWindow : Window
         _spacingSlider.Value = Math.Clamp(preset.Spacing, _spacingSlider.Minimum, _spacingSlider.Maximum);
         _autoSpacingCheck.IsChecked = preset.AutoSpacingActive;
         _smoothingSlider.Value = Math.Clamp(preset.Smoothing, _smoothingSlider.Minimum, _smoothingSlider.Maximum);
+        if (_speedAdaptiveCheck != null)
+            _speedAdaptiveCheck.IsChecked = preset.SpeedAdaptiveStabilizer;
         _grainSlider.Value = Math.Clamp(preset.Grain, _grainSlider.Minimum, _grainSlider.Maximum);
         _angleSlider.Value = Math.Clamp(preset.Angle, _angleSlider.Minimum, _angleSlider.Maximum);
         StylizeToggle(_mixToggle, preset.ColorMix);

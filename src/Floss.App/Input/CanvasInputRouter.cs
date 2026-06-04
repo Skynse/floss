@@ -65,6 +65,11 @@ public interface ICanvasInputHost
     // ── Cursor preview ──
     void LockCursorPreview(Point center, bool forceBrushOutline);
     void UnlockCursorPreview();
+    void SetBrushResizeEdgePreview(Point edgeCanvasPoint);
+    void ClearBrushResizePreview();
+    void RefreshCursorAfterInput();
+    bool TryCanvasPointToScreen(Point canvasPoint, out PixelPoint screen);
+    bool TryWarpCursorToCanvasPoint(Point canvasPoint);
 
     // ── Brush size gesture ──
     double GetActiveToolSize();
@@ -142,6 +147,8 @@ public sealed class CanvasInputRouter
     private double _brushSizeLastDirY;
     private bool _brushSizeHasLastDir;
     private bool _hadAlternateBeforeBrushSize;
+    private PixelPoint _brushSizeGestureStartScreenPoint;
+    private bool _brushSizeGestureStartScreenCaptured;
 
     public CanvasInputRouter(ICanvasInputHost host)
     {
@@ -259,10 +266,7 @@ public sealed class CanvasInputRouter
                 if (IsViewportTool())
                     _host.DispatchViewportPointerInput(ToolInputEventKind.Down, viewportPos, _host.GetViewportPointerPoint(e));
                 else
-                {
                     _host.DispatchPointerInput(ToolInputEventKind.Down, _host.GetCanvasPointerPoint(e));
-                    _host.SetCursorNone();
-                }
                 _host.CapturePointer(e.Pointer);
                 e.Handled = true;
             }
@@ -377,7 +381,11 @@ public sealed class CanvasInputRouter
         {
             _brushSizeActive = false;
             _host.FinishActiveToolSizeEdit();
+            _host.ClearBrushResizePreview();
             _host.UnlockCursorPreview();
+            if (_brushSizeGestureStartScreenCaptured)
+                PlatformCursorWarp.TrySet(_brushSizeGestureStartScreenPoint);
+            _brushSizeGestureStartScreenCaptured = false;
         }
 
         _state = RouterState.Idle;
@@ -461,6 +469,8 @@ public sealed class CanvasInputRouter
         _brushSizeActive = false;
         _brushSizeHasLastDir = false;
         _hadAlternateBeforeBrushSize = false;
+        _brushSizeGestureStartScreenCaptured = false;
+        _host.ClearBrushResizePreview();
         ClearModifierState();
         _state = RouterState.Idle;
         _runningAction = CanvasAction.None;
@@ -521,6 +531,18 @@ public sealed class CanvasInputRouter
         }
 
         _host.LockCursorPreview(_brushSizeGestureCenterCanvasPoint, forceBrushOutline: true);
+        SnapBrushSizePointerToResizeCircle(_brushSizeGestureStartCanvasPoint);
+        if (_host.TryCanvasPointToScreen(_brushSizeGestureStartCanvasPoint, out var screenStart))
+        {
+            _brushSizeGestureStartScreenPoint = screenStart;
+            _brushSizeGestureStartScreenCaptured = true;
+        }
+        else
+        {
+            _brushSizeGestureStartScreenCaptured = false;
+        }
+
+        _host.RefreshCursorAfterInput();
         EnterRunning(CanvasAction.BrushSize, pointerId, false);
         _host.CapturePointer(e.Pointer);
         e.Handled = true;
@@ -543,9 +565,34 @@ public sealed class CanvasInputRouter
             radiusDistance,
             _host.GetActiveToolSizeMin(),
             _host.GetActiveToolSizeMax()));
+
+        SnapBrushSizePointerToResizeCircle(canvasPoint);
         _lastViewportPos = viewportPt;
         _host.LockCursorPreview(_brushSizeGestureCenterCanvasPoint, forceBrushOutline: true);
+        _host.RefreshCursorAfterInput();
         e.Handled = true;
+    }
+
+    /// <summary>
+    /// Keeps the resize handle on the brush circle: center + direction * (diameter/2).
+    /// </summary>
+    private Point SnapBrushSizePointerToResizeCircle(Point fallbackCanvasPoint)
+    {
+        var radius = _host.GetActiveToolSize() * 0.5;
+        Point edge;
+        if (_brushSizeHasLastDir && radius > 0.001)
+        {
+            edge = new Point(
+                _brushSizeGestureCenterCanvasPoint.X + _brushSizeLastDirX * radius,
+                _brushSizeGestureCenterCanvasPoint.Y + _brushSizeLastDirY * radius);
+        }
+        else
+        {
+            edge = fallbackCanvasPoint;
+        }
+
+        _host.SetBrushResizeEdgePreview(edge);
+        return edge;
     }
 
     // ── Private: state transitions ──
@@ -561,6 +608,12 @@ public sealed class CanvasInputRouter
         _runningAction = action;
         _activePointerId = pointerId;
         _canvasButtonPresetActive = isTemporaryPreset;
+
+        if (!IsViewportTool())
+        {
+            _host.SetCursorNone();
+            _host.InvalidateViewport();
+        }
     }
 
     private void ExitRunning(object? eventArgs)

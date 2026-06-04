@@ -1668,6 +1668,44 @@ public class DockingTests
     }
 
     [Fact]
+    public void DockLayoutOps_FindPlacement_TabMember()
+    {
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.Normalize(PanelRegistry.AllIds);
+
+        var brush = DockLayoutOps.FindPlacement(layout, "brush");
+        Assert.NotNull(brush);
+        Assert.True(brush!.IsTabMember);
+        Assert.Equal("tab:left", brush.TabGroupKey);
+
+        Assert.True(DockLayoutOps.MovePanel(layout, "brush", 1));
+        var after = DockLayoutOps.FindPlacement(layout, "brush");
+        Assert.NotNull(after);
+        Assert.Equal(1, after!.IndexInTab);
+    }
+
+    [Fact]
+    public void Normalize_RepairsTabKeysStrippedFromPanelIds()
+    {
+        PanelRegistry.Clear();
+        PanelRegistry.Register(new DockPanelDef("brush", "", () => new TextBlock(), DefaultZone: "left"));
+        PanelRegistry.Register(new DockPanelDef("tool-properties", "", () => new TextBlock(), DefaultZone: "left"));
+
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.LeftColumn.PanelIds = [];
+        layout.LeftColumn.TabGroups = new Dictionary<string, TabGroupLayout>
+        {
+            ["tab:left"] = new() { PanelIds = ["brush", "tool-properties"], ActiveIndex = 0 }
+        };
+
+        layout.Normalize(PanelRegistry.AllIds);
+
+        Assert.Contains("tab:left", layout.LeftColumn.PanelIds);
+        Assert.NotEmpty(layout.LeftColumn.ResolvedRows());
+        Assert.Null(layout.FindOrphanedPanel());
+    }
+
+    [Fact]
     public void Normalize_DontDuplicatePanels_PlacedOnce()
     {
         PanelRegistry.Clear();

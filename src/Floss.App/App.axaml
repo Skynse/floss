@@ -16,7 +16,7 @@
 
         <Style Selector="Window">
             <Setter Property="FontFamily" Value="Inter, Segoe UI, Noto Sans, Ubuntu, Cantarell, Arial"/>
-            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontSize" Value="12"/>
             <Setter Property="Background" Value="{StaticResource Bg0}"/>
             <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
         </Style>
@@ -118,6 +118,38 @@
             <Setter Property="VerticalContentAlignment"    Value="Center"/>
         </Style>
 
+        <!-- Tool rail — flat, no scale bounce -->
+        <Style Selector="Button.tool-rail">
+            <Setter Property="Padding"                     Value="0"/>
+            <Setter Property="Width"                       Value="40"/>
+            <Setter Property="Height"                      Value="36"/>
+            <Setter Property="CornerRadius"              Value="4"/>
+            <Setter Property="Background"                Value="Transparent"/>
+            <Setter Property="BorderThickness"           Value="0"/>
+            <Setter Property="HorizontalContentAlignment"  Value="Center"/>
+            <Setter Property="VerticalContentAlignment"    Value="Center"/>
+            <Setter Property="Transitions"                 Value="{x:Null}"/>
+        </Style>
+        <Style Selector="Button.tool-rail:pointerover /template/ Border#Overlay">
+            <Setter Property="Background" Value="#1affffff"/>
+        </Style>
+
+        <!-- Panel icon buttons — flat ghost -->
+        <Style Selector="Button.icon-tool">
+            <Setter Property="Padding"                     Value="0"/>
+            <Setter Property="Width"                       Value="28"/>
+            <Setter Property="Height"                      Value="28"/>
+            <Setter Property="CornerRadius"              Value="4"/>
+            <Setter Property="Background"                Value="Transparent"/>
+            <Setter Property="BorderThickness"           Value="0"/>
+            <Setter Property="HorizontalContentAlignment"  Value="Center"/>
+            <Setter Property="VerticalContentAlignment"    Value="Center"/>
+            <Setter Property="Transitions"                 Value="{x:Null}"/>
+        </Style>
+        <Style Selector="Button.icon-tool:pointerover /template/ Border#Overlay">
+            <Setter Property="Background" Value="{StaticResource Bg3}"/>
+        </Style>
+
         <!-- ══════════════════════════════════════════════════════════════════
              ToggleButton
         ══════════════════════════════════════════════════════════════════ -->
@@ -192,7 +224,7 @@
             <Setter Property="SelectionForegroundBrush"    Value="#ffffff"/>
             <Setter Property="BorderBrush"                 Value="{StaticResource Stroke}"/>
             <Setter Property="BorderThickness"             Value="1"/>
-            <Setter Property="Background"                  Value="{StaticResource Bg0}"/>
+            <Setter Property="Background"                  Value="{StaticResource Bg2}"/>
             <Setter Property="FontSize"                    Value="12"/>
         </Style>
         <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
@@ -209,7 +241,7 @@
         <Style Selector="ComboBox">
             <Setter Property="CornerRadius"    Value="{StaticResource ControlRadius}"/>
             <Setter Property="Foreground"      Value="{StaticResource TextSecondary}"/>
-            <Setter Property="Background"      Value="{StaticResource Bg0}"/>
+            <Setter Property="Background"      Value="{StaticResource Bg2}"/>
             <Setter Property="BorderBrush"     Value="{StaticResource Stroke}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding"         Value="6,1"/>
@@ -242,6 +274,14 @@
             <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
             <Setter Property="FontSize"   Value="12"/>
             <Setter Property="Cursor"     Value="Hand"/>
+        </Style>
+        <Style Selector="CheckBox /template/ Border#NormalRectangle">
+            <Setter Property="Width"            Value="14"/>
+            <Setter Property="Height"           Value="14"/>
+            <Setter Property="CornerRadius"     Value="2"/>
+            <Setter Property="Background"       Value="{StaticResource Bg2}"/>
+            <Setter Property="BorderBrush"      Value="{StaticResource Stroke}"/>
+            <Setter Property="BorderThickness"  Value="1"/>
         </Style>
         <Style Selector="CheckBox:checked /template/ Border#NormalRectangle">
             <Setter Property="Background"  Value="{StaticResource Accent}"/>
@@ -334,11 +374,17 @@
             <Setter Property="Background" Value="Transparent"/>
         </Style>
 
+        <!-- ScrollViewers: always show scrollbars when content overflows -->
+        <Style Selector="ScrollViewer">
+            <Setter Property="HorizontalScrollBarVisibility" Value="Visible"/>
+            <Setter Property="VerticalScrollBarVisibility" Value="Visible"/>
+        </Style>
+
         <!-- ══════════════════════════════════════════════════════════════════
              ScrollBar
         ══════════════════════════════════════════════════════════════════ -->
         <Style Selector="ScrollBar">
-            <Setter Property="Opacity" Value="0.4"/>
+            <Setter Property="Opacity" Value="0.85"/>
         </Style>
 
         <!-- ══════════════════════════════════════════════════════════════════
@@ -361,11 +407,11 @@
         ══════════════════════════════════════════════════════════════════ -->
         <!-- Usage: <TextBlock Classes="section-header" Text="COLOR"/> -->
         <Style Selector="TextBlock.section-header">
-            <Setter Property="FontSize"     Value="10"/>
+            <Setter Property="FontSize"     Value="11"/>
             <Setter Property="FontWeight"   Value="SemiBold"/>
             <Setter Property="Foreground"   Value="{StaticResource TextMuted}"/>
-            <Setter Property="LetterSpacing" Value="1.5"/>
-            <Setter Property="Margin"       Value="0,0,0,5"/>
+            <Setter Property="LetterSpacing" Value="1.2"/>
+            <Setter Property="Margin"       Value="0,0,0,6"/>
         </Style>
 
         <!-- Usage: <Separator/> or <Border Classes="rule"/> -->

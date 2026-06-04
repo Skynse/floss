@@ -53,6 +53,17 @@ public sealed class AppConfig
     /// <summary>Check whether a tool property should be visible in the docker. Considers both user override and defaults.</summary>
     public bool IsToolPropertyDockerVisible(string propertyId)
         => ToolPropertyDockerVisibility.TryGetValue(propertyId, out var v) ? v : GetToolPropertyDockerDefault(propertyId);
+
+    public void SetToolPropertyDockerVisible(string propertyId, bool visible)
+    {
+        ToolPropertyDockerVisibility[propertyId] = visible;
+        Save();
+        NotifyToolPropertyVisibilityChanged();
+    }
+
+    public void ToggleToolPropertyDockerVisible(string propertyId)
+        => SetToolPropertyDockerVisible(propertyId, !IsToolPropertyDockerVisible(propertyId));
+
     public WorkspaceLayout WorkspaceLayout { get; set; } = WorkspaceLayout.CreateDefault();
     public Dictionary<string, WorkspaceLayout> WorkspacePresets { get; set; } = new();
     public static event Action? ToolPropertyVisibilityChanged;
@@ -72,6 +83,7 @@ public sealed class AppConfig
                 var cfg = JsonSerializer.Deserialize<AppConfig>(json) ?? new AppConfig();
                 ValidateOrResetLayout(cfg);
                 cfg.RepairToolPropertyVisibility();
+                cfg.PruneRecentFiles();
                 return cfg;
             }
         }
@@ -139,10 +151,60 @@ public sealed class AppConfig
 
     public void AddRecentFile(string path)
     {
+        if (string.IsNullOrWhiteSpace(path))
+            return;
+
+        try
+        {
+            path = Path.GetFullPath(path);
+        }
+        catch
+        {
+            return;
+        }
+
         var list = new List<string>(RecentFiles);
-        list.Remove(path);
+        list.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
         list.Insert(0, path);
-        if (list.Count > 10) list.RemoveRange(10, list.Count - 10);
+        if (list.Count > 10)
+            list.RemoveRange(10, list.Count - 10);
         RecentFiles = [.. list];
+        Save();
+    }
+
+    /// <summary>Drop missing paths and de-duplicate (case-insensitive).</summary>
+    public void PruneRecentFiles()
+    {
+        if (RecentFiles.Length == 0)
+            return;
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var kept = new List<string>(RecentFiles.Length);
+        foreach (var path in RecentFiles)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                continue;
+            string full;
+            try
+            {
+                full = Path.GetFullPath(path);
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (!File.Exists(full))
+                continue;
+            if (!seen.Add(full))
+                continue;
+            kept.Add(full);
+        }
+
+        if (kept.Count != RecentFiles.Length)
+        {
+            RecentFiles = [.. kept];
+            Save();
+        }
     }
 }

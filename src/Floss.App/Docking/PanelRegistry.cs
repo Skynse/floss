@@ -41,11 +41,11 @@ public static class PanelRegistry
 
         Register(new DockPanelDef("brush", "Brushes",
             buildContent("brush"),
-            Proportion: 0.28, MinHeight: 160, DefaultZone: "right-0"));
+            Proportion: 0.28, MinHeight: 160, DefaultZone: "left"));
 
         Register(new DockPanelDef("tool-properties", "Brush",
             buildContent("tool-properties"),
-            Proportion: 0.15, MinHeight: 64, DefaultZone: "right-0"));
+            Proportion: 0.15, MinHeight: 64, DefaultZone: "left"));
 
         Register(new DockPanelDef("layer-properties", "Layer Color",
             buildContent("layer-properties"),

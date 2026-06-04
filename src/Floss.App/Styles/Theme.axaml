@@ -5,14 +5,14 @@
          Mirror of AppColors.cs; keep in sync.
     ═════════════════════════════════════════════════════════════════════ -->
     <!-- Backgrounds -->
-    <Color x:Key="Bg0">#0b0c0e</Color>
-    <Color x:Key="Bg1">#101113</Color>
-    <Color x:Key="Bg2">#17181b</Color>
-    <Color x:Key="Bg3">#24262b</Color>
-    <Color x:Key="BgSidebar">#111214</Color>
+    <Color x:Key="Bg0">#1c1d21</Color>
+    <Color x:Key="Bg1">#24262b</Color>
+    <Color x:Key="Bg2">#2e3036</Color>
+    <Color x:Key="Bg3">#3a3d45</Color>
+    <Color x:Key="BgSidebar">#212328</Color>
 
     <!-- Borders -->
-    <Color x:Key="Stroke">#2a2c31</Color>
+    <Color x:Key="Stroke">#40444d</Color>
 
     <!-- Text -->
     <Color x:Key="TextPrimary">#f0f2f5</Color>
@@ -31,7 +31,7 @@
     <Color x:Key="Danger">#da3633</Color>
 
     <!-- Slider -->
-    <Color x:Key="SliderTrack">#26272a</Color>
+    <Color x:Key="SliderTrack">#32353c</Color>
     <Color x:Key="SliderFill">#0078f2</Color>
     <Color x:Key="SliderFillHover">#1688ff</Color>
     <Color x:Key="SliderFillActive">#38a0ff</Color>

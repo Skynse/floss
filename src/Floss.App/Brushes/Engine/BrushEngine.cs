@@ -6,6 +6,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Avalonia.Media;
+using Floss.App.Brushes.Tips;
 using Floss.App.Document;
 using Floss.App.Input;
 using SkiaSharp;
@@ -161,6 +162,31 @@ public sealed class BrushEngine : IDisposable
     {
         lock (_gate)
             EndStrokeCore();
+    }
+
+    /// <summary>Snapshot dab-spacing state (e.g. before a preview tail that will be tile-reverted).</summary>
+    public bool TryCaptureStrokeState(out StrokeState state)
+    {
+        lock (_gate)
+        {
+            if (_activeStroke == null)
+            {
+                state = default;
+                return false;
+            }
+
+            state = _activeStroke.State;
+            return true;
+        }
+    }
+
+    public void RestoreStrokeState(StrokeState state)
+    {
+        lock (_gate)
+        {
+            if (_activeStroke != null)
+                _activeStroke.State = state;
+        }
     }
 
     private void EndStrokeCore()
@@ -654,7 +680,9 @@ public sealed class BrushEngine : IDisposable
         var currentAngle = MathF.Atan2((float)dy, (float)dx);
         stroke.State.DrawingAngle = LerpAngle(stroke.State.DrawingAngle, currentAngle, 0.5f);
 
-        if (IsStraightSegment(stroke, from, to))
+        // Round procedural tips: stamp on the chord polyline (input samples). Catmull-Rom
+        // between sparse stabilized points creates uneven dab density (beads).
+        if (PreferLinearStampPath(brush) || velocity01 >= 0.5f || IsStraightSegment(stroke, from, to))
             return BuildStampsLinear(stroke, brush, from, to, distance, velocity01, ensureEndpoint);
 
         // Huge brushes: one dab per input segment when the footprint already
@@ -913,10 +941,22 @@ public sealed class BrushEngine : IDisposable
             return false;
 
         var spacing = BrushSpacing.EffectiveDistance(brush, stamp.Size, stamp.SpacingMultiplier);
-        if (distance <= spacing * 0.85f)
-            return true;
+        // One dab covers the move. Do not collapse every short stabilizer segment on
+        // large brushes (old rule: distance <= 0.75 * size) — that caused one dab per
+        // input point and visible compressions/rarefactions along the stroke.
+        return distance <= spacing * 0.85f;
+    }
 
-        return stamp.Size >= 64f && distance <= stamp.Size * 0.75f;
+    private static bool PreferLinearStampPath(BrushPreset brush)
+    {
+        if (brush.Dynamics.Scatter.IsEnabled)
+            return false;
+
+        return brush.Tip switch
+        {
+            ProceduralBrushTip { Shape: BrushTipShape.Circle or BrushTipShape.SoftRound or BrushTipShape.Ellipse } => true,
+            _ => false
+        };
     }
 
     private static StampSample CreateStamp(ActiveStroke stroke, BrushPreset brush, in StrokePoint sp)

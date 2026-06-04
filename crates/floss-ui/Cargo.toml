@@ -1,0 +1,8 @@
+[package]
+name = "floss-ui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+floss-core = { path = "../floss-core" }
+fontdue = "0.9"

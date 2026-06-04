@@ -62,10 +62,7 @@ public sealed class CompositeTool : ITool
         Input.ToolAuxMode = ctx.ToolAuxMode;
         Input.PointerMove(s);
         if (Input.IsActive && Input.GetPreview() is { } preview)
-        {
             Output.Preview(ctx, preview);
-        }
-        ctx.InvalidateRender();
     }
 
     public void PointerUp(ToolContext ctx, CanvasInputSample s)

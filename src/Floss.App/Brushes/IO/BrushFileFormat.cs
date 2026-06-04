@@ -14,8 +14,8 @@ public static class BrushFileFormat
     public const string Extension = ".flbr";
     private const uint Magic = 0x52424C46; // FLBR, little endian
 
-    // Version 13 adds material-tip id/label on library entries.
-    private const int Version = 13;
+    // Version 14 adds SpeedAdaptiveStabilizer on the preset.
+    private const int Version = 14;
 
     public static BrushAsset Load(string path)
     {
@@ -90,12 +90,16 @@ public static class BrushFileFormat
                     tips.Add(ReadTip(reader, version));
             }
             var parameterGraphs = ReadParameterGraphs(reader, version);
+            var speedAdaptive = version >= 14 && reader.BaseStream.Position < reader.BaseStream.Length
+                ? reader.ReadBoolean()
+                : true;
             asset.Preset = new BrushPreset(name, size, opacity, hardness, spacing, color, angle)
             {
                 Dynamics = dynamics,
                 Flow = flow,
                 Grain = grain,
                 Smoothing = smoothing,
+                SpeedAdaptiveStabilizer = speedAdaptive,
                 BaseAngleSource = baseAngleSource,
                 AngleJitter = angleJitter,
                 Quality = quality,
@@ -228,6 +232,7 @@ public static class BrushFileFormat
         foreach (var tip in p.Tips)
             WriteTip(writer, tip);
         WriteParameterGraphs(writer, p.ParameterGraphs);
+        writer.Write(p.SpeedAdaptiveStabilizer);
     }
 
     // ── Helpers (kept exactly the same) ────────────────────────────────────
@@ -251,31 +256,19 @@ public static class BrushFileFormat
         float x1, float y1, float x2, float y2,
         float min, float max, bool velocityEnabled, float velocityStrength)
     {
+        // Editor uses two endpoints; non-linear response is encoded in the curve LUT at runtime.
         var curveData = new List<float> { 0f, 0f, 1f, 1f };
-        if (curveKind == ResponseCurveKind.Bezier)
+        if (curveKind == ResponseCurveKind.Bezier && (Math.Abs(x1) > 0.02f || Math.Abs(y1) > 0.02f || Math.Abs(x2 - 1f) > 0.02f || Math.Abs(y2 - 1f) > 0.02f))
         {
-            const int steps = 9;
             curveData.Clear();
-            for (var i = 0; i < steps; i++)
-            {
-                var t = i / (float)(steps - 1);
-                var bx = CubicBez(t, 0, x1, x2, 1);
-                var by = Math.Clamp(CubicBez(t, 0, y1, y2, 1), 0, 1);
-                curveData.Add(bx);
-                curveData.Add(by);
-            }
-        }
-        else if (curveKind == ResponseCurveKind.Power && Math.Abs(gamma - 1.0) > 0.01f)
-        {
-            const int steps = 9;
-            curveData.Clear();
-            for (var i = 0; i < steps; i++)
-            {
-                var x = i / (float)(steps - 1);
-                var y = Math.Clamp(MathF.Pow(x, gamma), 0, 1);
-                curveData.Add(x);
-                curveData.Add(y);
-            }
+            curveData.Add(0f);
+            curveData.Add(0f);
+            curveData.Add(Math.Clamp(x1, 0, 1));
+            curveData.Add(Math.Clamp(y1, 0, 1));
+            curveData.Add(Math.Clamp(x2, 0, 1));
+            curveData.Add(Math.Clamp(y2, 0, 1));
+            curveData.Add(1f);
+            curveData.Add(1f);
         }
 
         return new ParameterDynamics

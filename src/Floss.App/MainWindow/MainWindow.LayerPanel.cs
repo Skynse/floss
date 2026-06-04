@@ -226,13 +226,11 @@ public partial class MainWindow
         _maskLayerBtn.Click += (_, _) => { _canvas.ToggleLayerMaskEditing(_canvas.ActiveLayerIndex); BuildLayerList(); };
         _refLayerBtn.Click += (_, _) => { _canvas.ToggleLayerReference(_canvas.ActiveLayerIndex); BuildLayerList(); };
 
-        foreach (var btn in new[] { _lockLayerBtn, _alphaLockLayerBtn, _clipLayerBtn, _maskLayerBtn, _refLayerBtn })
-            btn.Margin = new Thickness(0, 0, 2, 0);
-
         var toggleRow = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
-            Margin = new Thickness(0, 4, 0, 4),
+            Spacing = 4,
+            Margin = new Thickness(0, 6, 0, 6),
             Children = { _lockLayerBtn, _alphaLockLayerBtn, _clipLayerBtn, _maskLayerBtn, _refLayerBtn }
         };
 
@@ -273,7 +271,10 @@ public partial class MainWindow
         _layerListBox.TemplateApplied += (_, e) =>
         {
             if (e.NameScope.Find<ScrollViewer>("PART_ScrollViewer") is { } sv)
+            {
+                ScrollHelper.UseVisibleScrollBars(sv, horizontal: false, vertical: true);
                 ScrollHelper.DisablePointerPanScroll(sv);
+            }
         };
 
         // ── Action buttons (bottom bar — like CSP) ───────────────────────────────

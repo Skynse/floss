@@ -1,0 +1,19 @@
+[package]
+name = "floss-app"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "floss"
+path = "src/main.rs"
+
+[dependencies]
+floss-core        = { path = "../floss-core" }
+floss-document    = { path = "../floss-document" }
+floss-compositor  = { path = "../floss-compositor" }
+floss-psd         = { path = "../floss-psd" }
+
+eframe    = "0.34"
+egui      = "0.34"
+evdev     = "0.12"
+glam.workspace = true

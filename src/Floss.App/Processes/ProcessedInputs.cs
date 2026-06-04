@@ -12,6 +12,8 @@ public sealed class StrokeInput : IProcessedInput
 {
     public List<CanvasInputSample> RawSamples { get; set; } = [];
     public List<CanvasInputSample> SmoothedSamples { get; set; } = [];
+    /// <summary>Latest unsmoothed pointer position — painted each preview so ink follows the pen.</summary>
+    public CanvasInputSample? RawLead { get; set; }
 }
 
 // Polygon (closed or open) with raw and smoothed vertices.

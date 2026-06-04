@@ -1,5 +1,7 @@
+using System;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 
 namespace Floss.App;
 
@@ -116,11 +118,18 @@ public static class Icons
         _ => BrushOutline
     };
 
-    public static PathIcon Make(string pathData, double size, IBrush foreground) => new()
+    public static PathIcon Make(string pathData, double size, IBrush foreground)
     {
-        Data = Geometry.Parse(pathData),
-        Width = size,
-        Height = size,
-        Foreground = foreground,
-    };
+        var px = Math.Max(12, Math.Round(size));
+        var icon = new PathIcon
+        {
+            Data = Geometry.Parse(pathData),
+            Width = px,
+            Height = px,
+            Foreground = foreground,
+        };
+        RenderOptions.SetEdgeMode(icon, EdgeMode.Aliased);
+        RenderOptions.SetBitmapInterpolationMode(icon, BitmapInterpolationMode.None);
+        return icon;
+    }
 }

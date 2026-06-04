@@ -1,0 +1,12 @@
+[package]
+name = "floss-compositor"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+floss-core = { path = "../floss-core" }
+floss-document = { path = "../floss-document" }
+floss-brush = { path = "../floss-brush" }
+glam.workspace = true
+bytemuck.workspace = true
+smallvec.workspace = true

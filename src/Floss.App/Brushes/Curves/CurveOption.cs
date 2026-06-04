@@ -75,15 +75,8 @@ public sealed class CurveOption
 
     private static CubicCurve GammaCurve(float gamma)
     {
-        const int steps = 9;
-        var pts = new CurvePoint[steps];
-        for (int i = 0; i < steps; i++)
-        {
-            float x = i / (float)(steps - 1);
-            pts[i] = new CurvePoint(x, Math.Clamp(MathF.Pow(x, gamma), 0, 1));
-        }
         var c = new CubicCurve();
-        c.SetPoints(pts);
+        c.SetPowerLaw(gamma);
         return c;
     }
 

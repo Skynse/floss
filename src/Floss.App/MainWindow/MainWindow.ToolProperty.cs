@@ -17,6 +17,19 @@ using static Floss.App.Config.AppColors;
 
 public partial class MainWindow
 {
+    private void OnToolPropertyVisibilityChanged()
+        => Dispatcher.UIThread.Post(RefreshToolProperties);
+
+    /// <summary>Single tool-properties panel shared by the docked BRUSH column and popup.</summary>
+    private Control GetToolPropertiesContent()
+    {
+        if (_toolPropertiesContent != null)
+            return _toolPropertiesContent;
+
+        _toolPropertiesContent = BuildToolPropertySection();
+        return _toolPropertiesContent;
+    }
+
     private StackPanel BuildToolPropertySection()
     {
         _toolPropertyTitle = new TextBlock
@@ -40,9 +53,6 @@ public partial class MainWindow
         _lastToolPropertyKey = "";
         _builtToolPropertyDescriptors = null;
         RefreshToolProperties();
-
-        // Listen for visibility changes from brush editor eye toggles
-        AppConfig.ToolPropertyVisibilityChanged += () => Avalonia.Threading.Dispatcher.UIThread.Post(RefreshToolProperties);
 
         return root;
     }
@@ -95,7 +105,8 @@ public partial class MainWindow
                     () => _activePreset?.AutoSpacingActive ?? true, v => UpdateCurrentBrush(p => p with { AutoSpacingActive = v })),
                 SliderProp("brush.smoothing", "Stabilization", true, _smoothingSlider, "%"),
                 BoolProp("brush.speedAdaptive", "Adjust by speed", false,
-                    () => _speedAdaptiveStabilizer, v => { _speedAdaptiveStabilizer = v; _canvas?.SetStabilizerSpeedAdaptive(v); }),
+                    () => _activePreset?.SpeedAdaptiveStabilizer ?? true,
+                    v => UpdateCurrentBrush(p => p with { SpeedAdaptiveStabilizer = v })),
                 SliderProp("brush.grain", "Grain", false, _grainSlider, "%"),
                 EnumProp("brush.quality", "Quality", false,
                     () => _activePreset?.Quality ?? BrushQuality.High, v => UpdateCurrentBrush(p => p with { Quality = v })),
@@ -128,14 +139,14 @@ public partial class MainWindow
         {
             if (output != OutputProcessType.DirectDraw) // brush already shows smoothing above
                 props.Add(SliderProp("input.stabilization", "Stabilization", true,
-                    () => preset.Stabilization, v => preset.Stabilization = v, 0, 1, "%"));
+                    () => preset.Stabilization, v => UpdateActiveToolPreset(p => p.Stabilization = v), 0, 1, "%"));
         }
 
         if (preset.InputProcess == InputProcessType.Lasso ||
             output is OutputProcessType.ClosedAreaFill or OutputProcessType.SelectionArea)
         {
             props.Add(EnumProp("input.antialiasing", "Antialiasing", true,
-                () => preset.AntialiasingQuality, v => preset.AntialiasingQuality = v));
+                () => preset.AntialiasingQuality, v => UpdateActiveToolPreset(p => p.AntialiasingQuality = v)));
         }
 
         // ── Output-specific properties ──
@@ -144,22 +155,22 @@ public partial class MainWindow
             case OutputProcessType.FloodFill:
                 props.AddRange([
                     SliderProp("fill.tolerance", "Tolerance", true,
-                        () => preset.Tolerance, v => preset.Tolerance = v, 0, 1, "%"),
+                        () => preset.Tolerance, v => UpdateActiveToolPreset(p => p.Tolerance = v), 0, 1, "%"),
                     EnumProp("fill.reference", "Reference", true,
-                        () => preset.FillReference, v => preset.FillReference = v),
+                        () => preset.FillReference, v => UpdateActiveToolPreset(p => p.FillReference = v)),
                     SliderProp("fill.areaScaling", "Area Scaling", false,
-                        () => preset.AreaScaling, v => preset.AreaScaling = v, -20, 20, "px"),
+                        () => preset.AreaScaling, v => UpdateActiveToolPreset(p => p.AreaScaling = v), -20, 20, "px"),
                     BoolProp("fill.contiguous", "Contiguous", false,
-                        () => preset.ContiguousFill, v => preset.ContiguousFill = v)
+                        () => preset.ContiguousFill, v => UpdateActiveToolPreset(p => p.ContiguousFill = v))
                 ]);
                 break;
 
             case OutputProcessType.ClosedAreaFill:
                 props.AddRange([
                     SliderProp("fill.tolerance", "Tolerance", false,
-                        () => preset.Tolerance, v => preset.Tolerance = v, 0, 1, "%"),
+                        () => preset.Tolerance, v => UpdateActiveToolPreset(p => p.Tolerance = v), 0, 1, "%"),
                     SliderProp("fill.areaScaling", "Area Scaling", false,
-                        () => preset.AreaScaling, v => preset.AreaScaling = v, -20, 20, "px")
+                        () => preset.AreaScaling, v => UpdateActiveToolPreset(p => p.AreaScaling = v), -20, 20, "px")
                 ]);
                 break;
 
@@ -179,15 +190,16 @@ public partial class MainWindow
 
             case OutputProcessType.Gradient:
                 props.Add(EnumProp("gradient.type", "Gradient Type", true,
-                    () => preset.GradientType, v => preset.GradientType = v));
+                    () => preset.GradientType, v => UpdateActiveToolPreset(p => p.GradientType = v)));
                 break;
 
             case OutputProcessType.Stroke:
                 props.AddRange([
                     SliderProp("stroke.width", "Stroke Width", true,
-                        () => preset.PolylineStrokeWidth, v => preset.PolylineStrokeWidth = (float)v, 1, 200, "px"),
+                        () => preset.PolylineStrokeWidth,
+                        v => UpdateActiveToolPreset(p => p.PolylineStrokeWidth = (float)v), 1, 200, "px"),
                     BoolProp("stroke.closePath", "Close Path", true,
-                        () => preset.PolylineClosePath, v => preset.PolylineClosePath = v)
+                        () => preset.PolylineClosePath, v => UpdateActiveToolPreset(p => p.PolylineClosePath = v))
                 ]);
                 break;
 
@@ -198,7 +210,7 @@ public partial class MainWindow
                     EnumProp("wand.op", "Operation", true,
                         () => preset.SelectOp, v => UpdateActiveToolPreset(p => p.SelectOp = v)),
                     BoolProp("wand.contiguous", "Contiguous", false,
-                        () => preset.ContiguousFill, v => preset.ContiguousFill = v)
+                        () => preset.ContiguousFill, v => UpdateActiveToolPreset(p => p.ContiguousFill = v))
                 ]);
                 break;
 
@@ -496,9 +508,5 @@ public partial class MainWindow
         => App.Config.IsToolPropertyDockerVisible(prop.Id);
 
     private static void SetToolPropertyVisible(ToolPropertyDescriptor prop, bool visible)
-    {
-        App.Config.ToolPropertyDockerVisibility[prop.Id] = visible;
-        App.Config.Save();
-        AppConfig.NotifyToolPropertyVisibilityChanged();
-    }
+        => App.Config.SetToolPropertyDockerVisible(prop.Id, visible);
 }

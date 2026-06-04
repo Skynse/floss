@@ -15,6 +15,9 @@ public sealed class CubicCurve
     private readonly List<CurvePoint> _points = [];
     private float[] _lut = new float[LutSize];
 
+    /// <summary>When set, LUT is y = x^gamma; editor keeps two endpoints only.</summary>
+    public float? PowerGamma { get; private set; }
+
     public static CubicCurve Identity() { var c = new CubicCurve(); c.Reset(); return c; }
     public static CubicCurve Linear(float x0, float y0, float x1, float y1)
     {
@@ -29,6 +32,16 @@ public sealed class CubicCurve
 
     public void Reset()
     {
+        PowerGamma = null;
+        _points.Clear();
+        _points.Add(new(0f, 0f));
+        _points.Add(new(1f, 1f));
+        RebuildLut();
+    }
+
+    public void SetPowerLaw(float gamma)
+    {
+        PowerGamma = Math.Abs(gamma - 1f) < 0.01f ? null : gamma;
         _points.Clear();
         _points.Add(new(0f, 0f));
         _points.Add(new(1f, 1f));
@@ -37,6 +50,7 @@ public sealed class CubicCurve
 
     public void SetPoints(IEnumerable<CurvePoint> pts)
     {
+        PowerGamma = null;
         _points.Clear();
         _points.AddRange(pts);
         SortAndClamp();
@@ -75,6 +89,17 @@ public sealed class CubicCurve
 
     public void RebuildLut()
     {
+        if (PowerGamma is float gamma)
+        {
+            for (var i = 0; i < LutSize; i++)
+            {
+                var x = i / (float)(LutSize - 1);
+                _lut[i] = Math.Clamp(MathF.Pow(x, gamma), 0, 1);
+            }
+
+            return;
+        }
+
         var pts = _points.OrderBy(p => p.X).ToList();
         if (pts.Count == 0) { Array.Fill(_lut, 0.5f); return; }
         if (pts[0].X > 0) pts.Insert(0, new(0f, pts[0].Y));

@@ -74,20 +74,19 @@ public sealed class BrushStrokeInputProcess : IInputProcess
         if (!_active) return;
 
         _raw.Add(s);
+
         _history.Add(s);
 
         int targetCount = StabilizerSampleCount(s);
         while (_history.Count > targetCount)
             _history.RemoveAt(0);
 
-        var smoothed = GetStabilizedPosition();
+        var smoothed = Stabilization <= 0 ? s : GetStabilizedPosition();
 
-        // Only emit when the stabilized cursor actually moves enough.
-        // Fast strokes use a smaller threshold so gaps don't open before render catches up.
         var dx = smoothed.X - _lastSmoothed.X;
         var dy = smoothed.Y - _lastSmoothed.Y;
-        var minDist = _lastSpeed01 >= 0.55f ? 0.35 : 0.1;
-        if (Math.Sqrt(dx * dx + dy * dy) < minDist)
+        var minDist = Stabilization <= 0 ? 0.0 : _lastSpeed01 >= 0.55f ? 0.15 : 0.05;
+        if (dx * dx + dy * dy < minDist * minDist)
             return;
 
         _smoothed.Add(smoothed);
@@ -137,11 +136,7 @@ public sealed class BrushStrokeInputProcess : IInputProcess
     {
         if (!_active && _smoothed.Count > 0)
         {
-            var result = new StrokeInput
-            {
-                RawSamples = new List<CanvasInputSample>(_raw),
-                SmoothedSamples = new List<CanvasInputSample>(_smoothed)
-            };
+            var result = BuildStrokeOutput(_raw, _smoothed, _lastKnownPos);
             _raw.Clear();
             _smoothed.Clear();
             return result;
@@ -151,16 +146,34 @@ public sealed class BrushStrokeInputProcess : IInputProcess
 
     public IProcessedInput? GetPreview()
     {
-        if (_active && _smoothed.Count > 0)
+        if (!_active || _smoothed.Count == 0)
+            return null;
+
+        CanvasInputSample? rawLead = null;
+        if (_lastKnownPos is { } raw)
         {
-            return new StrokeInput
-            {
-                RawSamples = new List<CanvasInputSample>(_raw),
-                SmoothedSamples = new List<CanvasInputSample>(_smoothed)
-            };
+            var last = _smoothed[^1];
+            var dx = raw.X - last.X;
+            var dy = raw.Y - last.Y;
+            if (dx * dx + dy * dy > 0.01)
+                rawLead = raw;
         }
-        return null;
+
+        return new StrokeInput
+        {
+            RawSamples = new List<CanvasInputSample>(_raw),
+            SmoothedSamples = new List<CanvasInputSample>(_smoothed),
+            RawLead = rawLead
+        };
     }
+
+    private static StrokeInput BuildStrokeOutput(List<CanvasInputSample> raw, List<CanvasInputSample> smoothed, CanvasInputSample? rawLead)
+        => new()
+        {
+            RawSamples = new List<CanvasInputSample>(raw),
+            SmoothedSamples = new List<CanvasInputSample>(smoothed),
+            RawLead = rawLead
+        };
 
     private void FinishStroke()
     {
@@ -198,14 +211,9 @@ public sealed class BrushStrokeInputProcess : IInputProcess
             return baseCount;
 
         _lastSpeed01 = ComputeSpeed01(raw);
-
-        // Fast strokes: passthrough (1 sample) so ink stays under the pen like Krita.
-        if (_lastSpeed01 >= 0.55f)
-            return 1;
-
         var speedBlend = Math.Clamp(_lastSpeed01, 0f, 1f);
 
-        // Medium speed: blend between min and full stabilizer window.
+        // Fast strokes use a smaller window, not zero — stabilization must still apply.
         var target = (1.0 - speedBlend) * baseCount + speedBlend * minCount;
         return Math.Max(minCount, (int)Math.Round(target));
     }

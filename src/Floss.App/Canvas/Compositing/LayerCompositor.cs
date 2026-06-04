@@ -65,6 +65,12 @@ public sealed class LayerCompositor : IDisposable
     private int _strokePaintLayerIndex = -1;
     public bool StrokeSuspendActive => _strokeSuspendDepth > 0;
 
+    // During strokes, cache the composite of layers below the paint layer per tile.
+    // Only the paint layer + layers above are re-merged each dab.
+    private SKBitmap?[] _strokeBelowCache = [];
+    private bool[] _strokeBelowCacheReady = [];
+    private int _strokeBelowCacheTileTotal;
+
     public void Dispose()
     {
         _compositeIdleEvent.Wait(); // Efficiently blocks without burning CPU
@@ -162,6 +168,10 @@ public sealed class LayerCompositor : IDisposable
     private void ClearAll()
     {
         InvalidateCells();
+        ClearStrokeBelowCache();
+        _strokeBelowCache = [];
+        _strokeBelowCacheReady = [];
+        _strokeBelowCacheTileTotal = 0;
         for (var i = 0; i < _tileScratch.Length; i++) { var t = _tileScratch[i]; if (t != null) { _delayedDispose.Enqueue((t, 8)); _tileScratch[i] = null; } }
         _tileScratch = []; _xtiles = 0; _ytiles = 0; _tileTotal = 0;
         _pendingComposite.Clear();
@@ -391,25 +401,97 @@ public sealed class LayerCompositor : IDisposable
 
         var tl = new List<int>(pending);
 
-        foreach (var idx in tl) EnsureScratchTile(idx);
-        var all = tl.ToArray();
+        var strokePlan = new StrokeSplitPlan();
+        var canUseStrokeCache = _strokeSuspendDepth > 0
+            && _strokePaintLayerIndex >= 0
+            && !wasFull
+            && TryCreateStrokeSplitPlan(layers, _strokePaintLayerIndex, rl, out strokePlan);
 
-        // Composite each tile into its scratch bitmap, then memcpy to cell
-        void Comp1(int slot)
+        if (canUseStrokeCache)
         {
-            var ti = all[slot]; var ty = ti / _xtiles; var tx = ti % _xtiles; var tr = TileRect(tx, ty);
-            var bmp = _tileScratch[ti];
-            if (bmp == null) { bmp = AllocTileBitmap(tr); _tileScratch[ti] = bmp; } else bmp.Erase(SKColors.Transparent);
-            var dst = (byte*)bmp.GetPixels().ToPointer(); var ds = bmp.RowBytes;
-            ClearTile(dst, ds, tr, tx * CmpTileSize, ty * CmpTileSize, paperColor);
-            Projection.CompositeSiblingStack(dst, ds, bmp.Width, bmp.Height, rl, 1.0, tr, tx * CmpTileSize, ty * CmpTileSize);
-            CopyTileToCell(ti);
+            EnsureStrokeBelowCache();
+            foreach (var idx in tl) EnsureScratchTile(idx);
+            var all = tl.ToArray();
+
+            void CompStroke(int slot)
+            {
+                var ti = all[slot];
+                var ty = ti / _xtiles;
+                var tx = ti % _xtiles;
+                var tr = TileRect(tx, ty);
+                var ox = tx * CmpTileSize;
+                var oy = ty * CmpTileSize;
+
+                if (ti >= _strokeBelowCache.Length)
+                    return;
+
+                if (_strokeBelowCache[ti] == null)
+                {
+                    var cb = AllocTileBitmap(tr);
+                    cb.Erase(SKColors.Transparent);
+                    _strokeBelowCache[ti] = cb;
+                }
+
+                if (ti >= _strokeBelowCacheReady.Length || !_strokeBelowCacheReady[ti])
+                {
+                    var cb = _strokeBelowCache[ti]!;
+                    var cDst = (byte*)cb.GetPixels().ToPointer();
+                    var cDs = cb.RowBytes;
+                    cb.Erase(SKColors.Transparent);
+                    BuildStrokeBelowTile(cDst, cDs, cb.Width, cb.Height, tr, ox, oy, paperColor, strokePlan);
+                    _strokeBelowCacheReady[ti] = true;
+                }
+
+                var tile = _tileScratch[ti];
+                if (tile == null)
+                {
+                    tile = AllocTileBitmap(tr);
+                    _tileScratch[ti] = tile;
+                }
+                else
+                    tile.Erase(SKColors.Transparent);
+
+                var tDst = (byte*)tile.GetPixels().ToPointer();
+                var tDs = tile.RowBytes;
+                var cb2 = _strokeBelowCache[ti]!;
+                var src = (byte*)cb2.GetPixels().ToPointer();
+                var sDs = cb2.RowBytes;
+                var copyW = Math.Min(cb2.Width, tile.Width);
+                var copyH = Math.Min(cb2.Height, tile.Height);
+                var rowBytes = copyW * 4;
+                for (var y = 0; y < copyH; y++)
+                    Buffer.MemoryCopy(src + y * sDs, tDst + y * tDs, rowBytes, rowBytes);
+
+                CompositeStrokeAboveLayers(tDst, tDs, tile.Width, tile.Height, tr, ox, oy, strokePlan);
+                CopyTileToCell(ti);
+            }
+
+            if (all.Length >= 4 && Environment.ProcessorCount > 1) DispatchToPool(all.Length, CompStroke);
+            else for (var i = 0; i < all.Length; i++) CompStroke(i);
+
+            foreach (var idx in all) _pendingComposite.Remove(idx);
         }
+        else
+        {
+            foreach (var idx in tl) EnsureScratchTile(idx);
+            var all = tl.ToArray();
 
-        if (all.Length >= 4 && Environment.ProcessorCount > 1) DispatchToPool(all.Length, Comp1);
-        else for (var i = 0; i < all.Length; i++) Comp1(i);
+            void Comp1(int slot)
+            {
+                var ti = all[slot]; var ty = ti / _xtiles; var tx = ti % _xtiles; var tr = TileRect(tx, ty);
+                var bmp = _tileScratch[ti];
+                if (bmp == null) { bmp = AllocTileBitmap(tr); _tileScratch[ti] = bmp; } else bmp.Erase(SKColors.Transparent);
+                var dst = (byte*)bmp.GetPixels().ToPointer(); var ds = bmp.RowBytes;
+                ClearTile(dst, ds, tr, tx * CmpTileSize, ty * CmpTileSize, paperColor);
+                Projection.CompositeSiblingStack(dst, ds, bmp.Width, bmp.Height, rl, 1.0, tr, tx * CmpTileSize, ty * CmpTileSize);
+                CopyTileToCell(ti);
+            }
 
-        foreach (var idx in all) _pendingComposite.Remove(idx);
+            if (all.Length >= 4 && Environment.ProcessorCount > 1) DispatchToPool(all.Length, Comp1);
+            else for (var i = 0; i < all.Length; i++) Comp1(i);
+
+            foreach (var idx in all) _pendingComposite.Remove(idx);
+        }
         TrimCompositeCache(vpClip);
         LastDirtyTileCount = pending.Count; LastMissingTileCount = missing.Count;
         return _pendingComposite.Count > 0;
@@ -557,12 +639,218 @@ public sealed class LayerCompositor : IDisposable
     // ═══ Stroke suspend ═══════════════════════════════════════════════════════
 
     public void BeginStrokeSuspend(PixelRegion _, int layerIndex = -1)
-    { lock (CompositeGate) { _strokeSuspendDepth++; _strokePaintLayerIndex = layerIndex; } }
-    public void ExtendStrokeSuspend(PixelRegion r) { }
+    {
+        lock (CompositeGate)
+        {
+            _strokeSuspendDepth++;
+            _strokePaintLayerIndex = layerIndex;
+            if (_strokeSuspendDepth == 1 && layerIndex >= 0)
+            {
+                EnsureStrokeBelowCache();
+                InvalidateStrokeBelowCacheReady();
+            }
+        }
+    }
+
+    // Below-layer pixels do not change during a stroke — do not invalidate the cache here.
+    public void ExtendStrokeSuspend(PixelRegion _) { }
+
     public void EndStrokeSuspend()
-    { lock (CompositeGate) { if (_strokeSuspendDepth > 0) _strokeSuspendDepth--; if (_strokeSuspendDepth > 0) return; _strokePaintLayerIndex = -1; } }
-    public void ResetStrokeSuspend() { lock (CompositeGate) { _strokeSuspendDepth = 0; _strokePaintLayerIndex = -1; } }
-    private void InvalidateGroupCaches(PixelRegion? r, IReadOnlyList<DrawingLayer>? l, int? li) { }
+    {
+        lock (CompositeGate)
+        {
+            if (_strokeSuspendDepth > 0) _strokeSuspendDepth--;
+            if (_strokeSuspendDepth > 0) return;
+            _strokePaintLayerIndex = -1;
+            ClearStrokeBelowCache();
+        }
+    }
+
+    public void ResetStrokeSuspend()
+    {
+        lock (CompositeGate)
+        {
+            _strokeSuspendDepth = 0;
+            _strokePaintLayerIndex = -1;
+            ClearStrokeBelowCache();
+        }
+    }
+
+    private void EnsureStrokeBelowCache()
+    {
+        if (_strokeBelowCacheTileTotal == _tileTotal
+            && _strokeBelowCache.Length == _tileTotal
+            && _strokeBelowCacheReady.Length == _tileTotal)
+            return;
+
+        ClearStrokeBelowCache();
+        _strokeBelowCache = new SKBitmap?[_tileTotal];
+        _strokeBelowCacheReady = new bool[_tileTotal];
+        _strokeBelowCacheTileTotal = _tileTotal;
+    }
+
+    private void ClearStrokeBelowCache()
+    {
+        for (var i = 0; i < _strokeBelowCache.Length; i++)
+        {
+            var bmp = _strokeBelowCache[i];
+            if (bmp != null)
+            {
+                _delayedDispose.Enqueue((bmp, 8));
+                _strokeBelowCache[i] = null;
+            }
+        }
+        _strokeBelowCacheReady = [];
+    }
+
+    private void InvalidateStrokeBelowCacheReady()
+    {
+        if (_strokeBelowCacheReady.Length == _tileTotal)
+            Array.Clear(_strokeBelowCacheReady, 0, _strokeBelowCacheReady.Length);
+    }
+
+    private void InvalidateGroupCaches(PixelRegion? r, IReadOnlyList<DrawingLayer>? l, int? li)
+    {
+        if (_strokeSuspendDepth > 0 && li is int idx && idx != _strokePaintLayerIndex)
+            InvalidateStrokeBelowCacheReady();
+    }
+
+    private sealed class StrokeSplitPlan
+    {
+        public List<ProjectionSiblingItem> BelowRoots { get; } = [];
+        public List<ProjectionSiblingItem> AboveRoots { get; } = [];
+        public DrawingLayer? NestedGroup { get; set; }
+        public int NestedChildSplitIndex { get; set; }
+    }
+
+    private static bool TryCreateStrokeSplitPlan(
+        IReadOnlyList<DrawingLayer> layers,
+        int paintLayerIndex,
+        IReadOnlyList<ProjectionSiblingItem> rootStack,
+        out StrokeSplitPlan plan)
+    {
+        plan = new StrokeSplitPlan();
+        plan.NestedGroup = null;
+        plan.NestedChildSplitIndex = 0;
+        if (paintLayerIndex < 0 || paintLayerIndex >= layers.Count) return false;
+        var paintLayer = layers[paintLayerIndex];
+
+        for (var i = 0; i < rootStack.Count; i++)
+        {
+            if (rootStack[i].Layer != paintLayer) continue;
+            for (var j = 0; j < i; j++) plan.BelowRoots.Add(rootStack[j]);
+            for (var j = i; j < rootStack.Count; j++) plan.AboveRoots.Add(rootStack[j]);
+            return true;
+        }
+
+        for (var gi = 0; gi < rootStack.Count; gi++)
+        {
+            var group = rootStack[gi].Layer;
+            if (!group.IsGroup || !IsDescendantOf(group, paintLayer)) continue;
+
+            var directChild = FindDirectChildOf(group, paintLayer);
+            if (directChild == null) return false;
+            var childIdx = group.Children.IndexOf(directChild);
+            if (childIdx < 0) return false;
+
+            for (var j = 0; j < gi; j++) plan.BelowRoots.Add(rootStack[j]);
+            for (var j = gi + 1; j < rootStack.Count; j++) plan.AboveRoots.Add(rootStack[j]);
+            plan.NestedGroup = group;
+            plan.NestedChildSplitIndex = childIdx;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsDescendantOf(DrawingLayer ancestor, DrawingLayer node)
+    {
+        var current = node;
+        while (current.Parent != null)
+        {
+            if (current.Parent == ancestor) return true;
+            current = current.Parent;
+        }
+        return false;
+    }
+
+    private static DrawingLayer? FindDirectChildOf(DrawingLayer group, DrawingLayer descendant)
+    {
+        var current = descendant;
+        while (current.Parent != null && current.Parent != group)
+            current = current.Parent;
+        return current.Parent == group ? current : null;
+    }
+
+    private unsafe void BuildStrokeBelowTile(
+        byte* dst, int dstStride, int bmpW, int bmpH,
+        PixelRegion tr, int ox, int oy, uint paperColor, StrokeSplitPlan plan)
+    {
+        ClearTile(dst, dstStride, tr, ox, oy, paperColor);
+        if (plan.BelowRoots.Count > 0)
+            Projection.CompositeSiblingStack(dst, dstStride, bmpW, bmpH, plan.BelowRoots, 1.0, tr, ox, oy);
+
+        if (plan.NestedGroup is { } group && plan.NestedChildSplitIndex > 0)
+        {
+            var belowKids = new List<DrawingLayer>(plan.NestedChildSplitIndex);
+            for (var i = 0; i < plan.NestedChildSplitIndex; i++)
+                belowKids.Add(group.Children[i]);
+            CompositeGroupChildrenSubset(dst, dstStride, bmpW, bmpH, group, belowKids, 1.0, tr, ox, oy);
+        }
+    }
+
+    private unsafe void CompositeStrokeAboveLayers(
+        byte* dst, int dstStride, int bmpW, int bmpH,
+        PixelRegion tr, int ox, int oy, StrokeSplitPlan plan)
+    {
+        if (plan.NestedGroup is { } group)
+        {
+            var aboveCount = group.Children.Count - plan.NestedChildSplitIndex;
+            if (aboveCount > 0)
+            {
+                var aboveKids = new List<DrawingLayer>(aboveCount);
+                for (var i = plan.NestedChildSplitIndex; i < group.Children.Count; i++)
+                    aboveKids.Add(group.Children[i]);
+                CompositeGroupChildrenSubset(dst, dstStride, bmpW, bmpH, group, aboveKids, 1.0, tr, ox, oy);
+            }
+        }
+
+        if (plan.AboveRoots.Count > 0)
+            Projection.CompositeSiblingStack(dst, dstStride, bmpW, bmpH, plan.AboveRoots, 1.0, tr, ox, oy);
+    }
+
+    private unsafe void CompositeGroupChildrenSubset(
+        byte* dst, int dstStride, int bmpW, int bmpH,
+        DrawingLayer group, IReadOnlyList<DrawingLayer> children,
+        double opacityScale, PixelRegion tr, int ox, int oy)
+    {
+        if (children.Count == 0) return;
+        var groupOpacity = group.Opacity * opacityScale;
+        if (groupOpacity <= 0) return;
+
+        if (group.BlendMode == BlendMode.PassThrough)
+        {
+            Projection.CompositeSiblingList(dst, dstStride, bmpW, bmpH, children, groupOpacity, tr, ox, oy);
+            return;
+        }
+
+        var tempLen = tr.Width * tr.Height * 4;
+        var temp = ArrayPool<byte>.Shared.Rent(tempLen);
+        try
+        {
+            Array.Clear(temp, 0, tempLen);
+            fixed (byte* tp = temp)
+            {
+                Projection.CompositeSiblingList(tp, tr.Width * 4, bmpW, bmpH, children, 1.0, tr, ox, oy);
+                LayerCompositorPixelOps.CompositeBgraBuffer(dst, dstStride, tp, tr.Width * 4,
+                    group.BlendMode, groupOpacity, tr, ox, oy);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(temp);
+        }
+    }
 
     // ═══ Test/export helpers ══════════════════════════════════════════════════
 

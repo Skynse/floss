@@ -183,7 +183,7 @@ public sealed class ModifierKeySettingsWindow : Window
         var scroll = new ScrollViewer
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
             Content = _tableHost
         };
 
@@ -321,7 +321,7 @@ public sealed class ModifierKeySettingsWindow : Window
             Content = new ScrollViewer
             {
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
                 Content = list
             }
         };

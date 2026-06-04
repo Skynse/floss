@@ -173,7 +173,7 @@ public sealed class AdjustmentLayerDialog : Window
         var scroll = new ScrollViewer
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
             MaxHeight = 520,
             Content = panel
         };

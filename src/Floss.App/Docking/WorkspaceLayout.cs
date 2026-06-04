@@ -11,19 +11,41 @@ namespace Floss.App.Docking;
 /// </summary>
 public sealed class WorkspaceLayout
 {
-    public double LeftRailWidth { get; set; } = 48;
-        public double RightPanelWidth { get; set; } = 250;
+    /// <summary>3 = tabbed dock columns. See notes/ui-visual-refresh.md.</summary>
+    public int LayoutVersion { get; set; } = 3;
+
+    /// <summary>Width of the left dock column (brush library, etc.), not the 48px tool rail.</summary>
+    public double LeftRailWidth { get; set; } = 280;
+
+    public double RightPanelWidth { get; set; } = 320;
     public double RightDockSplit { get; set; } = 0.5;
     public double BottomDockHeight { get; set; } = 320;
 
     [JsonInclude]
     public List<DockColumnLayout> RightColumns { get; set; } =
     [
-        new() { Id = "right-0", PanelIds = ["color", "color-slider", "layer-properties", "brush", "tool-properties", "layers"] }
+        new()
+        {
+            Id = "right-0",
+            PanelIds = ["tab:color", "tab:layers"],
+            TabGroups = new Dictionary<string, TabGroupLayout>
+            {
+                ["tab:color"] = new() { PanelIds = ["color", "color-slider", "layer-properties"], ActiveIndex = 0 },
+                ["tab:layers"] = new() { PanelIds = ["layers"], ActiveIndex = 0 }
+            }
+        }
     ];
 
     [JsonInclude]
-    public DockColumnLayout LeftColumn { get; set; } = new() { Id = "left", PanelIds = [] };
+    public DockColumnLayout LeftColumn { get; set; } = new()
+    {
+        Id = "left",
+        PanelIds = ["tab:left"],
+        TabGroups = new Dictionary<string, TabGroupLayout>
+        {
+            ["tab:left"] = new() { PanelIds = ["brush", "tool-properties"], ActiveIndex = 0 }
+        }
+    };
 
     [JsonInclude]
     public DockColumnLayout BottomColumn { get; set; } = new() { Id = "bottom", PanelIds = ["node-graph"] };
@@ -37,7 +59,7 @@ public sealed class WorkspaceLayout
 
     [JsonInclude]
     [JsonPropertyName("HiddenDockers")]
-    public HashSet<string> HiddenPanelIds { get; set; } = ["tools", "color-slider"];
+    public HashSet<string> HiddenPanelIds { get; set; } = ["color-slider"];
 
     /// <summary>Per-panel content state (scroll position, selected category, etc.).</summary>
     [JsonInclude]
@@ -59,11 +81,16 @@ public sealed class WorkspaceLayout
         HiddenPanelIds.Remove("tool-properties");
         HiddenPanelIds.Remove("layer-properties");
 
-        // Migrate: color-slider is now visible by default
-        HiddenPanelIds.Remove("color-slider");
+        // Tools live on the fixed left rail (v2), not as a docked panel
+        HiddenPanelIds.Remove("tools");
+        LeftColumn.PanelIds.Remove("tools");
 
-        // Migrate old default or missing panels to the current layout.
-        if (RightColumns.Count == 1 &&
+        MigrateToWideDockLayoutV2();
+        MigrateToTabbedDockV3();
+
+        // Migrate old default or missing panels to the v1 right-stack layout.
+        if (LayoutVersion < 2 &&
+            RightColumns.Count == 1 &&
             (RightColumns[0].PanelIds.SequenceEqual(["brush", "color", "color-slider", "layers"]) ||
              RightColumns[0].PanelIds.SequenceEqual(["color", "brush", "layers"])))
         {
@@ -77,15 +104,28 @@ public sealed class WorkspaceLayout
 
         var known = new HashSet<string>(knownIds);
 
-        // Prune unknown panel IDs and deduplicate
+        // Prune unknown panel IDs (keep tab-group row keys — they are not registry panel ids).
         foreach (var col in RightColumns)
-            col.PanelIds = col.PanelIds.Where(known.Contains).Distinct().ToList();
-        LeftColumn.PanelIds = LeftColumn.PanelIds.Where(known.Contains).Distinct().ToList();
-        BottomColumn.PanelIds = BottomColumn.PanelIds.Where(known.Contains).Distinct().ToList();
+        {
+            col.PanelIds = col.PanelIds.Where(id => IsKnownColumnPanelId(id, col, known)).Distinct().ToList();
+            col.RepairTabGroupPanelIds();
+        }
+        LeftColumn.PanelIds = LeftColumn.PanelIds
+            .Where(id => IsKnownColumnPanelId(id, LeftColumn, known))
+            .Distinct()
+            .ToList();
+        LeftColumn.RepairTabGroupPanelIds();
+        BottomColumn.PanelIds = BottomColumn.PanelIds
+            .Where(id => IsKnownColumnPanelId(id, BottomColumn, known))
+            .Distinct()
+            .ToList();
+        BottomColumn.RepairTabGroupPanelIds();
 
         // Ensure every known panel is placed somewhere
         foreach (var id in known)
         {
+            if (id == "tools")
+                continue; // fixed tool rail — not a dock column panel
             if (RightColumns.Any(c => c.ContainsPanel(id))) continue;
             if (LeftColumn.ContainsPanel(id)) continue;
             if (BottomColumn.ContainsPanel(id)) continue;
@@ -108,6 +148,83 @@ public sealed class WorkspaceLayout
 
         // Deduplicate: remove from non-default columns
         DeduplicateColumns(known);
+    }
+
+    private static bool IsKnownColumnPanelId(string id, DockColumnLayout col, HashSet<string> known)
+        => known.Contains(id) || col.TabGroups.ContainsKey(id);
+
+    private void MigrateToWideDockLayoutV2()
+    {
+        if (LayoutVersion >= 2)
+            return;
+
+        if (RightPanelWidth < 280)
+            RightPanelWidth = 320;
+
+        if (LeftColumn.PanelIds.Count == 0 && RightColumns.Count > 0)
+        {
+            var right = RightColumns[0].PanelIds;
+            if (right.Remove("brush"))
+                LeftColumn.PanelIds.Add("brush");
+            if (right.Remove("tool-properties"))
+                LeftColumn.PanelIds.Add("tool-properties");
+        }
+
+        if (LeftColumn.PanelIds.Count > 0 && LeftRailWidth < 120)
+            LeftRailWidth = 280;
+
+        LayoutVersion = 2;
+    }
+
+    private void MigrateToTabbedDockV3()
+    {
+        if (LayoutVersion >= 3)
+            return;
+
+        static bool HasTabGroups(DockColumnLayout col) => col.TabGroups.Count > 0;
+
+        if (!HasTabGroups(LeftColumn))
+        {
+            var leftPanels = LeftColumn.PanelIds
+                .Where(id => id is "brush" or "tool-properties")
+                .Distinct()
+                .ToList();
+            if (leftPanels.Count == 0)
+                leftPanels = ["brush", "tool-properties"];
+
+            LeftColumn.PanelIds = ["tab:left"];
+            LeftColumn.TabGroups = new Dictionary<string, TabGroupLayout>
+            {
+                ["tab:left"] = new() { PanelIds = leftPanels, ActiveIndex = 0 }
+            };
+        }
+
+        if (RightColumns.Count > 0 && !HasTabGroups(RightColumns[0]))
+        {
+            var right = RightColumns[0];
+            var colorStack = right.PanelIds
+                .Where(id => id is "color" or "color-slider" or "layer-properties")
+                .Distinct()
+                .ToList();
+            if (colorStack.Count == 0)
+                colorStack = ["color", "color-slider", "layer-properties"];
+
+            var layerPanels = right.PanelIds.Contains("layers")
+                ? new List<string> { "layers" }
+                : new List<string>();
+
+            right.PanelIds = layerPanels.Count > 0
+                ? ["tab:color", "tab:layers"]
+                : ["tab:color"];
+            right.TabGroups = new Dictionary<string, TabGroupLayout>
+            {
+                ["tab:color"] = new() { PanelIds = colorStack, ActiveIndex = 0 }
+            };
+            if (layerPanels.Count > 0)
+                right.TabGroups["tab:layers"] = new() { PanelIds = layerPanels, ActiveIndex = 0 };
+        }
+
+        LayoutVersion = 3;
     }
 
     /// <summary>
@@ -287,6 +404,22 @@ public sealed class DockColumnLayout
     {
         if (Rows != null) return Rows.Any(r => r.PanelIds.Contains(id));
         return PanelIds.Contains(id) || TabGroups.Values.Any(t => t.PanelIds.Contains(id));
+    }
+
+    /// <summary>
+    /// Tab groups are referenced by keys in <see cref="PanelIds"/> (e.g. "tab:left").
+    /// Re-insert any keys present in <see cref="TabGroups"/> but missing from the column list.
+    /// </summary>
+    public void RepairTabGroupPanelIds()
+    {
+        if (Rows is { Count: > 0 })
+            return;
+
+        foreach (var key in TabGroups.Keys)
+        {
+            if (!PanelIds.Contains(key))
+                PanelIds.Add(key);
+        }
     }
 
     public void RemovePanel(string id)

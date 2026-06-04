@@ -9,15 +9,15 @@ namespace Floss.App.Config;
 /// </summary>
 public static class AppColors
 {
-    // ── Background hierarchy ─────────────────────────────────────────────
-    public const string Bg0      = "#0b0c0e";   // deepest bg (window chrome)
-    public const string Bg1      = "#101113";   // panel/toolbar bg
-    public const string Bg2      = "#17181b";   // elevated surface (dockers, dialogs)
-    public const string Bg3      = "#24262b";   // hover/active surface
-    public const string BgSidebar = "#111214";  // sidebar/panel rail
+    // ── Background hierarchy (warm charcoal — avoid pure black) ────────
+    public const string Bg0      = "#1c1d21";   // deepest bg (window chrome)
+    public const string Bg1      = "#24262b";   // panel/toolbar bg
+    public const string Bg2      = "#2e3036";   // elevated surface (dockers, dialogs)
+    public const string Bg3      = "#3a3d45";   // hover/active surface
+    public const string BgSidebar = "#212328";  // tool rail / sidebar
 
     // ── Borders ──────────────────────────────────────────────────────────
-    public const string Stroke   = "#2a2c31";
+    public const string Stroke   = "#40444d";
 
     // ── Text ─────────────────────────────────────────────────────────────
     public const string TextPrimary   = "#f0f2f5";
@@ -36,7 +36,7 @@ public static class AppColors
     public const string Danger  = "#da3633";
 
     // ── Slider ───────────────────────────────────────────────────────────
-    public const string SliderTrack      = "#0d0d0d";
+    public const string SliderTrack      = "#32353c";
     public const string SliderFill       = "#3a6bc9";
     public const string SliderFillHover  = "#4a7de0";
     public const string SliderFillActive = "#5a8ef5";

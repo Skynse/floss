@@ -6,15 +6,19 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Floss.App.Config;
 
 namespace Floss.App.Docking;
 
+using static AppColors;
+
 /// <summary>
-/// A row that shows multiple panels behind tabs, like Dock library's tab groups.
-/// Clicking a tab switches the active panel. The tab strip appears above the content.
+/// Tab strip + content for a dock row. Tabs can be dragged out to form new docker rows.
 /// </summary>
 public sealed class DockTabGroup : Grid
 {
+    private const int DragThreshold = 6;
+
     private readonly List<string> _panelIds;
     private readonly Dictionary<string, Control> _content;
     private readonly Dictionary<string, Border> _tabs;
@@ -22,7 +26,14 @@ public sealed class DockTabGroup : Grid
     private readonly Border _contentArea;
     private string _activeId;
 
+    private string? _dragTabId;
+    private Point _dragStart;
+    private bool _dragActive;
+
     public event Action<string>? TabChanged;
+    public event Action<string, PointerPressedEventArgs>? TabDragStarted;
+    public event Action<string, PointerEventArgs>? TabDragMoved;
+    public event Action<string, PointerReleasedEventArgs>? TabDragEnded;
 
     public string ActivePanelId => _activeId;
     public IReadOnlyList<string> PanelIds => _panelIds;
@@ -38,41 +49,44 @@ public sealed class DockTabGroup : Grid
         RowDefinitions = new RowDefinitions("Auto,*");
         ClipToBounds = true;
 
-        // Tab strip
         _tabStrip = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Background = new SolidColorBrush(Color.Parse("#292929")),
-            Margin = new Thickness(0, 0, 0, 0)
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
+            Spacing = 0,
+            Margin = new Thickness(0)
         };
 
-        foreach (var id in _panelIds)
+        for (var i = 0; i < _panelIds.Count; i++)
         {
+            var id = _panelIds[i];
             var title = titles.GetValueOrDefault(id, id);
+            var isLast = i == _panelIds.Count - 1;
             var tab = new Border
             {
-                Padding = new Thickness(8, 3),
+                Padding = new Thickness(10, 5),
+                CornerRadius = new CornerRadius(0),
+                BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+                BorderThickness = new Thickness(0, 0, isLast ? 0 : 1, 0),
                 Cursor = new Cursor(StandardCursorType.Hand),
                 Child = new TextBlock
                 {
                     Text = title,
-                    FontSize = 9,
-                    Foreground = new SolidColorBrush(Color.Parse("#8a8a8e")),
+                    FontSize = 11,
+                    Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
                     VerticalAlignment = VerticalAlignment.Center
                 }
             };
 
-            tab.PointerPressed += (_, e) =>
-            {
-                SetActivePanel(id);
-                e.Handled = true;
-            };
+            tab.PointerPressed += (_, e) => OnTabPointerPressed(id, tab, e);
+            tab.PointerMoved += (_, e) => OnTabPointerMoved(id, e);
+            tab.PointerReleased += (_, e) => OnTabPointerReleased(id, e);
+            tab.PointerCaptureLost += (_, _) => EndTabDrag(cancelOnly: true);
 
             _tabs[id] = tab;
             _tabStrip.Children.Add(tab);
         }
 
-        // Content area
         _contentArea = new Border { ClipToBounds = true };
 
         Grid.SetRow(_tabStrip, 0);
@@ -81,6 +95,60 @@ public sealed class DockTabGroup : Grid
         Children.Add(_contentArea);
 
         RefreshActiveTab();
+    }
+
+    private void OnTabPointerPressed(string id, Border tab, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(tab).Properties.IsLeftButtonPressed) return;
+        _dragTabId = id;
+        _dragStart = e.GetPosition(this);
+        _dragActive = false;
+        TabDragStarted?.Invoke(id, e);
+        e.Pointer.Capture(tab);
+        e.Handled = true;
+    }
+
+    private void OnTabPointerMoved(string id, PointerEventArgs e)
+    {
+        if (_dragTabId != id) return;
+        var pt = e.GetPosition(this);
+        if (!_dragActive && DragDistance(pt, _dragStart) < DragThreshold)
+            return;
+
+        if (!_dragActive)
+        {
+            _dragActive = true;
+            SetActivePanel(id);
+        }
+
+        TabDragMoved?.Invoke(id, e);
+        e.Handled = true;
+    }
+
+    private void OnTabPointerReleased(string id, PointerReleasedEventArgs e)
+    {
+        if (_dragTabId != id) return;
+        if (!_dragActive)
+            SetActivePanel(id);
+        else
+            TabDragEnded?.Invoke(id, e);
+
+        EndTabDrag(cancelOnly: false);
+        e.Pointer.Capture(null);
+        e.Handled = true;
+    }
+
+    private void EndTabDrag(bool cancelOnly)
+    {
+        _dragTabId = null;
+        _dragActive = false;
+    }
+
+    private static double DragDistance(Point a, Point b)
+    {
+        var dx = a.X - b.X;
+        var dy = a.Y - b.Y;
+        return Math.Sqrt(dx * dx + dy * dy);
     }
 
     public void SetActivePanel(string id)
@@ -93,14 +161,17 @@ public sealed class DockTabGroup : Grid
 
     private void RefreshActiveTab()
     {
-        foreach (var (id, tab) in _tabs)
+        for (var i = 0; i < _panelIds.Count; i++)
         {
+            var id = _panelIds[i];
+            var tab = _tabs[id];
             var isActive = id == _activeId;
-            tab.Background = new SolidColorBrush(Color.Parse(isActive ? "#1a1a1a" : "#292929"));
-            tab.BorderBrush = new SolidColorBrush(Color.Parse(isActive ? "#4f78b8" : "Transparent"));
-            tab.BorderThickness = new Thickness(0, 0, 0, isActive ? 2 : 0);
+            var isLast = i == _panelIds.Count - 1;
+            tab.Background = new SolidColorBrush(Color.Parse(isActive ? Bg1 : Bg2));
+            tab.BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke));
+            tab.BorderThickness = new Thickness(0, 0, isLast ? 0 : 1, isActive ? 2 : 1);
             if (tab.Child is TextBlock tb)
-                tb.Foreground = new SolidColorBrush(Color.Parse(isActive ? "#e0e0e0" : "#787878"));
+                tb.Foreground = new SolidColorBrush(Color.Parse(isActive ? TextPrimary : TextMuted));
         }
 
         if (_content.TryGetValue(_activeId, out var content))

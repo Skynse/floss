@@ -1,0 +1,10 @@
+[package]
+name = "floss-psd"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+floss-document = { path = "../floss-document" }
+floss-core = { path = "../floss-core" }
+flate2 = "1"
+rayon = "1"

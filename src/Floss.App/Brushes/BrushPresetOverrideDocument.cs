@@ -22,6 +22,7 @@ public sealed class BrushPresetOverrideDocument
     public double? Flow { get; set; }
     public double? Grain { get; set; }
     public double? Smoothing { get; set; }
+    public bool? SpeedAdaptiveStabilizer { get; set; }
     public double? MaxSizePercent { get; set; }
     public bool? ColorMix { get; set; }
     public double? ColorLoad { get; set; }
@@ -51,7 +52,7 @@ public sealed class BrushPresetOverrideDocument
 
     public bool HasContent =>
         Size.HasValue || Opacity.HasValue || Hardness.HasValue || Spacing.HasValue || Angle.HasValue ||
-        Flow.HasValue || Grain.HasValue || Smoothing.HasValue || MaxSizePercent.HasValue || ColorMix.HasValue || ColorLoad.HasValue ||
+        Flow.HasValue || Grain.HasValue || Smoothing.HasValue || SpeedAdaptiveStabilizer.HasValue || MaxSizePercent.HasValue || ColorMix.HasValue || ColorLoad.HasValue ||
         ColorStretch.HasValue || BlurAmount.HasValue || SmudgeMode.HasValue || MixingMode.HasValue ||
         AmountOfPaint.HasValue || DensityOfPaint.HasValue || TipDensity.HasValue || TipThickness.HasValue ||
         TipDirection.HasValue || TipSelectionMode.HasValue || Quality.HasValue || Texture != null ||
@@ -72,6 +73,7 @@ public sealed class BrushPresetOverrideDocument
             Flow = doc.Flow,
             Grain = doc.Grain,
             Smoothing = doc.Smoothing,
+            SpeedAdaptiveStabilizer = doc.SpeedAdaptiveStabilizer,
             MaxSizePercent = doc.MaxSizePercent,
             ColorMix = doc.ColorMix,
             ColorLoad = doc.ColorLoad,
@@ -124,6 +126,7 @@ public sealed class BrushPresetOverrideDocument
             Flow = Flow ?? basePreset.Flow,
             Grain = Grain ?? basePreset.Grain,
             Smoothing = Smoothing ?? basePreset.Smoothing,
+            SpeedAdaptiveStabilizer = SpeedAdaptiveStabilizer ?? basePreset.SpeedAdaptiveStabilizer,
             MaxSizePercent = MaxSizePercent ?? basePreset.MaxSizePercent,
             ColorMix = ColorMix ?? basePreset.ColorMix,
             ColorLoad = ColorLoad ?? basePreset.ColorLoad,
@@ -175,6 +178,7 @@ public sealed class BrushPresetOverrideDocument
         Flow = Flow,
         Grain = Grain,
         Smoothing = Smoothing,
+        SpeedAdaptiveStabilizer = SpeedAdaptiveStabilizer,
         MaxSizePercent = MaxSizePercent,
         ColorMix = ColorMix,
         ColorLoad = ColorLoad,

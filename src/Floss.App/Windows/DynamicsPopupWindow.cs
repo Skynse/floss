@@ -229,7 +229,7 @@ public sealed class DynamicsPopupWindow : Window
         _current = d;
 
         foreach (var channel in _channels)
-            channel.Graph.CurvePoints = channel.GetCurve(d);
+            channel.Graph.CurvePoints = ParameterDynamics.NormalizeCurveDataForEditor(channel.GetCurve(d));
 
         _minSlider.Value = Math.Clamp(d.Min, 0, 1);
         _maxSlider.Value = Math.Clamp(d.Max, 0, 1);

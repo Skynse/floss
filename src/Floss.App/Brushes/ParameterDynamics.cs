@@ -36,6 +36,30 @@ public sealed record ParameterDynamics
     public static float[] VelocityCurveFromStrength(float strength)
         => [0f, 1f, 1f, Math.Clamp(1f - strength, 0.05f, 1f)];
 
+    /// <summary>Collapse legacy 9-point auto-sampled curves to two endpoints for the editor.</summary>
+    public static float[] NormalizeCurveDataForEditor(float[] data)
+    {
+        if (data == null || data.Length <= 4)
+            return data is { Length: >= 4 } ? data : IdentityCurve;
+
+        var count = data.Length / 2;
+        if (count < 3)
+            return IdentityCurve;
+
+        var evenlySpaced = true;
+        for (var i = 0; i < count; i++)
+        {
+            var expected = i / (float)(count - 1);
+            if (Math.Abs(data[i * 2] - expected) > 0.03f)
+            {
+                evenlySpaced = false;
+                break;
+            }
+        }
+
+        return evenlySpaced ? IdentityCurve : data;
+    }
+
     public static ParameterDynamics Off => new();
 
     public static ParameterDynamics DefaultSize => new()

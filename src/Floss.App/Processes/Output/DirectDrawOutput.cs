@@ -130,6 +130,7 @@ public sealed class DirectDrawOutput : IOutputProcess
             tx.QueuedSamples.Add(ToLayerSample(layer, samples[i]));
             tx.LastQueuedInputIndex = i;
         }
+
     }
 
     private void EnsureActiveTransaction()

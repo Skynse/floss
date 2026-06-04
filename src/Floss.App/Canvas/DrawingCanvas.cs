@@ -15,6 +15,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Rendering.SceneGraph;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Floss.App.Brushes;
 using Floss.App.Document;
 using Floss.App.Input;
@@ -48,6 +49,7 @@ public sealed class DrawingCanvas : Control, IDisposable
     private SolidColorBrush? _paperColorBrush;
     private long _activePointerId = -1;
     private Point _pointerPos;
+    private Point _viewportPointerPos;
     private Point _prevPointerPos;
     private Point _lastCursorDirectionPos;
     private bool _hasCursorDirectionPos;
@@ -58,8 +60,10 @@ public sealed class DrawingCanvas : Control, IDisposable
     private float _pointerTwist;
     private Point _lockedPointerPos;
     private bool _isPointerOver;
+    private bool _hasViewportPointer;
     private bool _isCursorPreviewLocked;
     private bool _forceBrushOutlineCursor;
+    private Point? _brushResizeEdgeCanvasPoint;
     private bool _deferredTileRenderQueued;
     private int _renderLod = -1;
     private double _lastRenderZoom = double.NaN;
@@ -130,6 +134,30 @@ public sealed class DrawingCanvas : Control, IDisposable
     }
 
     public BrushEngine BrushEngine { get; }
+
+    internal event Action? CursorPreviewChanged;
+
+    internal bool ShouldShowToolCursor =>
+        IsBrushResizePreviewActive
+        || ((_isPointerOver || _isCursorPreviewLocked || _toolController.HasPendingOperation) && !IsPaintBlockedByLock);
+
+    internal bool IsCursorPreviewLocked => _isCursorPreviewLocked;
+
+    internal bool IsBrushResizePreviewActive => _brushResizeEdgeCanvasPoint.HasValue;
+
+    internal Point GetToolCursorViewportPosition(Visual viewport)
+    {
+        if (!_isCursorPreviewLocked && _hasViewportPointer)
+            return _viewportPointerPos;
+
+        var canvasPos = _isCursorPreviewLocked ? _lockedPointerPos : _pointerPos;
+        var matrix = this.TransformToVisual(viewport);
+        if (matrix.HasValue)
+            return matrix.Value.Transform(canvasPos);
+
+        var translated = this.TranslatePoint(canvasPos, viewport);
+        return translated ?? _viewportPointerPos;
+    }
 
     public DrawingCanvas()
     {
@@ -362,6 +390,7 @@ public sealed class DrawingCanvas : Control, IDisposable
         {
             _prevPointerPos = _pointerPos;
             _pointerPos = point.Position;
+            NotifyCursorPreviewChanged();
         }
         _pointerTiltX = (float)props.XTilt;
         _pointerTiltY = (float)props.YTilt;
@@ -381,21 +410,23 @@ public sealed class DrawingCanvas : Control, IDisposable
         _toolController.Dispatch(new ToolInputEvent(kind, sample));
     }
 
-    public void TrackViewportPointer(PointerPoint point)
+    public void TrackViewportPointer(PointerPoint viewportPoint, PointerPoint canvasPoint)
     {
+        _viewportPointerPos = viewportPoint.Position;
+        _hasViewportPointer = true;
         if (!_isCursorPreviewLocked)
         {
             _prevPointerPos = _pointerPos;
-            _pointerPos = point.Position;
+            _pointerPos = canvasPoint.Position;
         }
 
         _isPointerOver = true;
-        var props = point.Properties;
+        var props = viewportPoint.Properties;
         _pointerTiltX = (float)props.XTilt;
         _pointerTiltY = (float)props.YTilt;
         _pointerTwist = (float)props.Twist;
         Cursor = CursorNone;
-        InvalidateVisual();
+        NotifyCursorPreviewChanged();
     }
 
     public void ClearViewportPointer()
@@ -404,7 +435,12 @@ public sealed class DrawingCanvas : Control, IDisposable
             return;
 
         _isPointerOver = false;
-        InvalidateVisual();
+        NotifyCursorPreviewChanged();
+    }
+
+    private void NotifyCursorPreviewChanged()
+    {
+        CursorPreviewChanged?.Invoke();
     }
 
     // Viewport tools (Hand, Rotate, Zoom) need viewport coordinates because
@@ -473,6 +509,7 @@ public sealed class DrawingCanvas : Control, IDisposable
     {
         _brush = preset with { Color = _paintColor };
         _ctx.Brush = _brush;
+        ApplyBrushToStrokeInputs(_brush);
         InvalidateVisual();
     }
 
@@ -482,13 +519,22 @@ public sealed class DrawingCanvas : Control, IDisposable
     {
         _brush = brush with { Color = _paintColor };
         _ctx.Brush = _brush;
-
-        if (_brushTool.Input is BrushStrokeInputProcess brushInput)
-            brushInput.Stabilization = brush.Smoothing;
-        if (_eraserTool.Input is BrushStrokeInputProcess eraserInput)
-            eraserInput.Stabilization = brush.Smoothing;
-
+        ApplyBrushToStrokeInputs(_brush);
         InvalidateVisual();
+    }
+
+    private void ApplyBrushToStrokeInputs(BrushPreset brush)
+    {
+        if (_brushTool.Input is BrushStrokeInputProcess brushInput)
+        {
+            brushInput.Stabilization = brush.Smoothing;
+            brushInput.SpeedAdaptiveStabilizer = brush.SpeedAdaptiveStabilizer;
+        }
+        if (_eraserTool.Input is BrushStrokeInputProcess eraserInput)
+        {
+            eraserInput.Stabilization = brush.Smoothing;
+            eraserInput.SpeedAdaptiveStabilizer = brush.SpeedAdaptiveStabilizer;
+        }
     }
 
     public void SetPaintColor(Color color)
@@ -536,15 +582,8 @@ public sealed class DrawingCanvas : Control, IDisposable
     {
         _brush = _brush with { Smoothing = Math.Clamp(smoothing, 0, 0.95) };
         _ctx.Brush = _brush;
+        ApplyBrushToStrokeInputs(_brush);
         InvalidateVisual();
-    }
-
-    public void SetStabilizerSpeedAdaptive(bool enabled)
-    {
-        if (_brushTool.Input is BrushStrokeInputProcess brushInput)
-            brushInput.SpeedAdaptiveStabilizer = enabled;
-        if (_eraserTool.Input is BrushStrokeInputProcess eraserInput)
-            eraserInput.SpeedAdaptiveStabilizer = enabled;
     }
 
     public void SetBrushQuality(BrushQuality quality)
@@ -566,15 +605,29 @@ public sealed class DrawingCanvas : Control, IDisposable
         _lockedPointerPos = position;
         _isCursorPreviewLocked = true;
         _forceBrushOutlineCursor = forceBrushOutline;
-        InvalidateVisual();
+        NotifyCursorPreviewChanged();
+    }
+
+    public void SetBrushResizeEdgePreview(Point edgeCanvasPoint)
+    {
+        _brushResizeEdgeCanvasPoint = edgeCanvasPoint;
+        NotifyCursorPreviewChanged();
+    }
+
+    public void ClearBrushResizePreview()
+    {
+        if (!_brushResizeEdgeCanvasPoint.HasValue) return;
+        _brushResizeEdgeCanvasPoint = null;
+        NotifyCursorPreviewChanged();
     }
 
     public void UnlockCursorPreview()
     {
-        if (!_isCursorPreviewLocked) return;
+        if (!_isCursorPreviewLocked && !_brushResizeEdgeCanvasPoint.HasValue) return;
         _isCursorPreviewLocked = false;
         _forceBrushOutlineCursor = false;
-        InvalidateVisual();
+        _brushResizeEdgeCanvasPoint = null;
+        NotifyCursorPreviewChanged();
     }
 
     /// <summary>
@@ -1506,40 +1559,10 @@ public sealed class DrawingCanvas : Control, IDisposable
             context.DrawRectangle(null, new Pen(CursorInnerBrush, t, dash2), new Rect(rx, ry, rw, rh));
         }
 
-        if ((_isPointerOver || _isCursorPreviewLocked || _toolController.HasPendingOperation) && !IsPaintBlockedByLock)
-        {
-            var mode = ActiveCursorMode();
-            var pos = _isCursorPreviewLocked ? _lockedPointerPos : _pointerPos;
-            var t = Math.Max(0.5, 1.5 / CanvasZoom);
-            bool isBrushLike = _toolController.ActiveTool is CompositeTool ct && ct.Input.HasBrushCursor;
-            if (_forceBrushOutlineCursor || (isBrushLike && mode is BrushCursorMode.Outline or BrushCursorMode.DotAndOutline))
-            {
-                var r = ActiveToolCursorSize() * 0.5;
-                context.DrawEllipse(null, new Pen(CursorOuterBrush, t * 3), pos, r, r);
-                context.DrawEllipse(null, new Pen(CursorInnerBrush, t), pos, r, r);
-            }
-
-            if (!_forceBrushOutlineCursor && isBrushLike && mode == BrushCursorMode.BrushShape)
-                DrawBrushShapeCursor(context, pos, t);
-
-            if (!isBrushLike || mode is BrushCursorMode.Dot or BrushCursorMode.DotAndOutline)
-            {
-                var r = Math.Max(2.5 / CanvasZoom, t * 2);
-                context.DrawEllipse(CursorOuterBrush, null, pos, r, r);
-                context.DrawEllipse(CursorInnerBrush, null, pos, Math.Max(0.5 / CanvasZoom, r * 0.45), Math.Max(0.5 / CanvasZoom, r * 0.45));
-            }
-
-            if (_toolController.IsAlternateActive
-                || _ctx.ActivePreset?.OutputProcess == OutputProcessType.Eyedropper)
-            {
-                var swatchR = 10.0 / CanvasZoom;
-                var swatchPos = new Point(pos.X + swatchR * 1.6, pos.Y - swatchR * 1.6);
-                var colorBrush = new SolidColorBrush(_paintColor);
-                context.DrawEllipse(colorBrush, new Pen(CursorOuterBrush, t * 2), swatchPos, swatchR, swatchR);
-                context.DrawEllipse(null, new Pen(CursorInnerBrush, t), swatchPos, swatchR, swatchR);
-            }
-        }
-
+        if (IsBrushResizePreviewActive)
+            RenderBrushResizePreviewOnCanvas(context);
+        else
+            RenderToolCursorOnCanvas(context);
         DrawTelemetryOverlay(context);
     }
 
@@ -1640,6 +1663,132 @@ public sealed class DrawingCanvas : Control, IDisposable
         }, DispatcherPriority.Render);
     }
 
+    /// <summary>Draw tool cursor in canvas-local coordinates (always visible over the document).</summary>
+    internal void RenderToolCursorOnCanvas(DrawingContext context)
+    {
+        if (!ShouldShowToolCursor)
+            return;
+
+        var pos = _isCursorPreviewLocked ? _lockedPointerPos : _pointerPos;
+        // Canvas-local coords; parent viewport scale applies zoom — do not multiply by CanvasZoom here.
+        DrawToolCursorAt(context, pos, 1.0);
+    }
+
+    /// <summary>Draw tool cursor in <paramref name="viewportSpace"/> coordinates (full workspace viewport).</summary>
+    internal void RenderToolCursorInViewportSpace(DrawingContext context, Visual viewportSpace)
+    {
+        if (!ShouldShowToolCursor)
+            return;
+
+        DrawToolCursorAt(context, GetToolCursorViewportPosition(viewportSpace), Math.Max(CanvasZoom, 0.001));
+    }
+
+    /// <summary>Radial brush-size gesture on the document (canvas-local coords; parent scale applies zoom).</summary>
+    internal void RenderBrushResizePreviewOnCanvas(DrawingContext context)
+    {
+        if (!_brushResizeEdgeCanvasPoint.HasValue || !_isCursorPreviewLocked)
+            return;
+
+        DrawBrushResizePreviewAt(
+            context,
+            _lockedPointerPos,
+            _brushResizeEdgeCanvasPoint.Value,
+            ActiveToolCursorSize() * 0.5,
+            penScale: Math.Max(0.5, 1.0 / Math.Max(CanvasZoom, 0.001)));
+    }
+
+    /// <summary>Same preview in viewport overlay space (checkerboard / margins outside the canvas).</summary>
+    internal void RenderBrushResizePreviewInViewportSpace(DrawingContext context, Visual viewportSpace)
+    {
+        if (!_brushResizeEdgeCanvasPoint.HasValue || !_isCursorPreviewLocked)
+            return;
+
+        if (!TryCanvasPointToVisual(viewportSpace, _lockedPointerPos, out var centerVp)
+            || !TryCanvasPointToVisual(viewportSpace, _brushResizeEdgeCanvasPoint.Value, out var edgeVp))
+        {
+            return;
+        }
+
+        var zoom = Math.Max(CanvasZoom, 0.001);
+        DrawBrushResizePreviewAt(
+            context,
+            centerVp,
+            edgeVp,
+            ActiveToolCursorSize() * 0.5 * zoom,
+            penScale: Math.Max(0.5, 1.5));
+    }
+
+    private bool TryCanvasPointToVisual(Visual target, Point canvasPoint, out Point targetPoint)
+    {
+        var matrix = this.TransformToVisual(target);
+        if (matrix.HasValue)
+        {
+            targetPoint = matrix.Value.Transform(canvasPoint);
+            return true;
+        }
+
+        var translated = this.TranslatePoint(canvasPoint, target);
+        if (translated.HasValue)
+        {
+            targetPoint = translated.Value;
+            return true;
+        }
+
+        targetPoint = default;
+        return false;
+    }
+
+    private void DrawBrushResizePreviewAt(
+        DrawingContext context,
+        Point center,
+        Point edge,
+        double radius,
+        double penScale)
+    {
+        var t = Math.Max(0.5, 1.5 * penScale);
+
+        context.DrawEllipse(null, new Pen(CursorOuterBrush, t * 3), center, radius, radius);
+        context.DrawEllipse(null, new Pen(CursorInnerBrush, t), center, radius, radius);
+
+        var handleR = Math.Max(3.0, t * 2.5);
+        context.DrawEllipse(CursorOuterBrush, null, edge, handleR, handleR);
+        context.DrawEllipse(CursorInnerBrush, null, edge, Math.Max(1.0, handleR * 0.45), Math.Max(1.0, handleR * 0.45));
+    }
+
+    private void DrawToolCursorAt(DrawingContext context, Point pos, double radiusScale)
+    {
+        var t = Math.Max(0.5, 1.5);
+        var mode = ActiveCursorMode();
+        var isBrushLike = _toolController.ActiveTool is CompositeTool ct && ct.Input.HasBrushCursor;
+
+        if (_forceBrushOutlineCursor || (isBrushLike && mode is BrushCursorMode.Outline or BrushCursorMode.DotAndOutline))
+        {
+            var r = ActiveToolCursorSize() * 0.5 * radiusScale;
+            context.DrawEllipse(null, new Pen(CursorOuterBrush, t * 3), pos, r, r);
+            context.DrawEllipse(null, new Pen(CursorInnerBrush, t), pos, r, r);
+        }
+
+        if (!_forceBrushOutlineCursor && isBrushLike && mode == BrushCursorMode.BrushShape)
+            DrawBrushShapeCursor(context, pos, t, radiusScale);
+
+        if (!isBrushLike || mode is BrushCursorMode.Dot or BrushCursorMode.DotAndOutline)
+        {
+            var r = Math.Max(2.5, t * 2);
+            context.DrawEllipse(CursorOuterBrush, null, pos, r, r);
+            context.DrawEllipse(CursorInnerBrush, null, pos, Math.Max(0.5, r * 0.45), Math.Max(0.5, r * 0.45));
+        }
+
+        if (_toolController.IsAlternateActive
+            || _ctx.ActivePreset?.OutputProcess == OutputProcessType.Eyedropper)
+        {
+            var swatchR = 10.0;
+            var swatchPos = new Point(pos.X + swatchR * 1.6, pos.Y - swatchR * 1.6);
+            var colorBrush = new SolidColorBrush(_paintColor);
+            context.DrawEllipse(colorBrush, new Pen(CursorOuterBrush, t * 2), swatchPos, swatchR, swatchR);
+            context.DrawEllipse(null, new Pen(CursorInnerBrush, t), swatchPos, swatchR, swatchR);
+        }
+    }
+
     private BrushCursorMode ActiveCursorMode()
     {
         var cfg = App.Config;
@@ -1659,9 +1808,9 @@ public sealed class DrawingCanvas : Control, IDisposable
             _ => _brush.Size
         };
 
-    private void DrawBrushShapeCursor(DrawingContext context, Point pos, double t)
+    private void DrawBrushShapeCursor(DrawingContext context, Point pos, double t, double radiusScale = 1.0)
     {
-        var r = ActiveToolCursorSize() * 0.5;
+        var r = ActiveToolCursorSize() * 0.5 * radiusScale;
         if (r < 0.5) return;
         var tip = _brush.Tip;
         var useTipMask = _ctx.ActivePreset?.InputProcess == InputProcessType.Brush;
@@ -1976,14 +2125,14 @@ public sealed class DrawingCanvas : Control, IDisposable
         _pointerTiltX = (float)pt.Properties.XTilt;
         _pointerTiltY = (float)pt.Properties.YTilt;
         _pointerTwist = (float)pt.Properties.Twist;
-        InvalidateVisual();
+        NotifyCursorPreviewChanged();
     }
 
     protected override void OnPointerExited(PointerEventArgs e)
     {
         base.OnPointerExited(e);
         _isPointerOver = false;
-        InvalidateVisual();
+        NotifyCursorPreviewChanged();
     }
 
     protected override void OnPointerMoved(PointerEventArgs e)

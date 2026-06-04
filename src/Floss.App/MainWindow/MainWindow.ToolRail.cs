@@ -13,43 +13,8 @@ using static Floss.App.Config.AppColors;
 
 public partial class MainWindow
 {
-    // ── Tools docker content (used by the docker system) ──────────────────────
-    private Control BuildToolsContent()
-    {
-        _toolRailStack = new WrapPanel
-        {
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0),
-            ItemWidth = 30,
-            ItemHeight = 28
-        };
-
-        BuildToolRail();
-
-        _colorWell = new Border
-        {
-            Width = 22,
-            Height = 22,
-            CornerRadius = new CornerRadius(11),
-            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(1),
-            Background = new SolidColorBrush(Color.Parse(Bg0))
-        };
-
-
-
-        var outerStack = new StackPanel
-        {
-            Orientation = Orientation.Vertical,
-            HorizontalAlignment = HorizontalAlignment.Center,
-        };
-        outerStack.Children.Add(_toolRailStack);
-
-        // Cache the tool rail — it's complex but changes infrequently
-        outerStack.CacheMode = new Avalonia.Media.BitmapCache();
-
-        return outerStack;
-    }
+    // ── Tools docker content (fixed rail + optional dock) ─────────────────────
+    private Control BuildToolsContent() => BuildLeftRail();
 
     // ── Left rail ─────────────────────────────────────────────────────────────
     private Control BuildLeftRail()
@@ -78,12 +43,11 @@ public partial class MainWindow
         ToolTip.SetTip(colorBtn, "Cycle color  (X)");
         colorBtn.Click += (_, _) => CycleColor();
 
-        _toolRailStack = new WrapPanel
+        _toolRailStack = new StackPanel
         {
+            Spacing = 3,
             HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 4),
-            ItemWidth = 28,
-            ItemHeight = 26
+            Margin = new Thickness(0, 6, 0, 4)
         };
 
         BuildToolRail();
@@ -112,7 +76,7 @@ public partial class MainWindow
             Child = new ScrollViewer
             {
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
                 Content = outerStack
             }
         };
@@ -134,14 +98,8 @@ public partial class MainWindow
 
         var addBtn = new Button
         {
-            Content = Icons.Make(Icons.Plus, 16, new SolidColorBrush(Color.Parse(TextSecondary))),
-            Width = 36,
-            Height = 34,
-            HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            Background = Avalonia.Media.Brushes.Transparent,
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(0),
+            Content = FlossUi.Icon(Icons.Plus, FlossUi.IconRail),
+            Classes = { "tool-rail" },
         };
         ToolTip.SetTip(addBtn, "Add tool group");
         addBtn.Click += (_, _) => ShowAddToolGroupDialog();
@@ -551,15 +509,8 @@ public partial class MainWindow
     {
         var btn = new Button
         {
-            Content = MaterialIcon(icon, 18),
-            Width = 36,
-            Height = 34,
-            HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            Background = Avalonia.Media.Brushes.Transparent,
-            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(0)
+            Content = FlossUi.Icon(icon, FlossUi.IconRail),
+            Classes = { "tool-rail" },
         };
         ToolTip.SetTip(btn, tip);
         return btn;
@@ -568,7 +519,7 @@ public partial class MainWindow
     private static Border RailSep() => new()
     {
         Height = 1,
-        Width = 24,
+        Width = 32,
         Background = new SolidColorBrush(Color.Parse(Stroke)),
         Margin = new Thickness(0, 4)
     };
