@@ -356,12 +356,26 @@ public sealed class DrawingLayer : IDisposable
 
     public byte[] CapturePixels(PixelRegion region) => Pixels.Capture(region);
 
-    public Dictionary<(int X, int Y), byte[]?> CaptureTiles(PixelRegion region) => Pixels.CaptureTiles(region);
+    public Dictionary<(int X, int Y), byte[]?> CaptureTiles(PixelRegion region) => ActivePixels.CaptureTiles(region);
 
     public void CaptureTiles(PixelRegion region, Dictionary<(int X, int Y), byte[]?> target)
-        => Pixels.CaptureTiles(region, target);
+        => ActivePixels.CaptureTiles(region, target);
 
-    public byte[]? CaptureTile(int tileX, int tileY) => Pixels.CaptureTile(tileX, tileY);
+    public byte[]? CaptureTile(int tileX, int tileY) => ActivePixels.CaptureTile(tileX, tileY);
+
+    public void RestorePaintTile(int tileX, int tileY, byte[]? bytes, bool maskBuffer)
+    {
+        if (maskBuffer)
+        {
+            MaskPixels?.RestoreTile(tileX, tileY, bytes);
+            MarkMaskThumbnailDirty();
+        }
+        else
+        {
+            Pixels.RestoreTile(tileX, tileY, bytes);
+            MarkThumbnailDirty();
+        }
+    }
 
     public void RestorePixels(byte[] bytes)
         => RestorePixels(Pixels.Bounds, bytes);

@@ -33,21 +33,11 @@ public static class FlossFileFormat
         for (var i = 0; i < document.Layers.Count; i++)
         {
             var layer = document.Layers[i];
-            if (layer.IsGroup || layer.Adjustment != null) continue;
-
-            var entry = archive.CreateEntry($"layers/layer{i}.bgra", CompressionLevel.Optimal);
-            using var entryStream = entry.Open();
-            var tiles = layer.CaptureTiles();
-            var txBuf = new byte[4];
-            var tyBuf = new byte[4];
-            foreach (var ((tx, ty), tile) in tiles)
-            {
-                BitConverter.TryWriteBytes(txBuf, tx);
-                BitConverter.TryWriteBytes(tyBuf, ty);
-                entryStream.Write(txBuf);
-                entryStream.Write(tyBuf);
-                entryStream.Write(tile);
-            }
+            if (layer.IsGroup) continue;
+            if (layer.Adjustment == null)
+                WriteTilePayload(archive, $"layers/layer{i}.bgra", layer.Pixels.CaptureTiles());
+            if (layer.HasMask)
+                WriteTilePayload(archive, $"layers/layer{i}.mask.bgra", layer.MaskPixels!.CaptureTiles());
         }
 
         using var merged = DocumentRasterizer.RenderFlattenedBitmap(document);
@@ -137,7 +127,14 @@ public static class FlossFileFormat
             }
 
             if (!layer.IsGroup && layer.Adjustment == null && !string.IsNullOrWhiteSpace(info.PixelPath))
-                LoadLayerPixels(archive, layer, info.PixelPath);
+                LoadLayerTiles(archive, layer.Pixels, info.PixelPath, () => layer.MarkThumbnailDirty());
+
+            if (!string.IsNullOrWhiteSpace(info.MaskPath))
+            {
+                layer.MaskPixels = new TiledPixelBuffer(layer.Width, layer.Height);
+                LoadLayerTiles(archive, layer.MaskPixels, info.MaskPath, () => layer.MarkMaskThumbnailDirty());
+                layer.IsMaskVisible = info.IsMaskVisible;
+            }
 
             layers.Add(layer);
             document.AppendLayerForImport(layer);
@@ -186,6 +183,8 @@ public static class FlossFileFormat
                 IndentLevel = layer.IndentLevel,
                 ParentIndex = layer.Parent != null && layerIndexes.TryGetValue(layer.Parent, out var pIdx) ? pIdx : null,
                 PixelPath = !layer.IsGroup && layer.Adjustment == null ? $"layers/layer{i}.bgra" : null,
+                MaskPath = layer.HasMask ? $"layers/layer{i}.mask.bgra" : null,
+                IsMaskVisible = layer.IsMaskVisible,
                 LayerColor = layer.LayerColor is { } lc ? new SerializableColor(lc.R, lc.G, lc.B) : null,
                 ExpressionColor = layer.ExpressionColor,
                 Adjustment = layer.Adjustment == null ? null : new AdjustmentLayerManifest
@@ -224,12 +223,27 @@ public static class FlossFileFormat
         };
     }
 
-    private static void LoadLayerPixels(ZipArchive archive, DrawingLayer layer, string path)
+    private static void WriteTilePayload(ZipArchive archive, string path, Dictionary<(int X, int Y), byte[]> tiles)
+    {
+        var entry = archive.CreateEntry(path, CompressionLevel.Optimal);
+        using var entryStream = entry.Open();
+        var txBuf = new byte[4];
+        var tyBuf = new byte[4];
+        foreach (var ((tx, ty), tile) in tiles)
+        {
+            BitConverter.TryWriteBytes(txBuf, tx);
+            BitConverter.TryWriteBytes(tyBuf, ty);
+            entryStream.Write(txBuf);
+            entryStream.Write(tyBuf);
+            entryStream.Write(tile);
+        }
+    }
+
+    private static void LoadLayerTiles(ZipArchive archive, TiledPixelBuffer pixels, string path, Action markDirty)
     {
         var entry = archive.GetEntry(path)
             ?? throw new InvalidDataException($"Floss document is missing layer payload '{path}'.");
 
-        // Read entire entry into memory — ZipArchiveEntry streams don't support seeking.
         using var entryStream = entry.Open();
         var totalLength = (int)entry.Length;
         var data = new byte[totalLength];
@@ -244,23 +258,17 @@ public static class FlossFileFormat
         var tileLength = Document.TiledPixelBuffer.TileSize
             * Document.TiledPixelBuffer.TileSize * 4;
 
-        // Empty layer — nothing to restore
         if (totalLength == 0)
         {
-            layer.MarkThumbnailDirty();
+            markDirty();
             return;
         }
 
-        // Detect format: new tile-keyed vs old flat BGRA
-        // New format: stream is sequence of (tx:int32, ty:int32, tile:tileLength)
-        // Old format: flat BGRA array of width*height*4 bytes
         bool isNewFormat;
         if (totalLength >= 8 + tileLength)
         {
             var tx = BitConverter.ToInt32(data, 0);
             var ty = BitConverter.ToInt32(data, 4);
-            // Heuristic: if tx,ty look like reasonable tile coordinates (small ints),
-            // and the total length is an exact multiple of (header + tile), it's new format.
             isNewFormat = tx is >= -1000 and <= 1000 && ty is >= -1000 and <= 1000
                 && totalLength % (8 + tileLength) == 0;
         }
@@ -285,18 +293,17 @@ public static class FlossFileFormat
 
                 tiles[(tx, ty)] = tile;
             }
-            layer.Pixels.RestoreTiles(tiles);
+            pixels.RestoreTiles(tiles);
         }
         else
         {
-            // Old format: flat BGRA array
-            var expected = layer.Width * layer.Height * 4;
+            var expected = pixels.Width * pixels.Height * 4;
             if (data.Length != expected)
                 throw new InvalidDataException($"Layer payload '{path}' has {data.Length} bytes but expected {expected} for flat pixel data.");
-            layer.Pixels.CopyFromBgra(data, layer.Width, layer.Height);
+            pixels.CopyFromBgra(data, pixels.Width, pixels.Height);
         }
 
-        layer.MarkThumbnailDirty();
+        markDirty();
     }
 
     private static void WriteMergedImage(ZipArchive archive, SKBitmap source, string path, int? maxSide = null)
@@ -379,6 +386,8 @@ public static class FlossFileFormat
         [JsonPropertyName("indentLevel")] public int IndentLevel { get; set; }
         [JsonPropertyName("parentIndex")] public int? ParentIndex { get; set; }
         [JsonPropertyName("pixelPath")] public string? PixelPath { get; set; }
+        [JsonPropertyName("maskPath")] public string? MaskPath { get; set; }
+        [JsonPropertyName("isMaskVisible")] public bool IsMaskVisible { get; set; } = true;
         [JsonPropertyName("layerColor")] public SerializableColor? LayerColor { get; set; }
         [JsonPropertyName("expressionColor")] public ExpressionColorMode ExpressionColor { get; set; } = ExpressionColorMode.Color;
         [JsonPropertyName("adjustment")] public AdjustmentLayerManifest? Adjustment { get; set; }

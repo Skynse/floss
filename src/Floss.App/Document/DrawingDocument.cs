@@ -372,17 +372,19 @@ public sealed class DrawingDocument : IDisposable
         if (beforeTiles.Count == 0 || dirtyRegion.IsEmpty || layerIndex < 0 || layerIndex >= _layers.Count) return;
 
         var layer = _layers[layerIndex];
+        var maskMutation = layer.IsMaskEditing && layer.HasMask;
+        var paintBuf = maskMutation ? layer.MaskPixels! : layer.Pixels;
         var patches = new List<LayerTilePatch>(beforeTiles.Count);
         foreach (var (key, before) in beforeTiles)
         {
-            var after = layer.CaptureTile(key.X, key.Y);
+            var after = paintBuf.CaptureTile(key.X, key.Y);
             if (TileBytesEqual(before, after)) continue;
             patches.Add(new LayerTilePatch(key.X, key.Y, before, after));
         }
 
         if (patches.Count == 0) return;
 
-        PushHistoryState(new LayerTileHistoryState(layerIndex, patches.ToArray(), dirtyRegion));
+        PushHistoryState(new LayerTileHistoryState(layerIndex, patches.ToArray(), dirtyRegion, maskMutation));
         NotifyChanged(dirtyRegion, layerIndex);
     }
 
@@ -398,16 +400,18 @@ public sealed class DrawingDocument : IDisposable
                 continue;
 
             var layer = _layers[mutation.LayerIndex];
+            var maskMutation = layer.IsMaskEditing && layer.HasMask;
+            var paintBuf = maskMutation ? layer.MaskPixels! : layer.Pixels;
             var patches = new List<LayerTilePatch>(mutation.BeforeTiles.Count);
             foreach (var (key, before) in mutation.BeforeTiles)
             {
-                var after = layer.CaptureTile(key.X, key.Y);
+                var after = paintBuf.CaptureTile(key.X, key.Y);
                 if (TileBytesEqual(before, after)) continue;
                 patches.Add(new LayerTilePatch(key.X, key.Y, before, after));
             }
 
             if (patches.Count == 0) continue;
-            states.Add(new LayerTileHistoryState(mutation.LayerIndex, patches.ToArray(), mutation.DirtyRegion));
+            states.Add(new LayerTileHistoryState(mutation.LayerIndex, patches.ToArray(), mutation.DirtyRegion, maskMutation));
         }
 
         if (states.Count == 0) return;
@@ -770,9 +774,16 @@ public sealed class DrawingDocument : IDisposable
         if (index < 0 || index >= _layers.Count) return;
         var layer = _layers[index];
         if (layer.HasMask) return;
+        var dirtyRegion = LayerDirtyRegion(index);
         using var w = RenderLock.Write();
         layer.CreateMask();
-        NotifyLayerMetadataChanged(null, index);
+        var afterTiles = layer.MaskPixels!.CaptureTiles();
+        PushHistoryState(new LayerMaskTilesHistoryState(
+            index,
+            false, null, true,
+            true, afterTiles, layer.IsMaskVisible,
+            dirtyRegion));
+        NotifyLayerMetadataChanged(dirtyRegion, index);
     }
 
     public void DeleteLayerMask(int index)
@@ -780,9 +791,17 @@ public sealed class DrawingDocument : IDisposable
         if (index < 0 || index >= _layers.Count) return;
         var layer = _layers[index];
         if (!layer.HasMask) return;
+        var dirtyRegion = LayerDirtyRegion(index);
+        var beforeTiles = layer.MaskPixels!.CaptureTiles();
+        var beforeVisible = layer.IsMaskVisible;
         using var w = RenderLock.Write();
         layer.DeleteMask();
-        NotifyLayerMetadataChanged(null, index);
+        PushHistoryState(new LayerMaskTilesHistoryState(
+            index,
+            true, beforeTiles, beforeVisible,
+            false, null, true,
+            dirtyRegion));
+        NotifyLayerMetadataChanged(dirtyRegion, index);
     }
 
     public void ToggleLayerMask(int index)
@@ -790,8 +809,12 @@ public sealed class DrawingDocument : IDisposable
         if (index < 0 || index >= _layers.Count) return;
         var layer = _layers[index];
         if (!layer.HasMask) { CreateLayerMask(index); return; }
+        var oldVisible = layer.IsMaskVisible;
+        var dirtyRegion = LayerDirtyRegion(index);
         layer.ToggleMaskVisibility();
-        NotifyLayerMetadataChanged(null, index);
+        PushHistoryState(new LayerPropertyHistoryState<bool>(
+            index, oldVisible, layer.IsMaskVisible, (l, v) => l.IsMaskVisible = v, true, dirtyRegion));
+        NotifyLayerMetadataChanged(dirtyRegion, index);
     }
 
     public void ToggleLayerMaskEditing(int index)
@@ -1553,18 +1576,84 @@ public sealed class DrawingDocument : IDisposable
     }
 
     private readonly record struct LayerTilePatch(int TileX, int TileY, byte[]? BeforePixels, byte[]? AfterPixels);
-    private sealed record LayerTileHistoryState(int LayerIndex, LayerTilePatch[] Patches, PixelRegion DirtyRegion) : IHistoryState
+    private sealed record LayerTileHistoryState(int LayerIndex, LayerTilePatch[] Patches, PixelRegion DirtyRegion, bool MaskMutation = false) : IHistoryState
     {
         public bool AffectsVisual => true;
         public PixelRegion VisualDirtyRegion => DirtyRegion;
 
         public IHistoryState CaptureRedo(DrawingDocument document)
         {
+            if (LayerIndex < 0 || LayerIndex >= document._layers.Count)
+                return new LayerTileHistoryState(LayerIndex, [], DirtyRegion, MaskMutation);
+            var layer = document._layers[LayerIndex];
+            var paintBuf = MaskMutation ? layer.MaskPixels! : layer.Pixels;
             var redoPatches = new LayerTilePatch[Patches.Length];
-            for (var i = 0; i < Patches.Length; i++) { var patch = Patches[i]; redoPatches[i] = new LayerTilePatch(patch.TileX, patch.TileY, patch.AfterPixels, patch.BeforePixels); }
-            return new LayerTileHistoryState(LayerIndex, redoPatches, DirtyRegion);
+            for (var i = 0; i < Patches.Length; i++)
+            {
+                var patch = Patches[i];
+                redoPatches[i] = new LayerTilePatch(
+                    patch.TileX, patch.TileY,
+                    paintBuf.CaptureTile(patch.TileX, patch.TileY),
+                    patch.BeforePixels);
+            }
+            return new LayerTileHistoryState(LayerIndex, redoPatches, DirtyRegion, MaskMutation);
         }
-        public void Restore(DrawingDocument document) { if (LayerIndex < 0 || LayerIndex >= document._layers.Count) return; var layer = document._layers[LayerIndex]; foreach (var patch in Patches) { layer.RestoreTile(patch.TileX, patch.TileY, patch.BeforePixels); } document.NotifyChanged(DirtyRegion, LayerIndex); }
+
+        public void Restore(DrawingDocument document)
+        {
+            if (LayerIndex < 0 || LayerIndex >= document._layers.Count) return;
+            var layer = document._layers[LayerIndex];
+            foreach (var patch in Patches)
+                layer.RestorePaintTile(patch.TileX, patch.TileY, patch.BeforePixels, MaskMutation);
+            document.NotifyChanged(DirtyRegion, LayerIndex);
+        }
+    }
+
+    private sealed record LayerMaskTilesHistoryState(
+        int LayerIndex,
+        bool BeforeHadMask,
+        Dictionary<(int X, int Y), byte[]>? BeforeMaskTiles,
+        bool BeforeMaskVisible,
+        bool AfterHadMask,
+        Dictionary<(int X, int Y), byte[]>? AfterMaskTiles,
+        bool AfterMaskVisible,
+        PixelRegion DirtyRegion) : IHistoryState
+    {
+        public bool AffectsVisual => true;
+        public PixelRegion VisualDirtyRegion => DirtyRegion;
+
+        public IHistoryState CaptureRedo(DrawingDocument document)
+            => new LayerMaskTilesHistoryState(
+                LayerIndex,
+                AfterHadMask, AfterMaskTiles, AfterMaskVisible,
+                BeforeHadMask, BeforeMaskTiles, BeforeMaskVisible,
+                DirtyRegion);
+
+        public void Restore(DrawingDocument document)
+        {
+            if (LayerIndex < 0 || LayerIndex >= document._layers.Count) return;
+            ApplyMaskState(document._layers[LayerIndex], BeforeHadMask, BeforeMaskTiles, BeforeMaskVisible);
+            document.NotifyLayerMetadataChanged(DirtyRegion, LayerIndex);
+        }
+
+        private static void ApplyMaskState(
+            DrawingLayer layer,
+            bool hadMask,
+            Dictionary<(int X, int Y), byte[]>? tiles,
+            bool maskVisible)
+        {
+            if (hadMask)
+            {
+                layer.MaskPixels ??= new TiledPixelBuffer(layer.Width, layer.Height);
+                if (tiles != null)
+                    layer.MaskPixels.RestoreTiles(tiles);
+                layer.IsMaskVisible = maskVisible;
+                layer.MarkMaskThumbnailDirty();
+                return;
+            }
+
+            layer.DeleteMask();
+        }
     }
 
     private sealed record SelectionHistoryState(SelectionMask.Snapshot Before, SelectionMask.Snapshot After) : IHistoryState

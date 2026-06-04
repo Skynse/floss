@@ -26,3 +26,5 @@
 - `DrawingLayer.ActivePixels` → mask buffer when `IsMaskEditing`.
 - Brush writes use `ActivePixels`; after composite, mask pixels sync RGB from alpha for thumbnail preview.
 - Adjustment layers: LUT in-place on dst, gated by mask tile alpha × layer opacity (`ApplyWithMask`).
+- **Save/load**: `layers/layer{N}.mask.bgra` in `.floss` manifest (`maskPath`, `isMaskVisible`).
+- **History**: mask strokes use `LayerTileHistoryState` with `MaskMutation`; create/delete use `LayerMaskTilesHistoryState`.
