@@ -25,6 +25,7 @@ public partial class MainWindow
 
     private readonly Avalonia.Collections.AvaloniaList<DrawingLayer> _visibleLayers = new();
     private ListBox _layerListBox = null!;
+    private ContextMenu? _maskLayerToolbarMenu;
 
     // Drag-drop insertion line overlay
     private Avalonia.Controls.Canvas? _dropLineCanvas;
@@ -217,18 +218,16 @@ public partial class MainWindow
         _lockLayerBtn = SmIconBtn(Icons.LockOutline, "Lock layer");
         _alphaLockLayerBtn = SmIconBtn(Icons.AlphaLock, "Alpha lock");
         _clipLayerBtn = SmIconBtn(Icons.ClipToBelow, "Clipping mask");
-        _maskLayerBtn = SmIconBtn(Icons.RectangleOutline, "Layer mask");
+        _maskLayerBtn = SmIconBtn(Icons.LayerMask, "Layer mask (click to create or edit, right-click for options)");
         _refLayerBtn = SmIconBtn(Icons.Eye, "Reference layer");
 
         _lockLayerBtn.Click += (_, _) => { _canvas.ToggleLayerLock(_canvas.ActiveLayerIndex); BuildLayerList(); };
         _alphaLockLayerBtn.Click += (_, _) => { _canvas.ToggleLayerAlphaLock(_canvas.ActiveLayerIndex); BuildLayerList(); };
         _clipLayerBtn.Click += (_, _) => { _canvas.ToggleLayerClipping(_canvas.ActiveLayerIndex); BuildLayerList(); };
-        _maskLayerBtn.Click += (_, _) =>
-        {
-            var idx = _canvas.ActiveLayerIndex;
-            _canvas.ToggleLayerMaskEditing(idx);
-            BuildLayerList();
-        };
+        _maskLayerToolbarMenu = new ContextMenu();
+        _maskLayerBtn.ContextMenu = _maskLayerToolbarMenu;
+        _maskLayerToolbarMenu.Opening += (_, _) => RebuildMaskToolbarMenu();
+        _maskLayerBtn.Click += (_, _) => OnMaskToolbarClick();
         _refLayerBtn.Click += (_, _) => { _canvas.ToggleLayerReference(_canvas.ActiveLayerIndex); BuildLayerList(); };
 
         var toggleRow = new StackPanel
@@ -484,6 +483,84 @@ public partial class MainWindow
         SetToggleActive(_clipLayerBtn, layer.IsClipping);
         SetToggleActive(_maskLayerBtn, layer.HasMask && layer.IsMaskEditing);
         SetToggleActive(_refLayerBtn, layer.IsReference);
+
+        if (_maskLayerBtn != null)
+        {
+            ToolTip.SetTip(_maskLayerBtn, layer.HasMask
+                ? layer.IsMaskEditing
+                    ? "Editing layer mask (right-click for delete, etc.)"
+                    : "Layer mask — click to edit (right-click for options)"
+                : "Add layer mask");
+        }
+    }
+
+    private void OnMaskToolbarClick()
+    {
+        var idx = _canvas.ActiveLayerIndex;
+        if (idx < 0 || idx >= _canvas.Layers.Count) return;
+        var layer = _canvas.Layers[idx];
+        if (layer.IsGroup || layer.IsPaper) return;
+
+        _canvas.ToggleLayerMaskEditing(idx);
+        BuildLayerList();
+    }
+
+    private void RebuildMaskToolbarMenu()
+    {
+        if (_maskLayerToolbarMenu == null) return;
+        _maskLayerToolbarMenu.Items.Clear();
+
+        var idx = _canvas.ActiveLayerIndex;
+        if (idx < 0 || idx >= _canvas.Layers.Count) return;
+        var layer = _canvas.Layers[idx];
+        if (layer.IsGroup || layer.IsPaper) return;
+
+        if (!layer.HasMask)
+        {
+            _maskLayerToolbarMenu.Items.Add(MaskMenuItem("Create Mask", () =>
+            {
+                _canvas.CreateLayerMask(idx);
+                _canvas.SetLayerMaskEditing(idx, true);
+                BuildLayerList();
+            }));
+            return;
+        }
+
+        _maskLayerToolbarMenu.Items.Add(MaskMenuItem(
+            layer.IsMaskEditing ? "Edit Layer (exit mask)" : "Edit Mask",
+            () =>
+            {
+                if (layer.IsMaskEditing)
+                    _canvas.SetLayerContentEditing(idx);
+                else
+                    _canvas.SetLayerMaskEditing(idx, true);
+                BuildLayerList();
+            }));
+        _maskLayerToolbarMenu.Items.Add(MaskMenuItem(
+            layer.IsMaskVisible ? "Disable Mask" : "Enable Mask",
+            () =>
+            {
+                _canvas.ToggleLayerMask(idx);
+                BuildLayerList();
+            }));
+        _maskLayerToolbarMenu.Items.Add(MaskMenuItem("Apply Mask", () =>
+        {
+            _canvas.ApplyLayerMask(idx);
+            BuildLayerList();
+        }));
+        _maskLayerToolbarMenu.Items.Add(new MenuItem { Header = "-" });
+        _maskLayerToolbarMenu.Items.Add(MaskMenuItem("Delete Mask", () =>
+        {
+            _canvas.DeleteLayerMask(idx);
+            BuildLayerList();
+        }));
+    }
+
+    private static MenuItem MaskMenuItem(string header, Action action)
+    {
+        var item = new MenuItem { Header = header };
+        item.Click += (_, _) => action();
+        return item;
     }
 
 
@@ -560,11 +637,10 @@ public partial class MainWindow
         row.AddHandler(DragDrop.DragOverEvent, LayerRowDragOver);
         row.AddHandler(DragDrop.DropEvent, LayerRowDrop);
 
-        var showMaskSlot = !layer.IsGroup && !layer.IsPaper;
-        // cols: clip-strip | disclosure | visibility | content thumb | mask thumb | name/status
+        var showMaskThumb = layer.HasMask && !layer.IsGroup && !layer.IsPaper;
         var grid = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions(showMaskSlot ? "3,16,20,44,44,*" : "3,16,20,48,*")
+            ColumnDefinitions = new ColumnDefinitions(showMaskThumb ? "3,16,20,44,44,*" : "3,16,20,48,*")
         };
 
         // Thin pink strip on the left edge to signal "clipped to layer below"
@@ -606,7 +682,7 @@ public partial class MainWindow
 
         Control thumbHost = preview;
         Image? maskPreviewImage = null;
-        if (showMaskSlot)
+        if (showMaskThumb)
         {
             var (maskPreview, maskImg) = BuildLayerMaskPreview(layer, isActive || isSelected);
             maskPreviewImage = maskImg;
@@ -614,20 +690,17 @@ public partial class MainWindow
             {
                 if (!e.GetCurrentPoint(maskPreview).Properties.IsLeftButtonPressed) return;
                 FocusLayerForAction(i);
-                if (!layer.HasMask)
-                    _canvas.CreateLayerMask(i);
                 _canvas.SetLayerMaskEditing(i, true);
                 BuildLayerList();
                 e.Handled = true;
             };
 
-            var thumbs = new StackPanel
+            thumbHost = new StackPanel
             {
                 Orientation = Avalonia.Layout.Orientation.Horizontal,
                 Spacing = 2,
                 Children = { preview, maskPreview }
             };
-            thumbHost = thumbs;
         }
 
         var nameText = new TextBlock
@@ -668,7 +741,7 @@ public partial class MainWindow
         Grid.SetColumn(disclosureBtn, 1);
         Grid.SetColumn(visBtn, 2);
         Grid.SetColumn(thumbHost, 3);
-        Grid.SetColumn(nameHost, showMaskSlot ? 5 : 4);
+        Grid.SetColumn(nameHost, showMaskThumb ? 5 : 4);
         grid.Children.Add(clipStrip);
         grid.Children.Add(disclosureBtn);
         grid.Children.Add(visBtn);
@@ -839,19 +912,41 @@ public partial class MainWindow
             Item(layer.IsAlphaLocked ? "Disable Alpha Lock" : "Enable Alpha Lock", () => _canvas.ToggleLayerAlphaLock(index)),
             Item(layer.IsReference ? "Disable Reference Layer" : "Enable Reference Layer", () => _canvas.ToggleLayerReference(index)),
             Item(layer.IsClipping ? "Disable Clipping Mask" : "Enable Clipping Mask", () => _canvas.ToggleLayerClipping(index)),
-            Item(layer.HasMask ? (layer.IsMaskEditing ? "Edit Layer (exit mask)" : "Edit Mask") : "Create Mask",
-                () =>
-                {
-                    if (layer.HasMask && layer.IsMaskEditing)
-                        _canvas.SetLayerContentEditing(index);
-                    else
-                        _canvas.ToggleLayerMaskEditing(index);
-                    BuildLayerList();
-                }),
-            Item(layer.IsMaskVisible ? "Disable Mask" : "Enable Mask", () => _canvas.ToggleLayerMask(index)),
-            Item("Delete Mask", () => _canvas.DeleteLayerMask(index)),
-            Item("Apply Mask", () => _canvas.ApplyLayerMask(index))
         };
+        if (!layer.IsGroup && !layer.IsPaper && !layer.HasMask)
+            items.Add(Item("Create Mask", () =>
+            {
+                _canvas.CreateLayerMask(index);
+                _canvas.SetLayerMaskEditing(index, true);
+                BuildLayerList();
+            }));
+        else if (!layer.IsGroup && !layer.IsPaper)
+        {
+            items.Add(Item(layer.IsMaskEditing ? "Edit Layer (exit mask)" : "Edit Mask", () =>
+            {
+                if (layer.IsMaskEditing)
+                    _canvas.SetLayerContentEditing(index);
+                else
+                    _canvas.SetLayerMaskEditing(index, true);
+                BuildLayerList();
+            }));
+            items.Add(Item(layer.IsMaskVisible ? "Disable Mask" : "Enable Mask", () =>
+            {
+                _canvas.ToggleLayerMask(index);
+                BuildLayerList();
+            }));
+            items.Add(Item("Apply Mask", () =>
+            {
+                _canvas.ApplyLayerMask(index);
+                BuildLayerList();
+            }));
+            items.Add(new MenuItem { Header = "-" });
+            items.Add(Item("Delete Mask", () =>
+            {
+                _canvas.DeleteLayerMask(index);
+                BuildLayerList();
+            }));
+        }
 
         if (layer.IsPaper)
         {
@@ -1587,13 +1682,7 @@ public partial class MainWindow
             ClipToBounds = true,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
-        ToolTip.SetTip(frame, layer.HasMask ? "Layer mask (click to edit)" : "Add layer mask");
-
-        if (!layer.HasMask)
-        {
-            frame.Child = Icons.Make(Icons.RectangleOutline, Math.Min(16, Math.Min(thumbW, thumbH) - 4), MaskThumbText);
-            return (frame, null);
-        }
+        ToolTip.SetTip(frame, "Layer mask (click to edit)");
 
         var image = new Image
         {

@@ -2,10 +2,10 @@
 
 ## Reference behavior (Clip Studio Paint)
 
-- Layer row shows **two thumbnails**: layer content (left) and **mask** (right).
-- Click **mask thumbnail** (blue outline when active) → paint/erase edits the mask, not pixels.
-- Mask is **grayscale stored in alpha** (white = full effect, black = hidden). Erasing the mask reveals content below (e.g. adjustment on layers underneath).
-- Toolbar mask control: create mask if missing, then toggle mask vs layer edit target.
+- Layer row shows a **second thumbnail only when a mask exists** (content | mask). No placeholder button on the row.
+- **Toolbar** mask button (stacked-rect icon): click = create mask or toggle mask edit; **right-click** = delete / enable / apply.
+- Click **mask thumbnail** (green outline when active) → paint/erase edits the mask, not pixels.
+- Mask is **grayscale stored in alpha** (white = full effect, black = hidden).
 
 ## Floss files
 
@@ -18,7 +18,8 @@
 | `Canvas/Compositing/LayerCompositorPixelOps.cs` | `hasMask` → multiply layer alpha by mask A |
 | `Canvas/Compositing/AdjustmentLayerProcessor.cs` | `ApplyWithLayer` gates adjustment by mask |
 | `Canvas/Compositing/LayerProjectionPlane.cs` | Call `ApplyWithLayer` for adjustment layers |
-| `MainWindow/MainWindow.LayerPanel.cs` | Dual thumbnails, mask toolbar button |
+| `Icons.cs` | `LayerMask` toolbar icon |
+| `MainWindow/MainWindow.LayerPanel.cs` | Mask thumb when `HasMask`; toolbar + context menu |
 
 ## Implementation notes
 
