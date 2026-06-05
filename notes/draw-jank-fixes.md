@@ -8,7 +8,7 @@
 - `DirtyTileBudget=32` too low during live stroke → multi-pass catch-up.
 
 ## Changes
-1. **LayerCompositor.DrawTiles**: draw `SKBitmap` via `DrawBitmap`; cell `_cellRevision` bumps on `CopyTileToCell` so Avalonia scene graph sees updates without recreating `SKImage`.
+1. **LayerCompositor.DrawTiles**: `SKImage.FromBitmap` only when `_cellRevision` changes (`EnsureCellDisplayImage`), not every frame. `SkiaTileDrawOp.Equals` always false so pan/zoom repaints. Direct `DrawBitmap` was reverted — async render tore mutable cell bitmaps.
 2. **DirectDrawOutput.FlushPreviewDirty**: drop redundant `InvalidateRender()` (`NotifyChanged` → projection scheduler).
 3. **DirectDrawOutput**: skipped lazy `CaptureTiles` — undo/`CommitLayerTileMutation` still requires before-tile snapshots on first touch.
 4. **LayerCompositor.CompositeCore**: `StrokeSuspendTileBudget=256` during active stroke.
