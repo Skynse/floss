@@ -89,11 +89,12 @@ public sealed class LayerCompositor : IDisposable
         _compositeIdleEvent.Dispose();
     }
 
-    /// <summary>Do not block the UI render thread waiting on RenderThreadPool workers.</summary>
-    private static bool UseParallelComposite(int tileCount) =>
-        tileCount >= 4
-        && Environment.ProcessorCount > 1
-        && !Dispatcher.UIThread.CheckAccess();
+    /// <summary>
+    /// Tile merge runs serially while <see cref="CompositeGate"/> is held.
+    /// Parallel pool dispatch deadlocks: background <see cref="Composite"/> holds the gate
+    /// during <see cref="DispatchToPool"/> Wait, while UI <see cref="DrawTiles"/> needs the gate.
+    /// </summary>
+    private static bool UseParallelComposite(int tileCount) => false;
 
     private static void DispatchToPool(int count, Action<int> action)
     {

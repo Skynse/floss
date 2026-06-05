@@ -89,7 +89,8 @@ public sealed class BrushPresetDocument
 
     public BrushPreset ToPreset(BrushTipData tip, BrushTipData? shapeData, Color? colorOverride = null)
     {
-        var preset = new BrushPreset(Name, Size, Opacity, Hardness, Spacing, colorOverride ?? Avalonia.Media.Color.FromUInt32(Color), Angle)
+        var spacing = BrushSpacing.NormalizeSpacingAtLoad(Spacing, AutoSpacingCoeff, AutoSpacingActive, GapMode);
+        var preset = new BrushPreset(Name, Size, Opacity, Hardness, spacing, colorOverride ?? Avalonia.Media.Color.FromUInt32(Color), Angle)
         {
             Dynamics = BrushDynamics.Deserialize(DynamicsJson),
             Flow = Flow,
@@ -111,7 +112,7 @@ public sealed class BrushPresetDocument
             MaxSizePercent = MaxSizePercent <= 0 ? BrushSizeLimits.DefaultMaxSizePercent : MaxSizePercent,
             AutoSpacingActive = AutoSpacingActive,
             AutoSpacingCoeff = AutoSpacingCoeff <= 0 ? 1.0 : AutoSpacingCoeff,
-            GapMode = GapMode,
+            GapMode = BrushGapMode.Fixed,
             ContinuousSpraying = ContinuousSpraying,
             Quality = Quality,
             Texture = Texture,

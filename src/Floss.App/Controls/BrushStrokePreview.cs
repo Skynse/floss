@@ -142,7 +142,7 @@ public sealed class BrushStrokePreview : Control
         var pathW = w - hPad * 2f;
         float prevX = hPad, prevY = h * 0.5f;
         double accum = 0;
-        double nextSpacing = Math.Max(0.5, baseSize * brush.Spacing);
+        double nextSpacing = BrushSpacing.EffectiveDistance(brush, baseSize, 1f);
         int dabIdx = 0;
 
         for (var i = 1; i <= steps; i++)
@@ -191,7 +191,7 @@ public sealed class BrushStrokePreview : Control
                 canvas.DrawBitmap(stamp, 0, 0, tip.HasColor ? colorStampPaint : paint);
                 canvas.Restore();
 
-                nextSpacing = Math.Max(0.5, stampSize * brush.Spacing);
+                nextSpacing = BrushSpacing.EffectiveDistance(brush, stampSize, 1f);
                 dabIdx++;
             }
 
@@ -264,7 +264,7 @@ public sealed class BrushStrokePreview : Control
         const int steps = 600;
         float prevX = hPad, prevY = h * 0.5f;
         double accum = 0;
-        double nextSpacing = Math.Max(0.5, baseSize * brush.Spacing);
+        double nextSpacing = BrushSpacing.EffectiveDistance(brush, baseSize, 1f);
         int dabIdx = 0;
 
         for (var i = 1; i <= steps; i++)
@@ -342,7 +342,7 @@ public sealed class BrushStrokePreview : Control
                 canvas.Restore();
 
                 // Update spacing for the next dab (adapts to current stamp size)
-                nextSpacing = Math.Max(0.5, stampSize * brush.Spacing);
+                nextSpacing = BrushSpacing.EffectiveDistance(brush, stampSize, 1f);
                 dabIdx++;
             }
 

@@ -2,12 +2,16 @@ using System;
 
 namespace Floss.App.Brushes;
 
-// CSP-style gap spacing: Fixed uses the Spacing slider; Normal/Wide/Narrow pick
-// diameter fractions tuned for smooth strokes without over-stamping large brushes.
+// Spacing slider is always a fraction of brush diameter (UI shows %).
+// Auto ON uses Krita sqrt curve with coeff derived from that % at brush.Size so
+// full-size dabs match the slider; auto OFF is linear stampSize * fraction.
+// GapMode is preset-authoring metadata only; runtime always reads Spacing.
 public static class BrushSpacing
 {
     public const float MinDistancePx = 0.5f;
     public const float MinStampSizePx = 0.01f;
+    public const float MinSpacingValue = 0.02f;
+    public const float MaxSpacingValue = 4f;
 
     public const float NormalGapFraction = 0.25f;
     public const float WideGapFraction = 0.40f;
@@ -16,7 +20,7 @@ public static class BrushSpacing
     public static float GapFraction(BrushGapMode mode, float fixedSpacing)
         => mode switch
         {
-            BrushGapMode.Fixed => Math.Clamp(fixedSpacing, 0.005f, 4f),
+            BrushGapMode.Fixed => Math.Clamp(fixedSpacing, MinSpacingValue, MaxSpacingValue),
             BrushGapMode.Normal => NormalGapFraction,
             BrushGapMode.Wide => WideGapFraction,
             BrushGapMode.Narrow => NarrowGapFraction,
@@ -27,7 +31,48 @@ public static class BrushSpacing
         => coeff * (brushSize < 1f ? brushSize : MathF.Sqrt(brushSize));
 
     /// <summary>
-    /// MyPaint-style spacing: combines dabs-per-radius and dabs-per-second.
+    /// User-facing spacing value from preset. Legacy files may store auto coeff in AutoSpacingCoeff
+    /// while Spacing stayed at the 0.1 placeholder (Krita-style).
+    /// </summary>
+    public static float ResolveSpacing(BrushPreset brush)
+    {
+        var spacing = (float)brush.Spacing;
+        if (brush.AutoSpacingActive
+            && brush.AutoSpacingCoeff > 0
+            && Math.Abs(spacing - 0.1) < 0.001
+            && Math.Abs(brush.AutoSpacingCoeff - 1.0) > 0.001)
+        {
+            spacing = (float)brush.AutoSpacingCoeff;
+        }
+
+        return Math.Clamp(spacing, MinSpacingValue, MaxSpacingValue);
+    }
+
+    /// <summary>
+    /// One-time normalization when loading a saved preset that still uses CSP GapMode authoring.
+    /// </summary>
+    public static double NormalizeSpacingAtLoad(
+        double spacing,
+        double autoSpacingCoeff,
+        bool autoSpacingActive,
+        BrushGapMode gapMode)
+    {
+        if (autoSpacingActive
+            && autoSpacingCoeff > 0
+            && Math.Abs(spacing - 0.1) < 0.001
+            && Math.Abs(autoSpacingCoeff - 1.0) > 0.001)
+        {
+            spacing = autoSpacingCoeff;
+        }
+        else if (!autoSpacingActive && gapMode != BrushGapMode.Fixed)
+        {
+            spacing = GapFraction(gapMode, (float)spacing);
+        }
+
+        return Math.Clamp(spacing, MinSpacingValue, MaxSpacingValue);
+    }
+
+    /// <summary>
     /// Returns the distance between dabs in pixels.
     /// </summary>
     public static float EffectiveDistance(
@@ -41,8 +86,8 @@ public static class BrushSpacing
     {
         stampSize = Math.Max(MinStampSizePx, stampSize);
         spacingMultiplier = Math.Clamp(spacingMultiplier, 0.05f, 4f);
+        var spacingVal = ResolveSpacing(brush);
 
-        // MyPaint-style three-term spacing
         float baseSpacing;
         if (dabsPerBasicRadius >= 0 && dabsPerActualRadius >= 0 && dabsPerSecond >= 0)
         {
@@ -54,16 +99,15 @@ public static class BrushSpacing
         }
         else if (brush.AutoSpacingActive)
         {
-            baseSpacing = CalcAutoSpacing(stampSize, (float)brush.AutoSpacingCoeff) * spacingMultiplier;
+            // UI "%" at brush.Size must equal spacingVal * brush.Size (not raw coeff 0.02 → 0.64px at 1024).
+            var refSize = Math.Max(MinStampSizePx, (float)brush.Size);
+            var autoCoeff = spacingVal * MathF.Sqrt(refSize);
+            baseSpacing = CalcAutoSpacing(stampSize, autoCoeff) * spacingMultiplier;
         }
         else
         {
-            var gapFraction = GapFraction(brush.GapMode, (float)brush.Spacing);
-            baseSpacing = stampSize * gapFraction * spacingMultiplier;
+            baseSpacing = stampSize * spacingVal * spacingMultiplier;
         }
-
-        var flow = Math.Clamp((float)brush.Flow, 0.01f, 1f);
-        baseSpacing *= MathF.Sqrt(flow);
 
         return Math.Max(MinDistancePx, baseSpacing);
     }

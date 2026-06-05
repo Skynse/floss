@@ -3,11 +3,37 @@ namespace Floss.App.Tests;
 public class BrushSpacingTests
 {
     [Fact]
-    public void NormalGap_UsesQuarterDiameter()
+    public void AutoOn_PercentMatchesDiameterAtBrushSize()
     {
-        var brush = new BrushPreset("Normal", 400, 1, 1, 0.10, Colors.Black, 0)
+        var brush = new BrushPreset("Auto", 400, 1, 1, 0.05, Colors.Black, 0)
         {
-            GapMode = BrushGapMode.Normal
+            AutoSpacingActive = true
+        };
+
+        var spacing = BrushSpacing.EffectiveDistance(brush, 400, 1, 0);
+        TestAssertions.Near(20, spacing, 0.5);
+    }
+
+    [Fact]
+    public void AutoOn_1024pxAt2Percent_IsNotSubPixel()
+    {
+        var brush = new BrushPreset("Huge", 1024, 1, 1, 0.02, Colors.Black, 0)
+        {
+            AutoSpacingActive = true
+        };
+
+        var spacing = BrushSpacing.EffectiveDistance(brush, 1024, 1, 0);
+        TestAssertions.Near(20.48, spacing, 0.5);
+        TestAssertions.True(spacing > 10,
+            $"2% at 1024px should be ~20px between dabs, got {spacing}px (sub-pixel spacing stamp-storms the UI).");
+    }
+
+    [Fact]
+    public void AutoOff_UsesDiameterFraction()
+    {
+        var brush = new BrushPreset("Manual", 400, 1, 1, 0.25, Colors.Black, 0)
+        {
+            AutoSpacingActive = false
         };
 
         var spacing = BrushSpacing.EffectiveDistance(brush, 400, 1, 0);
@@ -15,53 +41,50 @@ public class BrushSpacingTests
     }
 
     [Fact]
-    public void NormalGap_IsWiderThanFixedNarrow()
+    public void ManualSpacing_ChangesEffectiveDistance()
     {
-        var normal = new BrushPreset("Normal", 500, 1, 1, 0.25, Colors.Black, 0)
-        {
-            GapMode = BrushGapMode.Normal
-        };
-        var fixedNarrow = new BrushPreset("Fixed", 500, 1, 1, 0.10, Colors.Black, 0)
-        {
-            GapMode = BrushGapMode.Fixed
-        };
+        var low = new BrushPreset("Low", 200, 1, 1, 0.05, Colors.Black, 0) { AutoSpacingActive = false };
+        var high = new BrushPreset("High", 200, 1, 1, 0.40, Colors.Black, 0) { AutoSpacingActive = false };
 
-        var normalSpacing = BrushSpacing.EffectiveDistance(normal, 500, 1, 0);
-        var fixedSpacing = BrushSpacing.EffectiveDistance(fixedNarrow, 500, 1, 0);
-        TestAssertions.True(normalSpacing > fixedSpacing);
+        var lowSpacing = BrushSpacing.EffectiveDistance(low, 200, 1, 0);
+        var highSpacing = BrushSpacing.EffectiveDistance(high, 200, 1, 0);
+        TestAssertions.True(lowSpacing < highSpacing,
+            $"Expected lower spacing fraction to produce smaller gap, low={lowSpacing} high={highSpacing}.");
     }
 
     [Fact]
-    public void BrushEngine_NormalGapUsesFewerStampsThanFixedNarrow()
+    public void BrushEngine_LowManualSpacingUsesMoreStampsThanHigh()
     {
         using var engine = new BrushEngine();
         using var layer = new DrawingLayer("Layer", 2048, 512);
         var from = Sample(40, 256, 0);
         var to = Sample(1800, 256, 16_000);
 
-        var normalBrush = new BrushPreset("Normal", 320, 1, 0.75, 0.25, Colors.Black, 0)
+        var lowBrush = new BrushPreset("Low spacing", 48, 1, 0.75, 0.02, Colors.Black, 0)
         {
-            GapMode = BrushGapMode.Normal,
+            AutoSpacingActive = false,
             Tip = new ProceduralBrushTip(BrushTipShape.Circle),
             Dynamics = new BrushDynamics()
         };
-        var fixedBrush = normalBrush with
-        {
-            Name = "Fixed",
-            GapMode = BrushGapMode.Fixed,
-            Spacing = 0.08
-        };
+        var highBrush = lowBrush with { Name = "High spacing", Spacing = 0.35 };
 
-        engine.BeginStroke(normalBrush, from);
-        engine.RasterizeSegment(layer, normalBrush, from, to);
-        var normalCount = engine.LastStats.StampCount;
+        engine.BeginStroke(lowBrush, from);
+        engine.RasterizeSegment(layer, lowBrush, from, to);
+        var lowCount = engine.LastStats.StampCount;
 
-        engine.BeginStroke(fixedBrush, from);
-        engine.RasterizeSegment(layer, fixedBrush, from, to);
-        var fixedCount = engine.LastStats.StampCount;
+        engine.BeginStroke(highBrush, from);
+        engine.RasterizeSegment(layer, highBrush, from, to);
+        var highCount = engine.LastStats.StampCount;
 
-        TestAssertions.True(normalCount < fixedCount,
-            $"Expected Normal gap to use fewer stamps ({normalCount}) than Fixed narrow ({fixedCount}).");
+        TestAssertions.True(lowCount > highCount,
+            $"Expected low spacing ({lowCount} stamps) to exceed high spacing ({highCount} stamps).");
+    }
+
+    [Fact]
+    public void NormalizeSpacingAtLoad_MapsLegacyGapModeToSpacing()
+    {
+        var spacing = BrushSpacing.NormalizeSpacingAtLoad(0.10, 1.0, autoSpacingActive: false, BrushGapMode.Normal);
+        TestAssertions.Near(0.25, spacing, 0.001);
     }
 
     private static CanvasInputSample Sample(double x, double y, long timeMicros)
