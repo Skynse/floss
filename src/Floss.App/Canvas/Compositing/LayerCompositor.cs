@@ -52,6 +52,8 @@ public sealed class LayerCompositor : IDisposable
     private SKBitmap?[] _tileScratch = [];
     // Large cells (>32MB): stroke-time dirty-tile overlays only. See notes/large-canvas-draw-jank.md.
     private const long MaxCellSnapshotBytes = 32L * 1024 * 1024;
+    /// <summary>Re-freeze cell snapshot when this many stroke overlay tiles accumulate (see notes/large-canvas-draw-jank.md).</summary>
+    private const int MaxStrokeOverlayTiles = 64;
     private const int DisplayDisposeFrames = 16;
     private SKImage?[] _tileDisplayImages = [];
     private readonly ConcurrentDictionary<int, byte> _strokeOverlayTiles = new();
@@ -338,7 +340,39 @@ public sealed class LayerCompositor : IDisposable
             _delayedDispose.Enqueue((_strokeFrozenCellImage, DisplayDisposeFrames));
         _strokeFrozenCellImage = null;
         _strokeFrozenCellIndex = -1;
+        ClearStrokeOverlayTiles();
+    }
+
+    private void ClearStrokeOverlayTiles()
+    {
+        foreach (var kv in _strokeOverlayTiles)
+        {
+            var ti = kv.Key;
+            if ((uint)ti >= (uint)_tileDisplayImages.Length) continue;
+            var img = _tileDisplayImages[ti];
+            if (img == null) continue;
+            _delayedDispose.Enqueue((img, DisplayDisposeFrames));
+            _tileDisplayImages[ti] = null;
+        }
+
         _strokeOverlayTiles.Clear();
+    }
+
+    /// <summary>Bake accumulated overlay tiles into a fresh frozen cell snapshot (live cell is already current).</summary>
+    private void RefreshStrokeFrozenCellImage()
+    {
+        var ci = _strokeFrozenCellIndex;
+        if (ci < 0 || ci >= _cellBitmaps.Length) return;
+        var bmp = _cellBitmaps[ci];
+        if (bmp == null) return;
+
+        var frozen = SKImage.FromBitmap(bmp);
+        if (frozen == null) return;
+
+        if (_strokeFrozenCellImage != null)
+            _delayedDispose.Enqueue((_strokeFrozenCellImage, DisplayDisposeFrames));
+        _strokeFrozenCellImage = frozen;
+        ClearStrokeOverlayTiles();
     }
 
     private void EnsureTileDisplayImagesArray()
@@ -638,6 +672,10 @@ public sealed class LayerCompositor : IDisposable
 
             foreach (var idx in all) _pendingComposite.Remove(idx);
         }
+
+        if (UsesLargeCellSnapshot() && _strokeSuspendDepth > 0 && _strokeOverlayTiles.Count >= MaxStrokeOverlayTiles)
+            RefreshStrokeFrozenCellImage();
+
         TrimCompositeCache(vpClip);
         LastDirtyTileCount = pending.Count; LastMissingTileCount = missing.Count;
         return _pendingComposite.Count > 0;

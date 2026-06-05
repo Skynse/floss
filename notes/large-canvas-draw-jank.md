@@ -45,6 +45,14 @@ Profile (UI thread, 15s draw): `EnsureCellDisplayImage` + `FromBitmap` ≈ **33%
 - **Small cell** (≤32 MB): baseline cell `SkiaTileDrawOp` + revision-gated `EnsureCellDisplayImage`.
 - **Large cell** (>32 MB, e.g. 10k×8k): during stroke only — freeze one cell snapshot at stroke start, overlay **dirty 64×64 tiles only** (1–4 `DrawImage`/dab). Outside stroke, normal cell snapshot on revision change (rare).
 
+## Long-stroke zigzag choke (profile `live-draw-15s`)
+
+Symptom: long zigzag on large canvas feels fine at first, then **chokes until pen up**.
+
+Cause: `_strokeOverlayTiles` only grows during stroke. Each frame draws **1 frozen cell + every overlay tile in viewport**. Zigzag covers more tiles → render `SkiaTileDrawOp`/`DrawImage` cost climbs (~60ms/s early → ~900ms/s late in 15s trace) even though brush rasterize stays flat.
+
+Fix: when overlay count ≥ `MaxStrokeOverlayTiles` (64), **re-freeze** from live `_cellBitmaps[ci]` (already updated by `CopyTileToCell`) and clear overlays. One ~250ms `FromBitmap` per consolidation vs hundreds of `DrawImage`/frame.
+
 ## Files
 
 - `src/Floss.App/Canvas/Compositing/LayerCompositor.cs`
