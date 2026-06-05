@@ -6,6 +6,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Floss.App.Controls;
+using Floss.App.Controls;
 using Floss.App.Document;
 
 namespace Floss.App.Windows;
@@ -98,7 +99,7 @@ public sealed class AdjustmentLayerDialog : Window
             var vl  = FilterValueLabel(string.Format($"{{0:{fmt}}}", get()));
             sl.PropertyChanged += (_, e) =>
             {
-                if (e.Property.Name != nameof(Slider.Value)) return;
+                if (e.Property != Avalonia.Controls.Primitives.RangeBase.ValueProperty) return;
                 vl.Text = string.Format($"{{0:{fmt}}}", sl.Value);
                 set((float)sl.Value);
             };
@@ -299,13 +300,8 @@ public sealed class AdjustmentLayerDialog : Window
                 var idx = si;
                 var stop = stops[si];
 
-                var posSlider = new Slider
-                {
-                    Minimum = 0, Maximum = 1,
-                    Value = stop.Pos,
-                    Width = 120, Height = 20,
-                    TickFrequency = 0.01
-                };
+                var posSlider = ScrubSliderFactory.Create(0, 1, stop.Pos);
+                posSlider.Width = 120;
                 var posLabel = new TextBlock
                 {
                     Text = $"{stop.Pos:F2}",
@@ -315,7 +311,7 @@ public sealed class AdjustmentLayerDialog : Window
                 };
                 posSlider.PropertyChanged += (_, e) =>
                 {
-                    if (e.Property.Name != nameof(Slider.Value)) return;
+                    if (e.Property != Avalonia.Controls.Primitives.RangeBase.ValueProperty) return;
                     stops[idx] = stops[idx] with { Pos = (float)posSlider.Value };
                     posLabel.Text = $"{posSlider.Value:F2}";
                     CommitStops();

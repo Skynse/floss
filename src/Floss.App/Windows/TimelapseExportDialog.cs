@@ -6,6 +6,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Floss.App.Controls;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using Floss.App.Timelapse;
@@ -20,7 +21,7 @@ public sealed class TimelapseExportDialog : Window
     private readonly IReadOnlyList<string> _frames;
     private readonly Image _preview;
     private readonly Button _playButton;
-    private readonly Slider _seek;
+    private readonly ScrubSlider _seek;
     private readonly TextBlock _time;
     private readonly ComboBox _length;
     private readonly ComboBox _aspect;
@@ -54,13 +55,9 @@ public sealed class TimelapseExportDialog : Window
         _playButton = SmallButton("▶");
         _playButton.Click += (_, _) => TogglePlay();
 
-        _seek = new Slider
-        {
-            Minimum = 0,
-            Maximum = Math.Max(0, _frames.Count - 1),
-            Width = 280,
-            IsEnabled = _frames.Count > 1
-        };
+        _seek = ScrubSliderFactory.Create(0, Math.Max(0, _frames.Count - 1), 0);
+        _seek.Width = 280;
+        _seek.IsEnabled = _frames.Count > 1;
         _seek.PropertyChanged += (_, e) =>
         {
             if (e.Property == RangeBase.ValueProperty && !_playing)

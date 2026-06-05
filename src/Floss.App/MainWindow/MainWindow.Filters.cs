@@ -5,7 +5,9 @@ using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
+using Floss.App.Controls;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Floss.App.Document;
@@ -46,10 +48,10 @@ public partial class MainWindow
     {
         var preview = new PreviewHandle();
         var valueLabel = FilterValueLabel("3.0");
-        var slider = new Slider { Minimum = 0.5, Maximum = 30, Value = 3.0, Width = 240, Margin = new Thickness(0, 4, 0, 0) };
+        var slider = FilterSlider(0.5, 30, 3.0);
         slider.PropertyChanged += (_, e) =>
         {
-            if (e.Property.Name == nameof(Slider.Value))
+            if (e.Property == RangeBase.ValueProperty)
             {
                 valueLabel.Text = $"{slider.Value:0.0}";
                 preview.Schedule();
@@ -71,10 +73,10 @@ public partial class MainWindow
     {
         var preview = new PreviewHandle();
         var valueLabel = FilterValueLabel("1.0");
-        var slider = new Slider { Minimum = 0.1, Maximum = 5, Value = 1.0, Width = 240, Margin = new Thickness(0, 4, 0, 0) };
+        var slider = FilterSlider(0.1, 5, 1.0);
         slider.PropertyChanged += (_, e) =>
         {
-            if (e.Property.Name == nameof(Slider.Value))
+            if (e.Property == RangeBase.ValueProperty)
             {
                 valueLabel.Text = $"{slider.Value:0.0}";
                 preview.Schedule();
@@ -96,7 +98,7 @@ public partial class MainWindow
     {
         var preview = new PreviewHandle();
         var valueLabel = FilterValueLabel("10%");
-        var slider = new Slider { Minimum = 0.01, Maximum = 1, Value = 0.1, Width = 240, Margin = new Thickness(0, 4, 0, 0) };
+        var slider = FilterSlider(0.01, 1, 0.1);
         var monoCheck = new CheckBox
         {
             Content = new TextBlock { Text = "Monochromatic", Foreground = new SolidColorBrush(Color.Parse(TextSecondary)), FontSize = 11 },
@@ -105,7 +107,7 @@ public partial class MainWindow
         };
         slider.PropertyChanged += (_, e) =>
         {
-            if (e.Property.Name == nameof(Slider.Value))
+            if (e.Property == RangeBase.ValueProperty)
             {
                 valueLabel.Text = $"{(int)(slider.Value * 100)}%";
                 preview.Schedule();
@@ -137,7 +139,7 @@ public partial class MainWindow
     {
         var preview = new PreviewHandle();
         var intensityLabel = FilterValueLabel("5.0");
-        var intensitySlider = new Slider { Minimum = 0, Maximum = 30, Value = 5, Width = 240, Margin = new Thickness(0, 4, 0, 0) };
+        var intensitySlider = FilterSlider(0, 30, 5);
 
         var radialToggle = new RadioButton
         {
@@ -154,7 +156,8 @@ public partial class MainWindow
         };
 
         var angleLabel = FilterValueLabel("0°");
-        var angleSlider = new Slider { Minimum = 0, Maximum = 360, Value = 0, Width = 240, Margin = new Thickness(0, 4, 0, 0), IsEnabled = false };
+        var angleSlider = FilterSlider(0, 360, 0);
+        angleSlider.IsEnabled = false;
 
         lateralToggle.IsCheckedChanged += (_, _) =>
         {
@@ -165,7 +168,7 @@ public partial class MainWindow
 
         intensitySlider.PropertyChanged += (_, e) =>
         {
-            if (e.Property.Name == nameof(Slider.Value))
+            if (e.Property == RangeBase.ValueProperty)
             {
                 intensityLabel.Text = $"{intensitySlider.Value:0.0}";
                 preview.Schedule();
@@ -173,7 +176,7 @@ public partial class MainWindow
         };
         angleSlider.PropertyChanged += (_, e) =>
         {
-            if (e.Property.Name == nameof(Slider.Value))
+            if (e.Property == RangeBase.ValueProperty)
             {
                 angleLabel.Text = $"{(int)angleSlider.Value}°";
                 preview.Schedule();
@@ -212,10 +215,10 @@ public partial class MainWindow
         var preview = new PreviewHandle();
 
         var sizeLabel = FilterValueLabel("50 px");
-        var sizeSlider = new Slider { Minimum = 1, Maximum = 500, Value = 50, Width = 240, Margin = new Thickness(0, 4, 0, 0) };
+        var sizeSlider = FilterSlider(1, 500, 50);
         sizeSlider.PropertyChanged += (_, e) =>
         {
-            if (e.Property.Name == nameof(Slider.Value))
+            if (e.Property == RangeBase.ValueProperty)
             {
                 sizeLabel.Text = $"{(int)sizeSlider.Value} px";
                 preview.Schedule();
@@ -223,10 +226,10 @@ public partial class MainWindow
         };
 
         var opacLabel = FilterValueLabel("5%");
-        var opacSlider = new Slider { Minimum = 1, Maximum = 100, Value = 5, Width = 240, Margin = new Thickness(0, 4, 0, 0) };
+        var opacSlider = FilterSlider(1, 100, 5);
         opacSlider.PropertyChanged += (_, e) =>
         {
-            if (e.Property.Name == nameof(Slider.Value))
+            if (e.Property == RangeBase.ValueProperty)
             {
                 opacLabel.Text = $"{(int)opacSlider.Value}%";
                 preview.Schedule();
@@ -586,7 +589,7 @@ public partial class MainWindow
         var slider = FilterSlider(min, max, value);
         slider.PropertyChanged += (_, e) =>
         {
-            if (e.Property.Name != nameof(Slider.Value)) return;
+            if (e.Property != RangeBase.ValueProperty) return;
             valueLabel.Text = format(slider.Value);
             preview.Schedule();
         };
@@ -622,13 +625,13 @@ public partial class MainWindow
 
         slider1.PropertyChanged += (_, e) =>
         {
-            if (e.Property.Name != nameof(Slider.Value)) return;
+            if (e.Property != RangeBase.ValueProperty) return;
             valueLabel1.Text = format1(slider1.Value);
             preview.Schedule();
         };
         slider2.PropertyChanged += (_, e) =>
         {
-            if (e.Property.Name != nameof(Slider.Value)) return;
+            if (e.Property != RangeBase.ValueProperty) return;
             valueLabel2.Text = format2(slider2.Value);
             preview.Schedule();
         };
@@ -675,19 +678,19 @@ public partial class MainWindow
 
         slider1.PropertyChanged += (_, e) =>
         {
-            if (e.Property.Name != nameof(Slider.Value)) return;
+            if (e.Property != RangeBase.ValueProperty) return;
             valueLabel1.Text = format1(slider1.Value);
             preview.Schedule();
         };
         slider2.PropertyChanged += (_, e) =>
         {
-            if (e.Property.Name != nameof(Slider.Value)) return;
+            if (e.Property != RangeBase.ValueProperty) return;
             valueLabel2.Text = format2(slider2.Value);
             preview.Schedule();
         };
         slider3.PropertyChanged += (_, e) =>
         {
-            if (e.Property.Name != nameof(Slider.Value)) return;
+            if (e.Property != RangeBase.ValueProperty) return;
             valueLabel3.Text = format3(slider3.Value);
             preview.Schedule();
         };

@@ -5,6 +5,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Floss.App.Brushes;
+using Floss.App.Controls;
 
 namespace Floss.App.Windows;
 
@@ -17,7 +18,7 @@ public sealed class DynamicsPopupWindow : Window
         public required CheckBox Toggle { get; init; }
         public required Border Card { get; init; }
         public required CurveGraph Graph { get; init; }
-        public Slider? LengthSlider { get; init; }
+        public ScrubSlider? LengthSlider { get; init; }
         public Func<ParameterDynamics, bool> IsEnabled { get; init; } = _ => false;
         public Func<ParameterDynamics, bool, ParameterDynamics> SetEnabled { get; init; } = (d, _) => d;
         public Func<ParameterDynamics, float[]> GetCurve { get; init; } = _ => ParameterDynamics.IdentityCurve;
@@ -28,10 +29,10 @@ public sealed class DynamicsPopupWindow : Window
     private const int GridColumns = 3;
 
     private readonly InputChannel[] _channels;
-    private readonly Slider _minSlider = MkSlider(0, 1, 0, "Output at minimum input");
-    private readonly Slider _maxSlider = MkSlider(0, 1, 1, "Output at maximum input");
-    private readonly Slider _distanceLengthSlider = MkSlider(16, 10000, 1000, "Stroke distance in pixels");
-    private readonly Slider _fadeLengthSlider = MkSlider(1, 2000, 120, "Fade length in dab count");
+    private readonly ScrubSlider _minSlider = MkSlider(0, 1, 0, "Output at minimum input");
+    private readonly ScrubSlider _maxSlider = MkSlider(0, 1, 1, "Output at maximum input");
+    private readonly ScrubSlider _distanceLengthSlider = MkSlider(16, 10000, 1000, "Stroke distance in pixels");
+    private readonly ScrubSlider _fadeLengthSlider = MkSlider(1, 2000, 120, "Fade length in dab count");
 
     private ParameterDynamics _current;
     private readonly Action<ParameterDynamics> _onChange;
@@ -91,7 +92,7 @@ public sealed class DynamicsPopupWindow : Window
         Func<ParameterDynamics, bool, ParameterDynamics> setEnabled,
         Func<ParameterDynamics, float[]> getCurve,
         Func<ParameterDynamics, float[], ParameterDynamics> setCurve,
-        Slider? lengthSlider = null,
+        ScrubSlider? lengthSlider = null,
         string? lengthLabel = null)
     {
         var toggle = new CheckBox
@@ -258,7 +259,7 @@ public sealed class DynamicsPopupWindow : Window
         }
     }
 
-    private static Control CompactRange(string label, Slider slider)
+    private static Control CompactRange(string label, ScrubSlider slider)
     {
         var row = new Grid
         {
@@ -282,7 +283,7 @@ public sealed class DynamicsPopupWindow : Window
         };
         slider.PropertyChanged += (_, e) =>
         {
-            if (e.Property == Slider.ValueProperty)
+            if (e.Property == RangeBase.ValueProperty)
                 val.Text = $"{slider.Value * 100:0}%";
         };
 
@@ -300,7 +301,7 @@ public sealed class DynamicsPopupWindow : Window
         return row;
     }
 
-    private static Control CompactLengthRow(string label, Slider slider)
+    private static Control CompactLengthRow(string label, ScrubSlider slider)
     {
         var val = new TextBlock
         {
@@ -314,7 +315,7 @@ public sealed class DynamicsPopupWindow : Window
         };
         slider.PropertyChanged += (_, e) =>
         {
-            if (e.Property == Slider.ValueProperty)
+            if (e.Property == RangeBase.ValueProperty)
                 val.Text = $"{slider.Value:0}";
         };
 
@@ -341,24 +342,16 @@ public sealed class DynamicsPopupWindow : Window
         return row;
     }
 
-    private static Slider MkSlider(double min, double max, double value, string tip)
-    {
-        var s = new Slider
-        {
-            Minimum = min,
-            Maximum = max,
-            Value = value,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        ToolTip.SetTip(s, tip);
-        return s;
-    }
+    private static ScrubSlider MkSlider(double min, double max, double value, string tip)
+        => ScrubSliderFactory.Create(min, max, value, tip);
 
-    private static void WireSlider(Slider slider, Action<double> onChange)
+    private static void WireSlider(ScrubSlider slider, Action<double> onChange)
     {
         slider.PropertyChanged += (_, e) =>
         {
-            if (e.Property == Slider.ValueProperty) onChange(slider.Value);
+            if (e.Property == RangeBase.ValueProperty && !slider.IsScrubbing)
+                onChange(slider.Value);
         };
+        slider.ScrubCompleted += (_, v) => onChange(v);
     }
 }

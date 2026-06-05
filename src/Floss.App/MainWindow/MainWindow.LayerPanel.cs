@@ -180,7 +180,7 @@ public partial class MainWindow
         _layerOpacitySlider.PointerCaptureLost += (_, _) => CommitLayerOpacityScrubIfActive();
         _layerOpacitySlider.PropertyChanged += (_, e) =>
         {
-            if (_syncingLayerUi || e.Property != Slider.ValueProperty) return;
+            if (_syncingLayerUi || e.Property != RangeBase.ValueProperty) return;
             if (_layerOpacityScrubActive)
                 _canvas.PreviewActiveLayerOpacity(_layerOpacitySlider.Value);
             else

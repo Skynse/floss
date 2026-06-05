@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Media;
+using Floss.App.Controls;
 
 namespace Floss.App;
 
@@ -128,7 +129,7 @@ public partial class MainWindow
 
     private StackPanel BuildRgbSlidersView()
     {
-        var panel = new StackPanel { Spacing = 4, Margin = new Thickness(8, 2, 8, 8) };
+        var panel = new StackPanel { Spacing = 10, Margin = new Thickness(10, 6, 10, 10) };
         _rgbRSlider = CreateRgbSlider(0, 255, Colors.Black, Colors.Red);
         _rgbGSlider = CreateRgbSlider(0, 255, Colors.Black, Colors.Green);
         _rgbBSlider = CreateRgbSlider(0, 255, Colors.Black, Colors.Blue);
@@ -149,10 +150,11 @@ public partial class MainWindow
         return panel;
     }
 
-    private static Slider CreateRgbSlider(double min, double max, Color start, Color end)
+    private static ScrubSlider CreateRgbSlider(double min, double max, Color start, Color end)
     {
-        var s = new Slider { Minimum = min, Maximum = max, Height = 14, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
-        s.Background = new LinearGradientBrush
+        var s = ScrubSliderFactory.Create(min, max, 0);
+        s.ShowValueFill = false;
+        s.TrackBackground = new LinearGradientBrush
         {
             StartPoint = new RelativePoint(0, 0.5, RelativeUnit.Relative),
             EndPoint = new RelativePoint(1, 0.5, RelativeUnit.Relative),
@@ -161,7 +163,7 @@ public partial class MainWindow
         return s;
     }
 
-    private void WireRgbSliders(Slider r, Slider g, Slider b, Border preview)
+    private void WireRgbSliders(ScrubSlider r, ScrubSlider g, ScrubSlider b, Border preview)
     {
         void update() {
             if (_syncingColorSliders) return;
@@ -170,9 +172,9 @@ public partial class MainWindow
             SetColor(cr, syncPicker: false);
             SyncPickerFromColor(cr);
         }
-        r.PropertyChanged += (_, e) => { if (e.Property == Slider.ValueProperty) update(); };
-        g.PropertyChanged += (_, e) => { if (e.Property == Slider.ValueProperty) update(); };
-        b.PropertyChanged += (_, e) => { if (e.Property == Slider.ValueProperty) update(); };
+        r.PropertyChanged += (_, e) => { if (e.Property == RangeBase.ValueProperty) update(); };
+        g.PropertyChanged += (_, e) => { if (e.Property == RangeBase.ValueProperty) update(); };
+        b.PropertyChanged += (_, e) => { if (e.Property == RangeBase.ValueProperty) update(); };
     }
 
     // ── Color picker ──────────────────────────────────────────────────────────

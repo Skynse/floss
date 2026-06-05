@@ -4,6 +4,8 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Floss.App.Brushes;
+using Floss.App.Controls;
+using Avalonia.Controls.Primitives;
 using static Floss.App.Brushes.BrushDynamics;
 
 namespace Floss.App.Windows;
@@ -13,7 +15,7 @@ using static Floss.App.Config.AppColors;
 public sealed class AngleDynamicsPopupWindow : Window
 {
     private readonly ComboBox _sourceCombo;
-    private readonly Slider _randomSlider;
+    private readonly ScrubSlider _randomSlider;
     private readonly TextBlock _randomVal;
 
     private readonly Action<AngleSource> _onSourceChanged;
@@ -77,10 +79,10 @@ public sealed class AngleDynamicsPopupWindow : Window
             TextAlignment = TextAlignment.Right
         };
 
-        _randomSlider = new Slider { Minimum = 0, Maximum = 1, Value = currentRandom, Height = 26, MinHeight = 22 };
+        _randomSlider = ScrubSliderFactory.Create(0, 1, currentRandom);
         _randomSlider.PropertyChanged += (_, e) =>
         {
-            if (_syncing || e.Property != Slider.ValueProperty)
+            if (_syncing || e.Property != RangeBase.ValueProperty)
                 return;
             _randomVal.Text = $"{_randomSlider.Value * 100:0}%";
             _onRandomChanged((float)_randomSlider.Value);

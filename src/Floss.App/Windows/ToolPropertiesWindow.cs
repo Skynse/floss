@@ -13,6 +13,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Floss.App.Brushes;
+using Floss.App.Controls;
 using Floss.App.Processes;
 using Floss.App.Tools;
 using SkiaSharp;
@@ -46,28 +47,28 @@ public sealed class ToolPropertiesWindow : Window
     private TextBlock _textureFileLabel = null!;
 
     // ── Sliders ───────────────────────────────────────────────────────────────
-    private readonly Slider _sizeSlider = MkSlider(0.5, 1000, 8, "Brush size in pixels");
-    private readonly Slider _opacitySlider = MkSlider(0.01, 1, 1.0, "Maximum opacity per stamp");
-    private readonly Slider _flowSlider = MkSlider(0.01, 1, 1.0, "Paint buildup per dab");
+    private readonly ScrubSlider _sizeSlider = MkSlider(0.5, 1000, 8, "Brush size in pixels");
+    private readonly ScrubSlider _opacitySlider = MkSlider(0.01, 1, 1.0, "Maximum opacity per stamp");
+    private readonly ScrubSlider _flowSlider = MkSlider(0.01, 1, 1.0, "Paint buildup per dab");
     private Button? _mixToggle;
-    private readonly Slider _colorLoadSlider = MkSlider(0, 1, 1.0, "Paint reload rate (1=always fresh, 0=color accumulates)");
-    private readonly Slider _colorStretchSlider = MkSlider(0, 1, 0.5, "Color stretch intensity (0=gentle, 1=aggressive)");
-    private readonly Slider _blurAmountSlider = MkSlider(0, 1, 0.0, "Blur during mixing (0=none, 1=full)");
-    private readonly Slider _amountOfPaintSlider = MkSlider(0, 1, 1.0, "Amount of paint deposited (0=none, 1=full)");
-    private readonly Slider _densityOfPaintSlider = MkSlider(0, 1, 1.0, "Paint density (0=thin, 1=thick)");
-    private readonly Slider _hardnessSlider = MkSlider(0, 1, 0.9, "Edge softness (anti-aliasing)");
-    private readonly Slider _spacingSlider = MkSlider(0.01, 1, 0.1, "Stamp interval as fraction of size");
+    private readonly ScrubSlider _colorLoadSlider = MkSlider(0, 1, 1.0, "Paint reload rate (1=always fresh, 0=color accumulates)");
+    private readonly ScrubSlider _colorStretchSlider = MkSlider(0, 1, 0.5, "Color stretch intensity (0=gentle, 1=aggressive)");
+    private readonly ScrubSlider _blurAmountSlider = MkSlider(0, 1, 0.0, "Blur during mixing (0=none, 1=full)");
+    private readonly ScrubSlider _amountOfPaintSlider = MkSlider(0, 1, 1.0, "Amount of paint deposited (0=none, 1=full)");
+    private readonly ScrubSlider _densityOfPaintSlider = MkSlider(0, 1, 1.0, "Paint density (0=thin, 1=thick)");
+    private readonly ScrubSlider _hardnessSlider = MkSlider(0, 1, 0.9, "Edge softness (anti-aliasing)");
+    private readonly ScrubSlider _spacingSlider = MkSlider(0.01, 1, 0.1, "Stamp interval as fraction of size");
     private readonly CheckBox _autoSpacingCheck = new()
     {
         Content = new TextBlock { Text = "Auto", FontSize = 11 },
         Margin = new Thickness(0, -2, 0, 0),
         IsChecked = true,
     };
-    private readonly Slider _smoothingSlider = MkSlider(0, 0.95, 0.3, "Input stabilization");
+    private readonly ScrubSlider _smoothingSlider = MkSlider(0, 0.95, 0.3, "Input stabilization");
     private CheckBox? _speedAdaptiveCheck;
-    private readonly Slider _angleSlider = MkSlider(0, 360, 0, "Base angle in degrees");
-    private readonly Slider _grainSlider = MkSlider(0, 1, 0.0, "Noise texture strength");
-    private readonly Slider _tipDensitySlider = MkSlider(0, 1, 1.0, "Brush tip density (0=none, 1=full)");
+    private readonly ScrubSlider _angleSlider = MkSlider(0, 360, 0, "Base angle in degrees");
+    private readonly ScrubSlider _grainSlider = MkSlider(0, 1, 0.0, "Noise texture strength");
+    private readonly ScrubSlider _tipDensitySlider = MkSlider(0, 1, 1.0, "Brush tip density (0=none, 1=full)");
 
     // ── Open dynamics popups ──────────────────────────────────────────────────
     private DynamicsPopupWindow? _sizeDynPopup;
@@ -1540,16 +1541,7 @@ public sealed class ToolPropertiesWindow : Window
     private static Control BuildGenericSliderRow(string label, double min, double max, double value,
         Action<double> setter, string fmt = "%", double mult = 1.0, double step = 0.01, string? toolPropId = null)
     {
-        var slider = new Slider
-        {
-            Minimum = min,
-            Maximum = max,
-            Value = value,
-            TickFrequency = step,
-            IsSnapToTickEnabled = true,
-            Height = 28,
-            HorizontalAlignment = HorizontalAlignment.Stretch
-        };
+        var slider = ScrubSliderFactory.Create(min, max, value);
 
         var valueLabel = new TextBlock
         {
@@ -1568,10 +1560,10 @@ public sealed class ToolPropertiesWindow : Window
 
         slider.PropertyChanged += (_, e) =>
         {
-            if (e.Property == Slider.ValueProperty) UpdateLabel();
+            if (e.Property == RangeBase.ValueProperty) UpdateLabel();
         };
 
-        slider.AddHandler(Slider.PointerReleasedEvent, (_, _) => setter(slider.Value), handledEventsToo: true);
+        slider.AddHandler(PointerReleasedEvent, (_, _) => setter(slider.Value), handledEventsToo: true);
         slider.LostFocus += (_, _) => setter(slider.Value);
 
         var lbl = new TextBlock
@@ -1680,7 +1672,7 @@ public sealed class ToolPropertiesWindow : Window
 
     // ── Row builders ──────────────────────────────────────────────────────────
 
-    private Control DynSliderRow(string label, Slider slider, string fmt, Action openDyn, string? toolPropId = null)
+    private Control DynSliderRow(string label, ScrubSlider slider, string fmt, Action openDyn, string? toolPropId = null)
     {
         var dynBtn = new Button
         {
@@ -1698,7 +1690,7 @@ public sealed class ToolPropertiesWindow : Window
         return BuildSliderRow(label, slider, fmt, dynBtn, toolPropId);
     }
 
-    private Control PlainSliderRow(string label, Slider slider, string fmt, string? toolPropId = null)
+    private Control PlainSliderRow(string label, ScrubSlider slider, string fmt, string? toolPropId = null)
         => BuildSliderRow(label, slider, fmt, null, toolPropId);
 
     private Control DynButtonRow(string label, Action openDyn)
@@ -1732,12 +1724,12 @@ public sealed class ToolPropertiesWindow : Window
         return row;
     }
 
-    private static Control PlainSliderRowRaw(Slider slider, string fmt)
+    private static Control PlainSliderRowRaw(ScrubSlider slider, string fmt)
     {
         var val = MkValLabel(slider.Value, fmt);
         slider.PropertyChanged += (_, e) =>
         {
-            if (e.Property == Slider.ValueProperty) val.Text = FormatV(slider.Value, fmt);
+            if (e.Property == RangeBase.ValueProperty) val.Text = FormatV(slider.Value, fmt);
         };
         var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 1, 0, 1) };
         DockPanel.SetDock(val, Dock.Right);
@@ -1746,7 +1738,7 @@ public sealed class ToolPropertiesWindow : Window
         return row;
     }
 
-    private static Control BuildSliderRow(string label, Slider slider, string fmt, Control? extra, string? toolPropId = null)
+    private static Control BuildSliderRow(string label, ScrubSlider slider, string fmt, Control? extra, string? toolPropId = null)
     {
         var lbl = new TextBlock
         {
@@ -1758,7 +1750,7 @@ public sealed class ToolPropertiesWindow : Window
         var val = MkValLabel(slider.Value, fmt);
         slider.PropertyChanged += (_, e) =>
         {
-            if (e.Property == Slider.ValueProperty) val.Text = FormatV(slider.Value, fmt);
+            if (e.Property == RangeBase.ValueProperty) val.Text = FormatV(slider.Value, fmt);
         };
 
         var header = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 6) };
@@ -2171,18 +2163,8 @@ public sealed class ToolPropertiesWindow : Window
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static Slider MkSlider(double min, double max, double value, string tip)
-    {
-        var s = new Slider
-        {
-            Minimum = min,
-            Maximum = max,
-            Value = value,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        ToolTip.SetTip(s, tip);
-        return s;
-    }
+    private static ScrubSlider MkSlider(double min, double max, double value, string tip)
+        => ScrubSliderFactory.Create(min, max, value, tip);
 
     private static BrushDynamics WithDynamics(BrushDynamics source, Action<BrushDynamics> update)
     {
@@ -2235,13 +2217,18 @@ public sealed class ToolPropertiesWindow : Window
         _ => $"{v:0.##}"
     };
 
-    private void WireSlider(Slider slider, Action<double> onChange)
+    private void WireSlider(ScrubSlider slider, Action<double> onChange)
     {
         slider.PropertyChanged += (_, e) =>
         {
-            if (_syncing || e.Property != Slider.ValueProperty)
+            if (_syncing || e.Property != RangeBase.ValueProperty || slider.IsScrubbing)
                 return;
             onChange(slider.Value);
+        };
+        slider.ScrubCompleted += (_, v) =>
+        {
+            if (!_syncing)
+                onChange(v);
         };
     }
 

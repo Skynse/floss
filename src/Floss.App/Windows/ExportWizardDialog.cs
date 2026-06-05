@@ -4,6 +4,8 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Controls.Primitives;
+using Floss.App.Controls;
 using SkiaSharp;
 
 namespace Floss.App.Windows;
@@ -33,7 +35,7 @@ public sealed class ExportWizardDialog : Window
     private readonly int _docDpi;
 
     // Quality
-    private readonly Slider _qualitySlider;
+    private readonly ScrubSlider _qualitySlider;
     private readonly TextBlock _qualityLabel;
     private readonly Border _qualitySection;
 
@@ -73,15 +75,7 @@ public sealed class ExportWizardDialog : Window
 
         bool hasQuality = _format is "JPEG" or "JPG" or "WEBP";
 
-        _qualitySlider = new Slider
-        {
-            Minimum = 1,
-            Maximum = 100,
-            Value = _format is "JPEG" or "JPG" ? 90 : 80,
-            TickFrequency = 1,
-            IsSnapToTickEnabled = true,
-            Height = 26
-        };
+        _qualitySlider = ScrubSliderFactory.Create(1, 100, _format is "JPEG" or "JPG" ? 90 : 80);
         _qualityLabel = new TextBlock
         {
             FontSize = 11,
@@ -94,7 +88,7 @@ public sealed class ExportWizardDialog : Window
         };
         _qualitySlider.PropertyChanged += (_, e) =>
         {
-            if (e.Property == Slider.ValueProperty)
+            if (e.Property == RangeBase.ValueProperty)
                 _qualityLabel.Text = $"{_qualitySlider.Value:0}";
         };
         _qualitySection = new Border { IsVisible = hasQuality };

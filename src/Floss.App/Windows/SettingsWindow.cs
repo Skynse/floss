@@ -8,6 +8,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Floss.App.Controls;
 using Floss.App.Input;
 using KeyBinding = Floss.App.Input.KeyBinding;
 
@@ -439,18 +440,11 @@ public sealed class SettingsWindow : Window
             VerticalAlignment = VerticalAlignment.Center,
             TextAlignment = Avalonia.Media.TextAlignment.Right
         };
-        var slider = new Slider
-        {
-            Minimum = min,
-            Maximum = max,
-            Value = currentValue,
-            Width = 180,
-            Height = 26,
-            VerticalAlignment = VerticalAlignment.Center
-        };
+        var slider = ScrubSliderFactory.Create(min, max, currentValue);
+        slider.Width = 180;
         slider.PropertyChanged += (_, e) =>
         {
-            if (e.Property != Slider.ValueProperty) return;
+            if (e.Property != Avalonia.Controls.Primitives.RangeBase.ValueProperty) return;
             setter(slider.Value);
             valLabel.Text = Format(slider.Value, fmt);
         };

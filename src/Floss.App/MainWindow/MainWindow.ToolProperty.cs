@@ -8,6 +8,7 @@ using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Floss.App.Brushes;
+using Floss.App.Controls;
 using Floss.App.Processes;
 using Floss.App.Tools;
 
@@ -259,7 +260,7 @@ public partial class MainWindow
         App.ToolGroups.Save();
     }
 
-    private ToolPropertyDescriptor SliderProp(string id, string label, bool visible, Slider source, string fmt)
+    private ToolPropertyDescriptor SliderProp(string id, string label, bool visible, ScrubSlider source, string fmt)
         => SliderProp(id, label, visible, () => source.Value, v => source.Value = v, source.Minimum, source.Maximum, fmt);
 
     private ToolPropertyDescriptor SliderProp(
@@ -272,15 +273,17 @@ public partial class MainWindow
         double max,
         string fmt)
     {
-        Slider? slider = null;
+        ScrubSlider? slider = null;
         return new(id, label, visible,
             () =>
             {
                 slider = MkSlider(min, max, Math.Clamp(get(), min, max), label);
                 slider.PropertyChanged += (_, e) =>
                 {
-                    if (e.Property == Slider.ValueProperty) set(slider.Value);
+                    if (e.Property == RangeBase.ValueProperty && !slider.IsScrubbing)
+                        set(slider.Value);
                 };
+                slider.ScrubCompleted += (_, v) => set(v);
                 return LabelSliderContent(label, slider, fmt);
             },
             () =>
@@ -347,7 +350,7 @@ public partial class MainWindow
             });
     }
 
-    private static Control LabelSliderContent(string label, Slider slider, string fmt)
+    private static Control LabelSliderContent(string label, ScrubSlider slider, string fmt)
     {
         var valueLabel = new TextBlock
         {
@@ -360,7 +363,7 @@ public partial class MainWindow
         };
         slider.PropertyChanged += (_, e) =>
         {
-            if (e.Property == Slider.ValueProperty)
+            if (e.Property == RangeBase.ValueProperty)
                 valueLabel.Text = FormatSliderValue(slider.Value, fmt);
         };
         valueLabel.Text = FormatSliderValue(slider.Value, fmt);

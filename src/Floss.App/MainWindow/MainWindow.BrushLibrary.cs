@@ -1846,6 +1846,16 @@ public partial class MainWindow : Window
         }
     }
 
+    private void PreviewCurrentBrush(Func<BrushPreset, BrushPreset> update)
+    {
+        if (_syncingBrushUi || _syncingToolPropertyPanel) return;
+        _activePreset ??= _canvas.Brush;
+        _activePreset = update(_activePreset);
+        var applied = _activePreset with { Color = _canvas.PaintColor };
+        _canvas.SetBrush(applied);
+        _strokePreview.Brush = applied;
+    }
+
     private void UpdateCurrentBrush(Func<BrushPreset, BrushPreset> update)
     {
         if (_syncingBrushUi || _syncingToolPropertyPanel) return;

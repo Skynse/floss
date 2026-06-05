@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Floss.App.Controls;
 
 namespace Floss.App;
 
@@ -27,16 +28,15 @@ internal static class FilterControls
         Foreground = new SolidColorBrush(Color.Parse(TextSecondary))
     };
 
-    public static Slider FilterSlider(double minimum, double maximum, double value) => new()
+    public static ScrubSlider FilterSlider(double minimum, double maximum, double value)
     {
-        Minimum = minimum,
-        Maximum = maximum,
-        Value = value,
-        Width = 240,
-        Margin = new Avalonia.Thickness(0, 4, 0, 0)
-    };
+        var s = ScrubSliderFactory.Create(minimum, maximum, value);
+        s.Width = 240;
+        s.Margin = new Avalonia.Thickness(0, 4, 0, 0);
+        return s;
+    }
 
-    public static Control FilterRow(TextBlock label, Slider slider, TextBlock value)
+    public static Control FilterRow(TextBlock label, ScrubSlider slider, TextBlock value)
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         row.Children.Add(label);

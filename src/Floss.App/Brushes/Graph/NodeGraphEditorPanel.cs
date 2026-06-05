@@ -9,6 +9,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Floss.App.Controls;
 
 namespace Floss.App.Brushes.Graph;
 
@@ -620,15 +621,8 @@ public sealed class NodeGraphEditorPanel : UserControl
             {
                 var range = param.Max - param.Min;
                 var current = Math.Clamp(param.Get(_selectedNode), param.Min, param.Max);
-                var slider = new Slider
-                {
-                    Minimum = param.Min,
-                    Maximum = param.Max,
-                    Value = current,
-                    HorizontalAlignment = HorizontalAlignment.Stretch,
-                    SmallChange = Math.Max(range / 200.0, 0.001),
-                    LargeChange = Math.Max(range / 20.0, 0.01),
-                };
+                var slider = ScrubSliderFactory.Create(param.Min, param.Max, current);
+                slider.HorizontalAlignment = HorizontalAlignment.Stretch;
                 var valueBox = new TextBox
                 {
                     Text = FormatParamValue(current),
@@ -666,11 +660,35 @@ public sealed class NodeGraphEditorPanel : UserControl
                     DoCommit();
                 }
 
-                slider.ValueChanged += (_, args) =>
+                void PreviewParam(float val)
                 {
                     if (_syncingPropertyParams) return;
-                    ApplyParamValue((float)args.NewValue);
+                    _syncingPropertyParams = true;
+                    try
+                    {
+                        slider.Value = val;
+                        valueBox.Text = FormatParamValue(val);
+                    }
+                    finally
+                    {
+                        _syncingPropertyParams = false;
+                    }
+
+                    _view.UpdateNode(selectedId, n => capturedParam.Set(n, val), notify: false);
+                    _graph = _view.Graph;
+                    _selectedNode = _graph.Nodes.FirstOrDefault(x => x.Id == selectedId) ?? _selectedNode;
+                }
+
+                slider.PropertyChanged += (_, e) =>
+                {
+                    if (_syncingPropertyParams || e.Property != Avalonia.Controls.Primitives.RangeBase.ValueProperty)
+                        return;
+                    if (slider.IsScrubbing)
+                        PreviewParam((float)slider.Value);
+                    else
+                        ApplyParamValue((float)slider.Value);
                 };
+                slider.ScrubCompleted += (_, _) => ApplyParamValue((float)slider.Value);
 
                 void CommitValueBox()
                 {

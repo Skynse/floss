@@ -137,9 +137,9 @@ public partial class MainWindow : Window, Tools.IViewportController
     private Border _selectionActionBar = null!;
     private HsvColorPicker _colorPicker = null!;
     private TextBox _hexInput = null!;
-    private Slider _rgbRSlider = null!;
-    private Slider _rgbGSlider = null!;
-    private Slider _rgbBSlider = null!;
+    private ScrubSlider _rgbRSlider = null!;
+    private ScrubSlider _rgbGSlider = null!;
+    private ScrubSlider _rgbBSlider = null!;
     private Border _colorWell = null!;
     private WrapPanel _swatchPanel = null!;
     private WrapPanel _brushCategoryPanel = null!;
@@ -148,15 +148,15 @@ public partial class MainWindow : Window, Tools.IViewportController
     private Control? _toolPropertiesContent;
     private StackPanel _toolPropertyPanel = null!;
     private TextBlock _toolPropertyTitle = null!;
-    private Slider _sizeSlider = null!;
-    private Slider _maxSizePercentSlider = null!;
-    private Slider _opacitySlider = null!;
-    private Slider _hardnessSlider = null!;
-    private Slider _spacingSlider = null!;
-    private Slider _smoothingSlider = null!;
-    private Slider _grainSlider = null!;
-    private Slider _flowSlider = null!;
-    private Slider _layerOpacitySlider = null!;
+    private ScrubSlider _sizeSlider = null!;
+    private ScrubSlider _maxSizePercentSlider = null!;
+    private ScrubSlider _opacitySlider = null!;
+    private ScrubSlider _hardnessSlider = null!;
+    private ScrubSlider _spacingSlider = null!;
+    private ScrubSlider _smoothingSlider = null!;
+    private ScrubSlider _grainSlider = null!;
+    private ScrubSlider _flowSlider = null!;
+    private ScrubSlider _layerOpacitySlider = null!;
     private bool _layerOpacityScrubActive;
     private TextBlock _activeBrushLabel = null!;
     private ComboBox _blendModeComboBox = null!;
@@ -2549,20 +2549,10 @@ public partial class MainWindow : Window, Tools.IViewportController
         return btn;
     }
 
-    private static Slider MkSlider(double min, double max, double value, string tip)
-    {
-        var s = new Slider
-        {
-            Minimum = min,
-            Maximum = max,
-            Value = value,
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
-        };
-        ToolTip.SetTip(s, tip);
-        return s;
-    }
+    private static ScrubSlider MkSlider(double min, double max, double value, string tip)
+        => ScrubSliderFactory.Create(min, max, value, tip);
 
-    private static Control LabelSlider(string label, Slider slider, string fmt = "")
+    private static Control LabelSlider(string label, ScrubSlider slider, string fmt = "")
     {
         var lbl = new TextBlock
         {
@@ -2584,7 +2574,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         };
         slider.PropertyChanged += (_, e) =>
         {
-            if (e.Property == Slider.ValueProperty)
+            if (e.Property == RangeBase.ValueProperty)
                 valText.Text = FormatSliderValue(slider.Value, fmt);
         };
         var row = new DockPanel { LastChildFill = true };
@@ -2706,18 +2696,14 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         WireCanvas();
 
-        SliderChanged(_sizeSlider, v => UpdateCurrentBrush(p => p with { Size = v }));
-        SliderChanged(_maxSizePercentSlider, v =>
-        {
-            UpdateCurrentBrush(p => p with { MaxSizePercent = v });
-            SyncBrushSizeLimits();
-        });
-        SliderChanged(_opacitySlider, v => UpdateCurrentBrush(p => p with { Opacity = v }));
-        SliderChanged(_flowSlider, v => UpdateCurrentBrush(p => p with { Flow = v }));
-        SliderChanged(_hardnessSlider, v => UpdateCurrentBrush(p => p with { Hardness = v }));
-        SliderChanged(_spacingSlider, v => UpdateCurrentBrush(p => p with { Spacing = v }));
-        SliderChanged(_smoothingSlider, v => UpdateCurrentBrush(p => p with { Smoothing = v }));
-        SliderChanged(_grainSlider, v => UpdateCurrentBrush(p => p with { Grain = v }));
+        WireBrushSlider(_sizeSlider, p => p with { Size = _sizeSlider.Value });
+        WireBrushSlider(_maxSizePercentSlider, p => p with { MaxSizePercent = _maxSizePercentSlider.Value }, SyncBrushSizeLimits);
+        WireBrushSlider(_opacitySlider, p => p with { Opacity = _opacitySlider.Value });
+        WireBrushSlider(_flowSlider, p => p with { Flow = _flowSlider.Value });
+        WireBrushSlider(_hardnessSlider, p => p with { Hardness = _hardnessSlider.Value });
+        WireBrushSlider(_spacingSlider, p => p with { Spacing = _spacingSlider.Value });
+        WireBrushSlider(_smoothingSlider, p => p with { Smoothing = _smoothingSlider.Value });
+        WireBrushSlider(_grainSlider, p => p with { Grain = _grainSlider.Value });
 
         AddHandler(KeyDownEvent, OnKeyDownTunnel, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         AddHandler(KeyUpEvent, OnKeyUpTunnel, Avalonia.Interactivity.RoutingStrategies.Tunnel);
@@ -2725,12 +2711,29 @@ public partial class MainWindow : Window, Tools.IViewportController
         RegisterShortcuts();
     }
 
-    private static void SliderChanged(Slider? slider, Action<double> action)
+    private void WireBrushSlider(
+        ScrubSlider? slider,
+        Func<BrushPreset, BrushPreset> map,
+        Action? afterCommit = null)
     {
         if (slider == null) return;
+
         slider.PropertyChanged += (_, e) =>
         {
-            if (e.Property == Slider.ValueProperty) action(slider.Value);
+            if (e.Property != RangeBase.ValueProperty || _syncingBrushUi) return;
+            if (slider.IsScrubbing)
+                PreviewCurrentBrush(map);
+            else
+            {
+                UpdateCurrentBrush(map);
+                afterCommit?.Invoke();
+            }
+        };
+        slider.ScrubCompleted += (_, _) =>
+        {
+            if (_syncingBrushUi) return;
+            UpdateCurrentBrush(map);
+            afterCommit?.Invoke();
         };
     }
 

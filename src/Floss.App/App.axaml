@@ -309,9 +309,7 @@
             <Setter Property="Background" Value="{StaticResource Bg2}"/>
         </Style>
 
-        <!-- ══════════════════════════════════════════════════════════════════
-             Horizontal slider — full-track scrub bar with floating thumb
-        ══════════════════════════════════════════════════════════════════ -->
+        <!-- Legacy Avalonia Slider styles (app uses Controls.ScrubSlider instead) -->
         <Style Selector="Slider:horizontal">
             <Setter Property="Background" Value="{StaticResource SliderTrack}"/>
             <Setter Property="MinHeight"  Value="14"/>
