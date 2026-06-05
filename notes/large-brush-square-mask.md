@@ -11,19 +11,20 @@ Circle brushes (e.g. Technical Pen at 488px, 96% hardness) turn octagonal then f
 3. **List preview** used a **28px mask** for all large brushes → blocky icon strokes.
 4. **`SampleMaskAlpha` nearest-neighbor** on scaled LOD dabs (when `IsScaled`) amplified blockiness (reverted to bilinear).
 
-## Fix
+## Fix (Krita-aligned, all procedural/node shapes)
 
-1. `ProceduralBrushTip.GenerateMask` for **Circle / SoftRound** → `ClassicBrushLut.ToAlpha8Bitmap` at full `baseSize` (Drawpile LUT, resolution-independent).
-2. `BaseMaskSize` cap raised **512 → 4096** so non-LUT tips bake at stamp resolution.
-3. **Unify large dab path with textured/image brushes**: remove `TryBakeLargeCircleDab`; large circles use `TryBakeLargeMaskDab` only.
-4. `UsesProceduralStampEvaluation` → **false** for built-in Circle/SoftRound so rasterization does not fall back to square UV graph eval.
-5. `BakeDabMaskCpu` centers on actual mask dimensions (not `BaseMaskSize` alone).
-6. `BrushStrokePreview` compact row: mask up to **32–96px** scaled with brush size (was fixed 28px).
+1. **`BrushTipMaskRasterization`** — policy: procedural + node graphs rasterize masks at full stamp size; cached dab composite only.
+2. **`StrokeBaseMaskSize`** — `min(4096, ceil(brush.Size))` (was capped at 512).
+3. **`NodeBrushTip.GenerateMask`** — classic **Circle** → `ClassicBrushLut`; all other primitives → `BrushTipNodeGraphEvaluator.Evaluate` at full `baseSize`.
+4. **`UsesProceduralStampEvaluation`** → **false** for `ProceduralBrushTip` and `NodeBrushTip` (except direct image sampler tips).
+5. **Unified large dab bake** — removed `TryBakeLargeCircleDab`; all shapes use `TryBakeLargeMaskDab`.
+6. **`BakeDabMaskCpu`** — centers on actual mask `Width`/`Height`, not `BaseMaskSize` alone.
+7. **Dab canvas draw** — centers mask/color stamp on bitmap dimensions.
 
 ## Files
 
+- `src/Floss.App/Brushes/Graph/BrushTipMaskRasterization.cs`
+- `src/Floss.App/Brushes/Graph/BrushTipNodeGraph.cs` — `NodeBrushTip.GenerateMask`
 - `src/Floss.App/Brushes/Engine/ClassicBrushLut.cs` — `ToAlpha8Bitmap`
-- `src/Floss.App/Brushes/Tips/ProceduralBrushTip.cs`
-- `src/Floss.App/Brushes/Engine/BrushEngine.cs` — `BaseMaskSize`, `SampleMaskAlpha`
-- `src/Floss.App/Controls/BrushStrokePreview.cs`
-- `tests/Floss.App.Tests/BrushTests.cs` — `ProceduralCircle_GenerateMask_StaysRoundAtLargeSize`
+- `src/Floss.App/Brushes/Engine/BrushEngine.cs`
+- `tests/Floss.App.Tests/BrushTests.cs`

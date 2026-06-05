@@ -6,6 +6,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Avalonia.Media;
+using Floss.App.Brushes.Graph;
 using Floss.App.Brushes.Tips;
 using Floss.App.Document;
 using Floss.App.Input;
@@ -4096,7 +4097,7 @@ public sealed class BrushEngine : IDisposable
             State.NextStampDistance = BrushSpacing.EffectiveDistance(
                 brush, initSize, Math.Clamp(initSpacingMul, 0.05f, 4f), 0f);
 
-            BaseMaskSize = Math.Max(1, Math.Min(512, (int)Math.Ceiling(brush.Size)));
+            BaseMaskSize = BrushTipMaskRasterization.StrokeBaseMaskSize(brush.Size);
             _deferMaskGeneration = UsesProceduralStampEvaluation(brush, TipFor(0), 0);
             if (!_deferMaskGeneration)
                 _mask = TipFor(0).GenerateMask(BaseMaskSize, (float)brush.Hardness);
@@ -4240,8 +4241,7 @@ public sealed class BrushEngine : IDisposable
             if (_dabCache.TryGetValue(key, out dab!))
                 return true;
 
-            if (TryBakeLargeCircleDab(key, out dab)
-                || TryBakeLargeMaskDab(key, out dab))
+            if (TryBakeLargeMaskDab(key, out dab))
             {
                 _dabCache[key] = dab;
                 _dabCacheOrder.Enqueue(key);
@@ -4267,7 +4267,7 @@ public sealed class BrushEngine : IDisposable
                 if (MathF.Abs(layout.AngleDegrees) > 0.001f)
                     canvas.RotateDegrees(layout.AngleDegrees);
                 canvas.Scale(layout.RenderScaleX, layout.RenderScaleY);
-                canvas.DrawBitmap(mask, -BaseMaskSize * 0.5f, -BaseMaskSize * 0.5f, paint);
+                canvas.DrawBitmap(mask, -mask.Width * 0.5f, -mask.Height * 0.5f, paint);
             }
 
             dab = new CachedDab(bitmap, layout.OffsetX, layout.OffsetY, layout.LogicalWidth, layout.LogicalHeight);
@@ -4305,7 +4305,7 @@ public sealed class BrushEngine : IDisposable
                 if (MathF.Abs(layout.AngleDegrees) > 0.001f)
                     canvas.RotateDegrees(layout.AngleDegrees);
                 canvas.Scale(layout.RenderScaleX, layout.RenderScaleY);
-                canvas.DrawBitmap(colorStamp, -BaseMaskSize * 0.5f, -BaseMaskSize * 0.5f, paint);
+                canvas.DrawBitmap(colorStamp, -colorStamp.Width * 0.5f, -colorStamp.Height * 0.5f, paint);
             }
 
             dab = new CachedColorDab(bitmap, layout.OffsetX, layout.OffsetY, layout.LogicalWidth, layout.LogicalHeight);
@@ -4324,42 +4324,6 @@ public sealed class BrushEngine : IDisposable
             int OffsetX,
             int OffsetY,
             float AngleDegrees);
-
-        private bool TryBakeLargeCircleDab(CachedDabKey key, out CachedDab dab)
-        {
-            dab = null!;
-            if (key.Size < LargeStampCachedRasterMinDiameterPx)
-                return false;
-            if (_brush.Shape != null || key.Angle != 0 || key.FlipBits != 0 || key.TipIndex != 0)
-                return false;
-            if (TipFor(0) is not ProceduralBrushTip { Shape: BrushTipShape.Circle or BrushTipShape.SoftRound })
-                return false;
-            if (Math.Abs(_brush.TipThickness - 1.0) > 0.001f && Math.Abs(key.Thickness / 256f - (float)_brush.TipThickness) > 0.05f)
-                return false;
-
-            var hardness = Math.Clamp(key.Hardness * 100 / 255, 0, 100);
-            var diamUpper = Math.Min(4096, key.Size + 8);
-            var buffer = new byte[diamUpper * diamUpper];
-            var stamp = ClassicBrushLut.GetStamp(key.Size, hardness, buffer, buffer);
-            var d = stamp.Diameter;
-            if (d <= 0 || d * d > buffer.Length)
-                return false;
-
-            var bitmap = new SKBitmap(new SKImageInfo(d, d, SKColorType.Alpha8, SKAlphaType.Unpremul));
-            unsafe
-            {
-                var dst = (byte*)bitmap.GetPixels().ToPointer();
-                var stride = bitmap.RowBytes;
-                fixed (byte* src = stamp.Data)
-                {
-                    for (var y = 0; y < d; y++)
-                        Buffer.MemoryCopy(src + y * d, dst + y * stride, d, d);
-                }
-            }
-
-            dab = new CachedDab(bitmap, stamp.Left, stamp.Top, d, d);
-            return true;
-        }
 
         private bool TryBakeLargeMaskDab(CachedDabKey key, out CachedDab dab)
         {
@@ -4398,14 +4362,13 @@ public sealed class BrushEngine : IDisposable
             var effScaleX = layout.RenderScaleX * (layout.BitmapWidth / (float)bakeW);
             var effScaleY = layout.RenderScaleY * (layout.BitmapHeight / (float)bakeH);
             var bitmap = new SKBitmap(new SKImageInfo(bakeW, bakeH, SKColorType.Alpha8, SKAlphaType.Unpremul));
-            BakeDabMaskCpu(mask, BaseMaskSize, bakeW, bakeH, effScaleX, effScaleY, layout.AngleDegrees, bitmap);
+            BakeDabMaskCpu(mask, bakeW, bakeH, effScaleX, effScaleY, layout.AngleDegrees, bitmap);
             dab = new CachedDab(bitmap, layout.OffsetX, layout.OffsetY, layout.LogicalWidth, layout.LogicalHeight);
             return true;
         }
 
         private static unsafe void BakeDabMaskCpu(
             SKBitmap mask,
-            int baseMaskSize,
             int bakeW,
             int bakeH,
             float scaleX,
@@ -4424,7 +4387,8 @@ public sealed class BrushEngine : IDisposable
             var radians = angleDegrees * MathF.PI / 180f;
             var cosA = MathF.Cos(radians);
             var sinA = MathF.Sin(radians);
-            var maskOrigin = baseMaskSize * 0.5f;
+            var maskOriginX = maskW * 0.5f;
+            var maskOriginY = maskH * 0.5f;
 
             for (var oy = 0; oy < bakeH; oy++)
             {
@@ -4435,8 +4399,8 @@ public sealed class BrushEngine : IDisposable
                     var px = ox - cx;
                     var rx = px * cosA + py * sinA;
                     var ry = -px * sinA + py * cosA;
-                    var mx = rx / scaleX + maskOrigin;
-                    var my = ry / scaleY + maskOrigin;
+                    var mx = rx / scaleX + maskOriginX;
+                    var my = ry / scaleY + maskOriginY;
                     dstRow[ox] = (byte)SampleMaskBilinear(maskPtr, maskW, maskH, maskStride, mx, my);
                 }
             }
@@ -4715,21 +4679,16 @@ public sealed class BrushEngine : IDisposable
         if (HasMultiTipSelection(brush)) return false;
         if (primaryTip.HasColor) return false;
 
+        if (BrushTipMaskRasterization.PrefersMaskRasterization(primaryTip))
+            return false;
+
         return primaryTip switch
         {
             ImageBrushTip => true,
             NodeBrushTip { IsDirectImageSampler: true } => true,
-            ProceduralBrushTip proc => CanDirectEvaluateGraph(proc.Graph, brush),
-            // ImageSampler graphs must bake a mask once — per-pixel graph eval re-samples
-            // the PNG for every stamp pixel and stalls the UI thread.
-            NodeBrushTip node when node.Graph.ContainsImageSampler(BrushMaterialTips.ForPreset(brush)) => false,
-            NodeBrushTip node => CanDirectEvaluateGraph(node.Graph, brush),
             _ => false
         };
     }
-
-    private static bool CanDirectEvaluateGraph(BrushTipNodeGraph graph, BrushPreset brush)
-        => BrushTipStampFastPath.TryCreate(graph, (float)brush.Hardness, out _);
 
     private static bool HasMultiTipSelection(BrushPreset brush)
         => brush.TipSelectionMode != BrushTipSelectionMode.Single && brush.Tips.Count > 1;

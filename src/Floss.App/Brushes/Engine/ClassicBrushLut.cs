@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.CompilerServices;
+using SkiaSharp;
 
 namespace Floss.App.Brushes.Engine;
 
@@ -226,5 +227,29 @@ public static class ClassicBrushLut
             stamp = GetOffsetStamp(stamp, offsetBuffer, subPixelX, subPixelY, hardness);
 
         return stamp;
+    }
+
+    public static SKBitmap ToAlpha8Bitmap(float diameter, int hardness)
+    {
+        var diamUpper = Math.Min(4096, (int)MathF.Ceiling(diameter) + 8);
+        var buffer = new byte[diamUpper * diamUpper];
+        var stamp = GetStamp(diameter, hardness, buffer, buffer);
+        var d = stamp.Diameter;
+        if (d <= 0 || d * d > buffer.Length)
+            return new SKBitmap(1, 1, SKColorType.Alpha8, SKAlphaType.Unpremul);
+
+        var bitmap = new SKBitmap(new SKImageInfo(d, d, SKColorType.Alpha8, SKAlphaType.Unpremul));
+        unsafe
+        {
+            var dst = (byte*)bitmap.GetPixels().ToPointer();
+            var stride = bitmap.RowBytes;
+            fixed (byte* src = stamp.Data)
+            {
+                for (var y = 0; y < d; y++)
+                    Buffer.MemoryCopy(src + y * d, dst + y * stride, d, d);
+            }
+        }
+
+        return bitmap;
     }
 }

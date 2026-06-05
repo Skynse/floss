@@ -420,6 +420,33 @@ public class BrushTests
     }
 
     [Fact]
+    public void ProceduralCircle_GenerateMask_StaysRoundAtLargeSize()
+    {
+        using var tip = new ProceduralBrushTip(BrushTipShape.Circle);
+        using var mask = tip.GenerateMask(862, 0.96f);
+        TestAssertions.True(mask.Width > 500);
+        TestAssertions.Equal(0, mask.GetPixel(0, 0).Alpha);
+        TestAssertions.Equal(0, mask.GetPixel(mask.Width - 1, 0).Alpha);
+        TestAssertions.Equal(0, mask.GetPixel(0, mask.Height - 1).Alpha);
+        TestAssertions.Equal(0, mask.GetPixel(mask.Width - 1, mask.Height - 1).Alpha);
+        var cx = mask.Width / 2;
+        var cy = mask.Height / 2;
+        TestAssertions.True(mask.GetPixel(cx, cy).Alpha > 200);
+    }
+
+    [Fact]
+    public void ProceduralRectangle_GenerateMask_FillsCenterAtLargeSize()
+    {
+        using var tip = new ProceduralBrushTip(BrushTipShape.Rectangle);
+        using var mask = tip.GenerateMask(862, 0.85f);
+        TestAssertions.True(mask.Width > 500);
+        var cx = mask.Width / 2;
+        var cy = mask.Height / 2;
+        TestAssertions.True(mask.GetPixel(cx, cy).Alpha > 200);
+        TestAssertions.Equal(0, mask.GetPixel(0, 0).Alpha);
+    }
+
+    [Fact]
     public void BrushEngine_LargeMultiStampUsesLightenRasterPath()
     {
         using var engine = new BrushEngine();
@@ -1551,10 +1578,10 @@ public class BrushTests
 
         TestAssertions.False(BrushEngine.UsesProceduralStampEvaluation(brush, tip, 0),
             "ImageSampler node graphs should bake masks instead of per-pixel graph evaluation.");
-        TestAssertions.True(BrushEngine.UsesProceduralStampEvaluation(
+        TestAssertions.False(BrushEngine.UsesProceduralStampEvaluation(
                 brush with { Tip = new ProceduralBrushTip(BrushTipShape.Circle) },
                 new ProceduralBrushTip(BrushTipShape.Circle), 0),
-            "Pure procedural tips should keep the fast per-pixel path.");
+            "Procedural and node-graph tips rasterize masks at stamp size and use cached dabs.");
     }
 
     [Fact]
@@ -1592,7 +1619,9 @@ public class BrushTests
         var dirty = engine.RasterizeSegment(layer, brush, from, to);
 
         TestAssertions.False(dirty.IsEmpty);
-        TestAssertions.Equal("CachedTileMajor", engine.LastStats.Path);
+        TestAssertions.True(
+            engine.LastStats.Path is "CachedTileMajor" or "CachedLightenScratch" or "StrokeMaskCached",
+            $"Expected cached dab raster path, got {engine.LastStats.Path}.");
         TestAssertions.True(engine.LastStats.CachedDabCount > 0);
     }
 

@@ -521,7 +521,11 @@ public sealed class NodeBrushTip : IBrushTip, IDisposable
             if (_maskCache.TryGetValue(key, out var cached))
                 return cached;
 
-        var mask = BrushTipNodeGraphEvaluator.Evaluate(Graph, size, h, _materialTips);
+        SKBitmap mask;
+        if (BrushTipMaskRasterization.TryCreateClassicCircleMask(Graph, size, h, out var lutMask))
+            mask = lutMask;
+        else
+            mask = BrushTipNodeGraphEvaluator.Evaluate(Graph, size, h, _materialTips);
         lock (_cacheLock)
         {
             if (_maskCache.TryGetValue(key, out var existing))
