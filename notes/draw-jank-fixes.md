@@ -7,11 +7,17 @@
 - `CaptureTiles` every segment batch even when selection/alpha-lock/color-mix unused.
 - `DirtyTileBudget=32` too low during live stroke → multi-pass catch-up.
 
-## Changes
-1. **LayerCompositor.DrawTiles**: `SKImage.FromBitmap` only when `_cellRevision` changes (`EnsureCellDisplayImage`), not every frame. `SkiaTileDrawOp.Equals` always false so pan/zoom repaints. Direct `DrawBitmap` was reverted — async render tore mutable cell bitmaps.
+## Changes (kept)
+1. **LayerCompositor.DrawTiles**: `SKImage.FromBitmap` only when `_cellRevision` changes (`EnsureCellDisplayImage`), not every frame. `SkiaTileDrawOp.Equals` always false so pan/zoom repaints.
 2. **DirectDrawOutput.FlushPreviewDirty**: drop redundant `InvalidateRender()` (`NotifyChanged` → projection scheduler).
-3. **DirectDrawOutput**: skipped lazy `CaptureTiles` — undo/`CommitLayerTileMutation` still requires before-tile snapshots on first touch.
+3. **DirectDrawOutput**: skip `CaptureTiles` when selection/alpha-lock/color-mix not needed.
 4. **LayerCompositor.CompositeCore**: `StrokeSuspendTileBudget=256` during active stroke.
+5. **LayerCompositor.DispatchToPool**: `UseParallelComposite` — no parallel merge on UI thread (avoids `SemaphoreSlim.Wait` stalls).
+
+## Reverted (2026-06-04, caused idle lag)
+- Per-tile `DrawTiles` (hundreds of Skia ops/frame vs 1–4 cells).
+- Viewport prefetch / `_tileDisplayReady` / LRU scratch cache / sync stroke composite on every `Render`.
+- Calm `BackgroundCompositePass` invalidate — restored always-invalidate behavior.
 
 ## Files
 - `src/Floss.App/Canvas/Compositing/LayerCompositor.cs`

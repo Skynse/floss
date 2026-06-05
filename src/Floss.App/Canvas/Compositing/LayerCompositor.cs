@@ -80,6 +80,12 @@ public sealed class LayerCompositor : IDisposable
         _compositeIdleEvent.Dispose();
     }
 
+    /// <summary>Do not block the UI render thread waiting on RenderThreadPool workers.</summary>
+    private static bool UseParallelComposite(int tileCount) =>
+        tileCount >= 4
+        && Environment.ProcessorCount > 1
+        && !Dispatcher.UIThread.CheckAccess();
+
     private static void DispatchToPool(int count, Action<int> action)
     {
         if (count <= 0) return;
@@ -480,7 +486,7 @@ public sealed class LayerCompositor : IDisposable
                 CopyTileToCell(ti);
             }
 
-            if (all.Length >= 4 && Environment.ProcessorCount > 1) DispatchToPool(all.Length, CompStroke);
+            if (UseParallelComposite(all.Length)) DispatchToPool(all.Length, CompStroke);
             else for (var i = 0; i < all.Length; i++) CompStroke(i);
 
             foreach (var idx in all) _pendingComposite.Remove(idx);
@@ -501,7 +507,7 @@ public sealed class LayerCompositor : IDisposable
                 CopyTileToCell(ti);
             }
 
-            if (all.Length >= 4 && Environment.ProcessorCount > 1) DispatchToPool(all.Length, Comp1);
+            if (UseParallelComposite(all.Length)) DispatchToPool(all.Length, Comp1);
             else for (var i = 0; i < all.Length; i++) Comp1(i);
 
             foreach (var idx in all) _pendingComposite.Remove(idx);
