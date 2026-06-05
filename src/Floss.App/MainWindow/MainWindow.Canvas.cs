@@ -246,6 +246,43 @@ public partial class MainWindow
             }
     }
 
+    internal async Task ShowCanvasInformationDialogAsync()
+    {
+        if (!_canvas.HasDocument) return;
+
+        var doc = _canvas.Document;
+        var initial = new CanvasPropertiesInitial(doc.Width, doc.Height, doc.Dpi, doc.PaperColor);
+        var result = await new DocumentPropertiesDialog(DocumentPropertiesMode.Edit, initial)
+            .ShowDialog<DocumentSettings?>(this);
+        if (result == null) return;
+
+        doc.SetDpi(result.Dpi);
+
+        var bgColor = result.BackgroundColor.ToAvalonia();
+        if (bgColor != doc.PaperColor)
+        {
+            doc.SetPaperColor(bgColor);
+            var paper = doc.PaperLayer;
+            if (paper != null)
+                paper.FillSolid(paper.Pixels.Bounds, bgColor);
+        }
+
+        if (result.Width != doc.Width || result.Height != doc.Height)
+        {
+            var offX = (result.Width - doc.Width) / 2;
+            var offY = (result.Height - doc.Height) / 2;
+            _canvas.ResizeCanvas(result.Width, result.Height, offX, offY);
+            SyncCanvasFrameToDocument(fitToViewport: true);
+            SyncBrushSizeLimits();
+            BuildLayerList();
+        }
+
+        _canvas.InvalidateCompositor();
+        _canvas.InvalidateVisual();
+        _checkerboardOverlay?.InvalidateVisual();
+        _resizeOverlay?.InvalidateVisual();
+    }
+
     private void ShowPaperColorPicker()
     {
         var picker = new ColorPickerWindow(_canvas.Document.PaperColor, color =>

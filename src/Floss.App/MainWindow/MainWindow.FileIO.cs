@@ -102,7 +102,8 @@ public partial class MainWindow
         }
 
         // 2. Show the New Document Wizard
-        var result = await new NewDocumentDialog().ShowDialog<DocumentSettings?>(this);
+        var result = await new DocumentPropertiesDialog(DocumentPropertiesMode.New)
+            .ShowDialog<DocumentSettings?>(this);
         if (result == null)
         {
             // User canceled — close the empty tab we just created
@@ -113,6 +114,7 @@ public partial class MainWindow
 
         // 3. Create the new document
         var newDoc = new DrawingDocument(result.Width, result.Height);
+        newDoc.SetDpi(result.Dpi);
 
         // Set the paper (background) color and create physical paper layer if solid.
         var bgColor = result.BackgroundColor.ToAvalonia();
@@ -425,7 +427,7 @@ public partial class MainWindow
         var doc = _canvas.Document;
 
         // Show format-specific export wizard
-        var settings = await new ExportWizardDialog(ext, doc.Width, doc.Height).ShowDialog<ExportSettings?>(this);
+        var settings = await new ExportWizardDialog(ext, doc.Width, doc.Height, doc.Dpi).ShowDialog<ExportSettings?>(this);
         if (settings == null) return;
 
         try

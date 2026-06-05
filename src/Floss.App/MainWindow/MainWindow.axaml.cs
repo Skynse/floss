@@ -943,7 +943,9 @@ public partial class MainWindow : Window, Tools.IViewportController
                 _copyMenuItem,
                 _pasteMenuItem,
                 new Separator(),
-                _editDeleteMenuItem
+                _editDeleteMenuItem,
+                new Separator(),
+                MenuAction("Canvas _Information...", async () => await ShowCanvasInformationDialogAsync())
             }
         };
 

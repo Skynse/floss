@@ -81,6 +81,19 @@ public sealed class DrawingDocument : IDisposable
     // --- Properties ---
     public int Width { get; private set; }
     public int Height { get; private set; }
+    /// <summary>Document resolution in dots per inch (metadata for export / canvas info).</summary>
+    public int Dpi { get; private set; } = 72;
+
+    public void SetDpi(int dpi)
+    {
+        dpi = Math.Clamp(dpi, 1, 1200);
+        if (dpi == Dpi) return;
+        var old = Dpi;
+        PushHistoryState(new DocumentPropertyHistoryState<int>(old, dpi, v => Dpi = v, false, PixelRegion.Empty));
+        Dpi = dpi;
+        DirtyStateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     public Avalonia.Media.Color PaperColor { get; internal set; } = new(255, 255, 255, 255); // opaque white by default
 
     public void SetPaperColor(Avalonia.Media.Color color)
@@ -313,6 +326,7 @@ public sealed class DrawingDocument : IDisposable
 
         Width = source.Width;
         Height = source.Height;
+        Dpi = source.Dpi;
         Selection.Resize(Width, Height);
         ActiveLayerIndex = source.ActiveLayerIndex;
         CommittedStrokeCount = source.CommittedStrokeCount;

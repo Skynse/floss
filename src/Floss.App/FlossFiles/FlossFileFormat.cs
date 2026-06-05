@@ -74,6 +74,8 @@ public static class FlossFileFormat
 
         var document = new DrawingDocument(Math.Max(1, manifest.Width), Math.Max(1, manifest.Height));
         document.ClearForImport();
+        if (manifest.Dpi is > 0)
+            document.SetDpi(manifest.Dpi);
 
         if (manifest.PaperColor is { } pc)
             document.PaperColor = Avalonia.Media.Color.FromArgb(pc.A, pc.R, pc.G, pc.B);
@@ -216,6 +218,7 @@ public static class FlossFileFormat
             App = "Floss",
             Width = document.Width,
             Height = document.Height,
+            Dpi = document.Dpi,
             ActiveLayerIndex = document.ActiveLayerIndex,
             PaperColor = new SerializableColor(document.PaperColor.R, document.PaperColor.G, document.PaperColor.B, document.PaperColor.A),
             Layers = layers,
@@ -361,6 +364,7 @@ public static class FlossFileFormat
         [JsonPropertyName("app")] public string App { get; set; } = "Floss";
         [JsonPropertyName("width")] public int Width { get; set; }
         [JsonPropertyName("height")] public int Height { get; set; }
+        [JsonPropertyName("dpi")] public int Dpi { get; set; } = 72;
         [JsonPropertyName("activeLayerIndex")] public int ActiveLayerIndex { get; set; }
         [JsonPropertyName("paperColor")] public SerializableColor? PaperColor { get; set; }
         [JsonPropertyName("layers")] public List<FlossLayerManifest> Layers { get; set; } = [];
