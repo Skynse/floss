@@ -3,6 +3,7 @@ namespace Floss.App.Tests;
 using Avalonia;
 using Avalonia.Headless;
 using Floss.App.Canvas.Compositing;
+using Floss.App.Document;
 using Floss.App.Kra;
 using SkiaSharp;
 
@@ -161,6 +162,55 @@ public class LayerCompositorTests
         compositor.BeginStrokeSuspend(new PixelRegion(0, 0, 64, 64));
         compositor.Composite([background], 64, 64, viewport: new PixelRegion(0, 0, 64, 64), zoom: 1.0);
         TestAssertions.Equal(0, compositor.LastLod, "Drawpile-style compositor always uses LOD 0.");
+        compositor.EndStrokeSuspend();
+    }
+
+    [Fact]
+    public void ClipCompositeStartIndex_FindsClipBase()
+    {
+        var baseLayer = new DrawingLayer("Base", 8, 8);
+        var clipA = new DrawingLayer("ClipA", 8, 8) { IsClipping = true };
+        var clipB = new DrawingLayer("ClipB", 8, 8) { IsClipping = true };
+        var siblings = new List<DrawingLayer> { baseLayer, clipA, clipB };
+
+        TestAssertions.Equal(0, LayerProjectionPlane.ClipCompositeStartIndex(siblings, 0));
+        TestAssertions.Equal(0, LayerProjectionPlane.ClipCompositeStartIndex(siblings, 1));
+        TestAssertions.Equal(0, LayerProjectionPlane.ClipCompositeStartIndex(siblings, 2));
+    }
+
+    [Fact]
+    public void StrokeSuspend_OnClippedLayer_MatchesFullCompositeOutsideClipBase()
+    {
+        EnsureAvalonia();
+        const int size = 64;
+        var baseLayer = new DrawingLayer("Base", size, size);
+        baseLayer.Pixels.SetPixel(32, 32, 0, 0, 0, 255);
+
+        var clipLayer = new DrawingLayer("Clip", size, size) { IsClipping = true };
+        clipLayer.Pixels.SetPixel(8, 8, 0, 255, 0, 255);
+
+        var layers = new List<DrawingLayer> { baseLayer, clipLayer };
+        using var compositor = new LayerCompositor();
+        compositor.SetSize(size, size);
+
+        void ReadAt(int x, int y, out byte b, out byte g, out byte r, out byte a)
+        {
+            if (!compositor.TryReadDisplayPixel(x, y, out b, out g, out r, out a))
+                b = g = r = a = 0;
+        }
+
+        compositor.Composite(layers, size, size, paperColor: 0xFFFFFFFF);
+        ReadAt(8, 8, out _, out var refG, out _, out var refA);
+
+        compositor.BeginStrokeSuspend(new PixelRegion(0, 0, size, size), layerIndex: 1);
+        compositor.Invalidate(new PixelRegion(0, 0, size, size));
+        compositor.Composite(layers, size, size, paperColor: 0xFFFFFFFF,
+            viewport: new PixelRegion(0, 0, size, size), zoom: 1.0);
+        ReadAt(8, 8, out _, out var liveG, out _, out var liveA);
+
+        TestAssertions.Equal(refG, liveG, "Live stroke must match full composite green channel outside clip base.");
+        TestAssertions.Equal(refA, liveA, "Live stroke must match full composite alpha outside clip base.");
+
         compositor.EndStrokeSuspend();
     }
 

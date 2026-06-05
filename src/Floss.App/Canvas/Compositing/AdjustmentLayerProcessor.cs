@@ -32,8 +32,7 @@ internal static unsafe class AdjustmentLayerProcessor
         byte* dst, int dstStride, AdjustmentLayerData adj, DrawingLayer layer, float op,
         PixelRegion clip, int originX, int originY)
     {
-        adj.LutCache.Ensure(adj);
-        var cache = adj.LutCache;
+        if (IsEffectivelyIdentity(adj)) return;
 
         var mask = layer.MaskPixels!;
         const int ts = TiledPixelBuffer.TileSize;
@@ -84,7 +83,8 @@ internal static unsafe class AdjustmentLayerProcessor
 
                             var docX = lx + offX;
                             var px = dstRow + (docX - originX) * 4;
-                            cache.Lookup(px[0], px[1], px[2], out var rb, out var gb, out var bb);
+                            if (px[3] == 0) continue;
+                            TransformRgb(adj, px[0], px[1], px[2], out var rb, out var gb, out var bb);
 
                             if (fullOpacity && maskA == 255)
                             {
@@ -128,8 +128,7 @@ internal static unsafe class AdjustmentLayerProcessor
     {
         if (opacityScale <= 0 || clip.IsEmpty) return;
         var op = (float)Math.Clamp(opacityScale, 0.0, 1.0);
-        adj.LutCache.Ensure(adj);
-        ApplyViaRgbCube(dst, dstStride, adj, op, clip, originX, originY);
+        ApplyPixels(dst, dstStride, adj, op, clip, originX, originY);
     }
 
     public static void ApplyClipped(
@@ -217,21 +216,46 @@ internal static unsafe class AdjustmentLayerProcessor
         px[2] = ro;
     }
 
-    private static void ApplyViaRgbCube(
+    private static void ApplyPixels(
         byte* dst, int dstStride, AdjustmentLayerData adj, float op,
         PixelRegion clip, int ox, int oy)
     {
-        var cache = adj.LutCache;
+        if (IsEffectivelyIdentity(adj)) return;
+
         for (var y = clip.Y; y < clip.Bottom; y++)
         {
             var row = dst + (y - oy) * dstStride + (clip.X - ox) * 4;
             for (var x = clip.X; x < clip.Right; x++, row += 4)
             {
-                cache.Lookup(row[0], row[1], row[2], out var rb, out var gb, out var bb);
+                if (row[3] == 0) continue;
+                TransformRgb(adj, row[0], row[1], row[2], out var rb, out var gb, out var bb);
                 BlendPx(row, rb, gb, bb, op);
             }
         }
     }
+
+    internal static bool IsEffectivelyIdentity(AdjustmentLayerData adj) => adj.Kind switch
+    {
+        AdjustmentKind.BrightnessContrast => adj.Brightness == 0f && adj.Contrast == 0f,
+        AdjustmentKind.HueSaturationLuminosity => adj.Hue == 0f && adj.Saturation == 0f && adj.Luminosity == 0f,
+        AdjustmentKind.Posterization => false,
+        AdjustmentKind.LevelCorrection =>
+            adj.LevelInBlack == 0f && adj.LevelInWhite == 255f && adj.LevelGamma == 1f
+            && adj.LevelOutBlack == 0f && adj.LevelOutWhite == 255f,
+        AdjustmentKind.ToneCurve => IsFlatCurve(adj.CurveAll) && IsFlatCurve(adj.CurveR)
+            && IsFlatCurve(adj.CurveG) && IsFlatCurve(adj.CurveB),
+        AdjustmentKind.ColorBalance =>
+            adj.ShadowR == 0f && adj.ShadowG == 0f && adj.ShadowB == 0f
+            && adj.MidtoneR == 0f && adj.MidtoneG == 0f && adj.MidtoneB == 0f
+            && adj.HighlightR == 0f && adj.HighlightG == 0f && adj.HighlightB == 0f,
+        AdjustmentKind.Binarization => false,
+        AdjustmentKind.GradientMap => false,
+        AdjustmentKind.ReverseGradient => false,
+        _ => true,
+    };
+
+    private static bool IsFlatCurve(float[] pts) =>
+        pts.Length >= 4 && pts[0] == 0f && pts[1] == 0f && pts[^2] == 255f && pts[^1] == 255f;
 
     private static void TransformRgb(AdjustmentLayerData adj, byte b, byte g, byte r,
         out byte bo, out byte go, out byte ro)
@@ -315,22 +339,29 @@ internal static unsafe class AdjustmentLayerProcessor
         ro = C((r - 128f) * cFactor + 128f + brightness);
     }
 
+    /// <summary>
+    /// Same HSL math as <see cref="Floss.App.Filters.FilterEngine.ApplyHueSaturationLightness"/>.
+    /// Sliders are degrees / percent (−100..100 sat &amp; lum); filter uses −1..1 for sat &amp; light.
+    /// </summary>
     private static void TransformHSL(AdjustmentLayerData adj, byte b, byte g, byte r,
         out byte bo, out byte go, out byte ro)
     {
-        var hShift = adj.Hue / 360f;
-        var sShift = adj.Saturation / 100f;
-        var lShift = adj.Luminosity / 100f;
-        float rf = r / 255f, gf = g / 255f, bf = b / 255f;
-        RgbToHsl(rf, gf, bf, out var h, out var s, out var l);
-        h = (h + hShift) % 1f;
-        if (h < 0) h += 1f;
-        s = Math.Clamp(s + sShift, 0f, 1f);
-        l = Math.Clamp(l + lShift, 0f, 1f);
-        HslToRgb(h, s, l, out var rof, out var gof, out var bof);
+        var saturation = adj.Saturation / 100f;
+        var lightness = adj.Luminosity / 100f;
+        RgbToHsl(r / 255f, g / 255f, b / 255f, out var h, out var s, out var l);
+        h = Wrap01(h + adj.Hue / 360f);
+        s = saturation >= 0 ? s + (1f - s) * saturation : s * (1f + saturation);
+        l = lightness >= 0 ? l + (1f - l) * lightness : l * (1f + lightness);
+        HslToRgb(h, Math.Clamp(s, 0f, 1f), Math.Clamp(l, 0f, 1f), out var rof, out var gof, out var bof);
         bo = C(bof * 255f);
         go = C(gof * 255f);
         ro = C(rof * 255f);
+    }
+
+    private static float Wrap01(float value)
+    {
+        value %= 1f;
+        return value < 0 ? value + 1f : value;
     }
 
     private static void RgbToHsl(float r, float g, float b, out float h, out float s, out float l)

@@ -720,7 +720,8 @@ public sealed class LayerCompositor : IDisposable
         public List<ProjectionSiblingItem> BelowRoots { get; } = [];
         public List<ProjectionSiblingItem> AboveRoots { get; } = [];
         public DrawingLayer? NestedGroup { get; set; }
-        public int NestedChildSplitIndex { get; set; }
+        /// <summary>First group child included in the clip-aware above pass (includes clip base).</summary>
+        public int NestedClipCompositeStart { get; set; }
     }
 
     private static bool TryCreateStrokeSplitPlan(
@@ -731,15 +732,26 @@ public sealed class LayerCompositor : IDisposable
     {
         plan = new StrokeSplitPlan();
         plan.NestedGroup = null;
-        plan.NestedChildSplitIndex = 0;
+        plan.NestedClipCompositeStart = 0;
         if (paintLayerIndex < 0 || paintLayerIndex >= layers.Count) return false;
         var paintLayer = layers[paintLayerIndex];
+
+        var rootLayers = new List<DrawingLayer>(rootStack.Count);
+        for (var i = 0; i < rootStack.Count; i++)
+            rootLayers.Add(rootStack[i].Layer);
 
         for (var i = 0; i < rootStack.Count; i++)
         {
             if (rootStack[i].Layer != paintLayer) continue;
-            for (var j = 0; j < i; j++) plan.BelowRoots.Add(rootStack[j]);
-            for (var j = i; j < rootStack.Count; j++) plan.AboveRoots.Add(rootStack[j]);
+
+            var clipStart = LayerProjectionPlane.ClipCompositeStartIndex(rootLayers, i);
+            for (var j = 0; j < clipStart; j++)
+                plan.BelowRoots.Add(rootStack[j]);
+
+            var aboveLayers = new List<DrawingLayer>(rootStack.Count - clipStart);
+            for (var j = clipStart; j < rootLayers.Count; j++)
+                aboveLayers.Add(rootLayers[j]);
+            plan.AboveRoots.AddRange(LayerProjectionPlane.BuildSiblingStack(aboveLayers));
             return true;
         }
 
@@ -753,10 +765,17 @@ public sealed class LayerCompositor : IDisposable
             var childIdx = group.Children.IndexOf(directChild);
             if (childIdx < 0) return false;
 
-            for (var j = 0; j < gi; j++) plan.BelowRoots.Add(rootStack[j]);
-            for (var j = gi + 1; j < rootStack.Count; j++) plan.AboveRoots.Add(rootStack[j]);
+            for (var j = 0; j < gi; j++)
+                plan.BelowRoots.Add(rootStack[j]);
+
+            var aboveLayers = new List<DrawingLayer>(rootStack.Count - gi - 1);
+            for (var j = gi + 1; j < rootLayers.Count; j++)
+                aboveLayers.Add(rootLayers[j]);
+            plan.AboveRoots.AddRange(LayerProjectionPlane.BuildSiblingStack(aboveLayers));
+
             plan.NestedGroup = group;
-            plan.NestedChildSplitIndex = childIdx;
+            plan.NestedClipCompositeStart =
+                LayerProjectionPlane.ClipCompositeStartIndex(group.Children, childIdx);
             return true;
         }
 
@@ -790,10 +809,10 @@ public sealed class LayerCompositor : IDisposable
         if (plan.BelowRoots.Count > 0)
             Projection.CompositeSiblingStack(dst, dstStride, bmpW, bmpH, plan.BelowRoots, 1.0, tr, ox, oy);
 
-        if (plan.NestedGroup is { } group && plan.NestedChildSplitIndex > 0)
+        if (plan.NestedGroup is { } group && plan.NestedClipCompositeStart > 0)
         {
-            var belowKids = new List<DrawingLayer>(plan.NestedChildSplitIndex);
-            for (var i = 0; i < plan.NestedChildSplitIndex; i++)
+            var belowKids = new List<DrawingLayer>(plan.NestedClipCompositeStart);
+            for (var i = 0; i < plan.NestedClipCompositeStart; i++)
                 belowKids.Add(group.Children[i]);
             CompositeGroupChildrenSubset(dst, dstStride, bmpW, bmpH, group, belowKids, 1.0, tr, ox, oy);
         }
@@ -805,11 +824,11 @@ public sealed class LayerCompositor : IDisposable
     {
         if (plan.NestedGroup is { } group)
         {
-            var aboveCount = group.Children.Count - plan.NestedChildSplitIndex;
+            var aboveCount = group.Children.Count - plan.NestedClipCompositeStart;
             if (aboveCount > 0)
             {
                 var aboveKids = new List<DrawingLayer>(aboveCount);
-                for (var i = plan.NestedChildSplitIndex; i < group.Children.Count; i++)
+                for (var i = plan.NestedClipCompositeStart; i < group.Children.Count; i++)
                     aboveKids.Add(group.Children[i]);
                 CompositeGroupChildrenSubset(dst, dstStride, bmpW, bmpH, group, aboveKids, 1.0, tr, ox, oy);
             }

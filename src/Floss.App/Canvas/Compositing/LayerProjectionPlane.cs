@@ -89,10 +89,11 @@ internal sealed class LayerProjectionPlane
                                     clip.Width, clip.Height, clipItem.Layer,
                                     clip, originX, originY);
                             else if (clipItem.Layer.Adjustment != null)
-                                AdjustmentLayerProcessor.ApplyWithLayer(
+                                AdjustmentLayerProcessor.ApplyClipped(
                                     tp, clip.Width * 4, clip.Width, clip.Height,
-                                    clipItem.Layer,
-                                    clipItem.Layer.Opacity, clip, originX, originY);
+                                    clipItem.Layer.Adjustment!,
+                                    clipItem.Layer.Opacity,
+                                    baseLayer, clip, originX, originY);
                             else
                                 LayerCompositorPixelOps.CompositeLayerAlphaPreserving(
                                     tp, clip.Width * 4, clip.Width, clip.Height,
@@ -218,6 +219,21 @@ internal sealed class LayerProjectionPlane
             }
         }
         return result;
+    }
+
+    /// <summary>
+    /// First sibling index to include when compositing a clip stack (base layer + clip chain).
+    /// Used by stroke-split so <see cref="ProjectionSiblingItem.BaseLayerIndex"/> stays valid.
+    /// </summary>
+    internal static int ClipCompositeStartIndex(IReadOnlyList<DrawingLayer> siblings, int paintIndex)
+    {
+        if (paintIndex <= 0 || paintIndex >= siblings.Count || !siblings[paintIndex].IsClipping)
+            return paintIndex;
+
+        var i = paintIndex;
+        while (i > 0 && siblings[i - 1].IsClipping)
+            i--;
+        return i > 0 && !siblings[i - 1].IsClipping ? i - 1 : i;
     }
 
     /// <summary>
