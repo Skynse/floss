@@ -121,7 +121,7 @@ public class DockingTests
     }
 
     [Fact]
-    public void Column_RemovePanel_DissolvesTabGroup_WhenOneRemains()
+    public void Column_RemovePanel_KeepsTabGroup_WhenOneRemains()
     {
         var col = new DockColumnLayout
         {
@@ -130,10 +130,9 @@ public class DockingTests
         };
         col.RemovePanel("brush");
 
-        // Tab group dissolved — "layers" is now a solo panel
-        Assert.False(col.TabGroups.ContainsKey("tab:0"));
-        Assert.Contains("layers", col.PanelIds);
-        Assert.DoesNotContain("tab:0", col.PanelIds);
+        Assert.True(col.TabGroups.ContainsKey("tab:0"));
+        Assert.Equal(["layers"], col.TabGroups["tab:0"].PanelIds);
+        Assert.Contains("tab:0", col.PanelIds);
     }
 
     [Fact]
@@ -178,6 +177,22 @@ public class DockingTests
         Assert.Equal(["color"], rows[1].PanelIds);
     }
 
+    [Fact]
+    public void DockTabStacks_Compact_MergesFlatColorStack()
+    {
+        var col = new DockColumnLayout { PanelIds = ["color", "color-slider", "layers"] };
+        Assert.True(DockTabStacks.NeedsCompaction(col));
+
+        DockTabStacks.Compact(col);
+
+        Assert.Equal(["tab:color", "layers"], col.PanelIds);
+        Assert.Equal(["color", "color-slider"], col.TabGroups["tab:color"].PanelIds);
+        var rows = col.ResolvedRows();
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(2, rows[0].PanelIds.Count);
+        Assert.Equal(["layers"], rows[1].PanelIds);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // WorkspaceLayout
     // ═══════════════════════════════════════════════════════════════════════════
@@ -203,8 +218,8 @@ public class DockingTests
         layout.HiddenPanelIds.Clear();
         layout.Normalize(PanelRegistry.AllIds);
 
-        Assert.True(layout.LeftColumn.ContainsPanel("tools"));
-        Assert.True(layout.LeftColumn.ContainsPanel("brush"));
+        Assert.True(layout.LeftColumns.Any(c => c.ContainsPanel("tools")));
+        Assert.True(layout.LeftColumns.Any(c => c.ContainsPanel("brush")));
         Assert.True(layout.BottomColumn.ContainsPanel("node-graph"));
     }
 
@@ -236,7 +251,8 @@ public class DockingTests
     public void Layout_FindPanel_FindsInRightColumn()
     {
         var layout = WorkspaceLayout.CreateDefault();
-        SetColumnPanels(layout.LeftColumn);
+        foreach (var c in layout.LeftColumns)
+            SetColumnPanels(c);
         SetColumnPanels(layout.RightColumns[0], "brush", "color");
         layout.RightColumns.Add(new DockColumnLayout { Id = "right-1", PanelIds = ["layers"] });
 
@@ -512,12 +528,11 @@ public class DockingTests
     }
 
     [Fact]
-    public void Normalize_Deduplicates_KeepsInDefaultZone()
+    public void Normalize_Deduplicates_PrefersRightOverBottom()
     {
         PanelRegistry.Clear();
         PanelRegistry.Register(new DockPanelDef("node-graph", "", () => new TextBlock(), DefaultZone: "bottom"));
 
-        // Simulate old config where node-graph is in both bottom and right
         var layout = new WorkspaceLayout
         {
             BottomColumn = new DockColumnLayout { PanelIds = ["node-graph"] },
@@ -525,13 +540,12 @@ public class DockingTests
         };
         layout.Normalize(PanelRegistry.AllIds);
 
-        // Should be removed from right column (kept in bottom)
-        Assert.True(layout.BottomColumn.ContainsPanel("node-graph"));
-        Assert.False(layout.RightColumns[0].ContainsPanel("node-graph"));
+        Assert.True(layout.RightColumns[0].ContainsPanel("node-graph"));
+        Assert.False(layout.BottomColumn.ContainsPanel("node-graph"));
     }
 
     [Fact]
-    public void Normalize_Deduplicates_KeepsInLeft()
+    public void Normalize_Deduplicates_PrefersRightOverLeft()
     {
         PanelRegistry.Clear();
         PanelRegistry.Register(new DockPanelDef("tools", "", () => new TextBlock(), DefaultZone: "left"));
@@ -543,8 +557,8 @@ public class DockingTests
         };
         layout.Normalize(PanelRegistry.AllIds);
 
-        Assert.True(layout.LeftColumn.ContainsPanel("tools"));
-        Assert.False(layout.RightColumns[0].ContainsPanel("tools"));
+        Assert.True(layout.RightColumns[0].ContainsPanel("tools"));
+        Assert.False(layout.LeftColumn.ContainsPanel("tools"));
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -581,7 +595,8 @@ public class DockingTests
         PanelRegistry.Register(new DockPanelDef("color", "", () => new TextBlock(), DefaultZone: "right-0"));
 
         var layout = WorkspaceLayout.CreateDefault();
-        SetColumnPanels(layout.LeftColumn);
+        foreach (var c in layout.LeftColumns)
+            SetColumnPanels(c);
         SetColumnPanels(layout.RightColumns[0], "brush");
         layout.RightColumns.Add(new DockColumnLayout { Id = "right-1", PanelIds = ["color"] });
 
@@ -695,11 +710,11 @@ public class DockingTests
         Assert.True(col.TabGroups.ContainsKey("tab:0"));
         Assert.Equal(["b", "c"], col.TabGroups["tab:0"].PanelIds);
 
-        // Remove second → 1 left, tab group dissolves, solo remains
+        // Remove second → 1 left, tab group stays (always-tabbed)
         col.RemovePanel("b");
-        Assert.False(col.TabGroups.ContainsKey("tab:0"));
-        Assert.Contains("c", col.PanelIds);
-        Assert.DoesNotContain("tab:0", col.PanelIds);
+        Assert.True(col.TabGroups.ContainsKey("tab:0"));
+        Assert.Equal(["c"], col.TabGroups["tab:0"].PanelIds);
+        Assert.Contains("tab:0", col.PanelIds);
     }
 
     [Fact]
@@ -1110,7 +1125,7 @@ public class DockingTests
     }
 
     [Fact]
-    public void TabGroup_RemoveLeavesSingle_SoloDissolves()
+    public void TabGroup_RemoveLeavesSingle_KeepsTabGroup()
     {
         var col = new DockColumnLayout
         {
@@ -1120,9 +1135,9 @@ public class DockingTests
 
         col.RemovePanel("a");
 
-        Assert.False(col.TabGroups.ContainsKey("tab:0"));
-        Assert.DoesNotContain("tab:0", col.PanelIds);
-        Assert.Contains("b", col.PanelIds);
+        Assert.True(col.TabGroups.ContainsKey("tab:0"));
+        Assert.Contains("tab:0", col.PanelIds);
+        Assert.Equal(["b"], col.TabGroups["tab:0"].PanelIds);
         Assert.Single(col.PanelIds);
     }
 
@@ -1339,7 +1354,7 @@ public class DockingTests
         PanelRegistry.Register(new DockPanelDef("a", "", () => new TextBlock()));
 
         var layout = WorkspaceLayout.CreateDefault();
-        layout.RightColumns[0].PanelIds = ["a"];
+        SetColumnPanels(layout.RightColumns[0], "a");
         layout.HiddenPanelIds.Add("a");
 
         Assert.True(layout.RightColumns[0].ContainsPanel("a"));
@@ -1662,7 +1677,7 @@ public class DockingTests
         PanelRegistry.Register(new DockPanelDef("b", "", () => new TextBlock(), DefaultZone: "right-0"));
 
         var layout = WorkspaceLayout.CreateDefault();
-        layout.RightColumns[0].PanelIds = ["tab:1"];
+        SetColumnPanels(layout.RightColumns[0], "tab:1");
         layout.RightColumns[0].TabGroups["tab:1"] = new TabGroupLayout { PanelIds = ["a", "b"] };
 
         layout.Normalize(PanelRegistry.AllIds);
@@ -1713,7 +1728,7 @@ public class DockingTests
 
         layout.Normalize(PanelRegistry.AllIds);
 
-        Assert.Equal(6, layout.LayoutVersion);
+        Assert.Equal(7, layout.LayoutVersion);
         Assert.Contains("tab:left", layout.LeftColumn.PanelIds);
         Assert.True(layout.LeftColumn.TabGroups["tab:left"].PanelIds.Contains("brush"));
     }
@@ -1783,9 +1798,12 @@ public class DockingTests
         PanelRegistry.Register(new DockPanelDef("d", "", () => new TextBlock()));
 
         var layout = WorkspaceLayout.CreateDefault();
-        SetColumnPanels(layout.LeftColumn);
-        SetColumnPanels(layout.RightColumns[0]);
-        SetColumnPanels(layout.BottomColumn);
+        foreach (var c in layout.LeftColumns)
+            SetColumnPanels(c);
+        foreach (var c in layout.RightColumns)
+            SetColumnPanels(c);
+        foreach (var c in layout.BottomColumns)
+            SetColumnPanels(c);
 
         layout.Normalize(PanelRegistry.AllIds);
 
@@ -1793,6 +1811,62 @@ public class DockingTests
             + layout.RightColumns.Sum(CountPlacedInColumn)
             + layout.BottomColumns.Sum(CountPlacedInColumn);
         Assert.Equal(PanelRegistry.AllIds.Count, total);
+    }
+
+    [Fact]
+    public void CreateDefault_LoadsBundledLayout()
+    {
+        var layout = WorkspaceLayout.CreateDefault();
+        Assert.Equal(7, layout.LayoutVersion);
+        Assert.Equal(2, layout.LeftColumns.Count);
+        Assert.True(layout.RightColumns[0].Rows?.Any(r => r.PanelIds.Contains("layers")) == true);
+        Assert.True(layout.LeftColumns.Any(c => c.ContainsPanel("brush")));
+        Assert.Contains("node-graph", layout.HiddenPanelIds);
+    }
+
+    [Fact]
+    public void DockRowLayout_SingleVerticalPanel_IsTabGroup()
+    {
+        var row = new DockRowLayout { PanelIds = ["layers"], Orientation = DockOrientation.Vertical };
+        Assert.True(row.IsTabGroup);
+    }
+
+    [Fact]
+    public void DockLayoutOps_ApplyMergeTab_CrossZone_LeftToRight()
+    {
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.LeftColumns[0].Rows =
+        [
+            new DockRowLayout { PanelIds = ["brush"], Orientation = DockOrientation.Vertical }
+        ];
+        layout.LeftColumns[0].PanelIds = [];
+        layout.LeftColumns[0].TabGroups.Clear();
+        layout.RightColumns[0].Rows =
+        [
+            new DockRowLayout { PanelIds = ["layers"], Orientation = DockOrientation.Vertical }
+        ];
+        layout.RightColumns[0].PanelIds = [];
+        layout.RightColumns[0].TabGroups.Clear();
+
+        DockLayoutOps.ApplyMergeTab(layout, "brush", DockColumnIndices.Right(0), mergeTabRowIndex: 0);
+
+        Assert.DoesNotContain("brush", layout.LeftColumns[0].ResolvedRows().SelectMany(r => r.PanelIds));
+        Assert.Contains("brush", layout.RightColumns[0].Rows![0].PanelIds);
+    }
+
+    [Fact]
+    public void DockLayoutOps_ApplyMergeTab_AddsToSoloVerticalRow()
+    {
+        var layout = WorkspaceLayout.CreateDefault();
+        layout.RightColumns[0].Rows =
+        [
+            new DockRowLayout { PanelIds = ["layers"], Orientation = DockOrientation.Vertical },
+            new DockRowLayout { PanelIds = ["color"], Orientation = DockOrientation.Vertical }
+        ];
+
+        DockLayoutOps.ApplyMergeTab(layout, "brush", DockColumnIndices.Right(0), mergeTabRowIndex: 0);
+
+        Assert.Equal(["layers", "brush"], layout.RightColumns[0].Rows![0].PanelIds);
     }
 
     private static int CountPlacedInColumn(DockColumnLayout col)

@@ -27,7 +27,9 @@ public partial class MainWindow
     private readonly List<DockPanelMetric> _dockPanelMetrics = [];
     private readonly List<DockRowContainerMetric> _dockRowMetrics = [];
     private readonly List<DockColumnEdgeMetric> _dockColumnEdgeMetrics = [];
+    private readonly List<Rect> _dockColumnBounds = [];
     private DropTargetState? _stickyTarget;
+    private bool _dockerDragWindowHandlersActive;
 
     private sealed record DockPanelMetric(
         int ColumnIndex,
@@ -139,6 +141,7 @@ public partial class MainWindow
         _dockPanelMetrics.Clear();
         _dockRowMetrics.Clear();
         _dockColumnEdgeMetrics.Clear();
+        _dockColumnBounds.Clear();
     }
 
     private void ContinueDockerDrag(string panelId, Point rootPt, PointerEventArgs e)
@@ -149,11 +152,52 @@ public partial class MainWindow
         if (!_dockDragActive)
         {
             _dockDragActive = true;
+            EnsureDockerDragWindowHandlers();
             CacheDockDropMetrics(panelId);
         }
 
         UpdateDockerDropPreview(panelId, rootPt);
-        e.Handled = true;
+        if (e != null && _dockDragActive)
+            e.Handled = true;
+    }
+
+    private void EnsureDockerDragWindowHandlers()
+    {
+        if (_dockerDragWindowHandlersActive) return;
+        _dockerDragWindowHandlersActive = true;
+        AddHandler(PointerMovedEvent, OnDockerDragWindowPointerMoved,
+            Avalonia.Interactivity.RoutingStrategies.Tunnel | Avalonia.Interactivity.RoutingStrategies.Bubble);
+        AddHandler(PointerReleasedEvent, OnDockerDragWindowPointerReleased,
+            Avalonia.Interactivity.RoutingStrategies.Tunnel | Avalonia.Interactivity.RoutingStrategies.Bubble);
+    }
+
+    private void RemoveDockerDragWindowHandlers()
+    {
+        if (!_dockerDragWindowHandlersActive) return;
+        _dockerDragWindowHandlersActive = false;
+        RemoveHandler(PointerMovedEvent, OnDockerDragWindowPointerMoved);
+        RemoveHandler(PointerReleasedEvent, OnDockerDragWindowPointerReleased);
+    }
+
+    private void OnDockerDragWindowPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (_dockDragPanelId == null) return;
+        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        {
+            CancelDockerDrag();
+            return;
+        }
+
+        ContinueDockerDrag(_dockDragPanelId, e.GetPosition(this), e);
+    }
+
+    private void OnDockerDragWindowPointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (_dockDragPanelId == null) return;
+        if (_dockDragActive)
+            FinishDockerDrag();
+        else
+            CancelDockerDrag();
     }
 
     private void FinishDockerDrag()
@@ -165,6 +209,7 @@ public partial class MainWindow
 
     private void CancelDockerDrag()
     {
+        RemoveDockerDragWindowHandlers();
         _dockDragPanelId = null;
         _dockDragActive = false;
         _dockDropColumn = -99;
@@ -173,6 +218,7 @@ public partial class MainWindow
         _dockPanelMetrics.Clear();
         _dockRowMetrics.Clear();
         _dockColumnEdgeMetrics.Clear();
+        _dockColumnBounds.Clear();
         _dockDropOverlay?.Clear();
     }
 
@@ -204,6 +250,7 @@ public partial class MainWindow
     {
         _dockPanelMetrics.Clear();
         _dockRowMetrics.Clear();
+        _dockColumnBounds.Clear();
         if (_dockDropOverlay == null) return;
 
         var layout = App.Config.WorkspaceLayout;
@@ -218,20 +265,19 @@ public partial class MainWindow
             var grid = ColumnGrid(columnIndex);
             if (grid == null) continue;
 
-            var resolved = column.ResolvedRows()
-                .Where(r => r.PanelIds.Count > 1 || !r.PanelIds.Contains(movingId))
-                .ToList();
-
-            for (var ri = 0; ri < resolved.Count; ri++)
+            var allRows = column.ResolvedRows().ToList();
+            for (var ri = 0; ri < allRows.Count; ri++)
             {
-                var row = resolved[ri];
+                var row = allRows[ri];
+                if (row.PanelIds.Count == 1 && row.PanelIds.Contains(movingId))
+                    continue;
                 var rowControl = FindRowContainer(grid, row);
                 if (rowControl == null) continue;
 
                 var rowRect = ControlRectInOverlay(rowControl);
                 if (rowRect == null) continue;
 
-                var isTabGroup = row.Orientation == DockOrientation.Vertical && row.PanelIds.Count > 1;
+                var isTabGroup = row.Orientation == DockOrientation.Vertical;
                 var label = row.PanelIds.Count > 1
                     ? string.Join(" · ", row.PanelIds.Select(DockerTitle))
                     : DockerTitle(row.PanelIds[0]);
@@ -259,8 +305,46 @@ public partial class MainWindow
             }
         }
 
+        CacheDockColumnBounds();
         CacheDockColumnEdgeMetrics();
     }
+
+    private void CacheDockColumnBounds()
+    {
+        _dockColumnBounds.Clear();
+        if (_dockDropOverlay == null) return;
+
+        AddRailBounds(_leftPanel);
+        AddRailBounds(_rightPanel);
+        if (_bottomDockerHostGrid != null)
+            AddRailBounds(_bottomDockerHostGrid);
+
+        var layout = App.Config.WorkspaceLayout;
+        var columnEntries = layout.LeftColumns
+            .Select((c, i) => DockColumnIndices.Left(i))
+            .Concat(layout.RightColumns.Select((_, i) => DockColumnIndices.Right(i)))
+            .Concat(layout.BottomColumns.Select((_, i) => DockColumnIndices.Bottom(i)));
+
+        foreach (var columnIndex in columnEntries)
+        {
+            var grid = ColumnGrid(columnIndex);
+            if (grid == null) continue;
+            var rect = ControlRectInOverlay(grid);
+            if (rect is { Width: > 0, Height: > 0 })
+                _dockColumnBounds.Add(rect.Value);
+        }
+    }
+
+    private void AddRailBounds(Control? control)
+    {
+        if (control == null || !control.IsVisible) return;
+        var rect = ControlRectInOverlay(control);
+        if (rect is { Width: > 0, Height: > 0 })
+            _dockColumnBounds.Add(rect.Value);
+    }
+
+    private bool IsOverDockColumn(Point rootPt)
+        => _dockColumnBounds.Any(r => r.Contains(rootPt));
 
     private void CacheDockColumnEdgeMetrics()
     {
@@ -488,37 +572,48 @@ public partial class MainWindow
 
     private DropTargetState? ResolveDropTarget(Point rootPt)
     {
-        var edgeHit = _dockColumnEdgeMetrics
+        var rowHit = _dockRowMetrics
             .Where(m => m.Bounds.Contains(rootPt))
             .OrderBy(m => m.Bounds.Width * m.Bounds.Height)
             .FirstOrDefault();
 
-        if (edgeHit != null)
+        if (rowHit != null)
         {
-            if (edgeHit.HorizontalInsertLine)
+            if (rowHit.IsTabGroup)
             {
-                return new DropTargetState(
-                    DockColumnIndices.Bottom(0),
-                    edgeHit.InsertColumnIndex,
-                    -1,
-                    DockDropKind.InsertDockColumn,
-                    edgeHit.Bounds.Top,
-                    edgeHit.Bounds,
-                    edgeHit.Label,
-                    true);
+                var insertBand = Math.Min(20, rowHit.Bounds.Height * 0.12);
+                if (rootPt.Y >= rowHit.Bounds.Top + insertBand
+                    && rootPt.Y <= rowHit.Bounds.Bottom - insertBand)
+                {
+                    var zoneLabel = DockColumnIndices.ZoneOf(rowHit.ColumnIndex) switch
+                    {
+                        DockZone.Left => "left",
+                        DockZone.Bottom => "bottom",
+                        _ => "right"
+                    };
+                    return new DropTargetState(
+                        rowHit.ColumnIndex,
+                        0,
+                        rowHit.RowIndex,
+                        DockDropKind.MergeTab,
+                        rowHit.Bounds.Top,
+                        rowHit.Bounds,
+                        $"Add tab ({zoneLabel}): {rowHit.Label}",
+                        false);
+                }
             }
 
-            var lineX = edgeHit.Zone == DockZone.Left
-                ? edgeHit.Bounds.Right
-                : edgeHit.Bounds.Left;
+            var aboveRow = rootPt.Y < rowHit.Bounds.Top + rowHit.Bounds.Height * 0.5;
+            var lineY = aboveRow ? rowHit.Bounds.Top : rowHit.Bounds.Bottom;
+            var insertIdx = aboveRow ? rowHit.RowIndex : rowHit.RowIndex + 1;
             return new DropTargetState(
-                DockColumnIndices.Encode(edgeHit.Zone, 0),
-                edgeHit.InsertColumnIndex,
-                -1,
-                DockDropKind.InsertDockColumn,
-                lineX,
-                edgeHit.Bounds,
-                edgeHit.Label,
+                rowHit.ColumnIndex,
+                0,
+                insertIdx,
+                DockDropKind.InsertRow,
+                lineY,
+                rowHit.Bounds,
+                $"New row ({rowHit.Label})",
                 false);
         }
 
@@ -574,37 +669,41 @@ public partial class MainWindow
                 false);
         }
 
-        var rowHit = _dockRowMetrics
-            .Where(m => m.Bounds.Contains(rootPt))
-            .FirstOrDefault();
-
-        if (rowHit != null)
+        if (!IsOverDockColumn(rootPt))
         {
-            if (rowHit.IsTabGroup && rootPt.Y < rowHit.Bounds.Top + DockDropOverlay.TabStripHeight)
+            var edgeHit = _dockColumnEdgeMetrics
+                .Where(m => m.Bounds.Contains(rootPt))
+                .OrderBy(m => m.Bounds.Width * m.Bounds.Height)
+                .FirstOrDefault();
+
+            if (edgeHit != null)
             {
+                if (edgeHit.HorizontalInsertLine)
+                {
+                    return new DropTargetState(
+                        DockColumnIndices.Bottom(0),
+                        edgeHit.InsertColumnIndex,
+                        -1,
+                        DockDropKind.InsertDockColumn,
+                        edgeHit.Bounds.Top,
+                        edgeHit.Bounds,
+                        edgeHit.Label,
+                        true);
+                }
+
+                var lineX = edgeHit.Zone == DockZone.Left
+                    ? edgeHit.Bounds.Right
+                    : edgeHit.Bounds.Left;
                 return new DropTargetState(
-                    rowHit.ColumnIndex,
-                    0,
-                    rowHit.RowIndex,
-                    DockDropKind.MergeTab,
-                    rowHit.Bounds.Top,
-                    rowHit.Bounds,
-                    $"Add to tab: {rowHit.Label}",
+                    DockColumnIndices.Encode(edgeHit.Zone, 0),
+                    edgeHit.InsertColumnIndex,
+                    -1,
+                    DockDropKind.InsertDockColumn,
+                    lineX,
+                    edgeHit.Bounds,
+                    edgeHit.Label,
                     false);
             }
-
-            var aboveRow = rootPt.Y < rowHit.Bounds.Top + rowHit.Bounds.Height * 0.5;
-            var lineY = aboveRow ? rowHit.Bounds.Top : rowHit.Bounds.Bottom;
-            var insertIdx = aboveRow ? rowHit.RowIndex : rowHit.RowIndex + 1;
-            return new DropTargetState(
-                rowHit.ColumnIndex,
-                0,
-                insertIdx,
-                DockDropKind.InsertRow,
-                lineY,
-                rowHit.Bounds,
-                $"New row ({rowHit.Label})",
-                false);
         }
 
         var inColumn = _dockRowMetrics

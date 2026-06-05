@@ -191,7 +191,7 @@ public static class DockLayoutOps
 
     public static void EnsureRowsModel(DockColumnLayout col)
     {
-        if (col.Rows is { Count: > 0 })
+        if (col.Rows != null)
             return;
 
         col.Rows = col.ResolvedRows().Select(r => new DockRowLayout
@@ -294,20 +294,6 @@ public static class DockLayoutOps
             f.IsFloating = false;
     }
 
-    /// <summary>Collapse single-panel tabs back to solo row keys.</summary>
-    public static void CompactTabGroups(DockColumnLayout col)
-    {
-        if (col.Rows is { Count: > 0 })
-            return;
-
-        foreach (var (key, tab) in col.TabGroups.ToList())
-        {
-            if (tab.PanelIds.Count != 1) continue;
-            var solo = tab.PanelIds[0];
-            var idx = col.PanelIds.IndexOf(key);
-            if (idx >= 0)
-                col.PanelIds[idx] = solo;
-            col.TabGroups.Remove(key);
-        }
-    }
+    /// <summary>No-op: panels stay in tab groups even when alone (Photoshop-style).</summary>
+    public static void CompactTabGroups(DockColumnLayout col) { }
 }

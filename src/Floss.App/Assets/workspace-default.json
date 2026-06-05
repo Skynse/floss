@@ -1,0 +1,93 @@
+{
+  "LayoutVersion": 7,
+  "LeftRailWidth": 312,
+  "RightPanelWidth": 305,
+  "RightDockSplit": 0.5,
+  "LeftDockSplit": 0.5,
+  "BottomDockHeight": 320,
+  "RightColumns": [
+    {
+      "Id": "right-0",
+      "Panels": [],
+      "TabGroups": {},
+      "Rows": [
+        {
+          "PanelIds": ["color"],
+          "Orientation": 0,
+          "ActiveIndex": 0
+        },
+        {
+          "PanelIds": ["color-slider"],
+          "Orientation": 0,
+          "ActiveIndex": 0
+        },
+        {
+          "PanelIds": ["layer-properties"],
+          "Orientation": 0,
+          "ActiveIndex": 0
+        },
+        {
+          "PanelIds": ["layers"],
+          "Orientation": 0,
+          "ActiveIndex": 0
+        }
+      ]
+    }
+  ],
+  "LeftColumns": [
+    {
+      "Id": "left-0",
+      "Panels": ["tab:left"],
+      "TabGroups": {
+        "tab:left": {
+          "PanelIds": ["tools"],
+          "ActiveIndex": 0
+        }
+      },
+      "Rows": null
+    },
+    {
+      "Id": "left-1",
+      "Panels": [],
+      "TabGroups": {},
+      "Rows": [
+        {
+          "PanelIds": ["brush"],
+          "Orientation": 0,
+          "ActiveIndex": 0
+        },
+        {
+          "PanelIds": ["tool-properties"],
+          "Orientation": 0,
+          "ActiveIndex": 0
+        }
+      ]
+    }
+  ],
+  "BottomColumns": [
+    {
+      "Id": "bottom-0",
+      "Panels": ["node-graph"],
+      "TabGroups": {},
+      "Rows": null
+    }
+  ],
+  "ColumnProportions": {
+    "left-0": 0.18831168831168832,
+    "right-0": 1,
+    "left-1": 0.8116883116883117
+  },
+  "PanelHeights": {
+    "tools": 1,
+    "color": 0.24770642201834864,
+    "layers": 0.4026503567787971,
+    "node-graph": 1,
+    "brush": 0.6510681586978637,
+    "tool-properties": 0.34893184130213634,
+    "color-slider": 0.11926605504587157,
+    "layer-properties": 0.23037716615698267
+  },
+  "FloatingPanels": {},
+  "HiddenDockers": ["node-graph"],
+  "PanelContentState": {}
+}

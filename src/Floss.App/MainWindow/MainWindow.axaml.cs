@@ -193,6 +193,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private readonly HashSet<int> _selectedLayerIndices = new();
     private readonly Dictionary<string, RowDefinition> _dockerRows = new();
     private readonly Dictionary<string, Border> _dockerSections = new();
+    private readonly Dictionary<string, Control> _dockerPanelBodies = new();
     private readonly Dictionary<string, Window> _floatingDockers = new();
     private MenuItem? _workspaceLoadMenu;
     private MenuItem? _saveMenuItem;
@@ -694,6 +695,7 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         _dockerRows.Clear();
         _dockerSections.Clear();
+        _dockerPanelBodies.Clear();
         var leftPanel = BuildLeftDockColumn();
         var rightPanel = BuildRightPanel();
 
@@ -1384,7 +1386,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         {
             var row = visibleRows[i];
             var pids = row.PanelIds;
-            var isTabGroup = row.Orientation == DockOrientation.Vertical && pids.Count > 1;
+            var isTabGroup = row.Orientation == DockOrientation.Vertical;
             var isHorizontal = row.Orientation == DockOrientation.Horizontal;
             var primaryId = pids[0];
             var sizing = ResolveDockerRowSizing(pids, isTabGroup, isHorizontal);
@@ -1403,7 +1405,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         {
             var resolvedRow = visibleRows[i];
             var rowPanelIds = resolvedRow.PanelIds;
-            var isTabGroup = resolvedRow.Orientation == DockOrientation.Vertical && rowPanelIds.Count > 1;
+            var isTabGroup = resolvedRow.Orientation == DockOrientation.Vertical;
             var isHorizontal = resolvedRow.Orientation == DockOrientation.Horizontal;
             var primaryId = rowPanelIds[0];
             var sizing = ResolveDockerRowSizing(rowPanelIds, isTabGroup, isHorizontal);
@@ -1479,7 +1481,7 @@ public partial class MainWindow : Window, Tools.IViewportController
             if (i == visibleRows.Count - 1) continue;
             var nextRow = visibleRows[i + 1];
             var nextPanelIds = nextRow.PanelIds;
-            var nextIsTabGroup = nextRow.Orientation == DockOrientation.Vertical && nextPanelIds.Count > 1;
+            var nextIsTabGroup = nextRow.Orientation == DockOrientation.Vertical;
             var nextIsHorizontal = nextRow.Orientation == DockOrientation.Horizontal;
             var nextSizing = ResolveDockerRowSizing(nextPanelIds, nextIsTabGroup, nextIsHorizontal);
 
@@ -1537,9 +1539,7 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         foreach (var id in panelIds)
         {
-            var section = GetOrCreatePanelSection(id);
-            _dockerSections[id] = section;
-            content[id] = section;
+            content[id] = GetOrCreatePanelBody(id);
             titles[id] = DockerTitle(id);
         }
 
@@ -1566,6 +1566,36 @@ public partial class MainWindow : Window, Tools.IViewportController
     /// previous parent. Otherwise builds a fresh section from the factory.
     /// This avoids "Control already has a parent" crashes during rebuild.
     /// </summary>
+    private Control GetOrCreatePanelBody(string id)
+    {
+        if (_dockerPanelBodies.TryGetValue(id, out var cached))
+        {
+            DetachFromVisualParent(cached);
+            return cached;
+        }
+
+        var info = GetDockerInfo(id);
+        if (info == null)
+        {
+            return new Border
+            {
+                Child = new TextBlock
+                {
+                    Text = $"Missing panel: {id}",
+                    Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+                    FontSize = 9,
+                    Margin = new Thickness(8)
+                }
+            };
+        }
+
+        var content = info.Build();
+        DetachFromVisualParent(content);
+        var body = BuildDockerBody(id, content);
+        _dockerPanelBodies[id] = body;
+        return body;
+    }
+
     private Border GetOrCreatePanelSection(string id)
     {
         if (_dockerSections.TryGetValue(id, out var cached))
@@ -2390,7 +2420,10 @@ public partial class MainWindow : Window, Tools.IViewportController
         var reset = new MenuItem { Header = "_Reset Layout" };
         reset.Click += (_, _) =>
         {
-            App.Config.WorkspaceLayout = WorkspaceLayout.CreateDefault();
+            App.Config.WorkspaceLayout = App.Config.WorkspacePresets.TryGetValue(
+                    BundledWorkspaceLayouts.DefaultPresetName, out var preset)
+                ? preset.Clone()
+                : WorkspaceLayout.CreateDefault();
             ApplyWorkspaceLayout();
         };
 

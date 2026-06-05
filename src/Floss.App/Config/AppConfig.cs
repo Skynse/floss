@@ -82,13 +82,26 @@ public sealed class AppConfig
                 var json = File.ReadAllText(AppPaths.ConfigPath);
                 var cfg = JsonSerializer.Deserialize<AppConfig>(json) ?? new AppConfig();
                 ValidateOrResetLayout(cfg);
+                cfg.EnsureBundledWorkspacePresets();
                 cfg.RepairToolPropertyVisibility();
                 cfg.PruneRecentFiles();
                 return cfg;
             }
         }
         catch (Exception ex) { CrashLog.Write(ex, "AppConfig.Load"); }
-        return new AppConfig();
+        var fresh = new AppConfig();
+        fresh.EnsureBundledWorkspacePresets();
+        return fresh;
+    }
+
+    /// <summary>
+    /// Ensures the shipped "default" workspace preset exists (Workspace → Load Preset).
+    /// </summary>
+    public void EnsureBundledWorkspacePresets()
+    {
+        if (WorkspacePresets.ContainsKey(BundledWorkspaceLayouts.DefaultPresetName))
+            return;
+        WorkspacePresets[BundledWorkspaceLayouts.DefaultPresetName] = WorkspaceLayout.CreateDefault().Clone();
     }
 
     /// <summary>

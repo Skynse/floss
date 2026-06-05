@@ -71,8 +71,9 @@ public sealed class DockTabGroup : Grid
                 Cursor = new Cursor(StandardCursorType.Hand),
                 Child = new TextBlock
                 {
-                    Text = title,
-                    FontSize = 11,
+                    Text = title.ToUpperInvariant(),
+                    FontSize = 10,
+                    FontWeight = FontWeight.SemiBold,
                     Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
                     VerticalAlignment = VerticalAlignment.Center
                 }
