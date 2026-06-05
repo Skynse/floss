@@ -8,6 +8,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using Floss.App.Brushes;
+using Floss.App.Brushes.Graph;
 using Floss.App.Input;
 using SkiaSharp;
 
@@ -209,7 +210,7 @@ public sealed class BrushStrokePreview : Control
         var materialTips = brush.TipSelectionMode != BrushTipSelectionMode.Single && brush.Tips.Count > 0
             ? brush.Tips.Select(t => t.CreateTip()).ToList()
             : null;
-        var maskCache = new Dictionary<int, SKBitmap>();
+        var maskCache = new Dictionary<(int TipIndex, int Size), SKBitmap>();
         var ownedMasks = new HashSet<SKBitmap>();
 
         IBrushTip TipFor(int tipIndex)
@@ -219,24 +220,25 @@ public sealed class BrushStrokePreview : Control
             return brush.Tip;
         }
 
-        SKBitmap MaskForTip(int tipIndex)
+        SKBitmap MaskForTip(int tipIndex, int dabMaskSize)
         {
             tipIndex = materialTips is { Count: > 0 } ? Math.Clamp(tipIndex, 0, materialTips.Count - 1) : 0;
-            if (maskCache.TryGetValue(tipIndex, out var cached))
+            var cacheKey = (tipIndex, dabMaskSize);
+            if (maskCache.TryGetValue(cacheKey, out var cached))
                 return cached;
 
             var tip = TipFor(tipIndex);
-            var tipMask = tip.GenerateMask(maskSize, (float)brush.Hardness);
+            var tipMask = tip.GenerateMask(dabMaskSize, (float)brush.Hardness);
             if (brush.Shape == null)
             {
-                maskCache[tipIndex] = tipMask;
+                maskCache[cacheKey] = tipMask;
                 return tipMask;
             }
 
-            var shapeMask = brush.Shape.GenerateMask(maskSize, (float)brush.Hardness);
-            var combined = MultiplyMasks(tipMask, shapeMask, maskSize);
+            var shapeMask = brush.Shape.GenerateMask(dabMaskSize, (float)brush.Hardness);
+            var combined = MultiplyMasks(tipMask, shapeMask);
             ownedMasks.Add(combined);
-            maskCache[tipIndex] = combined;
+            maskCache[cacheKey] = combined;
             return combined;
         }
 
@@ -300,16 +302,16 @@ public sealed class BrushStrokePreview : Control
                     dabIdx, DabHash(dabIdx), strokeRandom);
                 var tipIndex = SelectTipIndex(brush, sp);
                 var tip = TipFor(tipIndex);
-                var stampBitmap = tip.HasColor
-                    ? tip.GenerateColorStamp(maskSize)
-                    : MaskForTip(tipIndex);
-                if (stampBitmap == null) continue;
-
                 var sizeM = brush.Dynamics.EvalSize(sp);
                 var opacM = brush.Dynamics.EvalOpacity(sp);
                 var tipDensityM = brush.Dynamics.TipDensity.IsEnabled ? brush.Dynamics.EvalTipDensity(sp) : 1f;
                 var tipThicknessM = brush.Dynamics.TipThickness.IsEnabled ? brush.Dynamics.EvalTipThickness(sp) : 1f;
                 var stampSize = (float)Math.Max(0.5, baseSize * sizeM);
+                var dabMaskSize = BrushTipMaskRasterization.MaskResolutionForStamp(stampSize, brush);
+                var stampBitmap = tip.HasColor
+                    ? tip.GenerateColorStamp(dabMaskSize)
+                    : MaskForTip(tipIndex, dabMaskSize);
+                if (stampBitmap == null) continue;
                 var opacity = (float)Math.Clamp(brush.Opacity * brush.Flow * brush.TipDensity * tipDensityM * opacM, 0.0, 1.0);
                 var stampAlpha = (byte)(opacity * 255);
                 paint.Color = new SKColor(brush.Color.R, brush.Color.G, brush.Color.B, stampAlpha);
@@ -373,8 +375,9 @@ public sealed class BrushStrokePreview : Control
         };
     }
 
-    private static unsafe SKBitmap MultiplyMasks(SKBitmap tip, SKBitmap shape, int size)
+    private static unsafe SKBitmap MultiplyMasks(SKBitmap tip, SKBitmap shape)
     {
+        var size = Math.Max(Math.Max(tip.Width, tip.Height), Math.Max(shape.Width, shape.Height));
         var bmp = new SKBitmap(new SKImageInfo(size, size, SKColorType.Alpha8, SKAlphaType.Unpremul));
         var a = (byte*)tip.GetPixels().ToPointer();
         var b = (byte*)shape.GetPixels().ToPointer();

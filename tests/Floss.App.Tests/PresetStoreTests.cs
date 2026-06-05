@@ -622,6 +622,22 @@ public class PresetStoreTests
     }
 
     [Fact]
+    public void BrushPresetOverride_PreservesAutoSpacingOff()
+    {
+        var basePreset = new BrushPreset("Base", 40, 1, 0.9, 0.15, Color.Parse("#000000"), 0)
+        {
+            AutoSpacingActive = true,
+            Spacing = 0.1
+        };
+        var preset = new ToolPreset();
+        preset.CaptureFromBrushPreset(basePreset with { AutoSpacingActive = false, Spacing = 0.22 });
+
+        var restored = preset.ApplyToBrushPreset(basePreset);
+        TestAssertions.False(restored.AutoSpacingActive);
+        TestAssertions.Near(0.22, restored.Spacing);
+    }
+
+    [Fact]
     public void BrushPresetOverride_Isolation()
     {
         var basePreset = new BrushPreset("Base", 5, 1, 1, 0.5, Color.Parse("#000000"), 0);

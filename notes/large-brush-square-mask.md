@@ -15,11 +15,13 @@ Circle brushes (e.g. Technical Pen at 488px, 96% hardness) turn octagonal then f
 
 1. **`BrushTipMaskRasterization`** — policy: procedural + node graphs rasterize masks at full stamp size; cached dab composite only.
 2. **`StrokeBaseMaskSize`** — `min(4096, ceil(brush.Size))` (was capped at 512).
-3. **`NodeBrushTip.GenerateMask`** — classic **Circle** → `ClassicBrushLut`; all other primitives → `BrushTipNodeGraphEvaluator.Evaluate` at full `baseSize`.
-4. **`UsesProceduralStampEvaluation`** → **false** for `ProceduralBrushTip` and `NodeBrushTip` (except direct image sampler tips).
-5. **Unified large dab bake** — removed `TryBakeLargeCircleDab`; all shapes use `TryBakeLargeMaskDab`.
-6. **`BakeDabMaskCpu`** — centers on actual mask `Width`/`Height`, not `BaseMaskSize` alone.
-7. **Dab canvas draw** — centers mask/color stamp on bitmap dimensions.
+3. **`MaskResolutionForStamp`** — mask diameter = **stamp diameter** (no `max(stamp, brush.Size)` upsize/downscale mismatch).
+4. **`ActiveStroke.MaskFor(tip, hardness, stampDiameter)`** — cache key `(tip, hardness, resolution)`; dab bake uses `key.Size`.
+5. **`ComputeDabLayout`** — scale from actual mask `Width`/`Height`, not frozen `BaseMaskSize`.
+6. **`NodeBrushTip.GenerateMask`** — classic **Circle** → `ClassicBrushLut`; all other primitives → full-size graph raster.
+7. **`UsesProceduralStampEvaluation`** → **false** for procedural/node tips (except direct image sampler).
+8. **Skia fallback / preview** — matrix scale uses per-dab mask resolution, not stroke-start `BaseMaskSize`.
+9. **`BrushPreparationScheduler`** — warms masks at `StrokePeakMaskSize` (up to 4096).
 
 ## Files
 

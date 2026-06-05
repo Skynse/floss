@@ -446,6 +446,46 @@ public class BrushTests
         TestAssertions.Equal(0, mask.GetPixel(0, 0).Alpha);
     }
 
+    [Theory]
+    [InlineData(488, 0.96f)]
+    [InlineData(512, 0.96f)]
+    [InlineData(862, 0.96f)]
+    public void TechnicalPen_GenerateMask_StaysRoundAtLargeSize(int diameter, float hardness)
+    {
+        using var tip = new ProceduralBrushTip(BrushTipShape.Circle);
+        using var mask = tip.GenerateMask(diameter, hardness);
+        var cv = BoundaryRoundnessCv(mask);
+        TestAssertions.True(cv < 0.04,
+            $"Circle mask at {diameter}px / hardness {hardness} should stay round (CV={cv:F4}).");
+    }
+
+    [Fact]
+    public void BrushEngine_LargeTechnicalPenDab_StaysRoundOnLayer()
+    {
+        using var engine = new BrushEngine();
+        using var layer = new DrawingLayer("Layer", 1200, 1200);
+        var brush = new BrushPreset("Technical Pen", 488, 1, 0.96, 0.10, Colors.Black, 100)
+        {
+            GapMode = BrushGapMode.Fixed,
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null,
+            ColorMix = false,
+            Dynamics = new BrushDynamics { Size = CurveOption.Off(), Opacity = CurveOption.Off() }
+        };
+        var from = Sample(600, 600, 0);
+        var to = Sample(608, 600, 8_000);
+
+        engine.BeginStroke(brush, from);
+        var dirty = engine.RasterizeSegment(layer, brush, from, to);
+
+        TestAssertions.False(dirty.IsEmpty);
+        TestAssertions.True(engine.LastStats.CachedDabCount > 0,
+            $"Expected cached dab raster path, got {engine.LastStats.Path}.");
+        var cv = LayerAlphaBoundaryRoundnessCv(layer, dirty);
+        TestAssertions.True(cv < 0.06,
+            $"Rasterized dab at 488px should stay round on layer (CV={cv:F4}, path={engine.LastStats.Path}).");
+    }
+
     [Fact]
     public void BrushEngine_LargeMultiStampUsesLightenRasterPath()
     {
@@ -526,9 +566,10 @@ public class BrushTests
         var dirty = engine.RasterizeSegment(layer, brush, from, to);
 
         TestAssertions.False(dirty.IsEmpty);
-        TestAssertions.Equal("ProceduralStampFast", engine.LastStats.Path);
+        TestAssertions.True(engine.LastStats.Path is "CachedTileMajor" or "CachedTileMajorLighten" or "StrokeMaskCached",
+            $"Procedural circles rasterize via cached dabs, got {engine.LastStats.Path}.");
         TestAssertions.True(engine.LastStats.StampCount > 10, $"Expected low spacing to generate many dabs, got {engine.LastStats.StampCount}.");
-        TestAssertions.Equal(0, engine.LastStats.CachedDabCount);
+        TestAssertions.True(engine.LastStats.CachedDabCount > 0);
     }
 
     [Fact]
@@ -808,7 +849,7 @@ public class BrushTests
 
         TestAssertions.False(dirty.IsEmpty);
         var path = engine.LastStats.Path;
-        TestAssertions.True(path is "SkiaFallback" or "CachedTileMajor" or "ColorMixScratch" or "TileMajor",
+        TestAssertions.True(path is "SkiaFallback" or "CachedTileMajor" or "CachedTileMajorLighten" or "ColorMixScratch" or "TileMajor",
             $"Large color-mix brush must use a painting raster path, got {path}.");
         layer.Pixels.GetPixel(1100, 800, out _, out _, out _, out var alpha);
         TestAssertions.True(alpha > 0, "Large color-mix brush must actually paint instead of dropping stamps.");
@@ -1393,8 +1434,8 @@ public class BrushTests
     [Fact]
     public void ProceduralBrushTip_SoftRoundDiffersFromRound()
     {
-        var round = new ProceduralBrushTip(BrushTipShape.Circle).GenerateMask(64, 0.85f);
-        var soft = new ProceduralBrushTip(BrushTipShape.SoftRound).GenerateMask(64, 0.85f);
+        using var round = new ProceduralBrushTip(BrushTipShape.Circle).GenerateMask(64, 0.85f);
+        using var soft = new ProceduralBrushTip(BrushTipShape.SoftRound).GenerateMask(64, 0.85f);
 
         var roundAlpha = AlphaAt(round, 51, 32);
         var softAlpha = AlphaAt(soft, 51, 32);
@@ -1774,6 +1815,77 @@ public class BrushTests
         using var image = SKImage.FromBitmap(bitmap);
         using var data = image.Encode(SKEncodedImageFormat.Png, 100);
         return data.ToArray();
+    }
+
+    private static double BoundaryRoundnessCv(SKBitmap mask, byte threshold = 128)
+    {
+        var cx = mask.Width * 0.5;
+        var cy = mask.Height * 0.5;
+        var maxProbe = Math.Min(cx, cy) - 1;
+        var radii = new List<double>(24);
+        for (var deg = 0; deg < 360; deg += 15)
+        {
+            var rad = deg * Math.PI / 180.0;
+            var cos = Math.Cos(rad);
+            var sin = Math.Sin(rad);
+            for (var r = maxProbe; r > 0; r -= 0.5)
+            {
+                var x = (int)(cx + cos * r);
+                var y = (int)(cy + sin * r);
+                if ((uint)x >= (uint)mask.Width || (uint)y >= (uint)mask.Height)
+                    continue;
+                if (mask.GetPixel(x, y).Alpha >= threshold)
+                {
+                    radii.Add(r);
+                    break;
+                }
+            }
+        }
+
+        if (radii.Count < 12)
+            return 1.0;
+
+        var mean = radii.Average();
+        if (mean < 1.0)
+            return 1.0;
+        var variance = radii.Average(r => (r - mean) * (r - mean));
+        return Math.Sqrt(variance) / mean;
+    }
+
+    private static double LayerAlphaBoundaryRoundnessCv(DrawingLayer layer, PixelRegion dirty, byte threshold = 32)
+    {
+        var cx = (dirty.X + dirty.Right) * 0.5;
+        var cy = (dirty.Y + dirty.Bottom) * 0.5;
+        var maxProbe = Math.Min(Math.Min(cx - dirty.X, dirty.Right - cx), Math.Min(cy - dirty.Y, dirty.Bottom - cy)) - 1;
+        var radii = new List<double>(24);
+        for (var deg = 0; deg < 360; deg += 15)
+        {
+            var rad = deg * Math.PI / 180.0;
+            var cos = Math.Cos(rad);
+            var sin = Math.Sin(rad);
+            for (var r = maxProbe; r > 0; r -= 0.5)
+            {
+                var x = (int)(cx + cos * r);
+                var y = (int)(cy + sin * r);
+                if (x < dirty.X || y < dirty.Y || x >= dirty.Right || y >= dirty.Bottom)
+                    continue;
+                layer.Pixels.GetPixel(x, y, out _, out _, out _, out var alpha);
+                if (alpha >= threshold)
+                {
+                    radii.Add(r);
+                    break;
+                }
+            }
+        }
+
+        if (radii.Count < 12)
+            return 1.0;
+
+        var mean = radii.Average();
+        if (mean < 1.0)
+            return 1.0;
+        var variance = radii.Average(r => (r - mean) * (r - mean));
+        return Math.Sqrt(variance) / mean;
     }
 
     private static unsafe byte AlphaAt(SKBitmap bitmap, int x, int y)

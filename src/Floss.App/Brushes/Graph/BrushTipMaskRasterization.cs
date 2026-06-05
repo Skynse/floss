@@ -1,4 +1,5 @@
 using System;
+using Floss.App.Brushes.Curves;
 using Floss.App.Brushes.Engine;
 using Floss.App.Brushes.Tips;
 using SkiaSharp;
@@ -15,6 +16,29 @@ public static class BrushTipMaskRasterization
 
     public static int StrokeBaseMaskSize(double brushSizePx)
         => Math.Max(1, Math.Min(MaxMaskRasterDimension, (int)Math.Ceiling(brushSizePx)));
+
+    /// <summary>
+    /// Upper bound on stamp diameter for mask pre-generation at stroke start (Krita: mask matches dab size).
+    /// </summary>
+    public static int StrokePeakMaskSize(BrushPreset brush)
+    {
+        var peak = brush.Size * Math.Max(1.0, brush.Dynamics.Size.MaxOutput);
+        foreach (var graph in brush.ParameterGraphs)
+        {
+            if (graph.Target != BrushParameterTarget.Size || graph.Validate().Count > 0)
+                continue;
+            var hi = new StrokePoint(0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+            peak = Math.Max(peak, brush.Size * Math.Max(1.0, graph.Evaluate(in hi, 1f)));
+        }
+
+        return StrokeBaseMaskSize(peak);
+    }
+
+    /// <summary>
+    /// Mask raster size for one dab — always matches the stamp diameter (Krita: no upscale from a smaller template).
+    /// </summary>
+    public static int MaskResolutionForStamp(double stampDiameterPx, BrushPreset brush)
+        => StrokeBaseMaskSize(stampDiameterPx);
 
     /// <summary>
     /// Tips that should pre-rasterize <see cref="IBrushTip.GenerateMask"/> at
@@ -53,6 +77,10 @@ public static class BrushTipMaskRasterization
         if (graph.BuiltInShape is BrushTipShape.Circle)
             return true;
 
+        // Soft round, ellipse, chalk, etc. must keep analytic rasterization (node hardness/aspect).
+        if (graph.BuiltInShape is not null)
+            return false;
+
         var output = graph.Nodes.Find(n => n.Id == graph.OutputNodeId);
         if (output is not { Kind: BrushTipNodeKind.Output, Inputs.Count: 1 })
             return false;
@@ -61,7 +89,9 @@ public static class BrushTipMaskRasterization
         if (node is not { Kind: BrushTipNodeKind.Circle, Inputs.Count: 0 })
             return false;
 
-        return MathF.Abs(node.Width - 1f) < 0.02f
+        return MathF.Abs(node.Radius - 0.49f) < 0.02f
+            && MathF.Abs(node.Hardness - 0.72f) < 0.05f
+            && MathF.Abs(node.Width - 1f) < 0.02f
             && MathF.Abs(node.Height - 1f) < 0.02f
             && MathF.Abs(node.X - 0.5f) < 0.02f
             && MathF.Abs(node.Y - 0.5f) < 0.02f

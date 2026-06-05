@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Floss.App.Brushes.Graph;
 using Floss.App.Input;
 
 namespace Floss.App.Brushes.Engine;
@@ -15,7 +16,7 @@ public sealed class BrushPreparationScheduler : IDisposable
 
     public void QueuePrepare(BrushPreset brush, CanvasInputSample sample)
     {
-        var size = Math.Max(1, Math.Min(1024, (int)Math.Ceiling(brush.Size * Math.Max(1.0, brush.Dynamics.Size.MaxOutput))));
+        var size = BrushTipMaskRasterization.StrokePeakMaskSize(brush);
         var hardness = Math.Clamp((int)MathF.Round((float)Math.Clamp(brush.Hardness, 0.001, 1.0) * 255f), 0, 255);
 
         lock (_lock)

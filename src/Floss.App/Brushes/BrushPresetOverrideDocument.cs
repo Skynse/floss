@@ -24,6 +24,9 @@ public sealed class BrushPresetOverrideDocument
     public double? Smoothing { get; set; }
     public bool? SpeedAdaptiveStabilizer { get; set; }
     public double? MaxSizePercent { get; set; }
+    public bool? AutoSpacingActive { get; set; }
+    public double? AutoSpacingCoeff { get; set; }
+    public BrushGapMode? GapMode { get; set; }
     public bool? ColorMix { get; set; }
     public double? ColorLoad { get; set; }
     public double? ColorStretch { get; set; }
@@ -52,7 +55,8 @@ public sealed class BrushPresetOverrideDocument
 
     public bool HasContent =>
         Size.HasValue || Opacity.HasValue || Hardness.HasValue || Spacing.HasValue || Angle.HasValue ||
-        Flow.HasValue || Grain.HasValue || Smoothing.HasValue || SpeedAdaptiveStabilizer.HasValue || MaxSizePercent.HasValue || ColorMix.HasValue || ColorLoad.HasValue ||
+        Flow.HasValue || Grain.HasValue || Smoothing.HasValue || SpeedAdaptiveStabilizer.HasValue || MaxSizePercent.HasValue ||
+        AutoSpacingActive.HasValue || AutoSpacingCoeff.HasValue || GapMode.HasValue || ColorMix.HasValue || ColorLoad.HasValue ||
         ColorStretch.HasValue || BlurAmount.HasValue || SmudgeMode.HasValue || MixingMode.HasValue ||
         AmountOfPaint.HasValue || DensityOfPaint.HasValue || TipDensity.HasValue || TipThickness.HasValue ||
         TipDirection.HasValue || TipSelectionMode.HasValue || Quality.HasValue || Texture != null ||
@@ -75,6 +79,9 @@ public sealed class BrushPresetOverrideDocument
             Smoothing = doc.Smoothing,
             SpeedAdaptiveStabilizer = doc.SpeedAdaptiveStabilizer,
             MaxSizePercent = doc.MaxSizePercent,
+            AutoSpacingActive = doc.AutoSpacingActive,
+            AutoSpacingCoeff = doc.AutoSpacingCoeff,
+            GapMode = doc.GapMode,
             ColorMix = doc.ColorMix,
             ColorLoad = doc.ColorLoad,
             ColorStretch = doc.ColorStretch,
@@ -128,6 +135,9 @@ public sealed class BrushPresetOverrideDocument
             Smoothing = Smoothing ?? basePreset.Smoothing,
             SpeedAdaptiveStabilizer = SpeedAdaptiveStabilizer ?? basePreset.SpeedAdaptiveStabilizer,
             MaxSizePercent = MaxSizePercent ?? basePreset.MaxSizePercent,
+            AutoSpacingActive = AutoSpacingActive ?? basePreset.AutoSpacingActive,
+            AutoSpacingCoeff = AutoSpacingCoeff ?? basePreset.AutoSpacingCoeff,
+            GapMode = GapMode ?? basePreset.GapMode,
             ColorMix = ColorMix ?? basePreset.ColorMix,
             ColorLoad = ColorLoad ?? basePreset.ColorLoad,
             ColorStretch = ColorStretch ?? basePreset.ColorStretch,
@@ -180,6 +190,9 @@ public sealed class BrushPresetOverrideDocument
         Smoothing = Smoothing,
         SpeedAdaptiveStabilizer = SpeedAdaptiveStabilizer,
         MaxSizePercent = MaxSizePercent,
+        AutoSpacingActive = AutoSpacingActive,
+        AutoSpacingCoeff = AutoSpacingCoeff,
+        GapMode = GapMode,
         ColorMix = ColorMix,
         ColorLoad = ColorLoad,
         ColorStretch = ColorStretch,
