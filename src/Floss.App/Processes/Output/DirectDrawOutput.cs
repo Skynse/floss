@@ -297,7 +297,6 @@ public sealed class DirectDrawOutput : IOutputProcess
 
         tx.Ctx.Document.NotifyStrokeSuspendExtend(tx.PendingPreviewDirty);
         tx.Ctx.Document.NotifyChanged(tx.PendingPreviewDirty, tx.LayerIndex);
-        tx.Ctx.InvalidateRender();
         tx.PendingPreviewDirty = PixelRegion.Empty;
         tx.LastPreviewNotifyMs = now;
     }
@@ -533,7 +532,6 @@ public sealed class DirectDrawOutput : IOutputProcess
             {
                 tx.Layer.MarkThumbnailDirty();
                 tx.Ctx.Document.NotifyChanged(tileDirty, tx.LayerIndex);
-                tx.Ctx.InvalidateRender();
             }
         }
         finally

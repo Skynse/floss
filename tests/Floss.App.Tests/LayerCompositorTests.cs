@@ -82,8 +82,8 @@ public class LayerCompositorTests
     {
         var dirtyTileCount = LayerCompositor.CountTilesForRegion(new PixelRegion(0, 0, 4096, 4096), lod: 0);
 
+        TestAssertions.Equal(32, LayerCompositor.DirtyTileBudget);
         TestAssertions.True(dirtyTileCount > LayerCompositor.DirtyTileBudget);
-        TestAssertions.Equal(256, LayerCompositor.DirtyTileBudget);
     }
 
     [Fact]

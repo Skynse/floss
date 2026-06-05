@@ -21,7 +21,7 @@ namespace Floss.App.Canvas.Compositing;
 /// <summary>
 /// Drawpile GlCanvasImpl: all tiles stored in one contiguous flat buffer
 /// (split into cells for huge canvases). Tiles are memcpy'd into the cell,
-/// each cell gets one SKImage, DrawTiles draws one SkiaTileDrawOp per cell.
+/// each cell gets one SKBitmap; DrawTiles draws one SkiaTileDrawOp per cell (revision-tracked).
 /// </summary>
 public sealed class LayerCompositor : IDisposable
 {
@@ -34,6 +34,7 @@ public sealed class LayerCompositor : IDisposable
         _projection ??= new LayerProjectionPlane(new MergeHost(this));
     private static readonly System.Collections.Concurrent.ConcurrentBag<CountdownEvent> _cdePool = [];
     public const int DirtyTileBudget = 32;
+    private const int StrokeSuspendTileBudget = 256;
     private const int MaxMissingTilesPerFrame = 96;
     private const int MaxCompositeCacheTiles = 8192;
     private const int CmpTileSize = 64;
@@ -43,7 +44,7 @@ public sealed class LayerCompositor : IDisposable
     // ── Cells: one SKBitmap per cell (Drawpile: PixmapGrid) ───────────────
     private SKBitmap?[] _cellBitmaps = [];
     private SKImage?[] _cellImages = [];
-    private bool[] _cellDirty = [];
+    private int[] _cellRevision = [];
     private int _cellCols, _cellRows;
 
     // ── Per-tile composite scratch (Drawpile: transient tile per thread) ──
@@ -156,13 +157,13 @@ public sealed class LayerCompositor : IDisposable
     {
         for (var i = 0; i < _cellImages.Length; i++) { var img = _cellImages[i]; if (img != null) { _delayedDispose.Enqueue((img, 8)); _cellImages[i] = null; } }
         for (var i = 0; i < _cellBitmaps.Length; i++) { var b = _cellBitmaps[i]; if (b != null) { _delayedDispose.Enqueue((b, 8)); _cellBitmaps[i] = null; } }
-        _cellBitmaps = []; _cellImages = []; _cellDirty = []; _cellCols = 0; _cellRows = 0;
+        _cellBitmaps = []; _cellImages = []; _cellRevision = []; _cellCols = 0; _cellRows = 0;
     }
 
     private void MarkAllCellsDirty()
     {
-        for (var i = 0; i < _cellDirty.Length; i++)
-            _cellDirty[i] = true;
+        for (var i = 0; i < _cellRevision.Length; i++)
+            _cellRevision[i]++;
     }
 
     private void ClearAll()
@@ -225,8 +226,6 @@ public sealed class LayerCompositor : IDisposable
             var vp = visibleViewport?.ClipTo(_width, _height) ?? new PixelRegion(0, 0, _width, _height);
             if (vp.IsEmpty) return;
 
-            FlushDirtyCellImages();
-
             for (var ci = 0; ci < _cellBitmaps.Length; ci++)
             {
                 var bmp = _cellBitmaps[ci]; if (bmp == null) continue;
@@ -236,9 +235,8 @@ public sealed class LayerCompositor : IDisposable
                 var h = Math.Min(MaxCellDim, _height - y);
                 if (x + w <= vp.X || y + h <= vp.Y || x >= vp.Right || y >= vp.Bottom) continue;
 
-                var img = _cellImages[ci];
-                if (img == null) { img = SKImage.FromBitmap(bmp); _cellImages[ci] = img; }
-                context.Custom(new SkiaTileDrawOp(img, new SKRect(0, 0, bmp.Width, bmp.Height), new Rect(x, y, w, h)));
+                var revision = ci < _cellRevision.Length ? _cellRevision[ci] : 0;
+                context.Custom(new SkiaTileDrawOp(bmp, revision, new SKRect(0, 0, bmp.Width, bmp.Height), new Rect(x, y, w, h)));
             }
         }
     }
@@ -250,15 +248,20 @@ public sealed class LayerCompositor : IDisposable
         if (nc == _cellCols && nr == _cellRows && _cellBitmaps.Length == nc * nr) return;
 
         // Preserve overlapping cells
-        var oldBmps = _cellBitmaps; var oldImgs = _cellImages; var oldDirty = _cellDirty;
+        var oldBmps = _cellBitmaps; var oldImgs = _cellImages; var oldRevision = _cellRevision;
         var oc = _cellCols; var or = _cellRows;
         _cellCols = nc; _cellRows = nr; var nt = nc * nr;
-        _cellBitmaps = new SKBitmap?[nt]; _cellImages = new SKImage?[nt]; _cellDirty = new bool[nt];
+        _cellBitmaps = new SKBitmap?[nt]; _cellImages = new SKImage?[nt]; _cellRevision = new int[nt];
         for (var oy = 0; oy < Math.Min(or, nr); oy++)
             for (var ox = 0; ox < Math.Min(oc, nc); ox++)
             {
                 var oi = oy * oc + ox; var ni = oy * nc + ox;
-                if (oi < oldBmps.Length) { _cellBitmaps[ni] = oldBmps[oi]; _cellImages[ni] = oldImgs[oi]; _cellDirty[ni] = oldDirty[oi]; }
+                if (oi < oldBmps.Length)
+                {
+                    _cellBitmaps[ni] = oldBmps[oi];
+                    _cellImages[ni] = oldImgs[oi];
+                    if (oi < oldRevision.Length) _cellRevision[ni] = oldRevision[oi];
+                }
             }
         for (var i = 0; i < oldBmps.Length; i++) { var oy = i / oc; var ox = i % oc; if (oy >= nr || ox >= nc) { var img = oldImgs[i]; if (img != null) _delayedDispose.Enqueue(((object)img, 8)); var bmp = oldBmps[i]; if (bmp != null) _delayedDispose.Enqueue(((object)bmp, 8)); } }
 
@@ -270,7 +273,7 @@ public sealed class LayerCompositor : IDisposable
             if (cw <= 0 || ch <= 0) { cw = 1; ch = 1; }
             _cellBitmaps[ci] = new SKBitmap(new SKImageInfo(cw, ch, SKColorType.Bgra8888, SKAlphaType.Unpremul));
             _cellBitmaps[ci]!.Erase(SKColors.Transparent);
-            _cellDirty[ci] = true;
+            _cellRevision[ci] = 1;
         }
 
         // Copy existing tiles into newly created cells
@@ -295,7 +298,7 @@ public sealed class LayerCompositor : IDisposable
         var s = (byte*)bmp.GetPixels().ToPointer(); var sr = bmp.RowBytes;
         var d = (byte*)cb.GetPixels().ToPointer(); var dr = cb.RowBytes;
         for (var y = 0; y < ch; y++) Buffer.MemoryCopy(s + y * sr, d + (ly + y) * dr + lx * 4, cw * 4, cw * 4);
-        _cellDirty[ci] = true;
+        _cellRevision[ci]++;
     }
 
     private void CopyAllTilesToCells()
@@ -305,19 +308,6 @@ public sealed class LayerCompositor : IDisposable
             var bmp = _tileScratch[ti];
             if (bmp == null) continue;
             CopyTileToCell(ti);
-        }
-    }
-
-    private void FlushDirtyCellImages()
-    {
-        for (var ci = 0; ci < _cellBitmaps.Length; ci++)
-        {
-            if (!_cellDirty[ci]) continue;
-            var bmp = _cellBitmaps[ci]; if (bmp == null) continue;
-            var old = _cellImages[ci];
-            if (old != null) _delayedDispose.Enqueue((old, 8));
-            _cellImages[ci] = SKImage.FromBitmap(bmp);
-            _cellDirty[ci] = false;
         }
     }
 
@@ -394,8 +384,9 @@ public sealed class LayerCompositor : IDisposable
         _fullDirty = false; _dirtyRegion = null;
         var rl = LayerProjectionPlane.BuildSiblingStack(roots);
         var unbounded = wasFull || vpClip is { IsEmpty: false };
+        var tileBudget = _strokeSuspendDepth > 0 ? StrokeSuspendTileBudget : DirtyTileBudget;
         var pending = SelectPendingTiles(vpClip, missing,
-            unbounded ? int.MaxValue : DirtyTileBudget,
+            unbounded ? int.MaxValue : tileBudget,
             unbounded ? int.MaxValue : MaxMissingTilesPerFrame);
         if (pending.Count == 0 && missing.Count == 0) { LastDirtyTileCount = 0; LastMissingTileCount = 0; return false; }
 
@@ -938,29 +929,53 @@ public sealed class LayerCompositor : IDisposable
 
 internal sealed class SkiaTileDrawOp : ICustomDrawOperation
 {
+    private readonly SKBitmap? _bitmap;
+    private readonly int _revision;
     private readonly SKImage? _image;
     private readonly bool _ownsImage;
     private readonly SKRect _src;
     private readonly Rect _dest;
-    public SkiaTileDrawOp(SKBitmap bmp, SKRect src, Rect dest) { _image = SKImage.FromBitmap(bmp); _ownsImage = true; _src = src; _dest = dest; }
-    public SkiaTileDrawOp(SKImage image, SKRect src, Rect dest) { _image = image; _ownsImage = false; _src = src; _dest = dest; }
+
+    public SkiaTileDrawOp(SKBitmap bmp, int revision, SKRect src, Rect dest)
+    {
+        _bitmap = bmp;
+        _revision = revision;
+        _src = src;
+        _dest = dest;
+    }
+
+    public SkiaTileDrawOp(SKImage image, SKRect src, Rect dest)
+    {
+        _image = image;
+        _ownsImage = false;
+        _src = src;
+        _dest = dest;
+    }
+
     public Rect Bounds => _dest;
     public bool HitTest(Point p) => false;
     public bool Equals(ICustomDrawOperation? o) =>
         o is SkiaTileDrawOp other &&
+        _revision == other._revision &&
+        ReferenceEquals(_bitmap, other._bitmap) &&
         _image == other._image &&
         _src == other._src &&
         _dest == other._dest;
     public void Dispose() { if (_ownsImage) _image?.Dispose(); }
     public void Render(ImmediateDrawingContext ctx)
     {
-        if (_image == null) return;
         var lease = ctx.TryGetFeature<Avalonia.Skia.ISkiaSharpApiLeaseFeature>()?.Lease();
         if (lease == null) return;
         using (lease)
         {
             var dr = new SKRect((float)_dest.X, (float)_dest.Y, (float)_dest.Right, (float)_dest.Bottom);
-            lease.SkCanvas.DrawImage(_image, _src, dr, new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None));
+            if (_bitmap != null)
+            {
+                using var paint = new SKPaint { IsAntialias = false };
+                lease.SkCanvas.DrawBitmap(_bitmap, dr, paint);
+            }
+            else if (_image != null)
+                lease.SkCanvas.DrawImage(_image, _src, dr, new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None));
         }
     }
 }
