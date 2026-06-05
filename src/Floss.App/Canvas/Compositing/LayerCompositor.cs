@@ -50,6 +50,13 @@ public sealed class LayerCompositor : IDisposable
 
     // ── Per-tile composite scratch (Drawpile: transient tile per thread) ──
     private SKBitmap?[] _tileScratch = [];
+    // Large cells (>32MB): stroke-time dirty-tile overlays only. See notes/large-canvas-draw-jank.md.
+    private const long MaxCellSnapshotBytes = 32L * 1024 * 1024;
+    private const int DisplayDisposeFrames = 16;
+    private SKImage?[] _tileDisplayImages = [];
+    private readonly ConcurrentDictionary<int, byte> _strokeOverlayTiles = new();
+    private SKImage? _strokeFrozenCellImage;
+    private int _strokeFrozenCellIndex = -1;
     private int _xtiles, _ytiles, _tileTotal, _width, _height;
 
     private bool _fullDirty = true;
@@ -173,9 +180,20 @@ public sealed class LayerCompositor : IDisposable
             _cellRevision[i]++;
     }
 
+    private void ClearTileDisplayImages()
+    {
+        for (var i = 0; i < _tileDisplayImages.Length; i++)
+        {
+            var img = _tileDisplayImages[i];
+            if (img != null) { _delayedDispose.Enqueue((img, DisplayDisposeFrames)); _tileDisplayImages[i] = null; }
+        }
+        _tileDisplayImages = [];
+    }
+
     private void ClearAll()
     {
         InvalidateCells();
+        ClearTileDisplayImages();
         ClearStrokeBelowCache();
         _strokeBelowCache = [];
         _strokeBelowCacheReady = [];
@@ -233,6 +251,45 @@ public sealed class LayerCompositor : IDisposable
             var vp = visibleViewport?.ClipTo(_width, _height) ?? new PixelRegion(0, 0, _width, _height);
             if (vp.IsEmpty) return;
 
+            if (UsesLargeCellSnapshot() && _strokeSuspendDepth > 0 && _strokeFrozenCellImage != null)
+            {
+                var ci = _strokeFrozenCellIndex;
+                if (ci >= 0 && ci < _cellBitmaps.Length)
+                {
+                    var bmp = _cellBitmaps[ci];
+                    if (bmp != null)
+                    {
+                        var cx = ci % _cellCols;
+                        var cy = ci / _cellCols;
+                        var x = cx * MaxCellDim;
+                        var y = cy * MaxCellDim;
+                        var w = Math.Min(MaxCellDim, _width - x);
+                        var h = Math.Min(MaxCellDim, _height - y);
+                        context.Custom(new SkiaTileDrawOp(_strokeFrozenCellImage,
+                            new SKRect(0, 0, bmp.Width, bmp.Height), new Rect(x, y, w, h)));
+                    }
+                }
+
+                var area = TileAreaForRegion(vp);
+                for (var ty = area.Top; ty <= area.Bottom; ty++)
+                {
+                    for (var tx = area.Left; tx <= area.Right; tx++)
+                    {
+                        var ti = tileIndex(tx, ty);
+                        if (ti < 0 || !_strokeOverlayTiles.ContainsKey(ti)) continue;
+                        if (ti >= _tileDisplayImages.Length) continue;
+                        var img = _tileDisplayImages[ti];
+                        if (img == null) continue;
+                        var x = tx * CmpTileSize;
+                        var y = ty * CmpTileSize;
+                        context.Custom(new SkiaTileDrawOp(img, new SKRect(0, 0, img.Width, img.Height),
+                            new Rect(x, y, Math.Min(CmpTileSize, _width - x), Math.Min(CmpTileSize, _height - y))));
+                    }
+                }
+
+                return;
+            }
+
             for (var ci = 0; ci < _cellBitmaps.Length; ci++)
             {
                 var bmp = _cellBitmaps[ci]; if (bmp == null) continue;
@@ -248,6 +305,67 @@ public sealed class LayerCompositor : IDisposable
                 context.Custom(new SkiaTileDrawOp(img, new SKRect(0, 0, bmp.Width, bmp.Height), new Rect(x, y, w, h)));
             }
         }
+    }
+
+    private bool UsesLargeCellSnapshot()
+    {
+        if (_cellCols <= 0 || _cellRows <= 0) return (long)_width * _height * 4 > MaxCellSnapshotBytes;
+        for (var ci = 0; ci < _cellBitmaps.Length; ci++)
+        {
+            var bmp = _cellBitmaps[ci];
+            if (bmp == null) continue;
+            if ((long)bmp.Width * bmp.Height * 4 > MaxCellSnapshotBytes) return true;
+        }
+
+        return false;
+    }
+
+    private void EnsureStrokeFrozenCellImage()
+    {
+        if (_strokeFrozenCellImage != null) return;
+        if (_cellBitmaps.Length == 0) return;
+
+        var ci = 0;
+        var bmp = _cellBitmaps[ci];
+        if (bmp == null) return;
+        _strokeFrozenCellImage = SKImage.FromBitmap(bmp);
+        _strokeFrozenCellIndex = ci;
+    }
+
+    private void ClearStrokeFrozenCellImage()
+    {
+        if (_strokeFrozenCellImage != null)
+            _delayedDispose.Enqueue((_strokeFrozenCellImage, DisplayDisposeFrames));
+        _strokeFrozenCellImage = null;
+        _strokeFrozenCellIndex = -1;
+        _strokeOverlayTiles.Clear();
+    }
+
+    private void EnsureTileDisplayImagesArray()
+    {
+        if (_tileDisplayImages.Length == _tileTotal) return;
+
+        var old = _tileDisplayImages;
+        _tileDisplayImages = new SKImage?[_tileTotal];
+        Array.Copy(old, _tileDisplayImages, Math.Min(old.Length, _tileTotal));
+        for (var i = _tileTotal; i < old.Length; i++)
+            if (old[i] != null) _delayedDispose.Enqueue((old[i]!, DisplayDisposeFrames));
+    }
+
+    private void PublishTileDisplayImage(int ti)
+    {
+        if (!UsesLargeCellSnapshot() || _strokeSuspendDepth <= 0) return;
+        if ((uint)ti >= (uint)_tileTotal) return;
+        var scratch = _tileScratch[ti];
+        if (scratch == null || scratch.IsEmpty) return;
+
+        var prev = _tileDisplayImages[ti];
+        if (prev != null) _delayedDispose.Enqueue((prev, DisplayDisposeFrames));
+
+        using var pixmap = scratch.PeekPixels();
+        if (pixmap == null) return;
+        _tileDisplayImages[ti] = SKImage.FromPixelCopy(pixmap);
+        _strokeOverlayTiles[ti] = 0;
     }
 
     private void EnsureCellDisplayImage(int ci)
@@ -337,6 +455,7 @@ public sealed class LayerCompositor : IDisposable
             var bmp = _tileScratch[ti];
             if (bmp == null) continue;
             CopyTileToCell(ti);
+            PublishTileDisplayImage(ti);
         }
     }
 
@@ -387,6 +506,7 @@ public sealed class LayerCompositor : IDisposable
     private unsafe bool CompositeCore(IReadOnlyList<DrawingLayer> layers, int w, int h, uint paperColor, PixelRegion? viewport)
     {
         SetSize(w, h);
+        EnsureCells();
         var roots = LayerStackComposition.SelectLayersForComposite(layers);
         var vpClip = viewport?.ClipTo(w, h);
         EnsureTileScratchArray();
@@ -430,6 +550,8 @@ public sealed class LayerCompositor : IDisposable
         if (canUseStrokeCache)
         {
             EnsureStrokeBelowCache();
+            if (UsesLargeCellSnapshot() && _strokeSuspendDepth > 0)
+                EnsureTileDisplayImagesArray();
             foreach (var idx in tl) EnsureScratchTile(idx);
             var all = tl.ToArray();
 
@@ -484,6 +606,7 @@ public sealed class LayerCompositor : IDisposable
 
                 CompositeStrokeAboveLayers(tDst, tDs, tile.Width, tile.Height, tr, ox, oy, strokePlan);
                 CopyTileToCell(ti);
+                PublishTileDisplayImage(ti);
             }
 
             if (UseParallelComposite(all.Length)) DispatchToPool(all.Length, CompStroke);
@@ -493,6 +616,8 @@ public sealed class LayerCompositor : IDisposable
         }
         else
         {
+            if (UsesLargeCellSnapshot() && _strokeSuspendDepth > 0)
+                EnsureTileDisplayImagesArray();
             foreach (var idx in tl) EnsureScratchTile(idx);
             var all = tl.ToArray();
 
@@ -505,6 +630,7 @@ public sealed class LayerCompositor : IDisposable
                 ClearTile(dst, ds, tr, tx * CmpTileSize, ty * CmpTileSize, paperColor);
                 Projection.CompositeSiblingStack(dst, ds, bmp.Width, bmp.Height, rl, 1.0, tr, tx * CmpTileSize, ty * CmpTileSize);
                 CopyTileToCell(ti);
+                PublishTileDisplayImage(ti);
             }
 
             if (UseParallelComposite(all.Length)) DispatchToPool(all.Length, Comp1);
@@ -542,6 +668,7 @@ public sealed class LayerCompositor : IDisposable
         _xtiles = nxt; _ytiles = nyt; _tileTotal = nt;
         _tileScratch = new SKBitmap?[nt];
         for (var i = 0; i < old.Length; i++) { var t = old[i]; if (t != null) _delayedDispose.Enqueue((t, 8)); }
+        ClearTileDisplayImages();
     }
 
     private int tileIndex(int tx, int ty) => (uint)tx >= (uint)_xtiles || (uint)ty >= (uint)_ytiles ? -1 : ty * _xtiles + tx;
@@ -573,6 +700,11 @@ public sealed class LayerCompositor : IDisposable
             var idx = entries[i].idx; if (prot.Contains(idx)) continue;
             var ob = Interlocked.Exchange(ref _tileScratch[idx], null);
             if (ob != null) { _delayedDispose.Enqueue((ob, 8)); n--; }
+            if (idx < _tileDisplayImages.Length)
+            {
+                var oi = _tileDisplayImages[idx];
+                if (oi != null) { _delayedDispose.Enqueue((oi, DisplayDisposeFrames)); _tileDisplayImages[idx] = null; }
+            }
         }
     }
 
@@ -664,10 +796,17 @@ public sealed class LayerCompositor : IDisposable
         {
             _strokeSuspendDepth++;
             _strokePaintLayerIndex = layerIndex;
-            if (_strokeSuspendDepth == 1 && layerIndex >= 0)
+            if (_strokeSuspendDepth == 1)
             {
-                EnsureStrokeBelowCache();
-                InvalidateStrokeBelowCacheReady();
+                if (layerIndex >= 0)
+                {
+                    EnsureStrokeBelowCache();
+                    InvalidateStrokeBelowCacheReady();
+                }
+
+                EnsureCells();
+                if (UsesLargeCellSnapshot())
+                    EnsureStrokeFrozenCellImage();
             }
         }
     }
@@ -682,6 +821,7 @@ public sealed class LayerCompositor : IDisposable
             if (_strokeSuspendDepth > 0) _strokeSuspendDepth--;
             if (_strokeSuspendDepth > 0) return;
             _strokePaintLayerIndex = -1;
+            ClearStrokeFrozenCellImage();
             ClearStrokeBelowCache();
         }
     }
@@ -692,6 +832,7 @@ public sealed class LayerCompositor : IDisposable
         {
             _strokeSuspendDepth = 0;
             _strokePaintLayerIndex = -1;
+            ClearStrokeFrozenCellImage();
             ClearStrokeBelowCache();
         }
     }
@@ -971,10 +1112,9 @@ internal sealed class SkiaTileDrawOp : ICustomDrawOperation
 
     public Rect Bounds => _dest;
     public bool HitTest(Point p) => false;
-    // Mutable cell bitmaps are snapshotted to SKImage on content change only.
-    // Never compare equal — pan/zoom must repaint even when tile pixels are unchanged.
     public bool Equals(ICustomDrawOperation? o) => false;
     public void Dispose() { }
+
     public void Render(ImmediateDrawingContext ctx)
     {
         var lease = ctx.TryGetFeature<Avalonia.Skia.ISkiaSharpApiLeaseFeature>()?.Lease();
