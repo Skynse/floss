@@ -46,6 +46,12 @@ public sealed record TransformEditSnapshot(
     double Angle,
     bool KeepAspectRatio);
 
+public readonly record struct TransformCompletionFrame(
+    Rect BaseRect,
+    Rect CurrentRect,
+    double Angle,
+    TransformEditSnapshot Snapshot);
+
 internal enum TransformDragPart
 {
     None,
@@ -65,6 +71,7 @@ public sealed class TransformTool : ITool
 {
     private SelectionTransformOperation? _operation;
     private ITool? _previousTool;
+    private TransformCompletionFrame? _lastCompletionFrame;
 
     public int ViewportFlipX { get; set; } = 1;
     public int ViewportFlipY { get; set; } = 1;
@@ -76,10 +83,13 @@ public sealed class TransformTool : ITool
 
     public void Deactivate(ToolContext ctx) => Cancel(ctx);
 
-    public bool BeginTransform(ToolContext ctx, IReadOnlyList<int>? layerIndices = null)
+    public TransformCompletionFrame? LastCompletionFrame => _lastCompletionFrame;
+
+    public bool BeginTransform(ToolContext ctx, IReadOnlyList<int>? layerIndices = null, PixelRegion? contentBounds = null)
     {
         _operation?.Cancel();
-        _operation = SelectionTransformOperation.TryCreate(ctx, layerIndices);
+        _lastCompletionFrame = null;
+        _operation = SelectionTransformOperation.TryCreate(ctx, layerIndices, contentBounds);
         ctx.InvalidateRender();
         return _operation != null;
     }
@@ -114,6 +124,7 @@ public sealed class TransformTool : ITool
 
     public void Commit(ToolContext ctx)
     {
+        _lastCompletionFrame = _operation?.CompletionFrame;
         _operation?.CommitCurrent();
         _operation = null;
         ctx.InvalidateRender();
@@ -191,6 +202,9 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
         }
     }
 
+    public TransformCompletionFrame CompletionFrame
+        => new(NormalizedRect(_baseRect), NormalizedRect(_rect), _angle, Snapshot);
+
     public OverlayAction RequestedAction { get; private set; }
 
     private static readonly IBrush BtnBg = new SolidColorBrush(Color.Parse("#2a2e38"));
@@ -216,7 +230,7 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
     }
 
     public static SelectionTransformOperation? TryCreate(
-        ToolContext ctx, IReadOnlyList<int>? layerIndices = null)
+        ToolContext ctx, IReadOnlyList<int>? layerIndices = null, PixelRegion? contentBounds = null)
     {
         // Determine which layers to transform
         var layers = new List<(int Index, DrawingLayer Layer)>();
@@ -241,9 +255,14 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
 
         // Compute combined bounding box (document space)
         PixelRegion? combinedBounds = null;
-        bool usingSelection = ctx.Selection.HasSelection;
+        var useContentBounds = contentBounds is { IsEmpty: false };
+        bool usingSelection = !useContentBounds && ctx.Selection.HasSelection;
 
-        if (usingSelection)
+        if (useContentBounds)
+        {
+            combinedBounds = contentBounds!.Value.ClipTo(ctx.Document.Width, ctx.Document.Height);
+        }
+        else if (usingSelection)
         {
             var maskBounds = ctx.Selection.GetMaskBounds();
             if (maskBounds == null) return null;
@@ -315,7 +334,8 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
 
                 for (var docX = cb.X; docX < cb.Right; docX++)
                 {
-                    if (usingSelection && !ctx.Selection.IsSelected(docX, docY)) continue;
+                    if (usingSelection && !ctx.Selection.IsSelected(docX, docY))
+                        continue;
 
                     var layX = docX - layer.OffsetX;
 

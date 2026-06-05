@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using Avalonia.Media;
 using Floss.App.Input;
+using Floss.App.SmartShape;
 
 namespace Floss.App.Processes;
 
@@ -42,4 +43,11 @@ public sealed class DragInput : IProcessedInput
 {
     public CanvasInputSample Start { get; set; }
     public CanvasInputSample Current { get; set; }
+}
+
+// Fitted smart shape ready to rasterize with the active brush.
+public sealed class SmartShapeCommitInput : IProcessedInput
+{
+    public SmartShapeModel Shape { get; init; } = null!;
+    public double AvgPressure { get; init; } = 1.0;
 }

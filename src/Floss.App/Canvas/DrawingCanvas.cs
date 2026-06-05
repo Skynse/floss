@@ -22,6 +22,7 @@ using Floss.App.Input;
 using Floss.App.Processes;
 using Floss.App.Processes.Input;
 using Floss.App.Processes.Output;
+using Floss.App.SmartShape;
 using Floss.App.Tools;
 using Floss.App.Canvas.Compositing;
 using SkiaSharp;
@@ -136,6 +137,18 @@ public sealed class DrawingCanvas : Control, IDisposable
     public BrushEngine BrushEngine { get; }
 
     internal event Action? CursorPreviewChanged;
+    internal event Action? SmartShapeUiChanged;
+
+    internal SmartShapePhase GetSmartShapePhase() =>
+        _toolController.ActiveTool is CompositeTool { Input: SmartShapeBrushInputProcess ss }
+            ? ss.Phase
+            : SmartShapePhase.Idle;
+
+    /// <summary>
+    /// Viewport overlay owns the painted cursor during strokes; the canvas skips its copy
+    /// so the ring tracks the pen without a full canvas repaint every move.
+    /// </summary>
+    internal bool PreferViewportToolCursor { get; set; }
 
     internal bool ShouldShowToolCursor =>
         IsBrushResizePreviewActive
@@ -176,6 +189,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             Brush = _brush,
             PaintColor = _paintColor,
             InvalidateRender = InvalidateVisual,
+            InvalidateToolCursor = NotifyCursorPreviewChanged,
             InvalidateSelectionOverlay = InvalidateSelectionOutline,
             TransformEditChanged = () => TransformEditChanged?.Invoke(this, EventArgs.Empty),
             OnColorSampled = c =>
@@ -193,6 +207,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             OnSelectLayer = i => LayersChanged?.Invoke(this, EventArgs.Empty),
             OnSelectLayers = indices => LayersFoundByRect?.Invoke(indices)
         };
+        _ctx.SmartShapePhaseChanged = () => SmartShapeUiChanged?.Invoke();
 
         _brushTool = new CompositeTool(new BrushStrokeInputProcess(), new DirectDrawOutput(BrushEngine, _document));
         _eraserTool = new CompositeTool(new BrushStrokeInputProcess(), new DirectDrawOutput(BrushEngine, _document));
@@ -435,6 +450,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             return;
 
         _isPointerOver = false;
+        _hasViewportPointer = false;
         NotifyCursorPreviewChanged();
     }
 
@@ -1239,6 +1255,47 @@ public sealed class DrawingCanvas : Control, IDisposable
 
     public bool IsTransformActive => _toolController.ActiveTool is TransformTool tt && tt.HasPendingOperation;
 
+    public bool IsSmartShapeEditActive =>
+        GetSmartShapePhase() is SmartShapePhase.Adjusting or SmartShapePhase.Launcher or SmartShapePhase.Gizmo;
+
+    public void EnterSmartShapeGizmoEdit()
+    {
+        if (_toolController.ActiveTool is CompositeTool { Input: SmartShapeBrushInputProcess ss })
+            ss.EnterGizmoEdit();
+    }
+
+    /// <summary>Commit pending smart shape when the launcher bar is up (Esc / deselect dismiss).</summary>
+    public bool CommitSmartShapeIfLauncherShowing()
+    {
+        if (!App.Config.SmartShapeShowLauncher)
+            return false;
+
+        var phase = GetSmartShapePhase();
+        if (phase is not (SmartShapePhase.Launcher or SmartShapePhase.Gizmo))
+            return false;
+
+        if (_toolController.ActiveTool is not CompositeTool { Input: SmartShapeBrushInputProcess })
+            return false;
+
+        CommitActiveTool();
+        InvalidateVisual();
+        return true;
+    }
+
+    public void RefitSmartShape(SmartShapeFitKind kind)
+    {
+        if (_toolController.ActiveTool is CompositeTool { Input: SmartShapeBrushInputProcess ss })
+            ss.Refit(kind);
+    }
+
+    internal SmartShapeFitKind GetSmartShapeFitKind() =>
+        _toolController.ActiveTool is CompositeTool { Input: SmartShapeBrushInputProcess ss }
+            ? ss.ActiveFitKind
+            : SmartShapeFitKind.Auto;
+
+    internal bool GetSmartShapeStrokeClosed() =>
+        _toolController.ActiveTool is CompositeTool { Input: SmartShapeBrushInputProcess ss } && ss.StrokeClosed;
+
     private void NotifySelectionChanged()
     {
         SelectionChanged?.Invoke(this, EventArgs.Empty);
@@ -1562,10 +1619,13 @@ public sealed class DrawingCanvas : Control, IDisposable
             context.DrawRectangle(null, new Pen(CursorInnerBrush, t, dash2), new Rect(rx, ry, rw, rh));
         }
 
-        if (IsBrushResizePreviewActive)
-            RenderBrushResizePreviewOnCanvas(context);
-        else
-            RenderToolCursorOnCanvas(context);
+        if (!PreferViewportToolCursor)
+        {
+            if (IsBrushResizePreviewActive)
+                RenderBrushResizePreviewOnCanvas(context);
+            else
+                RenderToolCursorOnCanvas(context);
+        }
         DrawTelemetryOverlay(context);
     }
 

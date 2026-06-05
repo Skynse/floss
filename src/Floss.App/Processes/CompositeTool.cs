@@ -2,6 +2,7 @@ using Avalonia.Media;
 using Floss.App.Input;
 using Floss.App.Processes.Input;
 using Floss.App.Processes.Output;
+using Floss.App.SmartShape;
 using Floss.App.Tools;
 
 namespace Floss.App.Processes;
@@ -26,7 +27,11 @@ public sealed class CompositeTool : ITool
     {
         var hadPending = HasPendingOperation;
         Input.Cancel();
-        if (Output is DirectDrawOutput directDraw && directDraw.HasPendingWork)
+        if (Output is SmartShapeBrushOutput smartShapeOut)
+            smartShapeOut.ClearStrokePreview();
+        if (Output is SmartShapeBrushOutput smartOut && smartOut.HasPendingWork)
+            smartOut.FinalizeAccepting();
+        else if (Output is DirectDrawOutput directDraw && directDraw.HasPendingWork)
             directDraw.FinalizeAccepting();
         else if (Output is { } output && hadPending)
             output.Cancel();
@@ -35,32 +40,50 @@ public sealed class CompositeTool : ITool
 
     public void PointerDown(ToolContext ctx, CanvasInputSample s)
     {
+        BindSmartShapeUi(ctx);
         Input.ToolAuxMode = ctx.ToolAuxMode;
+        SyncSmartShapeModifiers(ctx);
         if (Output is SelectionAreaOutput sao)
             ctx.ActiveSelectionOp = SelectOpHelper.ResolveForSelection(sao.Operation, ctx);
         if (Input is RectInputProcess rip && Output is not SelectionAreaOutput)
             rip.Constrain = rip.ConsumesModifier(ctx.CurrentModifiers);
         Input.PointerDown(s);
+        if (Input.GetResult() is { } downResult)
+        {
+            Output.Execute(ctx, downResult);
+            InvalidateUi(ctx);
+            ctx.SmartShapePhaseChanged?.Invoke();
+            return;
+        }
         if (Input.GetImmediateResult() is { } immediate)
         {
             Output.Execute(ctx, immediate);
             InvalidateUi(ctx);
         }
-        if (Input.IsActive && Input.GetPreview() is { } preview)
+        SyncSmartShapeModifiers(ctx);
+        if (Input is SmartShapeBrushInputProcess { HasPendingSmartShape: true })
+            InvalidateSmartShapeUi(ctx);
+        else if (Input.IsActive && Input.GetPreview() is { } preview)
         {
             Output.Preview(ctx, preview);
             InvalidateUi(ctx);
         }
         else if (Output is SelectionAreaOutput)
-        {
             ctx.InvalidateSelectionOverlay();
-        }
     }
 
     public void PointerMove(ToolContext ctx, CanvasInputSample s)
     {
+        BindSmartShapeUi(ctx);
         Input.ToolAuxMode = ctx.ToolAuxMode;
+        SyncSmartShapeModifiers(ctx);
         Input.PointerMove(s);
+        if (Input is SmartShapeBrushInputProcess { HasPendingSmartShape: true })
+        {
+            InvalidateSmartShapeUi(ctx);
+            return;
+        }
+
         if (Input.IsActive && Input.GetPreview() is { } preview)
             Output.Preview(ctx, preview);
     }
@@ -72,48 +95,73 @@ public sealed class CompositeTool : ITool
             Output.Execute(ctx, result);
         ClearSelectionGesture(ctx);
         InvalidateUi(ctx);
+        if (Input is SmartShapeBrushInputProcess)
+            ctx.SmartShapePhaseChanged?.Invoke();
     }
 
     public void Cancel(ToolContext ctx)
     {
         Input.Cancel();
+        if (Output is SmartShapeBrushOutput smartOut)
+            smartOut.ClearStrokePreview();
         Output.Cancel();
         ClearSelectionGesture(ctx);
+        if (Input is SmartShapeBrushInputProcess)
+            ctx.SmartShapePhaseChanged?.Invoke();
     }
 
     public bool HasPendingOperation =>
+        (Input is SmartShapeBrushInputProcess smartIn && smartIn.HasPendingSmartShape) ||
         Input.IsActive ||
+        (Output is SmartShapeBrushOutput smartOut && smartOut.HasPendingWork) ||
         (Output is DirectDrawOutput directDraw && directDraw.HasPendingWork);
 
     public void RenderOverlay(DrawingContext dc, ToolContext ctx, double zoom)
     {
-        if (Input is BrushStrokeInputProcess bsip)
+        if (Input is SmartShapeBrushInputProcess ssip)
+        {
+            ssip.BrushSize = ctx.Brush?.Size ?? 8;
+            ssip.LastCanvasZoom = zoom;
+        }
+        else if (Input is BrushStrokeInputProcess bsip)
             bsip.BrushSize = ctx.Brush?.Size ?? 8;
         else if (Input is LiquifyInputProcess lip)
             lip.BrushSize = ctx.ActivePreset?.LiquifySize ?? 48;
+
+        if (Output is SmartShapeBrushOutput shapeOut
+            && Input is SmartShapeBrushInputProcess { HasPendingSmartShape: true })
+            shapeOut.DrawStrokePreview(dc);
+
         Input.RenderOverlay(dc, zoom);
     }
 
-    public bool CanCommitFromClick => Input is PolylineInputProcess;
+    public bool CanCommitFromClick =>
+        Input is PolylineInputProcess ||
+        Input is SmartShapeBrushInputProcess { Phase: SmartShapePhase.Launcher or SmartShapePhase.Gizmo };
 
     public bool ConsumesModifier(Avalonia.Input.KeyModifiers mods)
         => Output is not SelectionAreaOutput && Input.ConsumesModifier(mods);
 
     public void Commit(ToolContext ctx)
     {
-        Input.Commit();
+        if (Input is SmartShapeBrushInputProcess smartShape)
+            smartShape.Commit();
+        else
+            Input.Commit();
+
         if (Input.GetResult() is { } result)
-        {
             Output.Execute(ctx, result);
-        }
         else if (Input.IsActive)
             Input.Cancel();
 
-        if (Output is DirectDrawOutput directDraw && directDraw.HasPendingWork)
+        if (Output is SmartShapeBrushOutput smartOut && smartOut.HasPendingWork)
+            smartOut.FinalizeAccepting();
+        else if (Output is DirectDrawOutput directDraw && directDraw.HasPendingWork)
             directDraw.FlushPending();
 
         ClearSelectionGesture(ctx);
         InvalidateUi(ctx);
+        ctx.SmartShapePhaseChanged?.Invoke();
     }
 
     private static void ClearSelectionGesture(ToolContext ctx) => ctx.ActiveSelectionOp = null;
@@ -123,5 +171,28 @@ public sealed class CompositeTool : ITool
         ctx.InvalidateRender();
         if (Output is SelectionAreaOutput)
             ctx.InvalidateSelectionOverlay();
+    }
+
+    private void InvalidateSmartShapeUi(ToolContext ctx)
+    {
+        if (Input.GetPreview() is { } preview)
+            Output.Preview(ctx, preview);
+        ctx.InvalidateRender();
+        ctx.InvalidateToolCursor();
+    }
+
+    private void BindSmartShapeUi(ToolContext ctx)
+    {
+        if (Input is not SmartShapeBrushInputProcess smart)
+            return;
+
+        smart.InvalidateUi = () => InvalidateSmartShapeUi(ctx);
+        smart.PhaseChanged = () => ctx.SmartShapePhaseChanged?.Invoke();
+    }
+
+    private void SyncSmartShapeModifiers(ToolContext ctx)
+    {
+        if (Input is SmartShapeBrushInputProcess smart)
+            smart.ShiftConstrain = ctx.CurrentModifiers.HasFlag(Avalonia.Input.KeyModifiers.Shift);
     }
 }

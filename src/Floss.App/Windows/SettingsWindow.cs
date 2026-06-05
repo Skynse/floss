@@ -181,6 +181,16 @@ public sealed class SettingsWindow : Window
         content.Children.Add(RowCanvasButtonActionPicker("Right button", _sc.RightButtonAction,
             v => { _sc.RightButtonAction = v; App.Shortcuts.Save(); }));
 
+        content.Children.Add(GroupHeader("Smart Shape"));
+        content.Children.Add(RowCheckBox("Hold to create figures", _cfg.SmartShapeEnabled,
+            v => { _cfg.SmartShapeEnabled = v; App.Config.Save(); }));
+        content.Children.Add(RowSlider("Length of long-press (seconds)", _cfg.SmartShapeHoldSeconds, 0.10, 2.0,
+            v => { _cfg.SmartShapeHoldSeconds = v; App.Config.Save(); }, "f2"));
+        content.Children.Add(RowCheckBox("Show Smart Shape launcher", _cfg.SmartShapeShowLauncher,
+            v => { _cfg.SmartShapeShowLauncher = v; App.Config.Save(); }));
+        content.Children.Add(RowSlider("Hold still radius (px)", _cfg.SmartShapeHoldRadiusPx, 2, 32,
+            v => { _cfg.SmartShapeHoldRadiusPx = v; App.Config.Save(); }, "f0"));
+
         content.Children.Add(GroupHeader("Cursor Shape"));
         content.Children.Add(RowBrushCursorPicker("Brush",
             _cfg.BrushCursorMode, v => { _cfg.BrushCursorMode = v; App.Config.Save(); }));
@@ -455,6 +465,17 @@ public sealed class SettingsWindow : Window
             Children = { slider, valLabel }
         };
         return SettingRow(label, inner);
+    }
+
+    private static Control RowCheckBox(string label, bool currentValue, Action<bool> setter)
+    {
+        var check = new CheckBox
+        {
+            IsChecked = currentValue,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        check.IsCheckedChanged += (_, _) => setter(check.IsChecked ?? false);
+        return SettingRow(label, check);
     }
 
     private static Control SettingRow(string label, Control control)

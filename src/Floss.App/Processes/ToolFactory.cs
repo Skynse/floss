@@ -24,6 +24,11 @@ public sealed class ToolFactory
     {
         var input = CreateInput(preset);
         var output = CreateOutput(preset);
+        if (input is SmartShapeBrushInputProcess smartInput && output is SmartShapeBrushOutput smartOutput)
+        {
+            smartInput.BindOutput(smartOutput);
+            smartOutput.BindInput(smartInput);
+        }
         var alternate = CreateAlternate(preset);
         return new CompositeTool(input, output, alternate);
     }
@@ -52,12 +57,25 @@ public sealed class ToolFactory
         return Math.Clamp(preset.Stabilization, 0, 1);
     }
 
+    private SmartShapeBrushOutput CreateSmartShapeBrushOutput(ToolPreset preset)
+    {
+        var output = new SmartShapeBrushOutput(_brushEngine, _document)
+        {
+            Antialiasing = preset.Antialiasing
+        };
+        return output;
+    }
+
     private IInputProcess CreateInput(ToolPreset preset)
     {
         return preset.InputProcess switch
         {
             InputProcessType.Pen or InputProcessType.Brush or InputProcessType.Eraser or InputProcessType.Smudge
-                => new BrushStrokeInputProcess { Stabilization = EffectiveStabilization(preset) },
+                => new SmartShapeBrushInputProcess
+                {
+                    Stabilization = EffectiveStabilization(preset),
+                    SpeedAdaptiveStabilizer = preset.BrushOverride?.SpeedAdaptiveStabilizer ?? true
+                },
             InputProcessType.Liquify => new LiquifyInputProcess(),
             InputProcessType.Lasso => new LassoInputProcess { Stabilization = Math.Clamp(preset.Stabilization, 0, 1) },
             InputProcessType.Polyline => new PolylineInputProcess { ClosePath = preset.PolylineClosePath },
@@ -78,10 +96,7 @@ public sealed class ToolFactory
 
         return preset.OutputProcess switch
         {
-            OutputProcessType.DirectDraw => new DirectDrawOutput(_brushEngine, _document)
-            {
-                Antialiasing = preset.Antialiasing
-            },
+            OutputProcessType.DirectDraw => CreateSmartShapeBrushOutput(preset),
             OutputProcessType.ClosedAreaFill => new ClosedAreaFillOutput
             {
                 Antialiasing = preset.AntialiasingQuality != AntialiasingQuality.None,

@@ -87,6 +87,11 @@ public partial class MainWindow : ICanvasInputHost
         _workspaceViewport.Focus();
         UpdateViewportPointerFromEvent(e);
         ApplyViewportOsCursorHidden();
+
+        // Let smart-shape launcher buttons receive the click (tunnel runs before children).
+        if (IsOverSmartShapeLauncher(e.GetPosition(_workspaceViewport)))
+            return;
+
         _inputRouter.PointerPressed(e);
         RefreshViewportCursorAfterInput();
     }
@@ -162,6 +167,7 @@ public partial class MainWindow : ICanvasInputHost
         if (_rotDisplay != null) _rotDisplay.Text = "0°";
         PostUpdateStatus();
         UpdateSelectionActionBar();
+        UpdateSmartShapeLauncher();
     }
 
     private void SetRotation(double degrees)
@@ -186,6 +192,7 @@ public partial class MainWindow : ICanvasInputHost
         if (_rotDisplay != null) _rotDisplay.Text = $"{Math.Round(_rotation)}°";
         PostUpdateStatus();
         UpdateSelectionActionBar();
+        UpdateSmartShapeLauncher();
     }
 
     private void ResetView()
@@ -344,6 +351,7 @@ public partial class MainWindow : ICanvasInputHost
         _resizeOverlay?.InvalidateVisual();
         _selectionOutlineOverlay?.InvalidateVisual();
         _viewportCursorOverlay?.InvalidateVisual();
+        UpdateSmartShapeLauncher();
     }
 
     private void ClampCanvasPan()
@@ -452,6 +460,7 @@ public partial class MainWindow : ICanvasInputHost
         => _canvas.CommitActiveTool();
 
     bool ICanvasInputHost.IsTransformActive => _canvas.IsTransformActive;
+    bool ICanvasInputHost.IsSmartShapeEditActive => _canvas.IsSmartShapeEditActive;
 
     void ICanvasInputHost.EndTransformDragIfActive()
         => _canvas.EndTransformDragIfActive();
@@ -576,6 +585,8 @@ public partial class MainWindow : ICanvasInputHost
         if (_selectionActionBar is { IsVisible: true } selBar
             && selBar.Bounds.Contains(viewportPos))
             return true;
+        if (IsOverSmartShapeLauncher(viewportPos))
+            return true;
         return false;
     }
 
@@ -654,7 +665,7 @@ public partial class MainWindow : ICanvasInputHost
 
     private void ResetTransientInputState()
     {
-        if (_canvas.IsTransformActive)
+        if (_canvas.IsTransformActive || _canvas.IsSmartShapeEditActive)
             return;
 
         if (_temporaryPresetActive)

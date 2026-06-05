@@ -27,6 +27,10 @@ internal static class ToolPresetSync
     {
         switch (input)
         {
+            case SmartShapeBrushInputProcess smartBrush:
+                smartBrush.Stabilization = EffectiveStabilization(preset);
+                smartBrush.SpeedAdaptiveStabilizer = preset.BrushOverride?.SpeedAdaptiveStabilizer ?? true;
+                break;
             case BrushStrokeInputProcess brushStroke:
                 brushStroke.Stabilization = EffectiveStabilization(preset);
                 brushStroke.SpeedAdaptiveStabilizer = preset.BrushOverride?.SpeedAdaptiveStabilizer ?? true;
@@ -53,6 +57,9 @@ internal static class ToolPresetSync
 
         switch (output)
         {
+            case SmartShapeBrushOutput smartDraw:
+                smartDraw.Antialiasing = preset.Antialiasing;
+                break;
             case DirectDrawOutput directDraw:
                 directDraw.Antialiasing = preset.Antialiasing;
                 break;

@@ -164,6 +164,7 @@ public partial class MainWindow
         UpdateTimelapseMenuState();
 
         _footerStatusText.Text = $"Created '{result.FileName}'";
+        RefreshViewportCursorAfterInput();
     }
 
     private void AddBackgroundLayer()

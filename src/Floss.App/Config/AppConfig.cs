@@ -38,6 +38,13 @@ public sealed class AppConfig
     public BrushCursorMode EraserCursorMode { get; set; } = BrushCursorMode.Outline;
     public BrushCursorMode SmudgeCursorMode { get; set; } = BrushCursorMode.Outline;
     public bool ShowRulers { get; set; }
+
+    // CSP-style Smart Shape — global, applies to all DirectDraw tools.
+    public bool SmartShapeEnabled { get; set; } = true;
+    public double SmartShapeHoldSeconds { get; set; } = 0.70;
+    public bool SmartShapeShowLauncher { get; set; } = true;
+    public double SmartShapeHoldRadiusPx { get; set; } = 8;
+
     public Dictionary<string, bool> ToolPropertyDockerVisibility { get; set; } = new();
 
     /// <summary>Shared default visibility for tool properties in the docker. Used by both the docker panel and ToolPropertiesWindow.</summary>

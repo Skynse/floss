@@ -209,6 +209,7 @@ public partial class MainWindow
         // Save current viewport state into the departing tab
         if (_activeTab != null)
         {
+            _activeTab.Canvas.ClearViewportPointer();
             _activeTab.Canvas.RecoverInputState();
             _activeTab.Zoom = _zoom;
             _activeTab.Rotation = _rotation;
@@ -223,6 +224,7 @@ public partial class MainWindow
 
         _activeTab = tab;
         _canvas = tab.Canvas;
+        _canvas.PreferViewportToolCursor = true;
         _currentFilePath = tab.FilePath;
         _canvas.RecoverInputState();
 
@@ -246,6 +248,8 @@ public partial class MainWindow
         if (_rulerOverlay is RulerOverlay ro) ro.Canvas = _canvas;
         if (_resizeOverlay != null) _resizeOverlay.Canvas = _canvas;
         if (_selectionOutlineOverlay != null) _selectionOutlineOverlay.Canvas = _canvas;
+        if (_viewportCursorOverlay != null)
+            _viewportCursorOverlay.Canvas = _canvas;
 
         // Restore viewport state
         _zoom = tab.Zoom;
@@ -303,6 +307,7 @@ public partial class MainWindow
         SyncCanvasViewport();
         SyncBrushSizeLimits();
         ResetTransientInputState();
+        RefreshViewportCursorAfterInput();
         ActivateCanvasKeyboardRegion();
         _workspaceViewport?.Focus();
     }
@@ -428,6 +433,8 @@ public partial class MainWindow
         _canvas.LayersFoundByRect += ExpandAndScrollToLayers;
         _canvas.ColorSampled += OnCanvasColorSampled;
         _canvas.DirtyStateChanged += OnCanvasDirtyStateChanged;
+        _canvas.CursorPreviewChanged += OnCanvasCursorPreviewChanged;
+        _canvas.SmartShapeUiChanged += UpdateSmartShapeLauncher;
 
         _canvasUnwire = UnwireCanvas;
     }
@@ -442,6 +449,8 @@ public partial class MainWindow
         _canvas.LayersFoundByRect -= ExpandAndScrollToLayers;
         _canvas.ColorSampled -= OnCanvasColorSampled;
         _canvas.DirtyStateChanged -= OnCanvasDirtyStateChanged;
+        _canvas.CursorPreviewChanged -= OnCanvasCursorPreviewChanged;
+        _canvas.SmartShapeUiChanged -= UpdateSmartShapeLauncher;
     }
 
     private void OnCanvasStatsChanged(object? s, EventArgs e)

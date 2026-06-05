@@ -46,9 +46,6 @@ internal sealed class ViewportCursorOverlay : Control
             return;
         }
 
-        if (_canvas.IsCursorPreviewLocked)
-            return;
-
         _canvas.RenderToolCursorInViewportSpace(context, this);
     }
 }

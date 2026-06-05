@@ -69,6 +69,8 @@ public class CanvasInputRouterTests
             => Operations.Add("CommitTool");
 
         bool ICanvasInputHost.IsTransformActive => false;
+        public bool IsSmartShapeEditActive { get; set; }
+        bool ICanvasInputHost.IsSmartShapeEditActive => IsSmartShapeEditActive;
 
         void ICanvasInputHost.EndTransformDragIfActive() { }
 

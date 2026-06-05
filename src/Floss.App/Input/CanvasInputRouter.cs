@@ -54,6 +54,7 @@ public interface ICanvasInputHost
     void CommitActiveTool();
     ITool? ActiveTool { get; }
     bool IsTransformActive { get; }
+    bool IsSmartShapeEditActive { get; }
     void EndTransformDragIfActive();
 
     // ── Layer pick ──
@@ -371,7 +372,7 @@ public sealed class CanvasInputRouter
         {
             if (_host.IsTransformActive)
                 _host.EndTransformDragIfActive();
-            else
+            else if (!_host.IsSmartShapeEditActive)
                 _host.CommitActiveTool();
         }
 
@@ -684,6 +685,10 @@ public sealed class CanvasInputRouter
         if (_state == RouterState.Running)
             return;
 
+        // Smart-shape gizmo: ignore modifier tool swaps (pan/zoom uses viewport overlay in host).
+        if (_host.IsSmartShapeEditActive)
+            return;
+
         bool unchanged = (assignment == null && _activeModifierAction == ModifierAction.None)
                       || (assignment != null
                           && assignment.Modifiers == _activeModifierCombo
@@ -776,7 +781,7 @@ public sealed class CanvasInputRouter
         if (!_modifierAlternateActive)
             return;
 
-        if (_host.ActiveTool?.HasPendingOperation == true)
+        if (!_host.IsSmartShapeEditActive && _host.ActiveTool?.HasPendingOperation == true)
             _host.CommitActiveTool();
         _host.SetAlternateActive(false);
     }

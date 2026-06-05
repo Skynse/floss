@@ -18,6 +18,8 @@ public partial class MainWindow
         if (_workspaceViewport == null || _canvas == null)
             return;
 
+        _canvas.PreferViewportToolCursor = true;
+
         _viewportCursorOverlay = new ViewportCursorOverlay
         {
             Canvas = _canvas,
@@ -25,7 +27,7 @@ public partial class MainWindow
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
         };
-        _canvas.CursorPreviewChanged += OnCanvasCursorPreviewChanged;
+        // CursorPreviewChanged is wired per-tab in WireCanvas / UnwireCanvas.
 
         // Last child so the cursor paints above canvas, rulers, and chrome.
         _workspaceViewport.Children.Add(_viewportCursorOverlay);

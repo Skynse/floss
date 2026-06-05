@@ -352,7 +352,12 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         // Selection
         AddShortcut(s.SelectAll, () => _canvas.SelectAll(), CanExecuteSelectionShortcut);
-        AddShortcut(s.Deselect, () => _canvas.Deselect(), CanExecuteSelectionShortcut);
+        AddShortcut(s.Deselect, () =>
+        {
+            if (_canvas.CommitSmartShapeIfLauncherShowing())
+                return;
+            _canvas.Deselect();
+        }, CanExecuteSelectionShortcut);
         AddShortcut(s.InvertSelect, () => _canvas.InvertSelection(), CanExecuteSelectionShortcut);
         AddShortcut(s.Transform, TransformAction, CanExecuteCanvasDocumentShortcut);
 
@@ -397,6 +402,11 @@ public partial class MainWindow : Window, Tools.IViewportController
         // Special keys (not in ShortcutsConfig but handled same way)
         AddShortcut(new Input.KeyBinding(Key.Escape), () =>
         {
+            if (_canvas.CommitSmartShapeIfLauncherShowing())
+            {
+                ResetTransientInputState();
+                return;
+            }
             if (_canvas.ActiveTool.HasPendingOperation)
                 _canvas.CancelActiveTool();
             else if (_canvas.HasSelection)
@@ -654,6 +664,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         _workspaceViewport.Children.Add(_selectionActionBar);
 
         WireViewportCursor();
+        BuildSmartShapeLauncher();
 
         _canvasStatusText = MiniText();
         _footerStatusText = MiniText();
@@ -2904,8 +2915,8 @@ public partial class MainWindow : Window, Tools.IViewportController
     {
         if (_temporaryPresetActive) return false;
 
-        // Pan/zoom/rotate the viewport without committing or canceling an active transform.
-        if (_canvas.IsTransformActive && IsViewportNavigationPreset(presetId))
+        // Pan/zoom/rotate the viewport without committing or canceling transform / smart-shape edit.
+        if ((_canvas.IsTransformActive || _canvas.IsSmartShapeEditActive) && IsViewportNavigationPreset(presetId))
         {
             foreach (var group in App.ToolGroups.Groups)
             {
@@ -2922,6 +2933,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         {
             var preset = group.Presets.FirstOrDefault(p => p.Id == presetId);
             if (preset == null) continue;
+            if (_canvas.IsSmartShapeEditActive)
+                return false;
             if (_canvas.ActiveTool.HasPendingOperation)
                 _canvas.CommitActiveTool();
             _savedPresetTemp = _activeToolGroup?.ActivePreset;
@@ -2950,8 +2963,11 @@ public partial class MainWindow : Window, Tools.IViewportController
         // Commit any pending operation on the temporary tool before switching back
         // (e.g. eyedropper click that hasn't received PointerUp yet because the
         // modifier key was released first).
-        if (_canvas.ActiveTool.HasPendingOperation)
+        if (!_canvas.IsSmartShapeEditActive && _canvas.ActiveTool.HasPendingOperation)
             _canvas.CommitActiveTool();
+
+        if (_canvas.IsSmartShapeEditActive)
+            return;
 
         if (prev != null)
             _canvas.SetActiveTool(ToolForPreset(prev), prev);
