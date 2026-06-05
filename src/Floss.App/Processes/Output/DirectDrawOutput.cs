@@ -17,12 +17,16 @@ namespace Floss.App.Processes.Output;
 // finalizing a stroke while a new one has already started.
 public sealed class DirectDrawOutput : IOutputProcess
 {
-    // Time-slicing only applies when draining the backlog outside an active pointer
-    // move (Finalize/Flush). During Preview we drain the full queue synchronously
-    // so strokes stay under the pen (Krita-style), not playing catch-up.
+    // Light strokes: drain the full queue each pointer event (Krita-style, under the pen).
+    // Heavy strokes (large brush / backlog): time-slice on the UI thread — see notes/standard-canvas-stroke-budget.md.
     private const long PreviewNotifyIntervalMs = 0;
+    private const long HeavyPreviewNotifyIntervalMs = 16;
     private const double RenderSliceBudgetMs = 8.0;
+    private const double HeavyBrushDiameterPx = 128.0;
+    private const int HeavyStrokeBacklogSegments = 16;
+    private const double HeavyAverageSegmentMs = 4.0;
     private const int MaxSegmentsPerSlice = 64;
+    private const int HeavyMaxSegmentsPerSlice = 4;
     private const int InitialSegmentsPerSlice = 8;
 
     public bool IsPaintOutput => true;
@@ -62,9 +66,7 @@ public sealed class DirectDrawOutput : IOutputProcess
 
         EnsureActiveTransaction();
 
-        // Drain every queued segment on the UI thread before returning from the
-        // pointer event — no 5 ms budget cap, no Background-priority catch-up.
-        ProcessQueuedSync(drainAll: true);
+        ProcessQueuedSync(drainAll: !ShouldTimeSlicePreview(tx));
     }
 
     public void Execute(ToolContext ctx, IProcessedInput input)
@@ -186,7 +188,7 @@ public sealed class DirectDrawOutput : IOutputProcess
             // Never defer active-stroke work to Background — keep draining at Render
             // priority until the queue matches the pen.
             if (scheduleContinue && _active != null)
-                Dispatcher.UIThread.Post(() => ProcessQueuedSync(drainAll: true), DispatcherPriority.Render);
+                Dispatcher.UIThread.Post(() => ProcessQueuedSync(drainAll: drainAll), DispatcherPriority.Render);
         }
     }
 
@@ -292,7 +294,8 @@ public sealed class DirectDrawOutput : IOutputProcess
         if (tx.PendingPreviewDirty.IsEmpty) return;
 
         var now = Environment.TickCount64;
-        if (!force && now - tx.LastPreviewNotifyMs < PreviewNotifyIntervalMs)
+        var interval = ShouldTimeSlicePreview(tx) ? HeavyPreviewNotifyIntervalMs : PreviewNotifyIntervalMs;
+        if (!force && now - tx.LastPreviewNotifyMs < interval)
             return;
 
         tx.Ctx.Document.NotifyStrokeSuspendExtend(tx.PendingPreviewDirty);
@@ -324,6 +327,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         var pickupTiles = tx.PickupTiles;
 
         _brushEngine.CanvasZoom = tx.Ctx.Viewport?.Zoom ?? 1.0;
+        _brushEngine.BindStrokeBeforeTiles(tx.BeforeTiles);
         var dirty = _brushEngine.RasterizeSegments(tx.Layer, tx.Brush, samples, startSegmentIndex, segmentCount,
             pickupSampler, pickupTiles);
         RenderTelemetry.RecordBrush(ElapsedMs(started), _brushEngine.LastStats.Path, _brushEngine.LastStats.StampCount, _brushEngine.LastStats.CachedDabCount);
@@ -470,12 +474,16 @@ public sealed class DirectDrawOutput : IOutputProcess
         ref long started, ref int processed, ref PixelRegion batchDirty,
         ref bool scheduleAfterProcessing)
     {
+        var heavy = ShouldTimeSlicePreview(tx);
+        var maxPerSlice = force ? int.MaxValue : heavy ? HeavyMaxSegmentsPerSlice : MaxSegmentsPerSlice;
+        var initialPerSlice = heavy ? 1 : InitialSegmentsPerSlice;
+
         while (tx.NextSegmentIndex < tx.QueuedSamples.Count)
         {
             var remaining = tx.QueuedSamples.Count - tx.NextSegmentIndex;
             var segmentCount = force
                 ? remaining
-                : Math.Min(remaining, tx.SuggestedSegmentCount(RenderSliceBudgetMs, InitialSegmentsPerSlice, MaxSegmentsPerSlice));
+                : Math.Min(remaining, tx.SuggestedSegmentCount(RenderSliceBudgetMs, initialPerSlice, maxPerSlice));
 
             var segmentStarted = Stopwatch.GetTimestamp();
             var startIndex = tx.NextSegmentIndex;
@@ -485,7 +493,7 @@ public sealed class DirectDrawOutput : IOutputProcess
             processed += segmentCount;
             tx.RecordSegmentTime(ElapsedMs(segmentStarted), segmentCount);
 
-            if (!force && processed >= MaxSegmentsPerSlice)
+            if (!force && processed >= maxPerSlice)
                 break;
             if (!force && ElapsedMs(started) >= RenderSliceBudgetMs)
                 break;
@@ -494,7 +502,7 @@ public sealed class DirectDrawOutput : IOutputProcess
         if (!batchDirty.IsEmpty)
         {
             tx.PendingPreviewDirty = tx.PendingPreviewDirty.Union(batchDirty);
-            FlushPreviewDirty(tx, force: true);
+            FlushPreviewDirty(tx, force: force || !heavy);
         }
 
         if (tx.NextSegmentIndex < tx.QueuedSamples.Count)
@@ -564,6 +572,15 @@ public sealed class DirectDrawOutput : IOutputProcess
 
     private static double ElapsedMs(long started)
         => (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
+
+    private static bool ShouldTimeSlicePreview(StrokeTransaction tx)
+    {
+        if (tx.Brush.Size >= HeavyBrushDiameterPx)
+            return true;
+        if (tx.RemainingSegments > HeavyStrokeBacklogSegments)
+            return true;
+        return tx.AverageSegmentMs > HeavyAverageSegmentMs && tx.RemainingSegments > 4;
+    }
 
     private static void ReadBeforeStrokePixelFrom(Dictionary<(int, int), byte[]?> beforeTiles, DrawingLayer currentLayer, int x, int y, out byte b, out byte g, out byte r, out byte a)
     {

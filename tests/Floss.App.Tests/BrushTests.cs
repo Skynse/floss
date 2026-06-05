@@ -370,6 +370,115 @@ public class BrushTests
     }
 
     [Fact]
+    public void BrushEngine_LargeImageTipUsesCachedTileMajorPath()
+    {
+        using var engine = new BrushEngine();
+        using var layer = new DrawingLayer("Layer", 2048, 2048);
+        var brush = new BrushPreset("Huge texture", 1024, 1, 0.75, 0.05, Colors.Black, 0)
+        {
+            GapMode = BrushGapMode.Fixed,
+            Tip = new ImageBrushTip(ColoredTipPngBytes(SKColors.Gray)),
+            Shape = null,
+            ColorMix = false,
+            Grain = 0,
+            Dynamics = new BrushDynamics()
+        };
+        var from = Sample(512, 1024, 0);
+        var to = Sample(520, 1024, 8_000);
+
+        engine.BeginStroke(brush, from);
+        var dirty = engine.RasterizeSegment(layer, brush, from, to);
+
+        TestAssertions.False(dirty.IsEmpty);
+        TestAssertions.Equal("CachedTileMajor", engine.LastStats.Path);
+        TestAssertions.True(engine.LastStats.CachedDabCount > 0);
+    }
+
+    [Fact]
+    public void BrushEngine_LargeProceduralCircleUsesCachedTileMajorPath()
+    {
+        using var engine = new BrushEngine();
+        using var layer = new DrawingLayer("Layer", 2048, 2048);
+        var brush = new BrushPreset("Huge circle", 1024, 1, 0.75, 0.05, Colors.Black, 0)
+        {
+            GapMode = BrushGapMode.Fixed,
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null,
+            ColorMix = false,
+            Grain = 0,
+            Dynamics = new BrushDynamics()
+        };
+        var from = Sample(512, 1024, 0);
+        var to = Sample(520, 1024, 8_000);
+
+        engine.BeginStroke(brush, from);
+        var dirty = engine.RasterizeSegment(layer, brush, from, to);
+
+        TestAssertions.False(dirty.IsEmpty);
+        TestAssertions.Equal("CachedTileMajor", engine.LastStats.Path);
+        TestAssertions.True(engine.LastStats.CachedDabCount > 0);
+    }
+
+    [Fact]
+    public void BrushEngine_LargeMultiStampUsesLightenRasterPath()
+    {
+        using var engine = new BrushEngine();
+        using var layer = new DrawingLayer("Layer", 4096, 4096);
+        var brush = new BrushPreset("Huge overlap", 1024, 1, 0.75, 0.05, Colors.Black, 0)
+        {
+            GapMode = BrushGapMode.Fixed,
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null,
+            ColorMix = false,
+            Grain = 0,
+            Dynamics = new BrushDynamics()
+        };
+        var from = Sample(512, 2048, 0);
+        var to = Sample(1800, 2048, 120_000);
+
+        engine.BeginStroke(brush, from);
+        var dirty = engine.RasterizeSegment(layer, brush, from, to);
+
+        TestAssertions.False(dirty.IsEmpty);
+        TestAssertions.True(engine.LastStats.StampCount > 1,
+            $"Expected overlapping large stamps, got {engine.LastStats.StampCount}.");
+        TestAssertions.True(
+            engine.LastStats.Path is "StrokeMaskCached" or "CachedLightenScratch" or "CachedTileMajorLighten",
+            $"Expected lighten raster path, got {engine.LastStats.Path}.");
+        TestAssertions.True(engine.LastStats.CachedDabCount > 0);
+    }
+
+    [Fact]
+    public void BrushEngine_LiveLargeStrokeUsesStrokeMaskCached()
+    {
+        using var engine = new BrushEngine();
+        using var layer = new DrawingLayer("Layer", 4096, 4096);
+        layer.ActivePixels.LiveStroke = true;
+        var brush = new BrushPreset("Live huge", 1024, 1, 0.75, 0.05, Colors.Black, 0)
+        {
+            GapMode = BrushGapMode.Fixed,
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null,
+            ColorMix = false,
+            Grain = 0,
+            Dynamics = new BrushDynamics()
+        };
+        var from = Sample(512, 2048, 0);
+        var to = Sample(1800, 2048, 120_000);
+
+        engine.BeginStroke(brush, from);
+        var region = engine.EstimateSegmentRegion(layer, brush, from, to);
+        var beforeTiles = layer.CaptureTiles(region);
+        engine.BindStrokeBeforeTiles(beforeTiles);
+        var dirty = engine.RasterizeSegment(layer, brush, from, to);
+
+        TestAssertions.False(dirty.IsEmpty);
+        TestAssertions.Equal("StrokeMaskCached", engine.LastStats.Path);
+        TestAssertions.True(engine.LastStats.StampCount > 1);
+        TestAssertions.True(engine.LastStats.CachedDabCount > 0);
+    }
+
+    [Fact]
     public void BrushEngine_LowSpacingUsesCachedTileMajorPath()
     {
         using var engine = new BrushEngine();
@@ -416,7 +525,7 @@ public class BrushTests
         var dirty = engine.RasterizeSegment(layer, brush, from, to);
 
         TestAssertions.False(dirty.IsEmpty);
-        TestAssertions.Equal("TileMajor", engine.LastStats.Path);
+        TestAssertions.Equal("CachedTileMajor", engine.LastStats.Path);
         TestAssertions.True(engine.LastStats.CachedDabCount > 10);
         TestAssertions.True(engine.LastStats.TileBucketCount > 0);
     }
@@ -447,7 +556,7 @@ public class BrushTests
         var dirty = engine.RasterizeSegment(layer, brush, from, to);
 
         TestAssertions.False(dirty.IsEmpty);
-        TestAssertions.Equal("TileMajor", engine.LastStats.Path);
+        TestAssertions.Equal("CachedTileMajor", engine.LastStats.Path);
         TestAssertions.True(engine.LastStats.CachedDabCount > 10);
         TestAssertions.True(engine.LastStats.TileBucketCount > 0);
     }
@@ -495,7 +604,7 @@ public class BrushTests
         var dirty = engine.RasterizeSegment(layer, brush, from, to);
 
         TestAssertions.False(dirty.IsEmpty);
-        TestAssertions.Equal("ColorTileMajor", engine.LastStats.Path);
+        TestAssertions.Equal("CachedColorTileMajor", engine.LastStats.Path);
         TestAssertions.True(engine.LastStats.CachedDabCount > 10);
         layer.Pixels.GetPixel(240, 128, out var b, out var g, out var r, out var a);
         TestAssertions.True(a > 0, "Colored image tip should deposit alpha.");
@@ -529,7 +638,7 @@ public class BrushTests
         var dirty = engine.RasterizeSegments(layer, brush, samples, 1, samples.Count - 1);
 
         TestAssertions.False(dirty.IsEmpty);
-        TestAssertions.Equal("ColorTileMajor", engine.LastStats.Path);
+        TestAssertions.Equal("CachedColorTileMajor", engine.LastStats.Path);
         TestAssertions.True(engine.LastStats.StampCount > 40,
             $"Expected many unique stamps in one batch, got {engine.LastStats.StampCount}.");
         TestAssertions.True(engine.LastStats.CachedDabCount > 32,
@@ -772,7 +881,7 @@ public class BrushTests
             Sample(15_000, 0, 16_000)
         };
 
-        queue.Invoke(null, [tx, layer, brush, samples]);
+        queue.Invoke(null, [tx, layer, samples]);
         var queued = (List<CanvasInputSample>)(txType.GetProperty("QueuedSamples")?.GetValue(tx)
             ?? throw new InvalidOperationException("Missing QueuedSamples."));
 
@@ -1483,7 +1592,7 @@ public class BrushTests
         var dirty = engine.RasterizeSegment(layer, brush, from, to);
 
         TestAssertions.False(dirty.IsEmpty);
-        TestAssertions.Equal("TileMajor", engine.LastStats.Path);
+        TestAssertions.Equal("CachedTileMajor", engine.LastStats.Path);
         TestAssertions.True(engine.LastStats.CachedDabCount > 0);
     }
 

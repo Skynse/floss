@@ -43,6 +43,9 @@ public sealed class BrushEngine : IDisposable
 
     private const int MaxPrecomputedGrainPixels = 1024 * 1024;
     private const int MaxColorMixScratchPixels = 2048 * 2048;
+    // Profile live-1024brush-30s: procedural direct eval at 1024px ~1M px/dab; bake+blit instead.
+    internal const float LargeStampCachedRasterMinDiameterPx = 256f;
+    private const int LargeDabCpuBakeMaxDimension = 512;
 
     // Drawpile's brush engine grows dab batches from a 1024-element floor. Keep
     // the managed stamp/color lists in the same range so normal fast strokes do
@@ -167,6 +170,17 @@ public sealed class BrushEngine : IDisposable
     {
         lock (_gate)
             EndStrokeCore();
+    }
+
+    /// <summary>Pre-stroke tile snapshot (first capture per tile). Used to rebuild the
+    /// layer from max-alpha stroke mask without compounding dab overlaps across batches.</summary>
+    public void BindStrokeBeforeTiles(IReadOnlyDictionary<(int X, int Y), byte[]?>? beforeTiles)
+    {
+        lock (_gate)
+        {
+            if (_activeStroke != null)
+                _activeStroke.BeforeTiles = beforeTiles;
+        }
     }
 
     /// <summary>Snapshot dab-spacing state (e.g. before a preview tail that will be tile-reverted).</summary>
@@ -532,10 +546,11 @@ public sealed class BrushEngine : IDisposable
         bool isMultiTipSingle = false;
         var primaryTip = stroke.TipFor(0);
         bool usesProceduralStamp = UsesProceduralStampEvaluation(brush, primaryTip, _stampColors.Count);
+        bool preferCachedTileMajor = PreferCachedTileMajorRaster(brush);
 
         bool blendModeCanRasterize = SupportsCpuRasterBlendMode(brush.BlendMode);
 
-        if (blendModeCanRasterize && !isMultiTipSingle && !usesProceduralStamp)
+        if (blendModeCanRasterize && !isMultiTipSingle && (!usesProceduralStamp || preferCachedTileMajor))
         {
             var baseColor = stroke.BaseColor;
             float brushGrain = 0f;
@@ -553,14 +568,44 @@ public sealed class BrushEngine : IDisposable
                 return;
             }
 
-            if (!stroke.HasAnyColorTip &&
-                TryRasterizeCachedDabsTileMajor(layer, stroke, brush, brush.BlendMode,
-                    baseColor.Blue, baseColor.Green, baseColor.Red, baseColor.Alpha,
-                    brushGrain, texPx, texW, texH, texStride, dirty, grainTable))
+            if (!stroke.HasAnyColorTip)
             {
-                _lastRasterPath = "CachedTileMajor";
-                PaintBuf(layer).PruneRegion(dirty);
-                return;
+                // Live large strokes: accumulate max-alpha in a persistent stroke mask and
+                // rebuild dirty tiles from the pre-stroke snapshot each batch. Prevents
+                // overlap compounding across UI time-slices (the square banding artifact).
+                if (PreferStrokeMaskComposite(layer, brush)
+                    && TryAccumulateCachedDabsToStrokeMask(stroke, brush, brush.BlendMode,
+                        baseColor.Blue, baseColor.Green, baseColor.Red, baseColor.Alpha,
+                        brushGrain, texPx, texW, texH, texStride, dirty, grainTable))
+                {
+                    ApplyStrokeMaskToLayer(layer, stroke, dirty,
+                        baseColor.Blue, baseColor.Green, baseColor.Red, brush.BlendMode);
+                    _lastRasterPath = "StrokeMaskCached";
+                    PaintBuf(layer).PruneRegion(dirty);
+                    return;
+                }
+
+                var multiLargeSrcOver = preferCachedTileMajor && _stamps.Count > 1
+                    && brush.BlendMode == SKBlendMode.SrcOver;
+
+                if (multiLargeSrcOver &&
+                    TryRasterizeCachedDabsLightenScratch(layer, stroke, brush,
+                        baseColor.Blue, baseColor.Green, baseColor.Red, baseColor.Alpha, dirty))
+                {
+                    _lastRasterPath = "CachedLightenScratch";
+                    PaintBuf(layer).PruneRegion(dirty);
+                    return;
+                }
+
+                if (TryRasterizeCachedDabsTileMajor(layer, stroke, brush, brush.BlendMode,
+                        baseColor.Blue, baseColor.Green, baseColor.Red, baseColor.Alpha,
+                        brushGrain, texPx, texW, texH, texStride, dirty, grainTable,
+                        perTileLighten: multiLargeSrcOver))
+                {
+                    _lastRasterPath = multiLargeSrcOver ? "CachedTileMajorLighten" : "CachedTileMajor";
+                    PaintBuf(layer).PruneRegion(dirty);
+                    return;
+                }
             }
         }
 
@@ -1749,7 +1794,8 @@ public sealed class BrushEngine : IDisposable
         int texH,
         int texStride,
         PixelRegion dirty,
-        float[]? grainTable)
+        float[]? grainTable,
+        bool perTileLighten = false)
     {
         if (_stamps.Count == 0)
             return false;
@@ -1835,13 +1881,22 @@ public sealed class BrushEngine : IDisposable
                     var tilePixX = tx * tsz;
                     var tilePixY = ty * tsz;
 
-                    foreach (var placed in dabs)
+                    if (perTileLighten)
                     {
-                        ApplyCachedDabToTile(
-                            tile, tilePixX, tilePixY, dirty, grainTable,
-                            placed, blendMode,
-                            brushGrain, texPx, texW, texH, texStride,
-                            layer.IsAlphaLocked);
+                        ApplyCachedDabsLightenToTile(
+                            tile, tilePixX, tilePixY, dirty, grainTable, dabs, blendMode,
+                            brushGrain, texPx, texW, texH, texStride, layer.IsAlphaLocked);
+                    }
+                    else
+                    {
+                        foreach (var placed in dabs)
+                        {
+                            ApplyCachedDabToTile(
+                                tile, tilePixX, tilePixY, dirty, grainTable,
+                                placed, blendMode,
+                                brushGrain, texPx, texW, texH, texStride,
+                                layer.IsAlphaLocked);
+                        }
                     }
                 }
             }
@@ -1851,6 +1906,430 @@ public sealed class BrushEngine : IDisposable
         }
         finally
         {
+        }
+    }
+
+    private unsafe bool TryRasterizeCachedDabsLightenScratch(
+        DrawingLayer layer,
+        ActiveStroke stroke,
+        BrushPreset brush,
+        int brushB,
+        int brushG,
+        int brushR,
+        float baseAlpha,
+        PixelRegion dirty)
+    {
+        if (_stamps.Count <= 1)
+            return false;
+
+        var w = dirty.Width;
+        var h = dirty.Height;
+        if (w <= 0 || h <= 0 || (long)w * h > MaxColorMixScratchPixels)
+            return false;
+
+        if (_scratch == null || _scratch.Width < w || _scratch.Height < h
+            || _scratch.Width > w * 4 || _scratch.Height > h * 4)
+        {
+            _scratch?.Dispose();
+            _scratch = new SKBitmap(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+        }
+
+        if (_scratch == null || _scratch.IsEmpty)
+            return false;
+
+        var pixels = _scratch.GetPixels();
+        if (pixels == IntPtr.Zero)
+            return false;
+
+        var ptr = (byte*)pixels.ToPointer();
+        var stride = _scratch.RowBytes;
+        for (var sy = 0; sy < h; sy++)
+        {
+            var row = ptr + sy * stride;
+            for (var sx = 0; sx < w; sx++)
+            {
+                var offset = sx * 4;
+                row[offset] = 0;
+                row[offset + 1] = 0;
+                row[offset + 2] = 0;
+                row[offset + 3] = 0;
+            }
+        }
+
+        var dirtyX = dirty.X;
+        var dirtyY = dirty.Y;
+        for (var i = 0; i < _stamps.Count; i++)
+        {
+            var stamp = _stamps[i];
+            if (stamp.Opacity <= 0 || stamp.Size <= 0) continue;
+            if (!stroke.TryGetCachedDab(stamp, out var dab) || dab.Mask.IsEmpty)
+                return false;
+            _lastCachedDabCount++;
+
+            var left = (int)MathF.Round(stamp.X) + dab.OffsetX;
+            var top = (int)MathF.Round(stamp.Y) + dab.OffsetY;
+            var right = left + dab.LogicalWidth;
+            var bottom = top + dab.LogicalHeight;
+            var pxMinX = Math.Max(left, dirty.X);
+            var pxMinY = Math.Max(top, dirty.Y);
+            var pxMaxX = Math.Min(right, dirty.Right);
+            var pxMaxY = Math.Min(bottom, dirty.Bottom);
+            if (pxMinX >= pxMaxX || pxMinY >= pxMaxY) continue;
+
+            var stampOpacity255 = StampOpacity255(brush.BlendMode, stamp.Opacity, baseAlpha);
+            if (stampOpacity255 <= 0) continue;
+
+            var useFastMaskPath = !dab.IsScaled;
+            byte* maskPtr = null;
+            int maskStride = 0;
+            if (useFastMaskPath)
+            {
+                maskPtr = (byte*)dab.Mask.GetPixels().ToPointer();
+                maskStride = dab.Mask.RowBytes;
+            }
+
+            for (var py = pxMinY; py < pxMaxY; py++)
+            {
+                var localY = py - top;
+                var scratchY = py - dirtyY;
+                if ((uint)scratchY >= (uint)h) continue;
+                var scratchRow = ptr + scratchY * stride;
+                var maskRow = useFastMaskPath ? maskPtr + localY * maskStride : null;
+
+                for (var px = pxMinX; px < pxMaxX; px++)
+                {
+                    int maskA = useFastMaskPath
+                        ? maskRow![px - left]
+                        : SampleMaskAlpha(dab, px - left, localY);
+                    if (maskA == 0) continue;
+
+                    var stampA = (int)(maskA / 255f * stampOpacity255 + 0.5f);
+                    if (stampA <= 0) continue;
+                    if (stampA > 255) stampA = 255;
+
+                    var offset = (px - dirtyX) * 4;
+                    if (stampA > scratchRow[offset + 3])
+                    {
+                        scratchRow[offset + 0] = (byte)brushB;
+                        scratchRow[offset + 1] = (byte)brushG;
+                        scratchRow[offset + 2] = (byte)brushR;
+                        scratchRow[offset + 3] = (byte)stampA;
+                    }
+                }
+            }
+        }
+
+        CompositeScratchBgraOntoLayer(PaintBuf(layer), dirty, ptr, stride,
+            layer.IsAlphaLocked && !MaskPaint(layer), SKBlendMode.SrcOver, MaskPaint(layer));
+        return true;
+    }
+
+    private static bool PreferStrokeMaskComposite(DrawingLayer layer, BrushPreset brush)
+        => layer.ActivePixels.LiveStroke
+            && PreferCachedTileMajorRaster(brush)
+            && brush.BlendMode == SKBlendMode.SrcOver
+            && !brush.ColorMix;
+
+    private unsafe bool TryAccumulateCachedDabsToStrokeMask(
+        ActiveStroke stroke,
+        BrushPreset brush,
+        SKBlendMode blendMode,
+        int brushB,
+        int brushG,
+        int brushR,
+        float baseAlpha,
+        float brushGrain,
+        byte* texPx,
+        int texW,
+        int texH,
+        int texStride,
+        PixelRegion dirty,
+        float[]? grainTable)
+    {
+        if (stroke.BeforeTiles == null || _stamps.Count == 0)
+            return false;
+
+        const int tsz = TiledPixelBuffer.TileSize;
+        _dabBuckets.Clear();
+        var buckets = _dabBuckets;
+        buckets.EnsureCapacity(Math.Max(16, Math.Min(_stamps.Count * 4, 4096)));
+
+        for (var i = 0; i < _stamps.Count; i++)
+        {
+            var stamp = _stamps[i];
+            if (stamp.Opacity <= 0 || stamp.Size <= 0) continue;
+
+            var colorB = brushB;
+            var colorG = brushG;
+            var colorR = brushR;
+            var colorA = baseAlpha;
+            if (!UsesMaskOpacity(blendMode) && _stampColors.Count > i)
+            {
+                var color = _stampColors[i];
+                if (color.Alpha == 0) continue;
+                colorB = color.Blue;
+                colorG = color.Green;
+                colorR = color.Red;
+                colorA = color.Alpha;
+            }
+
+            if (!stroke.TryGetCachedDab(stamp, out var dab))
+            {
+                buckets.Clear();
+                return false;
+            }
+            _lastCachedDabCount++;
+
+            var left = (int)MathF.Round(stamp.X) + dab.OffsetX;
+            var top = (int)MathF.Round(stamp.Y) + dab.OffsetY;
+            var right = left + dab.LogicalWidth;
+            var bottom = top + dab.LogicalHeight;
+            if (right <= dirty.X || bottom <= dirty.Y || left >= dirty.Right || top >= dirty.Bottom)
+                continue;
+
+            var placed = new PlacedDab(stamp, dab, left, top, right, bottom, colorB, colorG, colorR, colorA);
+            var firstTx = FloorDiv(left, tsz);
+            var firstTy = FloorDiv(top, tsz);
+            var lastTx = FloorDiv(right - 1, tsz);
+            var lastTy = FloorDiv(bottom - 1, tsz);
+
+            for (var ty = firstTy; ty <= lastTy; ty++)
+            {
+                for (var tx = firstTx; tx <= lastTx; tx++)
+                {
+                    var tileLeft = tx * tsz;
+                    var tileTop = ty * tsz;
+                    if (right <= tileLeft || bottom <= tileTop || left >= tileLeft + tsz || top >= tileTop + tsz)
+                        continue;
+
+                    int key = (tx & 0xFFFF) | ((ty & 0xFFFF) << 16);
+                    if (!buckets.TryGetValue(key, out var list))
+                    {
+                        list = new List<PlacedDab>(8);
+                        buckets.Add(key, list);
+                    }
+                    list.Add(placed);
+                }
+            }
+        }
+
+        if (buckets.Count == 0)
+            return true;
+        _lastTileBucketCount = buckets.Count;
+
+        foreach (var (key, dabs) in buckets)
+        {
+            int tx = (short)key;
+            int ty = (short)(key >> 16);
+            var tilePixX = tx * tsz;
+            var tilePixY = ty * tsz;
+            MaxCachedDabsIntoStrokeMask(stroke, tx, ty, tilePixX, tilePixY, dirty, grainTable, dabs, blendMode,
+                brushGrain, texPx, texW, texH, texStride);
+        }
+
+        return true;
+    }
+
+    private static unsafe void MaxCachedDabsIntoStrokeMask(
+        ActiveStroke stroke,
+        int tx,
+        int ty,
+        int tilePixX,
+        int tilePixY,
+        PixelRegion dirty,
+        float[]? grainTable,
+        List<PlacedDab> dabs,
+        SKBlendMode blendMode,
+        float brushGrain,
+        byte* texPx,
+        int texW,
+        int texH,
+        int texStride)
+    {
+        const int tsz = TiledPixelBuffer.TileSize;
+        var tileKey = (tx, ty);
+        if (!stroke.StrokeMaskTiles.TryGetValue(tileKey, out var maskTile))
+        {
+            maskTile = new byte[tsz * tsz];
+            stroke.StrokeMaskTiles[tileKey] = maskTile;
+        }
+
+        float grainBase = 1f - brushGrain;
+        bool hasGrainTable = grainTable != null;
+        bool hasProceduralGrain = !hasGrainTable && brushGrain > 0f;
+        bool hasTexGrain = hasProceduralGrain && texPx != null;
+
+        foreach (var placed in dabs)
+        {
+            float stampOpacity255 = StampOpacity255(blendMode, placed.Stamp.Opacity, placed.ColorA);
+            if (stampOpacity255 <= 0) continue;
+
+            var pxMinX = Math.Max(placed.Left, tilePixX);
+            var pxMinY = Math.Max(placed.Top, tilePixY);
+            var pxMaxX = Math.Min(placed.Right, tilePixX + tsz);
+            var pxMaxY = Math.Min(placed.Bottom, tilePixY + tsz);
+            if (pxMinX >= pxMaxX || pxMinY >= pxMaxY) continue;
+
+            var useFastPath = !placed.Dab.IsScaled && !hasGrainTable && brushGrain <= 0f;
+            var maskPtr = (byte*)placed.Dab.Mask.GetPixels().ToPointer();
+            var maskStride = placed.Dab.Mask.RowBytes;
+
+            for (int py = pxMinY; py < pxMaxY; py++)
+            {
+                var localY = py - placed.Top;
+                var ly = py - tilePixY;
+                var maskRow = useFastPath ? maskPtr + localY * maskStride : null;
+
+                if (useFastPath)
+                {
+                    for (int px = pxMinX; px < pxMaxX; px++)
+                    {
+                        int maskA = maskRow![px - placed.Left];
+                        if (maskA == 0) continue;
+
+                        int stampA = (int)(maskA / 255f * stampOpacity255 + 0.5f);
+                        if (stampA <= 0) continue;
+                        if (stampA > 255) stampA = 255;
+
+                        var idx = ly * tsz + (px - tilePixX);
+                        if (stampA > maskTile[idx])
+                            maskTile[idx] = (byte)stampA;
+                    }
+                    continue;
+                }
+
+                for (int px = pxMinX; px < pxMaxX; px++)
+                {
+                    int maskA = SampleMaskAlpha(placed.Dab, px - placed.Left, localY);
+                    if (maskA == 0) continue;
+
+                    float alpha = maskA / 255f;
+                    if (hasGrainTable)
+                    {
+                        int gy = py - dirty.Y, gx = px - dirty.X;
+                        if (gy >= 0 && gy < dirty.Height && gx >= 0 && gx < dirty.Width)
+                            alpha *= grainTable![gy * dirty.Width + gx];
+                    }
+                    else if (hasProceduralGrain)
+                    {
+                        if (hasTexGrain)
+                            alpha *= grainBase + (texPx[((py % texH + texH) % texH) * texStride + ((px % texW + texW) % texW)] / 255.0f) * brushGrain;
+                        else
+                            alpha *= grainBase + GrainNoise(px, py) * brushGrain;
+                    }
+
+                    int stampA = (int)(alpha * stampOpacity255 + 0.5f);
+                    if (stampA <= 0) continue;
+                    if (stampA > 255) stampA = 255;
+
+                    var idx = ly * tsz + (px - tilePixX);
+                    if (stampA > maskTile[idx])
+                        maskTile[idx] = (byte)stampA;
+                }
+            }
+        }
+    }
+
+    private static unsafe void ApplyStrokeMaskToLayer(
+        DrawingLayer layer,
+        ActiveStroke stroke,
+        PixelRegion dirty,
+        int brushB,
+        int brushG,
+        int brushR,
+        SKBlendMode blendMode)
+    {
+        if (dirty.IsEmpty || stroke.BeforeTiles == null)
+            return;
+
+        const int tsz = TiledPixelBuffer.TileSize;
+        var beforeTiles = stroke.BeforeTiles;
+        var maskTiles = stroke.StrokeMaskTiles;
+        var alphaLocked = layer.IsAlphaLocked;
+        var maskMode = MaskPaint(layer);
+        var pixels = PaintBuf(layer);
+
+        pixels.EnterPixelWriteLock();
+        try
+        {
+            var firstTx = FloorDiv(dirty.X, tsz);
+            var firstTy = FloorDiv(dirty.Y, tsz);
+            var lastTx = FloorDiv(dirty.Right - 1, tsz);
+            var lastTy = FloorDiv(dirty.Bottom - 1, tsz);
+
+            for (var ty = firstTy; ty <= lastTy; ty++)
+            {
+                var tilePixY = ty * tsz;
+                for (var tx = firstTx; tx <= lastTx; tx++)
+                {
+                    var tilePixX = tx * tsz;
+                    var pxMinX = Math.Max(dirty.X, tilePixX);
+                    var pxMinY = Math.Max(dirty.Y, tilePixY);
+                    var pxMaxX = Math.Min(dirty.Right, tilePixX + tsz);
+                    var pxMaxY = Math.Min(dirty.Bottom, tilePixY + tsz);
+                    if (pxMinX >= pxMaxX || pxMinY >= pxMaxY) continue;
+
+                    var tile = pixels.GetOrCreateRawTile(tx, ty);
+                    beforeTiles.TryGetValue((tx, ty), out var beforeTile);
+                    maskTiles.TryGetValue((tx, ty), out var maskTile);
+
+                    for (var py = pxMinY; py < pxMaxY; py++)
+                    {
+                        var ly = py - tilePixY;
+                        var rowBase = ly * tsz * 4;
+                        for (var px = pxMinX; px < pxMaxX; px++)
+                        {
+                            var lx = px - tilePixX;
+                            var dstOffset = rowBase + lx * 4;
+                            var maskA = maskTile != null ? maskTile[ly * tsz + lx] : (byte)0;
+
+                            byte beforeB = 0, beforeG = 0, beforeR = 0, beforeA = 0;
+                            if (beforeTile != null)
+                            {
+                                var beforeOffset = rowBase + lx * 4;
+                                beforeB = beforeTile[beforeOffset];
+                                beforeG = beforeTile[beforeOffset + 1];
+                                beforeR = beforeTile[beforeOffset + 2];
+                                beforeA = beforeTile[beforeOffset + 3];
+                            }
+
+                            if (maskA == 0)
+                            {
+                                tile[dstOffset] = beforeB;
+                                tile[dstOffset + 1] = beforeG;
+                                tile[dstOffset + 2] = beforeR;
+                                tile[dstOffset + 3] = beforeA;
+                                continue;
+                            }
+
+                            if (maskMode)
+                            {
+                                WriteCompositeStamp(tile, dstOffset, (byte)brushB, (byte)brushG, (byte)brushR, maskA,
+                                    alphaLocked, blendMode, maskMode: true);
+                                continue;
+                            }
+
+                            fixed (byte* tp = tile)
+                            {
+                                tp[dstOffset] = beforeB;
+                                tp[dstOffset + 1] = beforeG;
+                                tp[dstOffset + 2] = beforeR;
+                                tp[dstOffset + 3] = beforeA;
+                                if (blendMode == SKBlendMode.SrcOver)
+                                    Canvas.Engine.SimdPixelOps.StampSrcOver(tp + dstOffset,
+                                        (byte)brushB, (byte)brushG, (byte)brushR, maskA, alphaLocked);
+                                else
+                                    WriteCompositeStamp(tile, dstOffset,
+                                        (byte)brushB, (byte)brushG, (byte)brushR, maskA, alphaLocked, blendMode);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        finally
+        {
+            pixels.ExitPixelWriteLock();
         }
     }
 
@@ -2225,6 +2704,154 @@ public sealed class BrushEngine : IDisposable
                     WriteCompositeStamp(tile, offset,
                         (byte)brushB, (byte)brushG, (byte)brushR, (byte)stampA,
                         alphaLocked, blendMode);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Merge all dabs touching one 64×64 layer tile via max-alpha, then composite once.
+    /// Avoids SrcOver compounding when large brush stamps overlap within a batch.
+    /// </summary>
+    private static unsafe void ApplyCachedDabsLightenToTile(
+        byte[] tile,
+        int tilePixX,
+        int tilePixY,
+        PixelRegion dirty,
+        float[]? grainTable,
+        List<PlacedDab> dabs,
+        SKBlendMode blendMode,
+        float brushGrain,
+        byte* texPx,
+        int texW,
+        int texH,
+        int texStride,
+        bool alphaLocked)
+    {
+        const int tsz = TiledPixelBuffer.TileSize;
+        Span<byte> scratchSpan = stackalloc byte[tsz * tsz * 4];
+        scratchSpan.Clear();
+
+        bool isSrcOver = blendMode == SKBlendMode.SrcOver;
+        float grainBase = 1f - brushGrain;
+        bool hasGrainTable = grainTable != null;
+        bool hasProceduralGrain = !hasGrainTable && brushGrain > 0f;
+        bool hasTexGrain = hasProceduralGrain && texPx != null;
+
+        fixed (byte* scratch = scratchSpan)
+        {
+            foreach (var placed in dabs)
+            {
+                float stampOpacity255 = StampOpacity255(blendMode, placed.Stamp.Opacity, placed.ColorA);
+                if (stampOpacity255 <= 0) continue;
+
+                var pxMinX = Math.Max(placed.Left, tilePixX);
+                var pxMinY = Math.Max(placed.Top, tilePixY);
+                var pxMaxX = Math.Min(placed.Right, tilePixX + tsz);
+                var pxMaxY = Math.Min(placed.Bottom, tilePixY + tsz);
+                if (pxMinX >= pxMaxX || pxMinY >= pxMaxY) continue;
+
+                int brushB = placed.ColorB, brushG = placed.ColorG, brushR = placed.ColorR;
+                var useFastPath = !placed.Dab.IsScaled && !hasGrainTable && brushGrain <= 0f;
+                var maskPtr = (byte*)placed.Dab.Mask.GetPixels().ToPointer();
+                var maskStride = placed.Dab.Mask.RowBytes;
+
+                for (int py = pxMinY; py < pxMaxY; py++)
+                {
+                    var localY = py - placed.Top;
+                    var ly = py - tilePixY;
+                    var scratchRow = scratch + ly * tsz * 4;
+                    var maskRow = useFastPath ? maskPtr + localY * maskStride : null;
+
+                    if (useFastPath)
+                    {
+                        for (int px = pxMinX; px < pxMaxX; px++)
+                        {
+                            int maskA = maskRow![px - placed.Left];
+                            if (maskA == 0) continue;
+
+                            int stampA = (int)(maskA / 255f * stampOpacity255 + 0.5f);
+                            if (stampA <= 0) continue;
+                            if (stampA > 255) stampA = 255;
+
+                            var offset = (px - tilePixX) * 4;
+                            if (stampA > scratchRow[offset + 3])
+                            {
+                                scratchRow[offset + 0] = (byte)brushB;
+                                scratchRow[offset + 1] = (byte)brushG;
+                                scratchRow[offset + 2] = (byte)brushR;
+                                scratchRow[offset + 3] = (byte)stampA;
+                            }
+                        }
+                        continue;
+                    }
+
+                    for (int px = pxMinX; px < pxMaxX; px++)
+                    {
+                        int maskA = SampleMaskAlpha(placed.Dab, px - placed.Left, localY);
+                        if (maskA == 0) continue;
+
+                        float alpha = maskA / 255f;
+                        if (hasGrainTable)
+                        {
+                            int gy = py - dirty.Y, gx = px - dirty.X;
+                            if (gy >= 0 && gy < dirty.Height && gx >= 0 && gx < dirty.Width)
+                                alpha *= grainTable![gy * dirty.Width + gx];
+                        }
+                        else if (hasProceduralGrain)
+                        {
+                            if (hasTexGrain)
+                                alpha *= grainBase + (texPx[((py % texH + texH) % texH) * texStride + ((px % texW + texW) % texW)] / 255.0f) * brushGrain;
+                            else
+                                alpha *= grainBase + GrainNoise(px, py) * brushGrain;
+                        }
+
+                        int stampA = (int)(alpha * stampOpacity255 + 0.5f);
+                        if (stampA <= 0) continue;
+                        if (stampA > 255) stampA = 255;
+
+                        var offset = (px - tilePixX) * 4;
+                        if (stampA > scratchRow[offset + 3])
+                        {
+                            scratchRow[offset + 0] = (byte)brushB;
+                            scratchRow[offset + 1] = (byte)brushG;
+                            scratchRow[offset + 2] = (byte)brushR;
+                            scratchRow[offset + 3] = (byte)stampA;
+                        }
+                    }
+                }
+            }
+
+            fixed (byte* tp = tile)
+            {
+                for (int ly = 0; ly < tsz; ly++)
+                {
+                    var rowBase = ly * tsz * 4;
+                    var scratchRow = scratch + ly * tsz * 4;
+                    for (int lx = 0; lx < tsz; lx++)
+                    {
+                        var scratchOffset = lx * 4;
+                        var stampA = scratchRow[scratchOffset + 3];
+                        if (stampA == 0) continue;
+
+                        var dstOffset = rowBase + lx * 4;
+                        if (isSrcOver)
+                        {
+                            Canvas.Engine.SimdPixelOps.StampSrcOver(tp + dstOffset,
+                                scratchRow[scratchOffset + 0],
+                                scratchRow[scratchOffset + 1],
+                                scratchRow[scratchOffset + 2],
+                                stampA, alphaLocked);
+                        }
+                        else
+                        {
+                            WriteCompositeStamp(tile, dstOffset,
+                                scratchRow[scratchOffset + 0],
+                                scratchRow[scratchOffset + 1],
+                                scratchRow[scratchOffset + 2],
+                                stampA, alphaLocked, blendMode);
+                        }
+                    }
                 }
             }
         }
@@ -3505,6 +4132,8 @@ public sealed class BrushEngine : IDisposable
         public bool SmearFirstDabPending;
         public SKColor BaseColor => _baseColor;
         public bool HasAnyColorTip { get; }
+        public Dictionary<(int X, int Y), byte[]> StrokeMaskTiles { get; } = new();
+        public IReadOnlyDictionary<(int X, int Y), byte[]?>? BeforeTiles { get; set; }
 
         public bool Matches(BrushPreset brush)
             => ReferenceEquals(_brush, brush);
@@ -3611,6 +4240,14 @@ public sealed class BrushEngine : IDisposable
             if (_dabCache.TryGetValue(key, out dab!))
                 return true;
 
+            if (TryBakeLargeCircleDab(key, out dab)
+                || TryBakeLargeMaskDab(key, out dab))
+            {
+                _dabCache[key] = dab;
+                _dabCacheOrder.Enqueue(key);
+                return true;
+            }
+
             var mask = MaskFor(key.TipIndex, key.Hardness / 255f);
             var layout = ComputeDabLayout(key);
             var bitmap = new SKBitmap(new SKImageInfo(layout.BitmapWidth, layout.BitmapHeight, SKColorType.Alpha8, SKAlphaType.Unpremul));
@@ -3687,6 +4324,143 @@ public sealed class BrushEngine : IDisposable
             int OffsetX,
             int OffsetY,
             float AngleDegrees);
+
+        private bool TryBakeLargeCircleDab(CachedDabKey key, out CachedDab dab)
+        {
+            dab = null!;
+            if (key.Size < LargeStampCachedRasterMinDiameterPx)
+                return false;
+            if (_brush.Shape != null || key.Angle != 0 || key.FlipBits != 0 || key.TipIndex != 0)
+                return false;
+            if (TipFor(0) is not ProceduralBrushTip { Shape: BrushTipShape.Circle or BrushTipShape.SoftRound })
+                return false;
+            if (Math.Abs(_brush.TipThickness - 1.0) > 0.001f && Math.Abs(key.Thickness / 256f - (float)_brush.TipThickness) > 0.05f)
+                return false;
+
+            var hardness = Math.Clamp(key.Hardness * 100 / 255, 0, 100);
+            var diamUpper = Math.Min(4096, key.Size + 8);
+            var buffer = new byte[diamUpper * diamUpper];
+            var stamp = ClassicBrushLut.GetStamp(key.Size, hardness, buffer, buffer);
+            var d = stamp.Diameter;
+            if (d <= 0 || d * d > buffer.Length)
+                return false;
+
+            var bitmap = new SKBitmap(new SKImageInfo(d, d, SKColorType.Alpha8, SKAlphaType.Unpremul));
+            unsafe
+            {
+                var dst = (byte*)bitmap.GetPixels().ToPointer();
+                var stride = bitmap.RowBytes;
+                fixed (byte* src = stamp.Data)
+                {
+                    for (var y = 0; y < d; y++)
+                        Buffer.MemoryCopy(src + y * d, dst + y * stride, d, d);
+                }
+            }
+
+            dab = new CachedDab(bitmap, stamp.Left, stamp.Top, d, d);
+            return true;
+        }
+
+        private bool TryBakeLargeMaskDab(CachedDabKey key, out CachedDab dab)
+        {
+            dab = null!;
+            if (key.Size < LargeStampCachedRasterMinDiameterPx)
+                return false;
+
+            var mask = MaskFor(key.TipIndex, key.Hardness / 255f);
+            if (mask.IsEmpty || mask.ColorType != SKColorType.Alpha8)
+                return false;
+
+            var layout = ComputeDabLayout(key);
+            var allowLod = key.Angle != 0 || key.FlipBits != 0;
+            return TryBakeLargeMaskDabCpu(key, mask, layout, allowLod, out dab);
+        }
+
+        private bool TryBakeLargeMaskDabCpu(CachedDabKey key, SKBitmap mask, DabLayout layout, bool allowLod, out CachedDab dab)
+        {
+            dab = null!;
+            var bakeW = layout.BitmapWidth;
+            var bakeH = layout.BitmapHeight;
+            if (bakeW <= 0 || bakeH <= 0)
+                return false;
+
+            if (allowLod)
+            {
+                var cap = LargeDabCpuBakeMaxDimension;
+                if (bakeW > cap || bakeH > cap)
+                {
+                    var shrink = cap / (float)Math.Max(bakeW, bakeH);
+                    bakeW = Math.Max(1, (int)MathF.Round(bakeW * shrink));
+                    bakeH = Math.Max(1, (int)MathF.Round(bakeH * shrink));
+                }
+            }
+
+            var effScaleX = layout.RenderScaleX * (layout.BitmapWidth / (float)bakeW);
+            var effScaleY = layout.RenderScaleY * (layout.BitmapHeight / (float)bakeH);
+            var bitmap = new SKBitmap(new SKImageInfo(bakeW, bakeH, SKColorType.Alpha8, SKAlphaType.Unpremul));
+            BakeDabMaskCpu(mask, BaseMaskSize, bakeW, bakeH, effScaleX, effScaleY, layout.AngleDegrees, bitmap);
+            dab = new CachedDab(bitmap, layout.OffsetX, layout.OffsetY, layout.LogicalWidth, layout.LogicalHeight);
+            return true;
+        }
+
+        private static unsafe void BakeDabMaskCpu(
+            SKBitmap mask,
+            int baseMaskSize,
+            int bakeW,
+            int bakeH,
+            float scaleX,
+            float scaleY,
+            float angleDegrees,
+            SKBitmap output)
+        {
+            var maskPtr = (byte*)mask.GetPixels().ToPointer();
+            var maskW = mask.Width;
+            var maskH = mask.Height;
+            var maskStride = mask.RowBytes;
+            var outPtr = (byte*)output.GetPixels().ToPointer();
+            var outStride = output.RowBytes;
+            var cx = bakeW * 0.5f;
+            var cy = bakeH * 0.5f;
+            var radians = angleDegrees * MathF.PI / 180f;
+            var cosA = MathF.Cos(radians);
+            var sinA = MathF.Sin(radians);
+            var maskOrigin = baseMaskSize * 0.5f;
+
+            for (var oy = 0; oy < bakeH; oy++)
+            {
+                var dstRow = outPtr + oy * outStride;
+                var py = oy - cy;
+                for (var ox = 0; ox < bakeW; ox++)
+                {
+                    var px = ox - cx;
+                    var rx = px * cosA + py * sinA;
+                    var ry = -px * sinA + py * cosA;
+                    var mx = rx / scaleX + maskOrigin;
+                    var my = ry / scaleY + maskOrigin;
+                    dstRow[ox] = (byte)SampleMaskBilinear(maskPtr, maskW, maskH, maskStride, mx, my);
+                }
+            }
+        }
+
+        private static unsafe int SampleMaskBilinear(byte* maskPtr, int maskW, int maskH, int maskStride, float mx, float my)
+        {
+            if (mx < 0f || my < 0f || mx >= maskW || my >= maskH)
+                return 0;
+
+            var x0 = (int)mx;
+            var y0 = (int)my;
+            var x1 = Math.Min(x0 + 1, maskW - 1);
+            var y1 = Math.Min(y0 + 1, maskH - 1);
+            var tx = mx - x0;
+            var ty = my - y0;
+            var a00 = maskPtr[y0 * maskStride + x0];
+            var a10 = maskPtr[y0 * maskStride + x1];
+            var a01 = maskPtr[y1 * maskStride + x0];
+            var a11 = maskPtr[y1 * maskStride + x1];
+            var top = a00 + (a10 - a00) * tx;
+            var bottom = a01 + (a11 - a01) * tx;
+            return (int)(top + (bottom - top) * ty + 0.5f);
+        }
 
         private DabLayout ComputeDabLayout(CachedDabKey key)
         {
@@ -3840,6 +4614,8 @@ public sealed class BrushEngine : IDisposable
             _colorDabCache.Clear();
             _colorDabCacheOrder.Clear();
             _ownedMasks.Clear();
+            StrokeMaskTiles.Clear();
+            BeforeTiles = null;
             Paint.Dispose();
         }
 
@@ -3874,6 +4650,8 @@ public sealed class BrushEngine : IDisposable
             public static CachedDabKey From(BrushPreset brush, StampSample stamp)
             {
                 var size = Math.Clamp((int)MathF.Round(stamp.Size), 1, 4096);
+                if (brush.Size >= LargeStampCachedRasterMinDiameterPx)
+                    size = QuantizeLargeStampCacheSize(size);
                 var hardness = Math.Clamp((int)MathF.Round(Math.Clamp(stamp.Hardness, 0.001f, 1f) * 255f), 0, 255);
                 var thickness = Math.Clamp((int)MathF.Round(Math.Clamp((float)brush.TipThickness * stamp.TipThicknessMultiplier, 0.01f, 4f) * 256f), 3, 1024);
                 var angle = QuantizeAngle(stamp.Angle, brush);
@@ -3916,6 +4694,16 @@ public sealed class BrushEngine : IDisposable
             h ^= h >> 16;
             return (h & 0xFFFF) / 65535.0f;
         }
+    }
+
+    private static bool PreferCachedTileMajorRaster(BrushPreset brush)
+        => brush.Size >= LargeStampCachedRasterMinDiameterPx;
+
+    private static int QuantizeLargeStampCacheSize(int size)
+    {
+        if (size >= 1024) return ((size + 127) / 128) * 128;
+        if (size >= 512) return ((size + 63) / 64) * 64;
+        return ((size + 31) / 32) * 32;
     }
 
     public static bool UsesProceduralStampEvaluation(BrushPreset brush, IBrushTip primaryTip, int stampColorCount)
