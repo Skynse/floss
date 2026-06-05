@@ -1,50 +1,44 @@
 <ResourceDictionary xmlns="https://github.com/avaloniaui"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <!-- ═════════════════════════════════════════════════════════════════════
-         Shared color palette — single source of truth for XAML styles.
-         Mirror of AppColors.cs; keep in sync.
-    ═════════════════════════════════════════════════════════════════════ -->
-    <!-- Backgrounds -->
-    <Color x:Key="Bg0">#1c1d21</Color>
-    <Color x:Key="Bg1">#24262b</Color>
-    <Color x:Key="Bg2">#2e3036</Color>
-    <Color x:Key="Bg3">#3a3d45</Color>
-    <Color x:Key="BgSidebar">#212328</Color>
+    <!-- Mirror of AppColors.cs — Photoshop-style neutral dark -->
+    <Color x:Key="Bg0">#1e1e1e</Color>
+    <Color x:Key="Bg1">#323232</Color>
+    <Color x:Key="Bg2">#2b2b2b</Color>
+    <Color x:Key="Bg3">#404040</Color>
+    <Color x:Key="BgSidebar">#2a2a2a</Color>
 
-    <!-- Borders -->
-    <Color x:Key="Stroke">#40444d</Color>
+    <Color x:Key="Stroke">#474747</Color>
+    <Color x:Key="StrokeSubtle">#3a3a3a</Color>
 
-    <!-- Text -->
-    <Color x:Key="TextPrimary">#f0f2f5</Color>
-    <Color x:Key="TextSecondary">#c6c9cf</Color>
-    <Color x:Key="TextMuted">#7f858e</Color>
+    <Color x:Key="TextPrimary">#e8e8e8</Color>
+    <Color x:Key="TextSecondary">#b8b8b8</Color>
+    <Color x:Key="TextMuted">#8a8a8a</Color>
 
-    <!-- Accents -->
-    <Color x:Key="Accent">#0078f2</Color>
-    <Color x:Key="AccentSoft">#0a4f9f</Color>
+    <Color x:Key="Accent">#3d9eff</Color>
+    <Color x:Key="AccentSoft">#3d3d3d</Color>
+    <Color x:Key="SelectionBg">#3a3a3a</Color>
+    <Color x:Key="SelectionBgActive">#454545</Color>
+    <Color x:Key="SelectionBorder">#5a9fd8</Color>
+
     <Color x:Key="AccentWarm">#d28a45</Color>
     <Color x:Key="AccentWarmSoft">#3d2b1e</Color>
 
-    <!-- Semantic -->
     <Color x:Key="Success">#3fb950</Color>
     <Color x:Key="Warning">#d29922</Color>
     <Color x:Key="Danger">#da3633</Color>
 
-    <!-- Slider -->
-    <Color x:Key="SliderTrack">#32353c</Color>
-    <Color x:Key="SliderFill">#0078f2</Color>
-    <Color x:Key="SliderFillHover">#1688ff</Color>
-    <Color x:Key="SliderFillActive">#38a0ff</Color>
-    <Color x:Key="SliderThumb">#2e3035</Color>
-    <Color x:Key="SliderThumbLine">#ffffff</Color>
+    <Color x:Key="SliderTrack">#3c3c3c</Color>
+    <Color x:Key="SliderFill">#5a5a5a</Color>
+    <Color x:Key="SliderFillHover">#6a6a6a</Color>
+    <Color x:Key="SliderFillActive">#3d9eff</Color>
+    <Color x:Key="SliderThumb">#c8c8c8</Color>
+    <Color x:Key="SliderThumbLine">#e0e0e0</Color>
 
-    <!-- Corner Radii -->
-    <CornerRadius x:Key="SmRadius">4</CornerRadius>
-    <CornerRadius x:Key="ControlRadius">6</CornerRadius>
-    <CornerRadius x:Key="CardRadius">8</CornerRadius>
+    <CornerRadius x:Key="SmRadius">2</CornerRadius>
+    <CornerRadius x:Key="ControlRadius">3</CornerRadius>
+    <CornerRadius x:Key="CardRadius">4</CornerRadius>
     <CornerRadius x:Key="FullRadius">999</CornerRadius>
 
-    <!-- ── Brushes (convenience) ────────────────────────────────────────── -->
     <SolidColorBrush x:Key="Bg0Brush"            Color="{StaticResource Bg0}"/>
     <SolidColorBrush x:Key="Bg1Brush"            Color="{StaticResource Bg1}"/>
     <SolidColorBrush x:Key="Bg2Brush"            Color="{StaticResource Bg2}"/>
@@ -55,8 +49,8 @@
     <SolidColorBrush x:Key="TextMutedBrush"      Color="{StaticResource TextMuted}"/>
     <SolidColorBrush x:Key="AccentBrush"         Color="{StaticResource Accent}"/>
     <SolidColorBrush x:Key="AccentSoftBrush"     Color="{StaticResource AccentSoft}"/>
-    <SolidColorBrush x:Key="AccentWarmBrush"     Color="{StaticResource AccentWarm}"/>
-    <SolidColorBrush x:Key="AccentWarmSoftBrush" Color="{StaticResource AccentWarmSoft}"/>
+    <SolidColorBrush x:Key="SelectionBgBrush"    Color="{StaticResource SelectionBg}"/>
+    <SolidColorBrush x:Key="SelectionBgActiveBrush" Color="{StaticResource SelectionBgActive}"/>
     <SolidColorBrush x:Key="DangerBrush"         Color="{StaticResource Danger}"/>
     <SolidColorBrush x:Key="SuccessBrush"        Color="{StaticResource Success}"/>
     <SolidColorBrush x:Key="WarningBrush"        Color="{StaticResource Warning}"/>

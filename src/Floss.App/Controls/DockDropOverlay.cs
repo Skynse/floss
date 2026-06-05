@@ -42,9 +42,9 @@ public sealed class DockDropOverlay : Avalonia.Controls.Canvas
 
         _tabHighlight = new Border
         {
-            BorderBrush = new SolidColorBrush(Color.Parse(Accent)),
-            BorderThickness = new Thickness(2),
-            Background = new SolidColorBrush(Color.FromArgb(32, 0, 120, 212)),
+            BorderBrush = new SolidColorBrush(Color.Parse(SelectionBorder)),
+            BorderThickness = new Thickness(1),
+            Background = new SolidColorBrush(Color.FromArgb(40, 90, 159, 216)),
             CornerRadius = new CornerRadius(0),
             IsVisible = false,
             IsHitTestVisible = false
@@ -53,17 +53,17 @@ public sealed class DockDropOverlay : Avalonia.Controls.Canvas
         _hintText = new TextBlock
         {
             FontSize = 11,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
+            FontWeight = FontWeight.Normal,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
             TextWrapping = TextWrapping.NoWrap
         };
 
         _hintCard = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(240, 36, 38, 43)),
+            Background = new SolidColorBrush(Color.FromArgb(245, 50, 50, 50)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
+            CornerRadius = new CornerRadius(3),
             Padding = new Thickness(10, 5),
             Child = _hintText,
             IsVisible = false,

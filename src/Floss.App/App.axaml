@@ -206,11 +206,11 @@
             <Setter Property="RenderTransform" Value="scale(0.97)"/>
         </Style>
         <Style Selector="ToggleButton:checked">
-            <Setter Property="Background" Value="{StaticResource AccentSoft}"/>
+            <Setter Property="Background" Value="{StaticResource SelectionBg}"/>
             <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
         </Style>
         <Style Selector="ToggleButton:checked:pointerover /template/ Border#Overlay">
-            <Setter Property="Background" Value="#1affffff"/>
+            <Setter Property="Background" Value="#18ffffff"/>
         </Style>
 
         <!-- ══════════════════════════════════════════════════════════════════
@@ -260,7 +260,7 @@
             <Setter Property="FontSize"   Value="12"/>
         </Style>
         <Style Selector="ComboBoxItem:selected">
-            <Setter Property="Background" Value="{StaticResource AccentSoft}"/>
+            <Setter Property="Background" Value="{StaticResource SelectionBg}"/>
             <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
         </Style>
         <Style Selector="ComboBoxItem:pointerover">
@@ -314,18 +314,18 @@
         ══════════════════════════════════════════════════════════════════ -->
         <Style Selector="Slider:horizontal">
             <Setter Property="Background" Value="{StaticResource SliderTrack}"/>
-            <Setter Property="MinHeight"  Value="16"/>
-            <Setter Property="MaxHeight"  Value="16"/>
+            <Setter Property="MinHeight"  Value="14"/>
+            <Setter Property="MaxHeight"  Value="14"/>
             <Setter Property="Cursor"     Value="SizeWestEast"/>
             <Setter Property="Padding"    Value="0"/>
             <Setter Property="Template">
                 <ControlTemplate>
                     <Border Background="{TemplateBinding Background}"
-                            Height="16"
-                            CornerRadius="4"
+                            Height="14"
+                            CornerRadius="2"
                             ClipToBounds="False">
                         <Track Name="PART_Track" Orientation="Horizontal"
-                               Height="16"
+                               Height="14"
                                Minimum="{TemplateBinding Minimum}"
                                Maximum="{TemplateBinding Maximum}"
                                Value="{TemplateBinding Value, Mode=TwoWay}">
@@ -339,14 +339,14 @@
                                 </RepeatButton>
                             </Track.DecreaseButton>
                             <Track.Thumb>
-                                <Thumb Width="16" Height="16" Cursor="SizeWestEast">
+                                <Thumb Width="12" Height="12" Cursor="SizeWestEast">
                                     <Thumb.Template>
                                         <ControlTemplate>
-                                            <Border Width="14" Height="14"
-                                                    Background="#402e3035"
-                                                    BorderBrush="{StaticResource SliderThumbLine}"
-                                                    BorderThickness="2"
-                                                    CornerRadius="4"
+                                            <Border Width="10" Height="10"
+                                                    Background="{StaticResource SliderThumb}"
+                                                    BorderBrush="{StaticResource Stroke}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="2"
                                                     VerticalAlignment="Center"
                                                     HorizontalAlignment="Center"/>
                                         </ControlTemplate>
@@ -396,10 +396,10 @@
             <Setter Property="CornerRadius" Value="{StaticResource SmRadius}"/>
         </Style>
         <Style Selector="ListBoxItem:selected">
-            <Setter Property="Background" Value="{StaticResource AccentSoft}"/>
+            <Setter Property="Background" Value="{StaticResource SelectionBg}"/>
         </Style>
         <Style Selector="ListBoxItem:pointerover">
-            <Setter Property="Background" Value="{StaticResource Bg2}"/>
+            <Setter Property="Background" Value="{StaticResource Bg3}"/>
         </Style>
 
         <!-- ══════════════════════════════════════════════════════════════════
@@ -408,10 +408,10 @@
         <!-- Usage: <TextBlock Classes="section-header" Text="COLOR"/> -->
         <Style Selector="TextBlock.section-header">
             <Setter Property="FontSize"     Value="11"/>
-            <Setter Property="FontWeight"   Value="SemiBold"/>
-            <Setter Property="Foreground"   Value="{StaticResource TextMuted}"/>
-            <Setter Property="LetterSpacing" Value="1.2"/>
-            <Setter Property="Margin"       Value="0,0,0,6"/>
+            <Setter Property="FontWeight"   Value="Normal"/>
+            <Setter Property="Foreground"   Value="{StaticResource TextSecondary}"/>
+            <Setter Property="LetterSpacing" Value="0"/>
+            <Setter Property="Margin"       Value="0"/>
         </Style>
 
         <!-- Usage: <Separator/> or <Border Classes="rule"/> -->

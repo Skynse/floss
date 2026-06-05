@@ -39,13 +39,13 @@ public partial class MainWindow
     // ── Pre-Allocated Layer Brushes (Performance Optimization) ──────────────
 
     // Row Backgrounds
-    private static readonly IBrush RowBgActive = new SolidColorBrush(Color.Parse(Accent));
-    private static readonly IBrush RowBgSelected = new SolidColorBrush(Color.Parse("#2f3a48"));
+    private static readonly IBrush RowBgActive = new SolidColorBrush(Color.Parse(SelectionBgActive));
+    private static readonly IBrush RowBgSelected = new SolidColorBrush(Color.Parse(SelectionBg));
     private static readonly IBrush RowBgDefault = new SolidColorBrush(Color.Parse(Bg2));
 
     // Row Borders
-    private static readonly IBrush RowBorderActive = new SolidColorBrush(Color.Parse(Accent));
-    private static readonly IBrush RowBorderSelected = new SolidColorBrush(Color.Parse("#485566"));
+    private static readonly IBrush RowBorderActive = new SolidColorBrush(Color.Parse(SelectionBorder));
+    private static readonly IBrush RowBorderSelected = new SolidColorBrush(Color.Parse(Stroke));
     private static readonly IBrush RowBorderDefault = new SolidColorBrush(Color.Parse(Stroke));
 
     // Text Colors
@@ -53,18 +53,18 @@ public partial class MainWindow
     private static readonly IBrush TextFgSelected = new SolidColorBrush(Color.Parse(TextPrimary));
     private static readonly IBrush TextFgDefault = new SolidColorBrush(Color.Parse(TextSecondary));
 
-    private static readonly IBrush TextDimActive = new SolidColorBrush(Color.Parse("#9fb6d6"));
+    private static readonly IBrush TextDimActive = new SolidColorBrush(Color.Parse(TextSecondary));
     private static readonly IBrush TextDimSelected = new SolidColorBrush(Color.Parse(TextSecondary));
     private static readonly IBrush TextDimDefault = new SolidColorBrush(Color.Parse(TextMuted));
 
     // Icon Colors
     private static readonly IBrush IconOff = new SolidColorBrush(Color.Parse("#5b5b5b"));
-    private static readonly IBrush IconVisOn = new SolidColorBrush(Color.Parse("#8aa6cc"));
+    private static readonly IBrush IconVisOn = new SolidColorBrush(Color.Parse(TextSecondary));
     private static readonly IBrush GroupIconFg = new SolidColorBrush(Color.Parse(TextMuted));
-    private static readonly IBrush GroupFolderIcon = new SolidColorBrush(Color.Parse("#8aa3c4"));
-    private static readonly IBrush GroupFolderIconActive = new SolidColorBrush(Color.Parse("#c5d8f0"));
-    private static readonly IBrush GroupPreviewBg = new SolidColorBrush(Color.Parse("#263040"));
-    private static readonly IBrush GroupPreviewBgActive = new SolidColorBrush(Color.Parse("#334158"));
+    private static readonly IBrush GroupFolderIcon = new SolidColorBrush(Color.Parse(TextMuted));
+    private static readonly IBrush GroupFolderIconActive = new SolidColorBrush(Color.Parse(TextPrimary));
+    private static readonly IBrush GroupPreviewBg = new SolidColorBrush(Color.Parse(Bg2));
+    private static readonly IBrush GroupPreviewBgActive = new SolidColorBrush(Color.Parse(Bg3));
 
     // Miscellaneous UI Elements
     // Layer thumbnail — alpha checkerboard so transparent regions are visible.
@@ -620,7 +620,9 @@ public partial class MainWindow
             Background = isActive ? RowBgActive : isSelected ? RowBgSelected : RowBgDefault,
             BorderBrush = layer.IsMaskEditing ? MaskEditBorderBrush
                 : isActive ? RowBorderActive : isSelected ? RowBorderSelected : RowBorderDefault,
-            BorderThickness = layer.IsMaskEditing ? new Thickness(2) : new Thickness(1),
+            BorderThickness = layer.IsMaskEditing
+                ? new Thickness(2)
+                : isActive ? new Thickness(2, 1, 1, 1) : new Thickness(1),
             CornerRadius = new CornerRadius(4),
             Padding = new Thickness(3, 2),
             Margin = new Thickness(layer.IndentLevel * 8, 0, 0, 0),

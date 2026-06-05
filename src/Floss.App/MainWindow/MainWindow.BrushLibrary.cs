@@ -178,11 +178,11 @@ public partial class MainWindow : Window
                 MinHeight = 28,
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
                 HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-                Background = new SolidColorBrush(Color.Parse(selected ? Bg3 : Bg2)),
+                Background = new SolidColorBrush(Color.Parse(selected ? SelectionBg : Bg2)),
                 Foreground = new SolidColorBrush(Color.Parse(selected ? TextPrimary : TextSecondary)),
-                BorderBrush = new SolidColorBrush(Color.Parse(selected ? Accent : Stroke)),
-                BorderThickness = new Thickness(1, 1, 1, selected ? 2 : 1),
-                CornerRadius = new CornerRadius(3),
+                BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(2),
                 Tag = catName,
             };
             btn.Click += (_, _) =>
@@ -375,13 +375,15 @@ public partial class MainWindow : Window
 
     private static void ApplyBrushPresetRowActive(Button row, bool isActive)
     {
-        row.BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke));
-        row.BorderThickness = new Thickness(isActive ? 2 : 1);
+        row.BorderBrush = new SolidColorBrush(Color.Parse(Stroke));
+        row.BorderThickness = new Thickness(isActive ? 2 : 1, 1, 1, 1);
+        if (isActive)
+            row.BorderBrush = new SolidColorBrush(Color.Parse(SelectionBorder));
         row.Background = new SolidColorBrush(Color.Parse(Bg2));
         if (row.Content is Grid grid && grid.Children.Count >= 2
             && grid.Children[1] is Border nameRow)
         {
-            nameRow.Background = new SolidColorBrush(Color.Parse(isActive ? AccentSoft : Bg1));
+            nameRow.Background = new SolidColorBrush(Color.Parse(isActive ? SelectionBgActive : Bg2));
         }
     }
 
@@ -495,10 +497,10 @@ public partial class MainWindow : Window
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            Background = new SolidColorBrush(Color.Parse(isActive ? Accent : Bg2)),
-            BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
+            Background = new SolidColorBrush(Color.Parse(isActive ? SelectionBgActive : Bg2)),
+            BorderBrush = new SolidColorBrush(Color.Parse(isActive ? SelectionBorder : Stroke)),
+            BorderThickness = new Thickness(isActive ? 2 : 1, 1, 1, 1),
+            CornerRadius = new CornerRadius(2),
             Content = content,
             Tag = preset.Id,
         };

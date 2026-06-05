@@ -64,16 +64,16 @@ public sealed class DockTabGroup : Grid
             var isLast = i == _panelIds.Count - 1;
             var tab = new Border
             {
-                Padding = new Thickness(10, 5),
+                Padding = new Thickness(12, 6),
                 CornerRadius = new CornerRadius(0),
-                BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-                BorderThickness = new Thickness(0, 0, isLast ? 0 : 1, 0),
+                BorderBrush = new SolidColorBrush(Color.Parse(StrokeSubtle)),
+                BorderThickness = new Thickness(0, 0, isLast ? 1 : 0, 0),
                 Cursor = new Cursor(StandardCursorType.Hand),
                 Child = new TextBlock
                 {
-                    Text = title.ToUpperInvariant(),
-                    FontSize = 10,
-                    FontWeight = FontWeight.SemiBold,
+                    Text = title,
+                    FontSize = 11,
+                    FontWeight = FontWeight.Normal,
                     Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
                     VerticalAlignment = VerticalAlignment.Center
                 }
@@ -88,7 +88,11 @@ public sealed class DockTabGroup : Grid
             _tabStrip.Children.Add(tab);
         }
 
-        _contentArea = new Border { ClipToBounds = true };
+        _contentArea = new Border
+        {
+            ClipToBounds = true,
+            Background = new SolidColorBrush(Color.Parse(Bg1))
+        };
 
         Grid.SetRow(_tabStrip, 0);
         Grid.SetRow(_contentArea, 1);
@@ -169,10 +173,13 @@ public sealed class DockTabGroup : Grid
             var isActive = id == _activeId;
             var isLast = i == _panelIds.Count - 1;
             tab.Background = new SolidColorBrush(Color.Parse(isActive ? Bg1 : Bg2));
-            tab.BorderBrush = new SolidColorBrush(Color.Parse(isActive ? Accent : Stroke));
-            tab.BorderThickness = new Thickness(0, 0, isLast ? 0 : 1, isActive ? 2 : 1);
+            tab.BorderBrush = new SolidColorBrush(Color.Parse(StrokeSubtle));
+            tab.BorderThickness = new Thickness(0, 0, isLast ? 1 : 0, 0);
             if (tab.Child is TextBlock tb)
+            {
                 tb.Foreground = new SolidColorBrush(Color.Parse(isActive ? TextPrimary : TextMuted));
+                tb.FontWeight = isActive ? FontWeight.SemiBold : FontWeight.Normal;
+            }
         }
 
         if (_content.TryGetValue(_activeId, out var content))

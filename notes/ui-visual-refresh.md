@@ -1,5 +1,10 @@
 # UI visual refresh
 
+## Chrome palette (2026)
+
+Photoshop-style neutral dark tokens — see `notes/photoshop-ui-reference.md`.  
+Single source: `Config/AppColors.cs` + `Styles/Theme.axaml` + `App.axaml` control styles.
+
 ## Cursor (viewport)
 
 - `ViewportCursorOverlay` must **stretch** to fill the workspace grid cell or it renders at 0×0.

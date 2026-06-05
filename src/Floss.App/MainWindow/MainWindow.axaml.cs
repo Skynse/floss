@@ -1320,7 +1320,7 @@ public partial class MainWindow : Window, Tools.IViewportController
 
         return new Border
         {
-            Background = new SolidColorBrush(Color.Parse(Bg0)),
+            Background = new SolidColorBrush(Color.Parse(Bg1)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(0),
             ClipToBounds = true,
@@ -1657,7 +1657,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         var body = BuildDockerBody(id, content);
         var titleText = new TextBlock
         {
-            Text = title.ToUpperInvariant(),
+            Text = title,
             Classes = { "section-header" },
             Margin = new Thickness(0),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
@@ -1675,8 +1675,10 @@ public partial class MainWindow : Window, Tools.IViewportController
         };
         var header = new Border
         {
-            Padding = new Thickness(10, 8, 10, 4),
+            Padding = new Thickness(10, 6, 10, 4),
             Background = new SolidColorBrush(Color.Parse(Bg2)),
+            BorderBrush = new SolidColorBrush(Color.Parse(StrokeSubtle)),
+            BorderThickness = new Thickness(0, 0, 0, 1),
             Child = headerRow,
             ContextMenu = ctxMenu
         };
@@ -2516,9 +2518,9 @@ public partial class MainWindow : Window, Tools.IViewportController
 
     private static void SetToggleActive(Button btn, bool active)
     {
-        btn.Background = new SolidColorBrush(Color.Parse(active ? Accent : "Transparent"));
-        btn.BorderBrush = new SolidColorBrush(Color.Parse(active ? Accent : "Transparent"));
-        btn.BorderThickness = new Thickness(active ? 1 : 0);
+        btn.Background = new SolidColorBrush(Color.Parse(active ? SelectionBg : "Transparent"));
+        btn.BorderBrush = new SolidColorBrush(Color.Parse("Transparent"));
+        btn.BorderThickness = new Thickness(0);
         btn.Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted));
     }
 
