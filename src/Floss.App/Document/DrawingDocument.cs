@@ -883,10 +883,7 @@ public sealed class DrawingDocument : IDisposable
     public void ToggleLayerOpen(int index)
     {
         if (index < 0 || index >= _layers.Count || !_layers[index].IsGroup) return;
-        var oldValue = _layers[index].IsOpen;
-        var newValue = !oldValue;
-        PushHistoryState(new LayerPropertyHistoryState<bool>(index, oldValue, newValue, (layer, value) => layer.IsOpen = value, false, PixelRegion.Empty));
-        _layers[index].IsOpen = newValue;
+        _layers[index].IsOpen = !_layers[index].IsOpen;
         NotifyLayersChanged();
     }
 
