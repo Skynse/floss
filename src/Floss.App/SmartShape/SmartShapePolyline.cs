@@ -13,22 +13,14 @@ public static class SmartShapePolyline
     public static List<CanvasInputSample> ToDocumentSamples(
         SmartShapeModel shape,
         DrawingLayer layer,
-        double avgPressure)
+        IReadOnlyList<CanvasInputSample> rawSamples,
+        bool strokeClosed)
     {
         var docPts = ToDocumentPoints(shape);
         if (docPts.Count < 2)
             return [];
 
-        var samples = new List<CanvasInputSample>(docPts.Count);
-        foreach (var p in docPts)
-        {
-            samples.Add(new CanvasInputSample(
-                (float)(p.X - layer.OffsetX),
-                (float)(p.Y - layer.OffsetY),
-                avgPressure, 0, 0, 0, 0, 0, 0,
-                CanvasInputPhase.Move));
-        }
-        return samples;
+        return SmartShapeSampleRemap.RemapOntoShape(docPts, rawSamples, layer, strokeClosed);
     }
 
     public static List<Vec2> ToDocumentPoints(SmartShapeModel shape) => shape switch

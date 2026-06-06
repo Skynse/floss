@@ -42,8 +42,10 @@ public sealed class AppConfig
     // CSP-style Smart Shape — global, applies to all DirectDraw tools.
     public bool SmartShapeEnabled { get; set; } = true;
     public double SmartShapeHoldSeconds { get; set; } = 0.70;
-    public bool SmartShapeShowLauncher { get; set; } = true;
     public double SmartShapeHoldRadiusPx { get; set; } = 8;
+
+    /// <summary>CSP-style Shift+click point-to-point straight lines on brush tools.</summary>
+    public bool ShiftStraightLineEnabled { get; set; } = true;
 
     public Dictionary<string, bool> ToolPropertyDockerVisibility { get; set; } = new();
 

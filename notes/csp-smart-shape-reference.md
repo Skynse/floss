@@ -77,6 +77,9 @@ Refit always uses stored `_rawStroke` samples (not current gizmo transform).
 - [x] Launcher anchored under fitted shape (updates on pan/zoom)
 - [x] Launcher → Gizmo via Edit / tap detected type
 - [x] Dual gizmo on curves (anchors + transform bbox)
+- [x] Point-only gizmo (no Bézier tangent handles); neighbor angle influence on polyline/polygon vertices
+- [x] Transform-aligned gizmo frame (oriented bbox, local hit-test, rotated overlay; Ctrl = free aspect, default uniform scale)
+- [x] Two-step undo on commit (smart shape → raw stroke → clear) via offscreen `SmartShapeCommitRasterizer` + `PushLayerTileHistoryPatches`
 - [x] Polyline shape + vertex editing
 - [x] Shift constrain while adjusting and gizmo drag
 - [x] Outside-bbox tap commits

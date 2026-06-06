@@ -804,6 +804,8 @@ public sealed class ToolGroupConfig
     internal const string ViewRotatePresetId = "builtin-rotate";
     internal const string ViewZoomInPresetId = "builtin-zoomin";
     internal const string ViewZoomOutPresetId = "builtin-zoomout";
+    internal static bool IsViewportNavigationPreset(string? presetId)
+        => presetId is ViewHandPresetId or ViewRotatePresetId or ViewZoomInPresetId or ViewZoomOutPresetId;
     internal const string EyedropperPresetId = "builtin-eyedropper";
     internal const string MoveLayerPresetId = "builtin-movelayer";
     internal const string SelectLayerPresetId = "builtin-selectlayer";

@@ -29,8 +29,6 @@ public enum SmartShapePhase
 {
     Idle,
     Drawing,
-    Adjusting,
-    /// <summary>Pointer up after hold — CSP launcher (Edit + shape types), no handles yet.</summary>
-    Launcher,
-    Gizmo
+    /// <summary>Auto-fitted; pen still down — release commits, Esc cancels.</summary>
+    Preview
 }

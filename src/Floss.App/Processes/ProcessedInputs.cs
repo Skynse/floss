@@ -49,5 +49,7 @@ public sealed class DragInput : IProcessedInput
 public sealed class SmartShapeCommitInput : IProcessedInput
 {
     public SmartShapeModel Shape { get; init; } = null!;
-    public double AvgPressure { get; init; } = 1.0;
+    public bool StrokeClosed { get; init; }
+    /// <summary>Original pen samples in canvas space (for dynamics remap + two-step undo).</summary>
+    public IReadOnlyList<CanvasInputSample> RawSamples { get; init; } = [];
 }

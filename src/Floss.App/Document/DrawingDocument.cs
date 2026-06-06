@@ -402,6 +402,31 @@ public sealed class DrawingDocument : IDisposable
         NotifyChanged(dirtyRegion, layerIndex);
     }
 
+    /// <summary>
+    /// Records a tile mutation from explicit before/after snapshots (used when the live
+    /// layer never held the intermediate state, e.g. smart-shape raw → fitted undo).
+    /// </summary>
+    public void PushLayerTileHistoryPatches(
+        int layerIndex,
+        IReadOnlyList<LayerTileHistoryPatch> patches,
+        PixelRegion dirtyRegion)
+    {
+        if (patches.Count == 0 || dirtyRegion.IsEmpty || layerIndex < 0 || layerIndex >= _layers.Count)
+            return;
+
+        var layer = _layers[layerIndex];
+        var maskMutation = layer.IsMaskEditing && layer.HasMask;
+        var tilePatches = new LayerTilePatch[patches.Count];
+        for (var i = 0; i < patches.Count; i++)
+        {
+            var patch = patches[i];
+            tilePatches[i] = new LayerTilePatch(patch.TileX, patch.TileY, patch.BeforePixels, patch.AfterPixels);
+        }
+
+        PushHistoryState(new LayerTileHistoryState(layerIndex, tilePatches, dirtyRegion, maskMutation));
+        NotifyChanged(dirtyRegion, layerIndex);
+    }
+
     public void CommitLayerTileMutations(IReadOnlyList<LayerTileMutation> mutations)
     {
         if (mutations.Count == 0) return;
@@ -1744,4 +1769,5 @@ public sealed class DocumentChangedEventArgs(PixelRegion? dirtyRegion, int? laye
 }
 public sealed class LayerMetadataChangedEventArgs(int layerIndex) : EventArgs { public int LayerIndex { get; } = layerIndex; }
 public readonly record struct LayerRegionPatch(PixelRegion Region, byte[] BeforePixels);
+public readonly record struct LayerTileHistoryPatch(int TileX, int TileY, byte[]? BeforePixels, byte[]? AfterPixels);
 public readonly record struct LayerTileMutation(int LayerIndex, IReadOnlyDictionary<(int X, int Y), byte[]?> BeforeTiles, PixelRegion DirtyRegion);

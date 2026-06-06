@@ -354,7 +354,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         AddShortcut(s.SelectAll, () => _canvas.SelectAll(), CanExecuteSelectionShortcut);
         AddShortcut(s.Deselect, () =>
         {
-            if (_canvas.CommitSmartShapeIfLauncherShowing())
+            if (_canvas.CancelSmartShapePreviewIfActive())
                 return;
             _canvas.Deselect();
         }, CanExecuteSelectionShortcut);
@@ -402,7 +402,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         // Special keys (not in ShortcutsConfig but handled same way)
         AddShortcut(new Input.KeyBinding(Key.Escape), () =>
         {
-            if (_canvas.CommitSmartShapeIfLauncherShowing())
+            if (_canvas.CancelSmartShapePreviewIfActive())
             {
                 ResetTransientInputState();
                 return;
@@ -2905,18 +2905,13 @@ public partial class MainWindow : Window, Tools.IViewportController
     private void CaptureActiveBrushToPreset()
         => CaptureActiveBrushToPresetIfChanged();
 
-    private static bool IsViewportNavigationPreset(string presetId)
-        => presetId is ToolGroupConfig.ViewHandPresetId
-            or ToolGroupConfig.ViewRotatePresetId
-            or ToolGroupConfig.ViewZoomInPresetId
-            or ToolGroupConfig.ViewZoomOutPresetId;
-
     internal bool PushTemporaryPreset(string presetId)
     {
         if (_temporaryPresetActive) return false;
 
         // Pan/zoom/rotate the viewport without committing or canceling transform / smart-shape edit.
-        if ((_canvas.IsTransformActive || _canvas.IsSmartShapeEditActive) && IsViewportNavigationPreset(presetId))
+        if ((_canvas.IsTransformActive || _canvas.IsSmartShapeEditActive)
+            && ToolGroupConfig.IsViewportNavigationPreset(presetId))
         {
             foreach (var group in App.ToolGroups.Groups)
             {
@@ -3231,9 +3226,8 @@ internal sealed class RulerOverlay : Control
         var minorStep = NiceStepForPixels(zoom, MinMinorTickPixels);
         var majorStep = NiceStepForPixels(zoom, MinLabelPixels);
 
-        // Horizontal ruler bar (bottom of viewport)
-        var rulerY = h - RulerThickness;
-        ctx.FillRectangle(bg, new Rect(0, rulerY, w, RulerThickness));
+        // Horizontal ruler bar (top of viewport)
+        ctx.FillRectangle(bg, new Rect(0, 0, w, RulerThickness));
         if (scaledW > 0)
         {
             var startX = Math.Floor(ScreenToDocX(0, w, scaledW, zoom, flipX, panX) / minorStep) * minorStep;
@@ -3248,17 +3242,17 @@ internal sealed class RulerOverlay : Control
                 if (sx < -0.5 || sx > w) continue;
                 var isMajor = IsMajorTick(x, majorStep);
                 var tickH = isMajor ? RulerThickness : RulerThickness * 0.4;
-                ctx.DrawLine(tickPen, new Point(sx, rulerY), new Point(sx, rulerY + tickH));
+                ctx.DrawLine(tickPen, new Point(sx, 0), new Point(sx, tickH));
                 if (isMajor)
                 {
                     var ft = new FormattedText(((int)x).ToString(), CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
                         Typeface.Default, 9, labelBrush);
-                    ctx.DrawText(ft, new Point(sx + 2, rulerY - 12));
+                    ctx.DrawText(ft, new Point(sx + 2, tickH - 12));
                 }
             }
         }
 
-        // Vertical ruler bar (left of viewport)
+        // Vertical ruler bar (left of viewport, shares top-left corner with horizontal)
         ctx.FillRectangle(bg, new Rect(0, 0, RulerThickness, h));
         var scaledH = docH * zoom;
         if (scaledH > 0)

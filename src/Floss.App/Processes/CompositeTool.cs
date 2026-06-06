@@ -61,8 +61,12 @@ public sealed class CompositeTool : ITool
             InvalidateUi(ctx);
         }
         SyncSmartShapeModifiers(ctx);
-        if (Input is SmartShapeBrushInputProcess { HasPendingSmartShape: true })
-            InvalidateSmartShapeUi(ctx);
+        if (Input is SmartShapeBrushInputProcess { ShowsFittedStrokePreview: true })
+        {
+            if (Input.GetPreview() is { } fittedPreview)
+                Output.Preview(ctx, fittedPreview);
+            ctx.InvalidateRender();
+        }
         else if (Input.IsActive && Input.GetPreview() is { } preview)
         {
             Output.Preview(ctx, preview);
@@ -78,11 +82,8 @@ public sealed class CompositeTool : ITool
         Input.ToolAuxMode = ctx.ToolAuxMode;
         SyncSmartShapeModifiers(ctx);
         Input.PointerMove(s);
-        if (Input is SmartShapeBrushInputProcess { HasPendingSmartShape: true })
-        {
-            InvalidateSmartShapeUi(ctx);
+        if (Input is SmartShapeBrushInputProcess { ShowsFittedStrokePreview: true })
             return;
-        }
 
         if (Input.IsActive && Input.GetPreview() is { } preview)
             Output.Preview(ctx, preview);
@@ -129,7 +130,7 @@ public sealed class CompositeTool : ITool
             lip.BrushSize = ctx.ActivePreset?.LiquifySize ?? 48;
 
         if (Output is SmartShapeBrushOutput shapeOut
-            && Input is SmartShapeBrushInputProcess { HasPendingSmartShape: true })
+            && Input is SmartShapeBrushInputProcess { ShowsFittedStrokePreview: true })
             shapeOut.DrawStrokePreview(dc);
 
         Input.RenderOverlay(dc, zoom);
@@ -137,7 +138,7 @@ public sealed class CompositeTool : ITool
 
     public bool CanCommitFromClick =>
         Input is PolylineInputProcess ||
-        Input is SmartShapeBrushInputProcess { Phase: SmartShapePhase.Launcher or SmartShapePhase.Gizmo };
+        Input is SmartShapeBrushInputProcess { Phase: SmartShapePhase.Preview };
 
     public bool ConsumesModifier(Avalonia.Input.KeyModifiers mods)
         => Output is not SelectionAreaOutput && Input.ConsumesModifier(mods);

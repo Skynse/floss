@@ -45,11 +45,11 @@ public sealed class SmartShapeBrushOutput : IOutputProcess
     {
         if (input is SmartShapeCommitInput shapePreview && _input?.HasPendingSmartShape == true)
         {
-            _strokePreview.Update(ctx, shapePreview.Shape, shapePreview.AvgPressure);
+            _strokePreview.Update(ctx, shapePreview.Shape, shapePreview.RawSamples, shapePreview.StrokeClosed);
             return;
         }
 
-        if (_input?.Phase is SmartShapePhase.Adjusting or SmartShapePhase.Launcher or SmartShapePhase.Gizmo)
+        if (_input?.Phase == SmartShapePhase.Preview)
             return;
 
         _direct.Preview(ctx, input);
@@ -88,29 +88,71 @@ public sealed class SmartShapeBrushOutput : IOutputProcess
         if (layer == null || layer.IsGroup || layer.IsLocked)
             return;
 
-        var samples = SmartShapePolyline.ToDocumentSamples(commit.Shape, layer, commit.AvgPressure);
-        if (samples.Count < 2)
+        var shapeSamples = SmartShapePolyline.ToDocumentSamples(
+            commit.Shape, layer, commit.RawSamples, commit.StrokeClosed);
+        if (shapeSamples.Count < 2)
             return;
 
-        var region = EstimateDirtyRegion(layer, ctx.Brush, samples);
-        if (region.IsEmpty)
+        var rawSamples = SmartShapeSampleRemap.ToDocumentSamples(commit.RawSamples, layer);
+
+        var shapeRegion = EstimateDirtyRegion(layer, ctx.Brush, shapeSamples);
+        var rawRegion = rawSamples.Count >= 2
+            ? EstimateDirtyRegion(layer, ctx.Brush, rawSamples)
+            : PixelRegion.Empty;
+        var fullRegion = rawRegion.IsEmpty ? shapeRegion : shapeRegion.Union(rawRegion);
+        if (fullRegion.IsEmpty)
             return;
 
-        var beforeTiles = new Dictionary<(int X, int Y), byte[]?>();
+        var beforeEmpty = new Dictionary<(int X, int Y), byte[]?>();
         layer.ActivePixels.EnterPixelReadLock();
         try
         {
-            layer.CaptureTiles(region, beforeTiles);
+            layer.CaptureTiles(fullRegion, beforeEmpty);
         }
         finally
         {
             layer.ActivePixels.ExitPixelReadLock();
         }
 
+        var plan = SmartShapeCommitRasterizer.Plan(
+            _brushEngine,
+            ctx,
+            layer,
+            ctx.Brush,
+            beforeEmpty,
+            fullRegion,
+            rawSamples,
+            shapeSamples);
+
+        if (plan.SmartStepPatches.Count == 0)
+            return;
+
+        var maskMutation = layer.IsMaskEditing && layer.HasMask;
+        var tileDirty = fullRegion.Translate(layer.OffsetX, layer.OffsetY);
+
         try
         {
             using var mutation = ctx.Document.RenderLock.Write();
-            PaintShapeSegments(ctx, layer, ctx.Brush, samples, region, beforeTiles);
+            layer.ActivePixels.LiveStroke = true;
+            ctx.Document.NotifyStrokeSuspendBegin(tileDirty, ctx.ActiveLayerIndex);
+
+            foreach (var patch in plan.SmartStepPatches)
+                layer.RestorePaintTile(patch.TileX, patch.TileY, patch.AfterPixels, maskMutation);
+
+            if (plan.RawStepPatches.Count > 0)
+            {
+                ctx.Document.PushLayerTileHistoryPatches(
+                    ctx.ActiveLayerIndex, plan.RawStepPatches, plan.DirtyRegion);
+            }
+
+            ctx.Document.PushLayerTileHistoryPatches(
+                ctx.ActiveLayerIndex, plan.SmartStepPatches, plan.DirtyRegion);
+
+            layer.MarkThumbnailDirty();
+            if (maskMutation)
+                layer.MarkMaskThumbnailDirty();
+
+            ctx.Document.CommitStroke();
         }
         catch (Exception ex)
         {
@@ -125,37 +167,6 @@ public sealed class SmartShapeBrushOutput : IOutputProcess
         ctx.InvalidateRender();
     }
 
-    private void PaintShapeSegments(
-        ToolContext ctx,
-        DrawingLayer layer,
-        BrushPreset brush,
-        List<CanvasInputSample> samples,
-        PixelRegion region,
-        Dictionary<(int X, int Y), byte[]?> beforeTiles)
-    {
-        layer.ActivePixels.LiveStroke = true;
-        ctx.Document.NotifyStrokeSuspendBegin(region.Translate(layer.OffsetX, layer.OffsetY), ctx.ActiveLayerIndex);
-
-        _brushEngine.CanvasZoom = ctx.Viewport?.Zoom ?? 1.0;
-        _brushEngine.BeginStroke(brush, samples[0]);
-        var dirty = _brushEngine.RasterizeSegments(layer, brush, samples, 1, samples.Count - 1);
-        _brushEngine.EndStroke();
-
-        if (dirty.IsEmpty)
-            return;
-
-        RestoreUnselectedPixels(layer, dirty, ctx.Selection, beforeTiles);
-
-        var tileDirty = dirty.Translate(layer.OffsetX, layer.OffsetY);
-        layer.MarkThumbnailDirty();
-        if (layer.IsMaskEditing)
-            layer.MarkMaskThumbnailDirty();
-
-        ctx.Document.CommitLayerTileMutation(ctx.ActiveLayerIndex, beforeTiles, tileDirty);
-        ctx.Document.CommitStroke();
-        ctx.Document.NotifyChanged(tileDirty, ctx.ActiveLayerIndex);
-    }
-
     private PixelRegion EstimateDirtyRegion(DrawingLayer layer, BrushPreset brush, List<CanvasInputSample> samples)
     {
         var region = PixelRegion.Empty;
@@ -163,78 +174,4 @@ public sealed class SmartShapeBrushOutput : IOutputProcess
             region = region.Union(_brushEngine.EstimateSegmentRegion(layer, brush, samples[i - 1], samples[i]));
         return region;
     }
-
-    private static void RestoreUnselectedPixels(
-        DrawingLayer layer,
-        PixelRegion dirty,
-        SelectionMask selection,
-        Dictionary<(int X, int Y), byte[]?> beforeTiles)
-    {
-        if (dirty.IsEmpty)
-            return;
-
-        var hasSelection = selection.HasSelection;
-        var alphaLocked = layer.IsAlphaLocked;
-        if (!hasSelection && !alphaLocked)
-            return;
-
-        const int ts = TiledPixelBuffer.TileSize;
-        var firstTileX = FloorDiv(dirty.X, ts);
-        var firstTileY = FloorDiv(dirty.Y, ts);
-        var lastTileX = FloorDiv(dirty.Right - 1, ts);
-        var lastTileY = FloorDiv(dirty.Bottom - 1, ts);
-
-        for (var ty = firstTileY; ty <= lastTileY; ty++)
-        {
-            var tilePixY = ty * ts;
-            for (var tx = firstTileX; tx <= lastTileX; tx++)
-            {
-                if (!beforeTiles.TryGetValue((tx, ty), out var beforeTile))
-                    continue;
-
-                var pxMin = Math.Max(dirty.X, tx * ts);
-                var pxMax = Math.Min(dirty.Right, tx * ts + ts);
-                var pyMin = Math.Max(dirty.Y, ty * ts);
-                var pyMax = Math.Min(dirty.Bottom, ty * ts + ts);
-                if (pxMin >= pxMax || pyMin >= pyMax)
-                    continue;
-
-                byte[]? liveTile = null;
-                for (var py = pyMin; py < pyMax; py++)
-                {
-                    var ly = py - tilePixY;
-                    var rowBase = ly * ts * 4;
-                    for (var px = pxMin; px < pxMax; px++)
-                    {
-                        var inSelection = !hasSelection || selection.IsSelected(px + layer.OffsetX, py + layer.OffsetY);
-                        var lx = px - tx * ts;
-                        var offset = rowBase + lx * 4;
-                        var hadAlpha = !alphaLocked || beforeTile is { } bt && bt[offset + 3] > 0;
-                        if (inSelection && hadAlpha)
-                            continue;
-
-                        if (beforeTile != null)
-                        {
-                            liveTile ??= layer.ActivePixels.GetOrCreateRawTile(tx, ty);
-                            liveTile[offset] = beforeTile[offset];
-                            liveTile[offset + 1] = beforeTile[offset + 1];
-                            liveTile[offset + 2] = beforeTile[offset + 2];
-                            liveTile[offset + 3] = beforeTile[offset + 3];
-                        }
-                        else
-                        {
-                            liveTile ??= layer.ActivePixels.GetOrCreateRawTile(tx, ty);
-                            liveTile[offset] = 0;
-                            liveTile[offset + 1] = 0;
-                            liveTile[offset + 2] = 0;
-                            liveTile[offset + 3] = 0;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private static int FloorDiv(int value, int divisor)
-        => (int)Math.Floor(value / (double)divisor);
 }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Avalonia;
 using Avalonia.Input;
+using Floss.App.Config;
 using Floss.App.Processes;
 using Floss.App.Processes.Output;
 using Floss.App.Tools;
@@ -685,9 +686,14 @@ public sealed class CanvasInputRouter
         if (_state == RouterState.Running)
             return;
 
-        // Smart-shape gizmo: ignore modifier tool swaps (pan/zoom uses viewport overlay in host).
-        if (_host.IsSmartShapeEditActive)
+        // Smart-shape edit: allow viewport pan/zoom/rotate overlays only (like transform).
+        if (_host.IsSmartShapeEditActive
+            && assignment is { Action: not ModifierAction.None }
+            && !IsSmartShapeViewportNavAssignment(assignment))
+        {
+            UpdateReadyAction();
             return;
+        }
 
         bool unchanged = (assignment == null && _activeModifierAction == ModifierAction.None)
                       || (assignment != null
@@ -865,6 +871,14 @@ public sealed class CanvasInputRouter
         var tool = _host.ActiveTool;
         if (tool is not CompositeTool ct) return false;
         return ct.Output is HandOutput or RotateOutput or ZoomOutput;
+    }
+
+    private static bool IsSmartShapeViewportNavAssignment(ModifierKeyAssignment assignment)
+    {
+        if (assignment.Action != ModifierAction.ChangeToolTemporarily)
+            return false;
+
+        return ToolGroupConfig.IsViewportNavigationPreset(assignment.TemporaryToolPresetId);
     }
 
     private static bool IsModifierKey(Key key) => key switch

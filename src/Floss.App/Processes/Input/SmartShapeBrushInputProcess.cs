@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Floss.App.Input;
@@ -11,8 +10,8 @@ using Floss.App.SmartShape;
 namespace Floss.App.Processes.Input;
 
 /// <summary>
-/// Hybrid brush input: normal stroke until hold-still triggers smart-shape fitting (CSP-style).
-/// Fitted stroke preview uses offscreen bitmap (Ctrl+T pattern), not live layer writes.
+/// Hybrid brush input: normal stroke until hold-still auto-fits a shape; release commits (double undo).
+/// No gizmo or launcher — hold still to fit, drag to scale/rotate, release to commit.
 /// </summary>
 public sealed class SmartShapeBrushInputProcess : IInputProcess
 {
@@ -21,8 +20,7 @@ public sealed class SmartShapeBrushInputProcess : IInputProcess
     private SmartShapePhase _phase = SmartShapePhase.Idle;
     private SmartShapeModel? _baseShape;
     private SmartShapeModel? _currentShape;
-    private List<Vec2> _rawStroke = [];
-    private List<double> _pressures = [];
+    private List<CanvasInputSample> _rawSamples = [];
     private bool _strokeClosed;
     private SmartShapeFitKind _activeFitKind = SmartShapeFitKind.Auto;
     private double _adjustRefDist = 1;
@@ -32,10 +30,6 @@ public sealed class SmartShapeBrushInputProcess : IInputProcess
     private DispatcherTimer? _holdTimer;
     private SmartShapeCommitInput? _commitResult;
     private CanvasInputSample? _lastKnownPos;
-    private IReadOnlyList<GizmoHandle> _gizmoHandles = [];
-    private GizmoHandle? _activeGizmoHandle;
-    private Vec2 _gizmoDragStart;
-    private SmartShapeModel? _gizmoShapeAtDragStart;
 
     public bool HasBrushCursor => true;
 
@@ -52,9 +46,10 @@ public sealed class SmartShapeBrushInputProcess : IInputProcess
     public bool StrokeClosed => _strokeClosed;
     public bool ShiftConstrain { get; set; }
 
-    public bool HasPendingSmartShape =>
-        _phase is SmartShapePhase.Adjusting or SmartShapePhase.Launcher or SmartShapePhase.Gizmo;
+    /// <summary>Pen still down after auto-fit — drag scales/rotates; release commits.</summary>
+    public bool HasPendingSmartShape => _phase == SmartShapePhase.Preview;
     public bool SmartShapeCaptured => HasPendingSmartShape;
+    public bool ShowsFittedStrokePreview => _phase == SmartShapePhase.Preview;
 
     public void BindOutput(SmartShapeBrushOutput output) => _output = output;
 
@@ -71,33 +66,6 @@ public sealed class SmartShapeBrushInputProcess : IInputProcess
         _commitResult = null;
         _lastKnownPos = s;
 
-        if (_phase == SmartShapePhase.Launcher)
-            return;
-
-        if (_phase == SmartShapePhase.Gizmo && _currentShape != null)
-        {
-            _gizmoHandles = SmartShapeGizmo.ComputeHandles(_currentShape);
-            var pos = new Vec2(s.X, s.Y);
-            if (SmartShapeGizmo.HitTest(_gizmoHandles, pos, LastCanvasZoom) is { } hit)
-            {
-                _activeGizmoHandle = hit;
-                _gizmoDragStart = pos;
-                _gizmoShapeAtDragStart = _currentShape;
-                return;
-            }
-
-            if (SmartShapeGizmo.BboxContains(_gizmoHandles, pos, LastCanvasZoom))
-            {
-                _activeGizmoHandle = new GizmoHandle(GizmoHandleKind.Move, SmartShapeAnalyzer.ShapeCenter(_currentShape));
-                _gizmoDragStart = pos;
-                _gizmoShapeAtDragStart = _currentShape;
-                return;
-            }
-
-            Commit();
-            return;
-        }
-
         if (!IsEnabled)
         {
             _brush.PointerDown(s);
@@ -105,8 +73,7 @@ public sealed class SmartShapeBrushInputProcess : IInputProcess
         }
 
         _phase = SmartShapePhase.Drawing;
-        _rawStroke = [new Vec2(s.X, s.Y)];
-        _pressures = [s.Pressure];
+        _rawSamples = [s];
         _lastMovePos = new Vec2(s.X, s.Y);
         _stillSinceMicros = s.TimeMicros;
         _brush.PointerDown(s);
@@ -118,31 +85,21 @@ public sealed class SmartShapeBrushInputProcess : IInputProcess
     {
         _lastKnownPos = s;
 
-        if (_phase == SmartShapePhase.Gizmo && _activeGizmoHandle is { } handle && _currentShape != null && _gizmoShapeAtDragStart != null)
-        {
-            var pos = new Vec2(s.X, s.Y);
-            _currentShape = SmartShapeGizmo.ApplyDrag(
-                _currentShape,
-                handle,
-                _gizmoDragStart,
-                pos,
-                _gizmoShapeAtDragStart);
-            if (ShiftConstrain)
-                _currentShape = SmartShapeRegular.Constrain(_currentShape);
-            InvalidateUi?.Invoke();
-            return;
-        }
-
         if (!IsEnabled || _phase == SmartShapePhase.Idle)
         {
             _brush.PointerMove(s);
             return;
         }
 
+        if (_phase == SmartShapePhase.Preview)
+        {
+            UpdateAdjustment(s);
+            return;
+        }
+
         if (_phase == SmartShapePhase.Drawing)
         {
-            _rawStroke.Add(new Vec2(s.X, s.Y));
-            _pressures.Add(s.Pressure);
+            _rawSamples.Add(s);
             var dx = s.X - _lastMovePos.X;
             var dy = s.Y - _lastMovePos.Y;
             if (Math.Sqrt(dx * dx + dy * dy) >= App.Config.SmartShapeHoldRadiusPx)
@@ -151,11 +108,7 @@ public sealed class SmartShapeBrushInputProcess : IInputProcess
                 _stillSinceMicros = s.TimeMicros;
             }
             _brush.PointerMove(s);
-            return;
         }
-
-        if (_phase == SmartShapePhase.Adjusting)
-            UpdateAdjustment(s);
     }
 
     public void PointerUp(CanvasInputSample s)
@@ -163,16 +116,15 @@ public sealed class SmartShapeBrushInputProcess : IInputProcess
         _lastKnownPos = s;
         StopHoldTimer();
 
-        if (_phase == SmartShapePhase.Gizmo)
-        {
-            _activeGizmoHandle = null;
-            _gizmoShapeAtDragStart = null;
-            return;
-        }
-
         if (!IsEnabled || _phase == SmartShapePhase.Idle)
         {
             _brush.PointerUp(s);
+            return;
+        }
+
+        if (_phase == SmartShapePhase.Preview && _currentShape != null)
+        {
+            CommitPreview();
             return;
         }
 
@@ -180,59 +132,7 @@ public sealed class SmartShapeBrushInputProcess : IInputProcess
         {
             _brush.PointerUp(s);
             ResetShapeState();
-            return;
         }
-
-        if (_phase == SmartShapePhase.Adjusting && _currentShape != null)
-        {
-            if (App.Config.SmartShapeShowLauncher)
-            {
-                _phase = SmartShapePhase.Launcher;
-                _baseShape = _currentShape;
-                NotifyPhaseChanged();
-                InvalidateUi?.Invoke();
-            }
-            else
-                EnterGizmoPhase();
-        }
-    }
-
-    public void EnterGizmoEdit()
-    {
-        if (_phase != SmartShapePhase.Launcher || _currentShape == null)
-            return;
-
-        EnterGizmoPhase();
-    }
-
-    private void EnterGizmoPhase()
-    {
-        if (_currentShape == null)
-            return;
-
-        _phase = SmartShapePhase.Gizmo;
-        _gizmoHandles = SmartShapeGizmo.ComputeHandles(_currentShape);
-        _baseShape = _currentShape;
-        NotifyPhaseChanged();
-        InvalidateUi?.Invoke();
-    }
-
-    public void Refit(SmartShapeFitKind kind)
-    {
-        if (_rawStroke.Count < 4 || _phase is SmartShapePhase.Idle or SmartShapePhase.Drawing)
-            return;
-
-        var shape = SmartShapeFitter.Fit(_rawStroke, kind);
-        if (shape == null)
-            return;
-
-        _activeFitKind = kind;
-        _baseShape = shape;
-        _currentShape = shape;
-        if (_phase == SmartShapePhase.Gizmo)
-            _gizmoHandles = SmartShapeGizmo.ComputeHandles(shape);
-        NotifyPhaseChanged();
-        InvalidateUi?.Invoke();
     }
 
     public void Cancel()
@@ -244,18 +144,8 @@ public sealed class SmartShapeBrushInputProcess : IInputProcess
 
     public void Commit()
     {
-        if (_currentShape == null)
-            return;
-        if (_phase is not (SmartShapePhase.Launcher or SmartShapePhase.Gizmo))
-            return;
-
-        var result = new SmartShapeCommitInput
-        {
-            Shape = _currentShape,
-            AvgPressure = AveragePressure()
-        };
-        ResetShapeState();
-        _commitResult = result;
+        if (_phase == SmartShapePhase.Preview)
+            CommitPreview();
     }
 
     public IProcessedInput? GetResult()
@@ -270,31 +160,24 @@ public sealed class SmartShapeBrushInputProcess : IInputProcess
         return _brush.GetResult();
     }
 
+    public IProcessedInput? GetImmediateResult() => _brush.GetImmediateResult();
+
     public IProcessedInput? GetPreview()
     {
-        if (_phase is SmartShapePhase.Adjusting or SmartShapePhase.Launcher or SmartShapePhase.Gizmo && _currentShape != null)
+        if (_phase == SmartShapePhase.Preview && _currentShape != null)
         {
             return new SmartShapeCommitInput
             {
                 Shape = _currentShape,
-                AvgPressure = AveragePressure()
+                StrokeClosed = _strokeClosed,
+                RawSamples = _rawSamples.ToArray()
             };
         }
 
         return _brush.GetPreview();
     }
 
-    public void RenderOverlay(DrawingContext dc, double zoom)
-    {
-        if (_phase == SmartShapePhase.Gizmo && _currentShape != null)
-        {
-            _gizmoHandles = SmartShapeGizmo.ComputeHandles(_currentShape);
-            SmartShapeOverlay.Draw(dc, zoom, _currentShape, SmartShapeOverlayStyle.Edit, _gizmoHandles);
-            return;
-        }
-
-        _brush.RenderOverlay(dc, zoom);
-    }
+    public void RenderOverlay(DrawingContext dc, double zoom) => _brush.RenderOverlay(dc, zoom);
 
     private void StartHoldTimer()
     {
@@ -314,7 +197,7 @@ public sealed class SmartShapeBrushInputProcess : IInputProcess
 
     private void TryDetectHold()
     {
-        if (_phase != SmartShapePhase.Drawing || _rawStroke.Count < 4)
+        if (_phase != SmartShapePhase.Drawing || _rawSamples.Count < 4)
             return;
 
         var holdMicros = (long)(App.Config.SmartShapeHoldSeconds * 1_000_000);
@@ -329,22 +212,22 @@ public sealed class SmartShapeBrushInputProcess : IInputProcess
         if (pos.TimeMicros - _stillSinceMicros < holdMicros)
             return;
 
-        _strokeClosed = SmartShapeFitter.StrokeIsClosed(_rawStroke);
-        var shape = SmartShapeFitter.Fit(_rawStroke, SmartShapeFitKind.Auto);
+        _strokeClosed = SmartShapeFitter.StrokeIsClosed(RawPoints(_rawSamples));
+        var shape = SmartShapeFitter.Fit(RawPoints(_rawSamples), SmartShapeFitKind.Auto);
         if (shape == null)
             return;
 
         _activeFitKind = SmartShapeFitter.DetectFitKind(shape, _strokeClosed);
-        EnterAdjusting(shape, pos);
+        EnterPreview(shape, pos);
     }
 
-    private void EnterAdjusting(SmartShapeModel shape, CanvasInputSample pos)
+    private void EnterPreview(SmartShapeModel shape, CanvasInputSample pos)
     {
         StopHoldTimer();
         _output?.AbortLiveStroke();
         _brush.Cancel();
 
-        _phase = SmartShapePhase.Adjusting;
+        _phase = SmartShapePhase.Preview;
         _baseShape = shape;
         _currentShape = shape;
 
@@ -353,6 +236,7 @@ public sealed class SmartShapeBrushInputProcess : IInputProcess
         var dy = pos.Y - center.Y;
         _adjustRefDist = Math.Max(Math.Sqrt(dx * dx + dy * dy), 1.0);
         _adjustRefAngle = Math.Atan2(dy, dx);
+
         NotifyPhaseChanged();
         InvalidateUi?.Invoke();
     }
@@ -373,32 +257,41 @@ public sealed class SmartShapeBrushInputProcess : IInputProcess
         InvalidateUi?.Invoke();
     }
 
+    private void CommitPreview()
+    {
+        if (_currentShape == null || _phase != SmartShapePhase.Preview)
+            return;
+
+        var result = new SmartShapeCommitInput
+        {
+            Shape = _currentShape,
+            StrokeClosed = _strokeClosed,
+            RawSamples = _rawSamples.ToArray()
+        };
+        ResetShapeState();
+        _commitResult = result;
+    }
+
     private void ResetShapeState()
     {
         StopHoldTimer();
         _phase = SmartShapePhase.Idle;
         _commitResult = null;
-        _rawStroke.Clear();
-        _pressures.Clear();
+        _rawSamples.Clear();
         _strokeClosed = false;
         _activeFitKind = SmartShapeFitKind.Auto;
         _baseShape = null;
         _currentShape = null;
-        _gizmoHandles = [];
-        _activeGizmoHandle = null;
-        _gizmoShapeAtDragStart = null;
         NotifyPhaseChanged();
     }
 
     private void NotifyPhaseChanged() => PhaseChanged?.Invoke();
 
-    private double AveragePressure()
+    private static List<Vec2> RawPoints(IReadOnlyList<CanvasInputSample> samples)
     {
-        if (_pressures.Count == 0)
-            return 1.0;
-        var sum = 0.0;
-        foreach (var p in _pressures)
-            sum += p;
-        return sum / _pressures.Count;
+        var pts = new List<Vec2>(samples.Count);
+        foreach (var s in samples)
+            pts.Add(new Vec2(s.X, s.Y));
+        return pts;
     }
 }

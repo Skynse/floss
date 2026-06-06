@@ -25,15 +25,15 @@ internal static class SmartShapeOverlay
     private static readonly IBrush BboxHandleFillBrush = new SolidColorBrush(Color.FromArgb(230, 90, 140, 255));
     private static readonly IBrush AnchorOutlineBrush = new SolidColorBrush(Color.FromArgb(220, 220, 60, 60));
     private static readonly IBrush RotateStemBrush = new SolidColorBrush(Color.FromArgb(120, 100, 140, 255));
-    private static readonly IBrush ControlBrush = new SolidColorBrush(Color.FromArgb(220, 160, 80, 220));
-    private static readonly IBrush TangentBrush = new SolidColorBrush(Color.FromArgb(100, 160, 80, 220));
 
     public static void Draw(
         DrawingContext dc,
         double zoom,
         SmartShapeModel? shape,
         SmartShapeOverlayStyle style,
-        IReadOnlyList<GizmoHandle>? gizmoHandles = null)
+        IReadOnlyList<GizmoHandle>? gizmoHandles = null,
+        Rect frameRect = default,
+        double frameAngleDeg = 0)
     {
         if (shape == null)
             return;
@@ -41,7 +41,7 @@ internal static class SmartShapeOverlay
         if (style != SmartShapeOverlayStyle.Edit || gizmoHandles == null)
             return;
 
-        DrawBoundingBox(dc, zoom, gizmoHandles);
+        DrawBoundingBox(dc, zoom, frameRect, frameAngleDeg);
         DrawGizmoHandles(dc, zoom, shape, gizmoHandles);
     }
 
@@ -134,45 +134,29 @@ internal static class SmartShapeOverlay
         dc.DrawGeometry(null, pen, geom);
     }
 
-    private static void DrawBoundingBox(DrawingContext dc, double zoom, IReadOnlyList<GizmoHandle> handles)
+    private static void DrawBoundingBox(DrawingContext dc, double zoom, Rect frameRect, double frameAngleDeg)
     {
-        Vec2? tl = null, tr = null, br = null, bl = null, tc = null, rot = null;
-        foreach (var h in handles)
-        {
-            switch (h.Kind)
-            {
-                case GizmoHandleKind.TopLeft: tl = h.Position; break;
-                case GizmoHandleKind.TopRight: tr = h.Position; break;
-                case GizmoHandleKind.BottomRight: br = h.Position; break;
-                case GizmoHandleKind.BottomLeft: bl = h.Position; break;
-                case GizmoHandleKind.Top: tc = h.Position; break;
-                case GizmoHandleKind.Rotate: rot = h.Position; break;
-            }
-        }
+        if (frameRect.Width <= 0 || frameRect.Height <= 0)
+            return;
 
-        if (tl is { } a && tr is { } b && br is { } c && bl is { } d)
-        {
-            var penW = Math.Max(0.5, 1.0 / zoom);
-            var bboxPen = new Pen(BboxBrush, penW)
-            {
-                DashStyle = DashStyle.Dash
-            };
-            var geom = new StreamGeometry();
-            using (var ctx = geom.Open())
-            {
-                ctx.BeginFigure(ToPoint(a), false);
-                ctx.LineTo(ToPoint(b));
-                ctx.LineTo(ToPoint(c));
-                ctx.LineTo(ToPoint(d));
-                ctx.LineTo(ToPoint(a));
-            }
-            dc.DrawGeometry(null, bboxPen, geom);
-        }
+        var rect = new Rect(frameRect.X, frameRect.Y, frameRect.Width, frameRect.Height);
+        var center = new Point(rect.X + rect.Width * 0.5, rect.Y + rect.Height * 0.5);
+        var angleRad = frameAngleDeg * Math.PI / 180.0;
+        var matrix = Matrix.CreateTranslation(-center.X, -center.Y)
+            * Matrix.CreateRotation(angleRad)
+            * Matrix.CreateTranslation(center.X, center.Y);
 
-        if (tc is { } top && rot is { } r)
+        var penW = Math.Max(0.75, 1.0 / zoom);
+        var bboxPen = new Pen(BboxBrush, penW) { DashStyle = DashStyle.Dash };
+        var rotateStemPen = new Pen(RotateStemBrush, penW);
+
+        using (dc.PushTransform(matrix))
         {
-            var penW = Math.Max(0.5, 1.0 / zoom);
-            dc.DrawLine(new Pen(RotateStemBrush, penW), ToPoint(top), ToPoint(r));
+            dc.DrawRectangle(null, bboxPen, rect);
+
+            var midX = rect.X + rect.Width * 0.5;
+            var rotY = rect.Bottom + Math.Max(rect.Height * 0.25, 12.0 / zoom);
+            dc.DrawLine(rotateStemPen, new Point(midX, rect.Top), new Point(midX, rotY));
         }
     }
 
@@ -182,75 +166,34 @@ internal static class SmartShapeOverlay
         SmartShapeModel shape,
         IReadOnlyList<GizmoHandle> handles)
     {
-        var penW = Math.Max(0.5, 1.0 / zoom);
+        var penW = Math.Max(0.75, 1.0 / zoom);
         var outlinePen = new Pen(HandleOutlineBrush, penW * 1.5);
-
-        if (shape is CurveShape curve)
-            DrawCurveGizmoHandles(dc, zoom, curve, handles, penW, outlinePen);
-
-        var handleR = Math.Max(5.0, 6.0 / zoom);
-        var isCurve = shape is CurveShape;
+        var handleSize = SmartShapeGizmo.HandleSize(zoom);
+        var half = handleSize * 0.5;
         foreach (var h in handles)
         {
             var pos = ToPoint(h.Position);
             switch (h.Kind)
             {
                 case GizmoHandleKind.Rotate:
-                    dc.DrawEllipse(HandleFillBrush, outlinePen, pos, handleR, handleR);
+                    dc.DrawEllipse(HandleFillBrush, outlinePen, pos, half, half);
                     break;
                 case GizmoHandleKind.TopLeft or GizmoHandleKind.TopRight
                     or GizmoHandleKind.BottomLeft or GizmoHandleKind.BottomRight:
+                    var isCurve = shape is CurveShape;
                     if (isCurve)
-                        dc.DrawEllipse(BboxHandleFillBrush, outlinePen, pos, handleR, handleR);
+                        dc.DrawEllipse(BboxHandleFillBrush, outlinePen, pos, half, half);
                     else
-                    {
-                        var s = handleR + 1;
-                        dc.DrawRectangle(HandleFillBrush, outlinePen, new Rect(pos.X - s, pos.Y - s, s * 2, s * 2));
-                    }
+                        dc.DrawRectangle(HandleFillBrush, outlinePen, new Rect(pos.X - half, pos.Y - half, handleSize, handleSize));
                     break;
                 case GizmoHandleKind.Top or GizmoHandleKind.Bottom
                     or GizmoHandleKind.Left or GizmoHandleKind.Right:
-                    var edge = handleR - 0.5;
-                    dc.DrawRectangle(HandleFillBrush, outlinePen, new Rect(pos.X - edge, pos.Y - edge, edge * 2, edge * 2));
-                    break;
-                case GizmoHandleKind.CurveControl:
-                    var cs = handleR * 0.6;
-                    dc.DrawRectangle(HandleFillBrush, new Pen(ControlBrush, penW * 1.5),
-                        new Rect(pos.X - cs, pos.Y - cs, cs * 2, cs * 2));
+                    dc.DrawRectangle(HandleFillBrush, outlinePen, new Rect(pos.X - half, pos.Y - half, handleSize, handleSize));
                     break;
                 case GizmoHandleKind.CurveAnchor:
-                    dc.DrawEllipse(HandleFillBrush, new Pen(AnchorOutlineBrush, penW * 1.5), pos, handleR * 0.85, handleR * 0.85);
+                    dc.DrawEllipse(HandleFillBrush, new Pen(AnchorOutlineBrush, penW * 1.5), pos, half * 0.85, half * 0.85);
                     break;
             }
-        }
-    }
-
-    private static void DrawCurveGizmoHandles(
-        DrawingContext dc,
-        double zoom,
-        CurveShape curve,
-        IReadOnlyList<GizmoHandle> handles,
-        double penW,
-        Pen outlinePen)
-    {
-        var anchorByIndex = new Dictionary<int, Vec2>();
-        var controlByKey = new Dictionary<(int Seg, int Cp), Vec2>();
-        foreach (var h in handles)
-        {
-            if (h.Kind == GizmoHandleKind.CurveAnchor)
-                anchorByIndex[h.Index] = h.Position;
-            else if (h.Kind == GizmoHandleKind.CurveControl)
-                controlByKey[(h.Index / 4, h.Index % 4)] = h.Position;
-        }
-
-        var tangentPen = new Pen(TangentBrush, penW);
-        for (var i = 0; i < curve.Curves.Count; i++)
-        {
-            var seg = curve.Curves[i];
-            if (controlByKey.TryGetValue((i, 1), out var c1))
-                dc.DrawLine(tangentPen, ToPoint(seg.P0), ToPoint(c1));
-            if (controlByKey.TryGetValue((i, 2), out var c2))
-                dc.DrawLine(tangentPen, ToPoint(seg.P3), ToPoint(c2));
         }
     }
 

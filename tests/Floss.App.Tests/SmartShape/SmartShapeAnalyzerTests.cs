@@ -32,7 +32,28 @@ public sealed class SmartShapeAnalyzerTests
 
         var shape = SmartShapeAnalyzer.AnalyzeStroke(pts);
         Assert.NotNull(shape);
-        Assert.True(shape is RectangleShape or PolygonShape);
+        Assert.IsType<RectangleShape>(shape);
+    }
+
+    [Fact]
+    public void AnalyzeStroke_WobblyClosedRectangle_NotHexagon()
+    {
+        var pts = new List<Vec2>();
+        for (var i = 0; i <= 80; i++)
+            pts.Add(new Vec2(100 + i * 1.5, 50 + Math.Sin(i * 0.7) * 3));
+        for (var i = 0; i <= 50; i++)
+            pts.Add(new Vec2(220 + Math.Sin(i * 0.7) * 3, 50 + i * 1.2));
+        for (var i = 0; i <= 80; i++)
+            pts.Add(new Vec2(220 - i * 1.5, 170 + Math.Sin(i * 0.7) * 3));
+        for (var i = 0; i <= 50; i++)
+            pts.Add(new Vec2(100 + Math.Sin(i * 0.7) * 3, 170 - i * 1.2));
+        pts.Add(pts[0]);
+
+        var simplified = SmartShapeAnalyzer.RdpSimplify(pts, 4.0);
+        Assert.True(simplified.Count > 4, "RDP should keep extra vertices from wobble");
+
+        var shape = SmartShapeAnalyzer.AnalyzeStroke(pts);
+        Assert.IsType<RectangleShape>(shape);
     }
 
     [Fact]

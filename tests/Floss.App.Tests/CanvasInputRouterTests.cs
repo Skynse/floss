@@ -284,6 +284,73 @@ public class CanvasInputRouterTests
     }
 
     [Fact]
+    public void SmartShapeEdit_CtrlSpaceActivatesViewportZoom()
+    {
+        var host = new MockHost
+        {
+            ToolTypes = ((int)InputProcessType.Pen, (int)OutputProcessType.DirectDraw),
+            HasActiveToolAlternate = true,
+            IsSmartShapeEditActive = true
+        };
+        typeof(App).GetProperty(nameof(App.ModifierKeys))!.SetValue(null, ModifierKeySettings.CreateDefaults());
+        var router = new CanvasInputRouter(host);
+
+        router.HandleKeyDown(Key.LeftCtrl, KeyModifiers.Control);
+        router.HandleKeyDown(Key.Space, KeyModifiers.Control);
+
+        TestAssertions.True(
+            host.Operations.Any(o => o == $"PushPreset:{ToolGroupConfig.ViewZoomInPresetId}"),
+            "Ctrl+Space should still push zoom overlay during smart-shape edit");
+        TestAssertions.False(
+            host.Operations.Any(o => o == "CommitTool"),
+            "Viewport zoom modifier must not commit smart shape");
+    }
+
+    [Fact]
+    public void SmartShapeEdit_BlocksNonViewportModifiers()
+    {
+        var host = new MockHost
+        {
+            ToolTypes = ((int)InputProcessType.Pen, (int)OutputProcessType.DirectDraw),
+            HasActiveToolAlternate = true,
+            IsSmartShapeEditActive = true
+        };
+        typeof(App).GetProperty(nameof(App.ModifierKeys))!.SetValue(null, ModifierKeySettings.CreateDefaults());
+        var router = new CanvasInputRouter(host);
+
+        router.HandleKeyDown(Key.LeftAlt, KeyModifiers.Alt);
+
+        TestAssertions.False(
+            host.Operations.Any(o => o == "SetAlternate:True"),
+            "Eyedropper alternate must stay blocked during smart-shape edit");
+        TestAssertions.False(
+            host.Operations.Any(o => o.StartsWith("PushPreset:")),
+            "Non-viewport temporary tools must stay blocked during smart-shape edit");
+    }
+
+    [Fact]
+    public void CaptureLostDuringSmartShapeEditDoesNotCommit()
+    {
+        var host = new MockHost { IsSmartShapeEditActive = true };
+        var router = new CanvasInputRouter(host);
+
+        router.HandlePointerPress(
+            action: CanvasAction.PrimaryTool,
+            isPrimaryDown: true,
+            pointerId: 1,
+            viewportPos: new Point(100, 100),
+            eventArgs: null,
+            ctrlHeld: false,
+            shiftHeld: false);
+
+        host.Operations.Clear();
+        router.HandleCaptureLost();
+
+        TestAssertions.False(host.Operations.Contains("CommitTool"),
+            "Unexpected capture loss must not commit smart-shape edit");
+    }
+
+    [Fact]
     public void PointerPressModifierMaskCanUpgradeAltEyedropperToCtrlAltBrushSize()
     {
         var host = new MockHost

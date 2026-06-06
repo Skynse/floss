@@ -228,23 +228,34 @@ Handle hit-testing in layer/document space on pointer-down when `Phase == Gizmo`
    - average pressure from original stroke
    - layer offset translation
 4. Capture `beforeTiles` for dirty region **once** at commit start (not at pointer-down).
-5. Paint all segments synchronously on UI thread (one-shot, not streaming).
-6. Push **one** `LayerTileHistoryState` + `CommitStroke()`.
+5. **`SmartShapeCommitRasterizer.Plan`**: rasterize raw + fitted strokes on a scratch layer from the same baseline; build tile patches for both undo steps without painting raw onto the live layer.
+6. Apply **fitted** tile patches to the live layer only.
+7. Push two `LayerTileHistoryState` entries via `PushLayerTileHistoryPatches` (raw→empty, then smart→raw) + one `CommitStroke()`.
 
 ```csharp
-// Pseudocode — single undo step
-var beforeTiles = layer.CaptureTilesInRegion(estimatedDirty);
-// ... brushEngine paint segments ...
-ctx.Document.CommitLayerTileMutation(layerIndex, beforeTiles, dirtyRegion);
-ctx.Document.CommitStroke();
-ctx.Document.NotifyChanged(dirtyRegion, layerIndex);
+var beforeEmpty = layer.CaptureTiles(fullRegion);
+var plan = SmartShapeCommitRasterizer.Plan(..., beforeEmpty, rawSamples, shapeSamples);
+foreach (var patch in plan.SmartStepPatches)
+    layer.RestorePaintTile(patch.TileX, patch.TileY, patch.AfterPixels, maskMutation);
+if (plan.RawStepPatches.Count > 0)
+    doc.PushLayerTileHistoryPatches(layerIndex, plan.RawStepPatches, dirtyRegion);
+doc.PushLayerTileHistoryPatches(layerIndex, plan.SmartStepPatches, dirtyRegion);
+doc.CommitStroke();
 ```
 
-### Why one history entry
+### Undo steps after commit
 
-User expectation: one undo removes the entire smart shape. Intermediate scribble never existed on the layer. Gizmo edits are preview-only until commit.
+| Undo count | Canvas shows |
+|------------|--------------|
+| 0 (committed) | Fitted smart shape only |
+| 1 | Raw pen stroke (re-rasterized from stored tile patches) |
+| 2 | Cleared (pre-stroke baseline) |
 
-`CompositeHistoryState` is unnecessary unless we later add multi-layer effects.
+The raw stroke never appears on the layer at commit time; it exists only as the `Before` side of the smart-step history patches (and as the `After` side of the raw-step patches).
+
+### Why not paint raw then smart on the live layer
+
+Painting both in sequence stacks ink (double stroke, halo outside the fitted path). Offscreen planning keeps one visible result while preserving honest tile undo.
 
 ### Contrast with `DirectDrawOutput`
 

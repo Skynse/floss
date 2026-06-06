@@ -186,10 +186,12 @@ public sealed class SettingsWindow : Window
             v => { _cfg.SmartShapeEnabled = v; App.Config.Save(); }));
         content.Children.Add(RowSlider("Length of long-press (seconds)", _cfg.SmartShapeHoldSeconds, 0.10, 2.0,
             v => { _cfg.SmartShapeHoldSeconds = v; App.Config.Save(); }, "f2"));
-        content.Children.Add(RowCheckBox("Show Smart Shape launcher", _cfg.SmartShapeShowLauncher,
-            v => { _cfg.SmartShapeShowLauncher = v; App.Config.Save(); }));
         content.Children.Add(RowSlider("Hold still radius (px)", _cfg.SmartShapeHoldRadiusPx, 2, 32,
             v => { _cfg.SmartShapeHoldRadiusPx = v; App.Config.Save(); }, "f0"));
+
+        content.Children.Add(GroupHeader("Drawing"));
+        content.Children.Add(RowCheckBox("Shift+click straight lines", _cfg.ShiftStraightLineEnabled,
+            v => { _cfg.ShiftStraightLineEnabled = v; App.Config.Save(); }));
 
         content.Children.Add(GroupHeader("Cursor Shape"));
         content.Children.Add(RowBrushCursorPicker("Brush",

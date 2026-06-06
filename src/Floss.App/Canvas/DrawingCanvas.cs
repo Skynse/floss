@@ -282,6 +282,8 @@ public sealed class DrawingCanvas : Control, IDisposable
     public void SetCurrentModifiers(Avalonia.Input.KeyModifiers mods) => _ctx.CurrentModifiers = mods;
     public void SetToolAuxMode(ToolAuxOperationType mode)
     {
+        if (mode == ToolAuxOperationType.StraightLine && !App.Config.ShiftStraightLineEnabled)
+            mode = ToolAuxOperationType.None;
         if (_ctx.ToolAuxMode == mode) return;
         _ctx.ToolAuxMode = mode;
         if (_toolController.ActiveTool is Processes.CompositeTool ct)
@@ -505,6 +507,7 @@ public sealed class DrawingCanvas : Control, IDisposable
     public void SetActiveTool(ITool tool, ToolPreset? preset = null)
     {
         _toolController.SetActiveTool(tool, preset);
+        ApplyBrushToStrokeInputs(_brush);
         InvalidateSelectionOutline();
         InvalidateVisual();
     }
@@ -541,15 +544,29 @@ public sealed class DrawingCanvas : Control, IDisposable
 
     private void ApplyBrushToStrokeInputs(BrushPreset brush)
     {
-        if (_brushTool.Input is BrushStrokeInputProcess brushInput)
+        ApplyStabilizationToInput(_brushTool.Input, brush);
+        ApplyStabilizationToInput(_eraserTool.Input, brush);
+
+        if (ActiveTool is CompositeTool active)
         {
-            brushInput.Stabilization = brush.Smoothing;
-            brushInput.SpeedAdaptiveStabilizer = brush.SpeedAdaptiveStabilizer;
+            ApplyStabilizationToInput(active.Input, brush);
+            if (active.Alternate is CompositeTool alternate)
+                ApplyStabilizationToInput(alternate.Input, brush);
         }
-        if (_eraserTool.Input is BrushStrokeInputProcess eraserInput)
+    }
+
+    private static void ApplyStabilizationToInput(IInputProcess? input, BrushPreset brush)
+    {
+        switch (input)
         {
-            eraserInput.Stabilization = brush.Smoothing;
-            eraserInput.SpeedAdaptiveStabilizer = brush.SpeedAdaptiveStabilizer;
+            case BrushStrokeInputProcess stroke:
+                stroke.Stabilization = brush.Smoothing;
+                stroke.SpeedAdaptiveStabilizer = brush.SpeedAdaptiveStabilizer;
+                break;
+            case SmartShapeBrushInputProcess smartShape:
+                smartShape.Stabilization = brush.Smoothing;
+                smartShape.SpeedAdaptiveStabilizer = brush.SpeedAdaptiveStabilizer;
+                break;
         }
     }
 
@@ -1255,38 +1272,25 @@ public sealed class DrawingCanvas : Control, IDisposable
 
     public bool IsTransformActive => _toolController.ActiveTool is TransformTool tt && tt.HasPendingOperation;
 
-    public bool IsSmartShapeEditActive =>
-        GetSmartShapePhase() is SmartShapePhase.Adjusting or SmartShapePhase.Launcher or SmartShapePhase.Gizmo;
+    public bool IsSmartShapeEditActive => GetSmartShapePhase() == SmartShapePhase.Preview;
 
-    public void EnterSmartShapeGizmoEdit()
+    public void EnterSmartShapeGizmoEdit() { }
+
+    /// <summary>Cancel auto-fit preview while pen is still down (Esc / deselect).</summary>
+    public bool CancelSmartShapePreviewIfActive()
     {
-        if (_toolController.ActiveTool is CompositeTool { Input: SmartShapeBrushInputProcess ss })
-            ss.EnterGizmoEdit();
-    }
-
-    /// <summary>Commit pending smart shape when the launcher bar is up (Esc / deselect dismiss).</summary>
-    public bool CommitSmartShapeIfLauncherShowing()
-    {
-        if (!App.Config.SmartShapeShowLauncher)
-            return false;
-
-        var phase = GetSmartShapePhase();
-        if (phase is not (SmartShapePhase.Launcher or SmartShapePhase.Gizmo))
+        if (GetSmartShapePhase() != SmartShapePhase.Preview)
             return false;
 
         if (_toolController.ActiveTool is not CompositeTool { Input: SmartShapeBrushInputProcess })
             return false;
 
-        CommitActiveTool();
+        CancelActiveTool();
         InvalidateVisual();
         return true;
     }
 
-    public void RefitSmartShape(SmartShapeFitKind kind)
-    {
-        if (_toolController.ActiveTool is CompositeTool { Input: SmartShapeBrushInputProcess ss })
-            ss.Refit(kind);
-    }
+    public void RefitSmartShape(SmartShapeFitKind kind) { }
 
     internal SmartShapeFitKind GetSmartShapeFitKind() =>
         _toolController.ActiveTool is CompositeTool { Input: SmartShapeBrushInputProcess ss }

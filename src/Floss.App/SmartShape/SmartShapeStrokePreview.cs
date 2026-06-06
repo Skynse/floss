@@ -27,7 +27,8 @@ internal sealed class SmartShapeStrokePreview : IDisposable
     private WriteableBitmap? _bitmap;
     private Rect _docRect;
     private SmartShapeModel? _cachedShape;
-    private double _cachedPressure;
+    private int _cachedRawCount;
+    private long _cachedFirstTimeMicros;
     private double _cachedBrushSize;
     private long _lastUpdateMs;
 
@@ -35,22 +36,29 @@ internal sealed class SmartShapeStrokePreview : IDisposable
 
     public bool IsActive => _bitmap != null;
 
-    public void Update(ToolContext ctx, SmartShapeModel shape, double avgPressure)
+    public void Update(
+        ToolContext ctx,
+        SmartShapeModel shape,
+        IReadOnlyList<CanvasInputSample> rawSamples,
+        bool strokeClosed)
     {
         var brush = ctx.Brush;
         var layer = ctx.ActiveLayer;
         if (brush == null || layer == null || layer.IsGroup || layer.IsLocked)
             return;
 
+        var rawCount = rawSamples.Count;
+        var firstTime = rawCount > 0 ? rawSamples[0].TimeMicros : 0;
         var now = Environment.TickCount64;
         if (_cachedShape != null
             && _cachedShape.Equals(shape)
-            && Math.Abs(_cachedPressure - avgPressure) < 0.0001
+            && _cachedRawCount == rawCount
+            && _cachedFirstTimeMicros == firstTime
             && Math.Abs(_cachedBrushSize - brush.Size) < 0.0001
             && now - _lastUpdateMs < MinUpdateIntervalMs)
             return;
 
-        var samples = SmartShapePolyline.ToDocumentSamples(shape, layer, avgPressure);
+        var samples = SmartShapePolyline.ToDocumentSamples(shape, layer, rawSamples, strokeClosed);
         if (samples.Count < 2)
             return;
 
@@ -83,7 +91,8 @@ internal sealed class SmartShapeStrokePreview : IDisposable
             Marshal.Copy(_pixels, 0, fb.Address, _pixels.Length);
 
         _cachedShape = shape;
-        _cachedPressure = avgPressure;
+        _cachedRawCount = rawCount;
+        _cachedFirstTimeMicros = firstTime;
         _cachedBrushSize = brush.Size;
         _lastUpdateMs = now;
     }

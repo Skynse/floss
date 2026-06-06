@@ -5,17 +5,18 @@ using Floss.App.Input;
 
 namespace Floss.App.Processes.Input;
 
-// Krita/CSP-style stabilizer: uniform moving average over a fixed-size
-// sample deque.  Fast strokes shrink the deque (less lag), slow strokes
-// grow it (more stabilization).  The buffer is pre-filled with the down-point
-// so the average starts moving immediately instead of creeping from zero.
+// Krita stabilizer mode: fixed-size deque prefilled at stroke start, uniform
+// position average via incremental mix (getStabilizedPaintInfo). Fast strokes
+// shrink the deque; slow strokes widen it.
 public sealed class BrushStrokeInputProcess : IInputProcess
 {
     public bool HasBrushCursor => true;
     private readonly List<CanvasInputSample> _raw = [];
     private readonly List<CanvasInputSample> _smoothed = [];
+    private readonly List<CanvasInputSample> _deque = new(64);
     private bool _active;
     private CanvasInputSample _lastSmoothed;
+    private int _dequeCapacity = 1;
 
     // StraightLine state
     private bool _straightLineAnchorSet;
@@ -32,16 +33,11 @@ public sealed class BrushStrokeInputProcess : IInputProcess
 
     private bool IsStraightLine => ToolAuxMode == ToolAuxOperationType.StraightLine;
 
-    // Fixed-size deque for uniform stabilizer average.
-    private readonly List<CanvasInputSample> _history = new(32);
-    private float _lastSpeed01;
-
     public void PointerDown(CanvasInputSample s)
     {
         _raw.Clear();
         _smoothed.Clear();
-        _history.Clear();
-        _lastSpeed01 = 0;
+        _deque.Clear();
 
         if (IsStraightLine && _straightLineAnchorSet)
         {
@@ -52,6 +48,14 @@ public sealed class BrushStrokeInputProcess : IInputProcess
                 RawSamples = [a, b],
                 SmoothedSamples = [a, b]
             };
+            _straightLineAnchor = b;
+            _straightLineAnchorSet = true;
+            _lastKnownPos = s;
+            _active = false;
+            _raw.Clear();
+            _smoothed.Clear();
+            _deque.Clear();
+            return;
         }
 
         _straightLineAnchorSet = false;
@@ -59,11 +63,9 @@ public sealed class BrushStrokeInputProcess : IInputProcess
         _smoothed.Add(s);
         _lastSmoothed = s;
 
-        // Pre-fill stabilizer deque with the starting point so the average
-        // doesn't sit at zero for the first N moves (Krita does the same).
-        int count = StabilizerSampleCount(s);
-        for (int i = 0; i < count; i++)
-            _history.Add(s);
+        _dequeCapacity = StabilizerSampleCount(s);
+        for (var i = 0; i < _dequeCapacity; i++)
+            _deque.Add(s);
 
         _active = true;
     }
@@ -75,22 +77,24 @@ public sealed class BrushStrokeInputProcess : IInputProcess
 
         _raw.Add(s);
 
-        _history.Add(s);
-
-        int targetCount = StabilizerSampleCount(s);
-        while (_history.Count > targetCount)
-            _history.RemoveAt(0);
-
-        var smoothed = Stabilization <= 0 ? s : GetStabilizedPosition();
-
-        var dx = smoothed.X - _lastSmoothed.X;
-        var dy = smoothed.Y - _lastSmoothed.Y;
-        var minDist = Stabilization <= 0 ? 0.0 : _lastSpeed01 >= 0.55f ? 0.15 : 0.05;
-        if (dx * dx + dy * dy < minDist * minDist)
+        if (Stabilization <= 0)
+        {
+            _smoothed.Add(s);
+            _lastSmoothed = s;
             return;
+        }
 
-        _smoothed.Add(smoothed);
-        _lastSmoothed = smoothed;
+        var smoothed = GetStabilizedPaintInfo(_deque, s);
+        if (!NearlyEqual(smoothed, _lastSmoothed))
+        {
+            _smoothed.Add(smoothed);
+            _lastSmoothed = smoothed;
+        }
+
+        if (_deque.Count > 0)
+            _deque.RemoveAt(0);
+        _deque.Add(s);
+        MaintainDequeCapacity(s);
     }
 
     public void PointerUp(CanvasInputSample s)
@@ -98,14 +102,22 @@ public sealed class BrushStrokeInputProcess : IInputProcess
         if (!_active) return;
 
         _raw.Add(s);
-        _history.Add(s);
 
-        int targetCount = StabilizerSampleCount(s);
-        while (_history.Count > targetCount)
-            _history.RemoveAt(0);
+        if (Stabilization <= 0)
+        {
+            if (!NearlyEqual(s, _lastSmoothed))
+                _smoothed.Add(s);
+        }
+        else
+        {
+            if (_deque.Count > 0)
+                _deque.RemoveAt(0);
+            _deque.Add(s);
+            var smoothed = GetStabilizedPaintInfo(_deque, s);
+            if (!NearlyEqual(smoothed, _lastSmoothed))
+                _smoothed.Add(smoothed);
+        }
 
-        var smoothed = GetStabilizedPosition();
-        _smoothed.Add(smoothed);
         FinishStroke();
     }
 
@@ -121,8 +133,7 @@ public sealed class BrushStrokeInputProcess : IInputProcess
         _immediateResult = null;
         _raw.Clear();
         _smoothed.Clear();
-        _history.Clear();
-        _lastSpeed01 = 0;
+        _deque.Clear();
     }
 
     public IProcessedInput? GetImmediateResult()
@@ -139,6 +150,7 @@ public sealed class BrushStrokeInputProcess : IInputProcess
             var result = BuildStrokeOutput(_raw, _smoothed, _lastKnownPos);
             _raw.Clear();
             _smoothed.Clear();
+            _deque.Clear();
             return result;
         }
         return null;
@@ -194,63 +206,74 @@ public sealed class BrushStrokeInputProcess : IInputProcess
             BrushSize);
     }
 
-    // Target sample count for the stabilizer deque.
-    // Fast strokes use fewer samples (less lag), slow strokes use more.
+    private void MaintainDequeCapacity(CanvasInputSample latest)
+    {
+        var target = StabilizerSampleCount(latest);
+        if (target == _dequeCapacity && _deque.Count == _dequeCapacity)
+            return;
+
+        _dequeCapacity = target;
+        while (_deque.Count > _dequeCapacity)
+            _deque.RemoveAt(0);
+        while (_deque.Count < _dequeCapacity)
+            _deque.Insert(0, _deque[0]);
+    }
+
+    // Krita effectiveSmoothnessDistance → sample count (max distance default 50).
     private int StabilizerSampleCount(CanvasInputSample raw)
     {
         if (Stabilization <= 0)
             return 1;
 
-        const int maxCount = 24;
-        const int minCount = 2;
-
-        var baseCount = (int)(Stabilization * maxCount);
-        baseCount = Math.Max(minCount, baseCount);
+        const int maxCount = 50;
+        const int minCount = 3;
+        var baseCount = Math.Max(minCount, (int)Math.Round(Stabilization * maxCount));
 
         if (!SpeedAdaptiveStabilizer)
             return baseCount;
 
-        _lastSpeed01 = ComputeSpeed01(raw);
-        var speedBlend = Math.Clamp(_lastSpeed01, 0f, 1f);
-
-        // Fast strokes use a smaller window, not zero — stabilization must still apply.
-        var target = (1.0 - speedBlend) * baseCount + speedBlend * minCount;
+        var speed = ComputeSpeed01(raw);
+        var target = (1.0 - speed) * baseCount + speed * minCount;
         return Math.Max(minCount, (int)Math.Round(target));
     }
 
-    // Uniform average over the deque — same as Krita's stabilizer.
-    private CanvasInputSample GetStabilizedPosition()
+    // Krita getStabilizedPaintInfo — incremental uniform average (position + pressure).
+    internal static CanvasInputSample GetStabilizedPaintInfo(IReadOnlyList<CanvasInputSample> queue, CanvasInputSample latest)
     {
-        if (_history.Count == 0)
-            return _lastSmoothed;
+        if (queue.Count <= 1)
+            return latest;
 
-        var count = _history.Count;
-        var sumX = 0.0;
-        var sumY = 0.0;
-        var sumPressure = 0.0;
-
-        for (var i = 0; i < count; i++)
+        var x = latest.X;
+        var y = latest.Y;
+        var pressure = latest.Pressure;
+        var i = 2;
+        for (var idx = 1; idx < queue.Count; idx++)
         {
-            var h = _history[i];
-            sumX += h.X;
-            sumY += h.Y;
-            sumPressure += h.Pressure;
+            var it = queue[idx];
+            var k = (i - 1.0) / i;
+            x = x * k + it.X * (1.0 - k);
+            y = y * k + it.Y * (1.0 - k);
+            pressure = pressure * k + it.Pressure * (1.0 - k);
+            i++;
         }
 
-        var latest = _history[^1];
-        return latest.WithPosition(
-            sumX / count,
-            sumY / count,
-            sumPressure / count,
-            latest.TimeMicros);
+        return latest.WithPosition(x, y, pressure, latest.TimeMicros);
+    }
+
+    private static bool NearlyEqual(CanvasInputSample a, CanvasInputSample b)
+    {
+        const double eps = 1e-6;
+        return Math.Abs(a.X - b.X) < eps
+            && Math.Abs(a.Y - b.Y) < eps
+            && Math.Abs(a.Pressure - b.Pressure) < eps;
     }
 
     private float ComputeSpeed01(CanvasInputSample raw)
     {
-        if (_history.Count < 2)
+        if (_deque.Count < 2)
             return 0;
 
-        var prev = _history[^2];
+        var prev = _deque[^2];
         var dx = raw.X - prev.X;
         var dy = raw.Y - prev.Y;
         var dt = Math.Max(0.001, (raw.TimeMicros - prev.TimeMicros) / 1_000_000.0);

@@ -152,23 +152,24 @@ public static class SmartShapeAnalyzer
             return new EllipseShape(new Vec2(cx, cy), rx, ry, angle);
         }
 
-        var corners = FindCorners(pts, simplified);
-        var nc = corners.Count;
+        var obb = FitObb(pts);
+        var size = Math.Max(obb.Width, obb.Height);
+        if (size >= 1.0 && MaxObbEdgeDeviation(pts, obb) / size <= 0.12)
+            return new RectangleShape(obb.Center, obb.Width, obb.Height, obb.Angle);
+
+        var nc = simplified.Count;
 
         if (nc <= 3)
         {
-            corners = FindCorners(pts, simplified, 3);
-            return new TriangleShape(corners);
+            var triangleCorners = FindCorners(pts, simplified, 3);
+            return new TriangleShape(triangleCorners);
         }
 
         if (nc == 4)
-        {
-            var rect = FitObb(pts);
-            return new RectangleShape(rect.Center, rect.Width, rect.Height, rect.Angle);
-        }
+            return new RectangleShape(obb.Center, obb.Width, obb.Height, obb.Angle);
 
-        corners = FindCorners(pts, simplified, Math.Min(nc, 8));
-        return new PolygonShape(corners);
+        var polygonCorners = FindCorners(pts, simplified, Math.Min(nc, 8));
+        return new PolygonShape(polygonCorners);
     }
 
     private static SmartShapeModel ClassifyOpen(IReadOnlyList<Vec2> pts, IReadOnlyList<Vec2> simplified)
@@ -245,6 +246,40 @@ public static class SmartShapeAnalyzer
             curves.RemoveAt(best + 1);
         }
         return curves;
+    }
+
+    private static double MaxObbEdgeDeviation(
+        IReadOnlyList<Vec2> pts,
+        (Vec2 Center, double Width, double Height, double Angle) obb)
+    {
+        var angleRad = obb.Angle * Math.PI / 180.0;
+        var cos = Math.Cos(-angleRad);
+        var sin = Math.Sin(-angleRad);
+        var hw = obb.Width * 0.5;
+        var hh = obb.Height * 0.5;
+        var maxDev = 0.0;
+        foreach (var p in pts)
+        {
+            var dx = p.X - obb.Center.X;
+            var dy = p.Y - obb.Center.Y;
+            var lx = dx * cos - dy * sin;
+            var ly = dx * sin + dy * cos;
+            var dev = DistanceToRectBoundary(lx, ly, hw, hh);
+            if (dev > maxDev)
+                maxDev = dev;
+        }
+        return maxDev;
+    }
+
+    private static double DistanceToRectBoundary(double lx, double ly, double hw, double hh)
+    {
+        var dx = Math.Max(0, Math.Abs(lx) - hw);
+        var dy = Math.Max(0, Math.Abs(ly) - hh);
+        if (dx <= 0)
+            return dy;
+        if (dy <= 0)
+            return dx;
+        return Math.Sqrt(dx * dx + dy * dy);
     }
 
     private static double Compactness(IReadOnlyList<Vec2> pts)
