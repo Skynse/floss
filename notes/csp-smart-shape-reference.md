@@ -86,7 +86,7 @@ Refit always uses stored `_rawStroke` samples (not current gizmo transform).
 - [x] Modifier keys don't abort session (`IsSmartShapeEditActive`)
 - [x] Selection clip on commit
 - [x] Native vector overlay (ellipse/rect/Bézier)
-- [ ] Starting/ending taper on commit (brush preset dynamics)
+- [x] Starting/ending taper on commit (dense arc-length resample preserves pressure/time per segment)
 - [ ] Vector layer output (CSP only; Floss raster-only)
 
 Reference this file before changing smart-shape behavior.

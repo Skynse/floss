@@ -19,9 +19,32 @@ public sealed class SmartShapeSampleRemapTests
         var shapePath = new List<Vec2> { new(100, 100), new(300, 100) };
         var mapped = SmartShapeSampleRemap.RemapOntoShape(shapePath, raw, layer, strokeClosed: false);
 
-        Assert.Equal(2, mapped.Count);
+        Assert.Equal(raw.Count, mapped.Count);
         Assert.InRange(mapped[0].Pressure, 0.15, 0.35);
-        Assert.InRange(mapped[1].Pressure, 0.85, 1.05);
+        Assert.InRange(mapped[^1].Pressure, 0.85, 1.05);
+        Assert.InRange(mapped[mapped.Count / 2].Pressure, 0.45, 0.65);
+    }
+
+    [Fact]
+    public void RemapOntoShape_DenseLinePreservesPerSegmentTiming()
+    {
+        var layer = new Document.DrawingLayer("test", 512, 512);
+        var raw = new List<CanvasInputSample>();
+        for (var i = 0; i <= 10; i++)
+        {
+            var t = i / 10.0;
+            raw.Add(Sample(100 + t * 100, 100, 1, i * 50_000));
+        }
+
+        var shapePath = new List<Vec2> { new(100, 100), new(200, 100) };
+        var mapped = SmartShapeSampleRemap.RemapOntoShape(shapePath, raw, layer, strokeClosed: false);
+
+        Assert.Equal(raw.Count, mapped.Count);
+        for (var i = 1; i < mapped.Count; i++)
+        {
+            var dt = mapped[i].TimeMicros - mapped[i - 1].TimeMicros;
+            Assert.InRange(dt, 40_000, 60_000);
+        }
     }
 
     [Fact]

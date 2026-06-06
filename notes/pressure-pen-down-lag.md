@@ -28,7 +28,7 @@ Noticeable hitch when the pen first touches the tablet, especially with pressure
 1. Large-brush dab cache keyed on **quantized `stamp.Size`** (32/64/128px buckets), not raw per-event size — avoids bake churn without mismatched mask placement.
 2. **Prewarm** dab in `BeginStroke` so first paint avoids bake on the UI path.
 3. Coarser **hardness quantize** (32 steps) on large dab keys when hardness dynamics are enabled.
-4. **Initial dab on zero-length segment** + duplicate first sample for pen/tablet on down.
+4. **Do not paint on pen-down** — first dab comes from spacing along the first move (see `notes/stroke-start-bulb-fix.md`). Optional: prewarm dab cache in `BeginStroke` without stamping.
 5. Cache `BrushParameterGraph` node index across `Evaluate` calls.
 
 ## Files

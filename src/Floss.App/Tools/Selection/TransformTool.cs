@@ -648,9 +648,7 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
             if (_lastPreviewDestByLayer.TryGetValue(data.Index, out var lastDest)
                 && lastDest is { IsEmpty: false } dest)
             {
-                var destLayer = ToLayerRegion(dest, layer);
-                if (!destLayer.IsEmpty)
-                    layer.Clear(destLayer);
+                ClearPreviewStamp(layer, dest, data);
             }
 
             ClearLayerSourceFromDocument(data);
@@ -765,9 +763,7 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
             if (_lastPreviewDestByLayer.TryGetValue(data.Index, out var lastDest)
                 && lastDest is { IsEmpty: false } prev)
             {
-                var prevLayer = ToLayerRegion(prev, layer);
-                if (!prevLayer.IsEmpty)
-                    layer.Clear(prevLayer);
+                ClearPreviewStamp(layer, prev, data);
                 dirty = dirty.Union(prev);
             }
 
@@ -817,9 +813,65 @@ internal sealed class SelectionTransformOperation : IToolOperationOverlay
             Buffer.BlockCopy(existing, 0, flat, 0, Math.Min(existing.Length, flat.Length));
 
         if (destLayer.Width == data.SrcW && destLayer.Height == data.SrcH)
-            Buffer.BlockCopy(data.FloatPixels, 0, flat, 0, data.FloatPixels.Length);
+            MergeFloatPixelsIntoBuffer(data.FloatPixels, data.SrcW, data.SrcH, flat);
 
         layer.Pixels.Restore(destLayer, flat);
+        layer.MarkThumbnailDirty();
+    }
+
+    /// <summary>
+    /// Only write pixels that belong to the transformed selection/content — transparent
+    /// entries in <see cref="LayerData.FloatPixels"/> must not erase destination art.
+    /// </summary>
+    private static void MergeFloatPixelsIntoBuffer(byte[] floatPixels, int srcW, int srcH, byte[] dest)
+    {
+        var count = Math.Min(floatPixels.Length, dest.Length);
+        for (var i = 3; i < count; i += 4)
+        {
+            if (floatPixels[i] == 0) continue;
+            var o = i - 3;
+            dest[o] = floatPixels[o];
+            dest[o + 1] = floatPixels[o + 1];
+            dest[o + 2] = floatPixels[o + 2];
+            dest[o + 3] = floatPixels[i];
+        }
+    }
+
+    /// <summary>
+    /// Erase only pixels that were stamped from the transform source, not the full AABB.
+    /// </summary>
+    private void ClearPreviewStamp(DrawingLayer layer, PixelRegion destDoc, LayerData data)
+    {
+        var destLayer = ToLayerRegion(destDoc, layer);
+        if (destLayer.IsEmpty) return;
+
+        if (!_usingSelection)
+        {
+            layer.Clear(destLayer);
+            layer.MarkThumbnailDirty();
+            return;
+        }
+
+        var capture = layer.Pixels.Capture(destLayer);
+        if (capture.Length == 0) return;
+
+        var w = Math.Min(data.SrcW, destLayer.Width);
+        var h = Math.Min(data.SrcH, destLayer.Height);
+        for (var y = 0; y < h; y++)
+        {
+            for (var x = 0; x < w; x++)
+            {
+                var si = (y * data.SrcW + x) * 4;
+                if (data.FloatPixels[si + 3] == 0) continue;
+                var di = (y * destLayer.Width + x) * 4;
+                capture[di] = 0;
+                capture[di + 1] = 0;
+                capture[di + 2] = 0;
+                capture[di + 3] = 0;
+            }
+        }
+
+        layer.Pixels.Restore(destLayer, capture);
         layer.MarkThumbnailDirty();
     }
 

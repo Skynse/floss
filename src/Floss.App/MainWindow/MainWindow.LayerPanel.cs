@@ -10,6 +10,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Styling;
+using Avalonia.VisualTree;
 using Floss.App.Canvas;
 using Floss.App.Canvas.Compositing;
 using Floss.App.Controls;
@@ -35,6 +36,7 @@ public partial class MainWindow
     private Thickness _dropTargetOriginalThickness;
     private IBrush? _dropTargetOriginalBorderBrush;
     private static readonly IBrush DropIndicatorBrush = new SolidColorBrush(Color.Parse(Accent));
+    private const RoutingStrategies LayerDropRouting = RoutingStrategies.Tunnel | RoutingStrategies.Bubble;
 
     // ── Pre-Allocated Layer Brushes (Performance Optimization) ──────────────
 
@@ -636,8 +638,8 @@ public partial class MainWindow
         row.PointerReleased += LayerRowPointerReleased;
         row.Tapped += LayerRowTapped;
         row.DoubleTapped += LayerRowDoubleTapped;
-        row.AddHandler(DragDrop.DragOverEvent, LayerRowDragOver);
-        row.AddHandler(DragDrop.DropEvent, LayerRowDrop);
+        row.AddHandler(DragDrop.DragOverEvent, LayerRowDragOver, LayerDropRouting);
+        row.AddHandler(DragDrop.DropEvent, LayerRowDrop, LayerDropRouting);
 
         var showMaskThumb = layer.HasMask && !layer.IsGroup && !layer.IsPaper;
         var grid = new Grid
@@ -1093,7 +1095,7 @@ public partial class MainWindow
         return items;
     }
 
-    private void SelectLayerWithModifiers(int index, KeyModifiers mods)
+    private void SelectLayerWithModifiers(int index, KeyModifiers mods, bool rebuildList = true)
     {
         if (mods.HasFlag(KeyModifiers.Control))
         {
@@ -1134,7 +1136,50 @@ public partial class MainWindow
             _selectedLayerIndices.Add(index);
             _canvas.SelectLayer(index);
         }
-        BuildLayerList();
+
+        if (rebuildList)
+            BuildLayerList();
+        else
+            RefreshLayerRowSelectionStyles();
+    }
+
+    private void CommitPendingLayerSelection()
+    {
+        if (_canvas == null || _pendingLayerSelectIndex < 0) return;
+
+        var index = _pendingLayerSelectIndex;
+        _pendingLayerSelectIndex = -1;
+        if (index != _canvas.ActiveLayerIndex)
+            _canvas.SelectLayer(index);
+        else
+            RefreshLayerRowSelectionStyles();
+    }
+
+    private void RefreshLayerRowSelectionStyles()
+    {
+        if (_canvas == null) return;
+
+        foreach (var (idx, refs) in _layerRows)
+        {
+            if (idx < 0 || idx >= _canvas.Layers.Count) continue;
+            var layer = _canvas.Layers[idx];
+            var isActive = idx == _canvas.ActiveLayerIndex
+                || (_pendingLayerSelectIndex >= 0 && idx == _pendingLayerSelectIndex);
+            var isSelected = _selectedLayerIndices.Contains(idx);
+            refs.Row.Background = isActive ? RowBgActive : isSelected ? RowBgSelected : RowBgDefault;
+            refs.Row.BorderBrush = layer.IsMaskEditing ? MaskEditBorderBrush
+                : isActive ? RowBorderActive : isSelected ? RowBorderSelected : RowBorderDefault;
+            refs.Row.BorderThickness = layer.IsMaskEditing
+                ? new Thickness(2)
+                : isActive ? new Thickness(2, 1, 1, 1) : new Thickness(1);
+        }
+
+        if (_canvas.Layers.Count > 0)
+        {
+            var active = _canvas.Layers[_canvas.ActiveLayerIndex];
+            RefreshLayerToggleButtons(active);
+            RefreshLayerProperties();
+        }
     }
 
     private void LayerRowPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -1164,14 +1209,30 @@ public partial class MainWindow
             }
 
             // Ctrl+click always toggles selection (even on already-selected layers).
-            // For plain click on an already-selected layer, skip SelectLayerWithModifiers
-            // so the multi-selection persists through the pending drag gesture.
+            // Shift+click extends the range immediately.
+            // Plain click on an unselected row: panel selection only until release or
+            // drag end. Calling _canvas.SelectLayer here fires LayersChanged and
+            // ScheduleLayerListRebuild, which recreates rows and breaks drag.
             var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
-            if (ctrl || !alreadySelected)
+            var shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+            if (ctrl || shift)
+            {
                 SelectLayerWithModifiers(index, e.KeyModifiers);
+                _pendingLayerSelectIndex = -1;
+            }
+            else if (!alreadySelected)
+            {
+                _selectedLayerIndices.Clear();
+                _selectedLayerIndices.Add(index);
+                _pendingLayerSelectIndex = index;
+                RefreshLayerRowSelectionStyles();
+            }
+            else
+            {
+                _pendingLayerSelectIndex = -1;
+            }
 
-            // Don't start a drag when modifier keys are held (Ctrl=toggle, Shift=range).
-            if (ctrl || e.KeyModifiers.HasFlag(KeyModifiers.Shift) || e.ClickCount > 1) return;
+            if (ctrl || shift || e.ClickCount > 1) return;
 
             // Store pending drag state; actual drag starts in PointerMoved after threshold exceeded.
             _pendingDragIndex = index;
@@ -1201,6 +1262,7 @@ public partial class MainWindow
         var args = _pendingDragArgs!;
         _pendingDragIndex = -1;
         _pendingDragArgs = null;
+        _layerDragInProgress = true;
 
         _layerDragSourceIndex = index;
         var draggedIndices = _selectedLayerIndices.Contains(index)
@@ -1223,11 +1285,17 @@ public partial class MainWindow
             _layerDragSourceIndex = -1;
             ClearDropIndicator();
             pointer.Capture(null);
+            CommitPendingLayerSelection();
+            _layerDragInProgress = false;
+            BuildLayerList();
         }
     }
 
     private void LayerRowPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
+        if (!_layerDragInProgress && _pendingLayerSelectIndex >= 0)
+            CommitPendingLayerSelection();
+
         _pendingDragIndex = -1;
         _pendingDragArgs = null;
     }
@@ -1358,9 +1426,28 @@ public partial class MainWindow
         return false;
     }
 
+    private bool TryGetLayerRow(object? source, out Border row, out int targetIndex)
+    {
+        row = null!;
+        targetIndex = -1;
+        for (var visual = source as Visual; visual != null; visual = visual.GetVisualParent())
+        {
+            if (visual is not Border border || border.Tag is not int idx)
+                continue;
+            if (_layerRows.TryGetValue(idx, out var refs) && ReferenceEquals(refs.Row, border))
+            {
+                row = border;
+                targetIndex = idx;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private void LayerRowDragOver(object? sender, DragEventArgs e)
     {
-        if (sender is not Border row || row.Tag is not int targetIndex)
+        if (!TryGetLayerRow(e.Source, out var row, out var targetIndex))
         {
             e.DragEffects = DragDropEffects.None;
             e.Handled = true;
@@ -1386,7 +1473,9 @@ public partial class MainWindow
     private void LayerRowDrop(object? sender, DragEventArgs e)
     {
         ClearDropIndicator();
-        if (sender is not Border row || row.Tag is not int targetIndex) return;
+        if (!TryGetLayerRow(e.Source, out var row, out var targetIndex))
+            return;
+
         var sourceIndices = GetDraggedLayerIndices(e.DataTransfer);
         var placement = GetLayerDropPlacement(row, targetIndex, e.GetPosition(row));
         if (sourceIndices.Count == 0) return;
@@ -1432,29 +1521,26 @@ public partial class MainWindow
 
     private LayerDropPlacement GetLayerDropPlacement(Border row, int targetIndex, Point position)
     {
-        var height = Math.Max(1, row.Bounds.Height);
         var target = _canvas.Layers[targetIndex];
 
-        // Top 30% → insert above this row; bottom 30% → insert below.
-        // Middle 40% → into group (if it's a group), otherwise split at 50%.
-        if (position.Y < height * 0.30)
-            return LayerDropPlacement.Above;
-        if (position.Y > height * 0.70)
-            return LayerDropPlacement.Below;
+        // Folder rows are drop-onto targets; reorder above/below via adjacent layer rows.
         if (target.IsGroup)
             return LayerDropPlacement.Into;
+
+        var height = Math.Max(1, row.Bounds.Height);
         return position.Y < height * 0.5 ? LayerDropPlacement.Above : LayerDropPlacement.Below;
     }
 
     private void UpdateDropIndicator(Border row, LayerDropPlacement placement)
     {
-        // Clear previous indicator on a different row
-        if (_dropTargetRow != null && !ReferenceEquals(_dropTargetRow, row))
-            ClearDropIndicator();
-
         if (placement == LayerDropPlacement.Into)
         {
-            // Highlight the row border for "into group"
+            if (_dropTargetRow != null && !ReferenceEquals(_dropTargetRow, row))
+                ClearDropIndicator();
+
+            if (_dropLine is not null)
+                _dropLine.IsVisible = false;
+
             if (!ReferenceEquals(_dropTargetRow, row))
             {
                 _dropTargetRow = row;
@@ -1463,30 +1549,26 @@ public partial class MainWindow
                 row.BorderThickness = new Thickness(2);
                 row.BorderBrush = DropIndicatorBrush;
             }
-            if (_dropLine is not null)
-                _dropLine.IsVisible = false;
+
+            return;
         }
-        else
-        {
-            // Restore row border if we previously highlighted for Into
-            if (_dropTargetRow != null)
-                ClearDropIndicator();
 
-            // Position floating insertion line based on Above/Below
-            if (_dropLineCanvas == null || _dropLine == null) return;
+        if (_dropTargetRow != null)
+            ClearDropIndicator();
 
-            var pt = row.TranslatePoint(new Point(0, 0), _dropLineCanvas);
-            if (!pt.HasValue) return;
+        if (_dropLineCanvas == null || _dropLine == null) return;
 
-            var y = placement == LayerDropPlacement.Above
-                ? pt.Value.Y - 1
-                : pt.Value.Y + row.Bounds.Height - 3;
-            Avalonia.Controls.Canvas.SetTop(_dropLine, y);
-            Avalonia.Controls.Canvas.SetLeft(_dropLine, 0);
-            var cw = _dropLineCanvas.Bounds.Width;
-            _dropLine.Width = cw > 0 ? cw : _layerListBox.Bounds.Width;
-            _dropLine.IsVisible = true;
-        }
+        var pt = row.TranslatePoint(new Point(0, 0), _dropLineCanvas);
+        if (!pt.HasValue) return;
+
+        var y = placement == LayerDropPlacement.Above
+            ? pt.Value.Y - 1
+            : pt.Value.Y + row.Bounds.Height - 3;
+        Avalonia.Controls.Canvas.SetTop(_dropLine, y);
+        Avalonia.Controls.Canvas.SetLeft(_dropLine, 0);
+        var cw = _dropLineCanvas.Bounds.Width;
+        _dropLine.Width = cw > 0 ? cw : _layerListBox.Bounds.Width;
+        _dropLine.IsVisible = true;
     }
 
     private void ClearDropIndicator()
@@ -1497,6 +1579,7 @@ public partial class MainWindow
             _dropTargetRow.BorderBrush = _dropTargetOriginalBorderBrush;
             _dropTargetRow = null;
         }
+
         if (_dropLine != null)
             _dropLine.IsVisible = false;
     }

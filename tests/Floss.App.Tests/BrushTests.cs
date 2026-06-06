@@ -516,6 +516,360 @@ public class BrushTests
     }
 
     [Fact]
+    public void BrushEngine_LargeBrushPreservesPeakOpacity()
+    {
+        static void FillWhite(DrawingLayer layer)
+        {
+            for (var y = 0; y < layer.Height; y++)
+            for (var x = 0; x < layer.Width; x++)
+                layer.Pixels.SetPixel(x, y, 255, 255, 255, 255);
+        }
+
+        static (byte b, byte g, byte r, byte a) PeakAt(DrawingLayer layer, int cx, int cy, int radius)
+        {
+            byte pb = 0, pg = 0, pr = 0, pa = 0;
+            for (var y = cy - radius; y <= cy + radius; y++)
+            for (var x = cx - radius; x <= cx + radius; x++)
+            {
+                layer.Pixels.GetPixel(x, y, out var b, out var g, out var r, out var a);
+                if (a > pa) { pa = a; pb = b; pg = g; pr = r; }
+            }
+            return (pb, pg, pr, pa);
+        }
+
+        static BrushPreset SolidBlueBrush(double size) => new($"Blue {size}", size, 1, 1, 0.05, Colors.Blue, 0)
+        {
+            GapMode = BrushGapMode.Fixed,
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null,
+            ColorMix = false,
+            Grain = 0,
+            Dynamics = new BrushDynamics { Size = CurveOption.Off(), Opacity = CurveOption.Off() }
+        };
+
+        const int cx = 512, cy = 512;
+        var from = SampleWithPressure(cx, cy, 0, 1.0);
+        var to = SampleWithPressure(cx + 1, cy, 1_000, 1.0);
+
+        using var smallEngine = new BrushEngine();
+        using var smallLayer = new DrawingLayer("Small", 1024, 1024);
+        FillWhite(smallLayer);
+        var smallBrush = SolidBlueBrush(48);
+        smallEngine.BeginStroke(smallBrush, from);
+        var smallDirty = smallEngine.RasterizeFinalSegment(smallLayer, smallBrush, from, to);
+        var small = PeakAt(smallLayer, cx, cy, 30);
+
+        using var largeEngine = new BrushEngine();
+        using var largeLayer = new DrawingLayer("Large", 1024, 1024);
+        FillWhite(largeLayer);
+        var largeBrush = SolidBlueBrush(512);
+        largeEngine.BeginStroke(largeBrush, from);
+        var largeDirty = largeEngine.RasterizeFinalSegment(largeLayer, largeBrush, from, to);
+        var large = PeakAt(largeLayer, cx, cy, 280);
+
+        TestAssertions.False(smallDirty.IsEmpty);
+        TestAssertions.False(largeDirty.IsEmpty);
+        TestAssertions.True(small.a >= 240, $"Small brush peak alpha={small.a} path={smallEngine.LastStats.Path}");
+        TestAssertions.True(large.a >= 240, $"Large brush peak alpha={large.a} path={largeEngine.LastStats.Path}");
+        TestAssertions.True(large.b >= small.b - 5,
+            $"Large brush center blue={large.b} should match small={small.b} (path={largeEngine.LastStats.Path}).");
+
+        using var hugeEngine = new BrushEngine();
+        using var hugeLayer = new DrawingLayer("Huge", 4096, 4096);
+        FillWhite(hugeLayer);
+        var hugeBrush = SolidBlueBrush(2048);
+        hugeEngine.BeginStroke(hugeBrush, from);
+        hugeEngine.RasterizeFinalSegment(hugeLayer, hugeBrush, from, to);
+        var huge = PeakAt(hugeLayer, cx, cy, 1100);
+        TestAssertions.True(huge.a >= 240,
+            $"2048px brush peak alpha={huge.a} blue={huge.b} path={hugeEngine.LastStats.Path}");
+        TestAssertions.True(huge.b >= small.b - 5,
+            $"2048px brush peak blue={huge.b} should match small={small.b}");
+    }
+
+    [Fact]
+    public void BrushEngine_LargeOverlapStrokeMatchesSmallPeakOpacity()
+    {
+        static void FillWhite(DrawingLayer layer)
+        {
+            for (var y = 0; y < layer.Height; y++)
+            for (var x = 0; x < layer.Width; x++)
+                layer.Pixels.SetPixel(x, y, 255, 255, 255, 255);
+        }
+
+        static (byte b, byte g, byte r, byte a) PeakAlongStroke(DrawingLayer layer, int y, int x0, int x1)
+        {
+            byte pb = 0, pg = 0, pr = 0, pa = 0;
+            for (var x = x0; x <= x1; x++)
+            {
+                layer.Pixels.GetPixel(x, y, out var b, out var g, out var r, out var a);
+                if (a > pa) { pa = a; pb = b; pg = g; pr = r; }
+            }
+            return (pb, pg, pr, pa);
+        }
+
+        static BrushPreset SolidBlueBrush(double size) => new($"Blue {size}", size, 1, 1, 0.05, Colors.Blue, 0)
+        {
+            GapMode = BrushGapMode.Fixed,
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null,
+            ColorMix = false,
+            Grain = 0,
+            Dynamics = new BrushDynamics { Size = CurveOption.Off(), Opacity = CurveOption.Off() }
+        };
+
+        const int y = 512;
+        var from = SampleWithPressure(200, y, 0, 1.0);
+        var to = SampleWithPressure(900, y, 120_000, 1.0);
+
+        using var smallEngine = new BrushEngine();
+        using var smallLayer = new DrawingLayer("Small", 1024, 1024);
+        FillWhite(smallLayer);
+        var smallBrush = SolidBlueBrush(64);
+        smallEngine.BeginStroke(smallBrush, from);
+        smallEngine.RasterizeFinalSegment(smallLayer, smallBrush, from, to);
+        var small = PeakAlongStroke(smallLayer, y, 200, 900);
+
+        using var largeEngine = new BrushEngine();
+        using var largeLayer = new DrawingLayer("Large", 1024, 1024);
+        FillWhite(largeLayer);
+        var largeBrush = SolidBlueBrush(512);
+        largeEngine.BeginStroke(largeBrush, from);
+        largeEngine.RasterizeFinalSegment(largeLayer, largeBrush, from, to);
+        var large = PeakAlongStroke(largeLayer, y, 200, 900);
+
+        TestAssertions.True(small.a >= 240, $"Small overlap peak alpha={small.a}");
+        TestAssertions.True(large.a >= 240, $"Large overlap peak alpha={large.a} path={largeEngine.LastStats.Path}");
+        TestAssertions.True(large.b >= small.b - 5,
+            $"Large overlap peak blue={large.b} should match small={small.b} (path={largeEngine.LastStats.Path}, stamps={largeEngine.LastStats.StampCount}).");
+    }
+
+    [Fact]
+    public void BrushEngine_LargeBrushDoubleDabBuildsOpacityLikeSmall()
+    {
+        static void FillWhite(DrawingLayer layer)
+        {
+            for (var y = 0; y < layer.Height; y++)
+            for (var x = 0; x < layer.Width; x++)
+                layer.Pixels.SetPixel(x, y, 255, 255, 255, 255);
+        }
+
+        static byte PeakBlue(DrawingLayer layer, int cx, int cy, int radius)
+        {
+            byte pb = 0, pa = 0;
+            for (var y = cy - radius; y <= cy + radius; y++)
+            for (var x = cx - radius; x <= cx + radius; x++)
+            {
+                layer.Pixels.GetPixel(x, y, out var b, out _, out _, out var a);
+                if (a > pa) { pa = a; pb = b; }
+            }
+            return pb;
+        }
+
+        static byte RenderTwoDabs(double size)
+        {
+            const int cx = 400, cy = 400;
+            var s = SampleWithPressure(cx, cy, 0, 1.0);
+            var brush = new BrushPreset("Double", size, 1, 1, 0.05, Colors.Blue, 0)
+            {
+                GapMode = BrushGapMode.Fixed,
+                Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+                Shape = null,
+                ColorMix = false,
+                Dynamics = new BrushDynamics { Size = CurveOption.Off(), Opacity = CurveOption.Off() }
+            };
+            using var engine = new BrushEngine();
+            using var layer = new DrawingLayer("L", 800, 800);
+            FillWhite(layer);
+            var s2 = SampleWithPressure(cx + 0.5, cy, 1_000, 1.0);
+            engine.BeginStroke(brush, s);
+            engine.RasterizeFinalSegment(layer, brush, s, s2);
+            engine.RasterizeFinalSegment(layer, brush, s2, s);
+            return PeakBlue(layer, cx, cy, (int)(size * 0.6));
+        }
+
+        var smallPeak = RenderTwoDabs(64);
+        var largePeak = RenderTwoDabs(512);
+        TestAssertions.True(largePeak >= smallPeak - 5,
+            $"Two large dabs at same point peak blue={largePeak} should match small={smallPeak}.");
+    }
+
+    [Fact]
+    public void BrushEngine_LargeOverlapStrokeMeanOpacityMatchesSmall()
+    {
+        static void FillWhite(DrawingLayer layer)
+        {
+            for (var y = 0; y < layer.Height; y++)
+            for (var x = 0; x < layer.Width; x++)
+                layer.Pixels.SetPixel(x, y, 255, 255, 255, 255);
+        }
+
+        static double MeanBlueAlongStroke(DrawingLayer layer, int y, int x0, int x1)
+        {
+            double sum = 0;
+            var count = 0;
+            for (var x = x0; x <= x1; x++)
+            {
+                layer.Pixels.GetPixel(x, y, out var b, out _, out _, out var a);
+                if (a == 0) continue;
+                sum += b;
+                count++;
+            }
+            return count == 0 ? 0 : sum / count;
+        }
+
+        const int y = 512;
+        var from = SampleWithPressure(200, y, 0, 1.0);
+        var to = SampleWithPressure(900, y, 120_000, 1.0);
+        var brush = new BrushPreset("Blue overlap", 512, 1, 1, 0.05, Colors.Blue, 0)
+        {
+            GapMode = BrushGapMode.Fixed,
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null,
+            ColorMix = false,
+            Grain = 0,
+            Dynamics = new BrushDynamics { Size = CurveOption.Off(), Opacity = CurveOption.Off() }
+        };
+
+        using var smallEngine = new BrushEngine();
+        using var smallLayer = new DrawingLayer("Small", 1024, 1024);
+        FillWhite(smallLayer);
+        var smallBrush = brush with { Size = 64 };
+        smallEngine.BeginStroke(smallBrush, from);
+        smallEngine.RasterizeFinalSegment(smallLayer, smallBrush, from, to);
+        var smallMean = MeanBlueAlongStroke(smallLayer, y, 200, 900);
+
+        using var largeEngine = new BrushEngine();
+        using var largeLayer = new DrawingLayer("Large", 1024, 1024);
+        FillWhite(largeLayer);
+        largeEngine.BeginStroke(brush, from);
+        largeEngine.RasterizeFinalSegment(largeLayer, brush, from, to);
+        var largeMean = MeanBlueAlongStroke(largeLayer, y, 200, 900);
+
+        TestAssertions.True(largeMean >= smallMean - 0.5,
+            $"Large brush mean blue={largeMean:F2} should not be washed out vs small={smallMean:F2} (path={largeEngine.LastStats.Path}, stamps={largeEngine.LastStats.StampCount}).");
+    }
+
+    [Fact]
+    public void BrushEngine_LiveLargeTimeSlicedStrokePreservesPeakOpacity()
+    {
+        static void FillWhite(DrawingLayer layer)
+        {
+            for (var y = 0; y < layer.Height; y++)
+            for (var x = 0; x < layer.Width; x++)
+                layer.Pixels.SetPixel(x, y, 255, 255, 255, 255);
+        }
+
+        static (byte b, byte g, byte r, byte a) PeakAlongStroke(DrawingLayer layer, int y, int x0, int x1)
+        {
+            byte pb = 0, pg = 0, pr = 0, pa = 0;
+            for (var x = x0; x <= x1; x++)
+            {
+                layer.Pixels.GetPixel(x, y, out var b, out var g, out var r, out var a);
+                if (a > pa) { pa = a; pb = b; pg = g; pr = r; }
+            }
+            return (pb, pg, pr, pa);
+        }
+
+        static PixelRegion EstimateBatchRegion(BrushEngine engine, DrawingLayer layer, BrushPreset brush,
+            IReadOnlyList<CanvasInputSample> samples, int startSegmentIndex, int segmentCount)
+        {
+            var end = Math.Min(samples.Count - 1, startSegmentIndex + segmentCount - 1);
+            var region = PixelRegion.Empty;
+            for (var i = startSegmentIndex; i <= end; i++)
+                region = region.Union(engine.EstimateSegmentRegion(layer, brush, samples[i - 1], samples[i]));
+            return region;
+        }
+
+        const int y = 2048;
+        var samples = new List<CanvasInputSample>();
+        for (var x = 512; x <= 1800; x += 8)
+            samples.Add(SampleWithPressure(x, y, x * 1_000L, 1.0));
+
+        var brush = new BrushPreset("Sliced blue", 1024, 1, 1, 0.05, Colors.Blue, 0)
+        {
+            GapMode = BrushGapMode.Fixed,
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null,
+            ColorMix = false,
+            Grain = 0,
+            Dynamics = new BrushDynamics { Size = CurveOption.Off(), Opacity = CurveOption.Off() }
+        };
+
+        using var engine = new BrushEngine();
+        using var layer = new DrawingLayer("Layer", 4096, 4096);
+        layer.ActivePixels.LiveStroke = true;
+        FillWhite(layer);
+
+        engine.BeginStroke(brush, samples[0]);
+        var beforeTiles = new Dictionary<(int X, int Y), byte[]?>();
+        const int segmentsPerBatch = 2;
+        for (var start = 1; start < samples.Count; start += segmentsPerBatch)
+        {
+            var count = Math.Min(segmentsPerBatch, samples.Count - start);
+            var region = EstimateBatchRegion(engine, layer, brush, samples, start, count);
+            layer.CaptureTiles(region, beforeTiles);
+            engine.BindStrokeBeforeTiles(beforeTiles);
+            engine.RasterizeSegments(layer, brush, samples, start, count);
+        }
+
+        var peak = PeakAlongStroke(layer, y, 512, 1800);
+        TestAssertions.Equal("StrokeMaskCached", engine.LastStats.Path);
+        TestAssertions.True(peak.a >= 240, $"Time-sliced live stroke peak alpha={peak.a}");
+        TestAssertions.True(peak.b >= 250, $"Time-sliced live stroke peak blue={peak.b} should stay saturated.");
+    }
+
+    [Fact]
+    public void BrushEngine_LiveLargeStrokePreservesPeakOpacity()
+    {
+        static void FillWhite(DrawingLayer layer)
+        {
+            for (var y = 0; y < layer.Height; y++)
+            for (var x = 0; x < layer.Width; x++)
+                layer.Pixels.SetPixel(x, y, 255, 255, 255, 255);
+        }
+
+        static (byte b, byte g, byte r, byte a) PeakAlongStroke(DrawingLayer layer, int y, int x0, int x1)
+        {
+            byte pb = 0, pg = 0, pr = 0, pa = 0;
+            for (var x = x0; x <= x1; x++)
+            {
+                layer.Pixels.GetPixel(x, y, out var b, out var g, out var r, out var a);
+                if (a > pa) { pa = a; pb = b; pg = g; pr = r; }
+            }
+            return (pb, pg, pr, pa);
+        }
+
+        const int y = 2048;
+        var from = SampleWithPressure(512, y, 0, 1.0);
+        var to = SampleWithPressure(1800, y, 120_000, 1.0);
+        var brush = new BrushPreset("Live blue", 1024, 1, 1, 0.05, Colors.Blue, 0)
+        {
+            GapMode = BrushGapMode.Fixed,
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null,
+            ColorMix = false,
+            Grain = 0,
+            Dynamics = new BrushDynamics { Size = CurveOption.Off(), Opacity = CurveOption.Off() }
+        };
+
+        using var engine = new BrushEngine();
+        using var layer = new DrawingLayer("Layer", 4096, 4096);
+        layer.ActivePixels.LiveStroke = true;
+        FillWhite(layer);
+
+        engine.BeginStroke(brush, from);
+        var region = engine.EstimateSegmentRegion(layer, brush, from, to);
+        engine.BindStrokeBeforeTiles(layer.CaptureTiles(region));
+        engine.RasterizeFinalSegment(layer, brush, from, to);
+
+        var peak = PeakAlongStroke(layer, y, 512, 1800);
+        TestAssertions.Equal("StrokeMaskCached", engine.LastStats.Path);
+        TestAssertions.True(peak.a >= 240, $"Live large stroke peak alpha={peak.a}");
+        TestAssertions.True(peak.b >= 250, $"Live large stroke peak blue={peak.b} should stay saturated.");
+    }
+
+    [Fact]
     public void BrushEngine_LiveLargeStrokeUsesStrokeMaskCached()
     {
         using var engine = new BrushEngine();
@@ -650,6 +1004,33 @@ public class BrushTests
 
         TestAssertions.False(dirty.IsEmpty);
         TestAssertions.True(activeTip.GenerateCount > 0, "Single tip mode must render brush.Tip, not the saved material tip list.");
+    }
+
+    [Fact]
+    public void BrushEngine_ZeroLengthSegmentDoesNotPlacePenDownDab()
+    {
+        using var engine = new BrushEngine();
+        using var layer = new DrawingLayer("Layer", 256, 256);
+        var brush = new BrushPreset("Speed size", 24, 1, 0.75, 0.15, Colors.Black, 0)
+        {
+            Dynamics = new BrushDynamics
+            {
+                Size = CurveOption.PressureSpeed(1.2f, 0.35f)
+            }
+        };
+        var down = Sample(64, 128, 0);
+
+        engine.BeginStroke(brush, down);
+        var zeroMove = engine.RasterizeSegment(layer, brush, down, down);
+
+        TestAssertions.True(zeroMove.IsEmpty);
+        TestAssertions.Equal(0, engine.LastStats.StampCount);
+
+        var move = Sample(120, 128, 8_000);
+        var dirty = engine.RasterizeSegment(layer, brush, down, move);
+
+        TestAssertions.False(dirty.IsEmpty);
+        TestAssertions.True(engine.LastStats.StampCount > 0);
     }
 
     [Fact]

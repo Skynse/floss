@@ -46,24 +46,30 @@ internal static class SmartShapeSampleRemap
             ? FindPhaseDistance(rawSamples, shapePts[0])
             : 0.0;
 
-        var output = new List<CanvasInputSample>(shapePath.Count);
-        var walked = 0.0;
-        for (var i = 0; i < shapePath.Count; i++)
-        {
-            if (i > 0)
-                walked += Dist(shapePath[i - 1], shapePath[i]);
+        // Resample at the same density as the raw stroke so per-segment velocity,
+        // pressure, and fade/distance dynamics are not flattened onto sparse vertices.
+        var sampleCount = rawSamples.Count;
+        var output = new List<CanvasInputSample>(sampleCount + 1);
 
-            var fraction = shapeArc.Total <= 1e-6 ? 0.0 : walked / shapeArc.Total;
-            var rawDistance = shapeLoop && rawLoop
-                ? Mod(rawArc.Total, phase + fraction * rawArc.Total)
-                : fraction * rawArc.Total;
-            var source = SampleAtDistance(rawSamples, rawPts, rawArc, rawDistance, rawLoop);
-            output.Add(ToDocumentSample(source with
+        if (shapeLoop && strokeClosed)
+        {
+            for (var i = 0; i <= sampleCount; i++)
             {
-                X = shapePath[i].X,
-                Y = shapePath[i].Y,
-                Phase = CanvasInputPhase.Move
-            }, layer));
+                var fraction = i / (double)sampleCount;
+                AppendRemappedSample(
+                    output, shapePts, shapeArc, shapeLoop,
+                    rawSamples, rawPts, rawArc, rawLoop, phase, fraction, layer);
+            }
+        }
+        else
+        {
+            for (var i = 0; i < sampleCount; i++)
+            {
+                var fraction = sampleCount <= 1 ? 0.0 : i / (double)(sampleCount - 1);
+                AppendRemappedSample(
+                    output, shapePts, shapeArc, shapeLoop,
+                    rawSamples, rawPts, rawArc, rawLoop, phase, fraction, layer);
+            }
         }
 
         return output;
@@ -79,15 +85,46 @@ internal static class SmartShapeSampleRemap
         return output;
     }
 
+    private static void AppendRemappedSample(
+        List<CanvasInputSample> output,
+        IReadOnlyList<Vec2> shapePts,
+        ArcTable shapeArc,
+        bool shapeLoop,
+        IReadOnlyList<CanvasInputSample> rawSamples,
+        IReadOnlyList<Vec2> rawPts,
+        ArcTable rawArc,
+        bool rawLoop,
+        double phase,
+        double fraction,
+        DrawingLayer layer)
+    {
+        var shapeDistance = fraction * shapeArc.Total;
+        var pt = PointAtArcDistance(shapePts, shapeArc, shapeDistance, shapeLoop);
+        var rawDistance = shapeLoop && rawLoop
+            ? Mod(rawArc.Total, phase + fraction * rawArc.Total)
+            : fraction * rawArc.Total;
+        var source = SampleAtDistance(rawSamples, rawPts, rawArc, rawDistance, rawLoop);
+        output.Add(ToDocumentSample(source with
+        {
+            X = pt.X,
+            Y = pt.Y,
+            Phase = CanvasInputPhase.Move
+        }, layer));
+    }
+
     private static List<CanvasInputSample> FlatDocumentSamples(
         IReadOnlyList<Vec2> shapePath,
         IReadOnlyList<CanvasInputSample> rawSamples,
         DrawingLayer layer)
     {
         var fallback = rawSamples[0];
-        var output = new List<CanvasInputSample>(shapePath.Count);
-        foreach (var pt in shapePath)
+        var output = new List<CanvasInputSample>(rawSamples.Count);
+        for (var i = 0; i < rawSamples.Count; i++)
         {
+            var fraction = rawSamples.Count <= 1 ? 0.0 : i / (double)(rawSamples.Count - 1);
+            var ptIndex = (int)Math.Round(fraction * (shapePath.Count - 1));
+            ptIndex = Math.Clamp(ptIndex, 0, shapePath.Count - 1);
+            var pt = shapePath[ptIndex];
             output.Add(ToDocumentSample(fallback with
             {
                 X = pt.X,
@@ -146,6 +183,42 @@ internal static class SmartShapeSampleRemap
             total += Dist(pts[^1], pts[0]);
 
         return new ArcTable(cumulative, total, closed);
+    }
+
+    private static Vec2 PointAtArcDistance(
+        IReadOnlyList<Vec2> pts,
+        ArcTable arc,
+        double distance,
+        bool closed)
+    {
+        if (pts.Count == 0)
+            return default;
+        if (pts.Count == 1)
+            return pts[0];
+
+        distance = closed ? Mod(arc.Total, distance) : Math.Clamp(distance, 0, arc.Total);
+
+        for (var i = 1; i < pts.Count; i++)
+        {
+            var segEnd = arc.Cumulative[i];
+            if (distance > segEnd + 1e-9)
+                continue;
+
+            var segStart = arc.Cumulative[i - 1];
+            var segLen = segEnd - segStart;
+            var t = segLen <= 1e-6 ? 0.0 : (distance - segStart) / segLen;
+            return LerpVec(pts[i - 1], pts[i], t);
+        }
+
+        if (closed && pts.Count > 1)
+        {
+            var segStart = arc.Cumulative[^1];
+            var segLen = arc.Total - segStart;
+            var t = segLen <= 1e-6 ? 0.0 : (distance - segStart) / segLen;
+            return LerpVec(pts[^1], pts[0], t);
+        }
+
+        return pts[^1];
     }
 
     private static double FindPhaseDistance(
@@ -224,6 +297,11 @@ internal static class SmartShapeSampleRemap
             to.Source,
             to.Phase);
     }
+
+    private static Vec2 LerpVec(Vec2 from, Vec2 to, double t)
+        => new(
+            from.X + (to.X - from.X) * t,
+            from.Y + (to.Y - from.Y) * t);
 
     private static CanvasInputSample ToDocumentSample(CanvasInputSample sample, DrawingLayer layer)
         => new(

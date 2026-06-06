@@ -153,26 +153,10 @@ public sealed class DrawingLayer : IDisposable
 
     public WriteableBitmap GetThumbnail()
     {
-        var (tw, th) = ComputeThumbnailPixelSize(Width, Height);
-        if (_thumbnail == null || _thumbnailWidth != tw || _thumbnailHeight != th)
-        {
-            _thumbnail?.Dispose();
-            _thumbnailWidth = tw;
-            _thumbnailHeight = th;
-            _thumbnail = new WriteableBitmap(
-                new PixelSize(tw, th),
-                new Vector(96, 96),
-                PixelFormat.Bgra8888,
-                AlphaFormat.Unpremul);
-            _thumbnailDirty = true;
-        }
-
+        EnsureThumbnailBitmap();
         if (_thumbnailDirty)
-        {
             RefreshThumbnail();
-        }
-
-        return _thumbnail;
+        return _thumbnail!;
     }
 
     public void MarkThumbnailDirty() => _thumbnailDirty = true;
@@ -180,26 +164,77 @@ public sealed class DrawingLayer : IDisposable
     public WriteableBitmap? GetMaskThumbnail()
     {
         if (!HasMask) return null;
-        var (tw, th) = ComputeThumbnailPixelSize(Width, Height);
-        if (_maskThumbnail == null || _thumbnailWidth != tw || _thumbnailHeight != th)
-        {
-            _maskThumbnail?.Dispose();
-            _maskThumbnail = new WriteableBitmap(
-                new PixelSize(tw, th),
-                new Vector(96, 96),
-                PixelFormat.Bgra8888,
-                AlphaFormat.Unpremul);
-            _maskThumbnailDirty = true;
-        }
-
+        EnsureMaskThumbnailBitmap();
         if (_maskThumbnailDirty)
             RefreshMaskThumbnail();
         return _maskThumbnail;
     }
 
+    /// <summary>
+    /// Layer thumbnails are also assigned to layer-panel <see cref="Avalonia.Controls.Image"/> sources.
+    /// When a row is recycled or its source is replaced, Avalonia may dispose that bitmap while
+    /// we still hold <see cref="_thumbnail"/> — recreate on the next refresh instead of crashing.
+    /// </summary>
+    private void EnsureThumbnailBitmap()
+    {
+        var (tw, th) = ComputeThumbnailPixelSize(Width, Height);
+        if (_thumbnail != null && _thumbnailWidth == tw && _thumbnailHeight == th && IsBitmapLockable(_thumbnail))
+            return;
+
+        DisposeThumbnailBitmap();
+        _thumbnailWidth = tw;
+        _thumbnailHeight = th;
+        _thumbnail = CreateThumbnailBitmap(tw, th);
+        _thumbnailDirty = true;
+    }
+
+    private void EnsureMaskThumbnailBitmap()
+    {
+        var (tw, th) = ComputeThumbnailPixelSize(Width, Height);
+        if (_maskThumbnail != null && _thumbnailWidth == tw && _thumbnailHeight == th && IsBitmapLockable(_maskThumbnail))
+            return;
+
+        _maskThumbnail?.Dispose();
+        _maskThumbnail = null;
+        _thumbnailWidth = tw;
+        _thumbnailHeight = th;
+        _maskThumbnail = CreateThumbnailBitmap(tw, th);
+        _maskThumbnailDirty = true;
+    }
+
+    private void DisposeThumbnailBitmap()
+    {
+        if (_thumbnail == null) return;
+        if (IsBitmapLockable(_thumbnail))
+            _thumbnail.Dispose();
+        _thumbnail = null;
+    }
+
+    private static WriteableBitmap CreateThumbnailBitmap(int width, int height)
+        => new(
+            new PixelSize(width, height),
+            new Vector(96, 96),
+            PixelFormat.Bgra8888,
+            AlphaFormat.Unpremul);
+
+    private static bool IsBitmapLockable(WriteableBitmap bitmap)
+    {
+        try
+        {
+            using var _ = bitmap.Lock();
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+    }
+
     public void RefreshMaskThumbnail()
     {
-        if (_maskThumbnail == null || MaskPixels == null) return;
+        if (MaskPixels == null) return;
+        EnsureMaskThumbnailBitmap();
+        if (_maskThumbnail == null) return;
 
         using var dstFrame = _maskThumbnail.Lock();
         unsafe
@@ -245,6 +280,7 @@ public sealed class DrawingLayer : IDisposable
 
     public void RefreshThumbnail()
     {
+        EnsureThumbnailBitmap();
         if (_thumbnail == null) return;
 
         using var dstFrame = _thumbnail.Lock();

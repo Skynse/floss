@@ -189,6 +189,18 @@ public sealed class SettingsWindow : Window
         content.Children.Add(RowSlider("Hold still radius (px)", _cfg.SmartShapeHoldRadiusPx, 2, 32,
             v => { _cfg.SmartShapeHoldRadiusPx = v; App.Config.Save(); }, "f0"));
 
+        content.Children.Add(GroupHeader("Discord"));
+        content.Children.Add(RowCheckBox("Show rich presence", _cfg.DiscordRichPresenceEnabled,
+            v =>
+            {
+                _cfg.DiscordRichPresenceEnabled = v;
+                App.Config.Save();
+                if (v)
+                    App.DiscordPresence.Start();
+                else
+                    App.DiscordPresence.Stop();
+            }));
+
         content.Children.Add(GroupHeader("Drawing"));
         content.Children.Add(RowCheckBox("Shift+click straight lines", _cfg.ShiftStraightLineEnabled,
             v => { _cfg.ShiftStraightLineEnabled = v; App.Config.Save(); }));

@@ -523,5 +523,6 @@ public partial class MainWindow
         var name = _activeTab.DisplayTitle;
         var star = _canvas.IsDirty ? "*" : "";
         Title = $"Floss Studio — {name}{star}";
+        UpdateDiscordPresence();
     }
 }

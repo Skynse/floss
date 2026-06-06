@@ -33,6 +33,12 @@ public sealed class AppConfig
     public double LastBrushSpacing { get; set; } = 0.10;
     public bool RecordTimelapse { get; set; } = false;
     public bool ShowRenderTelemetry { get; set; } = false;
+
+    /// <summary>Discord Rich Presence (desktop client must be running).</summary>
+    public bool DiscordRichPresenceEnabled { get; set; } = true;
+
+    /// <summary>Discord Developer Portal application ID. Falls back to FLOSS_DISCORD_APP_ID env var.</summary>
+    public string? DiscordApplicationId { get; set; }
     public BrushCursorMode BrushCursorMode { get; set; } = BrushCursorMode.Outline;
     public BrushCursorMode PenCursorMode { get; set; } = BrushCursorMode.Outline;
     public BrushCursorMode EraserCursorMode { get; set; } = BrushCursorMode.Outline;

@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -2128,7 +2129,7 @@ public sealed class ToolPropertiesWindow : Window
         if (_blendModeCombo != null) _blendModeCombo.SelectedItem = preset.BlendMode;
         if (_mixingModeCombo != null) _mixingModeCombo.SelectedItem = preset.MixingMode;
         UpdateSmudgeModeButtons(preset.SmudgeMode);
-        if (_aaLevelCombo != null) _aaLevelCombo.SelectedIndex = HardnessToLevel(preset.Hardness);
+        if (_qualityCombo != null) _qualityCombo.SelectedItem = preset.Quality;
 
         if (_textureFileLabel != null)
             _textureFileLabel.Text = preset.Texture != null ? Path.GetFileName(preset.Texture) : "None";
@@ -2401,33 +2402,33 @@ public sealed class ToolPropertiesWindow : Window
         btn.Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextSecondary));
     }
 
-    // ── Antialiasing level row ────────────────────────────────────────────────
-    private ComboBox? _aaLevelCombo;
+    // ── Brush raster quality (antialiasing) ───────────────────────────────────
+    private ComboBox? _qualityCombo;
 
     private Control BuildAntialiasingLevelRow(string? toolPropId = null)
     {
-        var levels = new[] { "Pixel Art", "Low", "Medium", "High" };
-        _aaLevelCombo = new ComboBox
+        _qualityCombo = new ComboBox
         {
-            ItemsSource = levels,
-            SelectedIndex = HardnessToLevel(_brushPreset.Hardness),
+            ItemsSource = BrushQualityPolicy.AllLevels,
+            SelectedItem = _brushPreset.Quality,
             FontSize = 11,
             MinHeight = 24,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
-        StyleCombo(_aaLevelCombo);
-        _aaLevelCombo.SelectionChanged += (_, _) =>
+        _qualityCombo.ItemTemplate = new FuncDataTemplate<BrushQuality>((quality, _) =>
+            new TextBlock { Text = BrushQualityPolicy.DisplayName(quality), FontSize = 11 });
+        StyleCombo(_qualityCombo);
+        _qualityCombo.SelectionChanged += (_, _) =>
         {
             if (_syncing)
                 return;
-            var level = _aaLevelCombo.SelectedIndex;
-            var hardness = LevelToHardness(level);
-            Commit(p => p with { Hardness = hardness });
+            if (_qualityCombo.SelectedItem is BrushQuality quality)
+                Commit(p => p with { Quality = quality });
         };
         var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 1), MinHeight = 24 };
         var lbl = new TextBlock
         {
-            Text = "Quality",
+            Text = "Antialiasing",
             FontSize = 11,
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
             Width = 88,
@@ -2435,24 +2436,8 @@ public sealed class ToolPropertiesWindow : Window
         };
         DockPanel.SetDock(lbl, Dock.Left);
         row.Children.Add(lbl);
-        row.Children.Add(_aaLevelCombo);
+        row.Children.Add(_qualityCombo);
         if (toolPropId != null) return AddEyeButton(row, toolPropId);
         return row;
     }
-
-    private static int HardnessToLevel(double hardness) => hardness switch
-    {
-        >= 0.95 => 0, // Pixel Art
-        >= 0.6 => 1, // Low
-        >= 0.3 => 2, // Medium
-        _ => 3, // High
-    };
-
-    private static double LevelToHardness(int level) => level switch
-    {
-        0 => 1.0,   // Pixel Art
-        1 => 0.65,  // Low
-        2 => 0.35,  // Medium
-        _ => 0.05,  // High
-    };
 }

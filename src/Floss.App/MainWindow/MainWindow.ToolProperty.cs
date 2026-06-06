@@ -4,6 +4,7 @@ using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Threading;
@@ -11,6 +12,7 @@ using Floss.App.Brushes;
 using Floss.App.Controls;
 using Floss.App.Processes;
 using Floss.App.Tools;
+using Floss.App.Windows;
 
 namespace Floss.App;
 
@@ -64,7 +66,17 @@ public partial class MainWindow
         string Label,
         bool DefaultVisible,
         Func<Control> BuildControl,
-        Action? RefreshValue = null);
+        Action? RefreshValue = null,
+        Action? OpenDynamics = null);
+
+    private DynamicsPopupWindow? _dockerSizeDynPopup;
+    private DynamicsPopupWindow? _dockerOpacDynPopup;
+    private DynamicsPopupWindow? _dockerFlowDynPopup;
+    private DynamicsPopupWindow? _dockerHardnessDynPopup;
+    private DynamicsPopupWindow? _dockerSpacingDynPopup;
+    private AngleDynamicsPopupWindow? _dockerAngleDynPopup;
+    private DynamicsPopupWindow? _dockerTipDensityDynPopup;
+    private DynamicsPopupWindow? _dockerTipThicknessDynPopup;
 
     private string _lastToolPropertyKey = "";
 
@@ -88,7 +100,7 @@ public partial class MainWindow
             // Use brush.opacity for DirectDraw so the ID matches ToolPropertiesWindow's eye button.
             // Other paint tools use paint.opacity (no ToolPropertiesWindow eye button).
             var opacityId = output == OutputProcessType.DirectDraw ? "brush.opacity" : "paint.opacity";
-            props.Add(SliderProp(opacityId, "Opacity", true, _opacitySlider, "%"));
+            props.Add(SliderProp(opacityId, "Opacity", true, _opacitySlider, "%", OpenDockerOpacityDynamics));
             props.Add(EnumProp("paint.blendMode", "Blend", false,
                 () => _canvas.Brush.BlendMode, v => UpdateCurrentBrush(p => p with { BlendMode = v })));
         }
@@ -97,11 +109,11 @@ public partial class MainWindow
         if (output == OutputProcessType.DirectDraw)
         {
             props.AddRange([
-                SliderProp("brush.size", "Brush Size", true, _sizeSlider, "px"),
+                SliderProp("brush.size", "Brush Size", true, _sizeSlider, "px", OpenDockerSizeDynamics),
                 SliderProp("brush.maxSizePercent", "Max Size", false, _maxSizePercentSlider, "%"),
-                SliderProp("brush.flow", "Flow", false, _flowSlider, "%"),
-                SliderProp("brush.hardness", "Hardness", true, _hardnessSlider, "%"),
-                SliderProp("brush.spacing", "Spacing", false, _spacingSlider, "%"),
+                SliderProp("brush.flow", "Flow", false, _flowSlider, "%", OpenDockerFlowDynamics),
+                SliderProp("brush.hardness", "Hardness", true, _hardnessSlider, "%", OpenDockerHardnessDynamics),
+                SliderProp("brush.spacing", "Spacing", false, _spacingSlider, "%", OpenDockerSpacingDynamics),
                 BoolProp("brush.autoSpacing", "Auto", false,
                     () => _activePreset?.AutoSpacingActive ?? true, v => UpdateCurrentBrush(p => p with { AutoSpacingActive = v })),
                 SliderProp("brush.smoothing", "Stabilization", true, _smoothingSlider, "%"),
@@ -109,8 +121,9 @@ public partial class MainWindow
                     () => _activePreset?.SpeedAdaptiveStabilizer ?? true,
                     v => UpdateCurrentBrush(p => p with { SpeedAdaptiveStabilizer = v })),
                 SliderProp("brush.grain", "Grain", false, _grainSlider, "%"),
-                EnumProp("brush.quality", "Quality", false,
-                    () => _activePreset?.Quality ?? BrushQuality.High, v => UpdateCurrentBrush(p => p with { Quality = v })),
+                BrushQualityProp("brush.quality", "Antialiasing", false,
+                    () => _activePreset?.Quality ?? BrushQuality.High,
+                    v => UpdateCurrentBrush(p => p with { Quality = v })),
                 BoolProp("brush.colorMix", "Color Mix", false,
                     () => _activePreset?.ColorMix ?? false, v => UpdateCurrentBrush(p => p with { ColorMix = v })),
                 EnumProp("brush.smudgeMode", "Mix Mode", false,
@@ -124,11 +137,14 @@ public partial class MainWindow
                 SliderProp("brush.blurAmount", "Blur Mix", false,
                     () => _activePreset?.BlurAmount ?? 0, v => UpdateCurrentBrush(p => p with { BlurAmount = v }), 0, 1, "%"),
                 SliderProp("brush.angle", "Angle", false,
-                    () => _activePreset?.Angle ?? 0, v => UpdateCurrentBrush(p => p with { Angle = v }), 0, 360, "°"),
+                    () => _activePreset?.Angle ?? 0, v => UpdateCurrentBrush(p => p with { Angle = v }), 0, 360, "°",
+                    OpenDockerAngleDynamics),
                 SliderProp("brush.tipDensity", "Tip Density", false,
-                    () => _activePreset?.TipDensity ?? 1, v => UpdateCurrentBrush(p => p with { TipDensity = v }), 0, 1, "%"),
+                    () => _activePreset?.TipDensity ?? 1, v => UpdateCurrentBrush(p => p with { TipDensity = v }), 0, 1, "%",
+                    OpenDockerTipDensityDynamics),
                 SliderProp("brush.tipThickness", "Tip Thickness", false,
-                    () => _activePreset?.TipThickness ?? 1, v => UpdateCurrentBrush(p => p with { TipThickness = v }), 0.01, 1, "%"),
+                    () => _activePreset?.TipThickness ?? 1, v => UpdateCurrentBrush(p => p with { TipThickness = v }), 0.01, 1, "%",
+                    OpenDockerTipThicknessDynamics),
                 EnumProp("brush.tipDirection", "Tip Direction", false,
                     () => _activePreset?.TipDirection ?? BrushTipDirection.Horizontal, v => UpdateCurrentBrush(p => p with { TipDirection = v })),
             ]);
@@ -264,8 +280,8 @@ public partial class MainWindow
         App.ToolGroups.Save();
     }
 
-    private ToolPropertyDescriptor SliderProp(string id, string label, bool visible, ScrubSlider source, string fmt)
-        => SliderProp(id, label, visible, () => source.Value, v => source.Value = v, source.Minimum, source.Maximum, fmt);
+    private ToolPropertyDescriptor SliderProp(string id, string label, bool visible, ScrubSlider source, string fmt, Action? openDynamics = null)
+        => SliderProp(id, label, visible, () => source.Value, v => source.Value = v, source.Minimum, source.Maximum, fmt, openDynamics);
 
     private ToolPropertyDescriptor SliderProp(
         string id,
@@ -275,7 +291,8 @@ public partial class MainWindow
         Action<double> set,
         double min,
         double max,
-        string fmt)
+        string fmt,
+        Action? openDynamics = null)
     {
         ScrubSlider? slider = null;
         return new(id, label, visible,
@@ -294,6 +311,43 @@ public partial class MainWindow
             {
                 if (slider != null)
                     slider.Value = Math.Clamp(get(), min, max);
+            },
+            openDynamics);
+    }
+
+    private ToolPropertyDescriptor BrushQualityProp(
+        string id,
+        string label,
+        bool visible,
+        Func<BrushQuality> get,
+        Action<BrushQuality> set)
+    {
+        ComboBox? combo = null;
+        return new(id, label, visible,
+            () =>
+            {
+                combo = new ComboBox
+                {
+                    ItemsSource = BrushQualityPolicy.AllLevels,
+                    SelectedItem = get(),
+                    FontSize = 10,
+                    MinHeight = 22,
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch
+                };
+                combo.ItemTemplate = new FuncDataTemplate<BrushQuality>((quality, _) =>
+                    new TextBlock { Text = BrushQualityPolicy.DisplayName(quality), FontSize = 10 });
+                combo.SelectionChanged += (_, _) =>
+                {
+                    if (_syncingToolPropertyPanel) return;
+                    if (combo.SelectedItem is BrushQuality value)
+                        set(value);
+                };
+                return LabeledControl(label, combo);
+            },
+            () =>
+            {
+                if (combo != null)
+                    combo.SelectedItem = get();
             });
     }
 
@@ -498,6 +552,14 @@ public partial class MainWindow
     private Control BuildDockerPropertyRow(ToolPropertyDescriptor prop)
     {
         var row = new DockPanel { LastChildFill = true };
+        if (prop.OpenDynamics != null)
+        {
+            var tune = SmIconBtn(Icons.TuneVertical, "Edit dynamics curve");
+            tune.Width = 22;
+            tune.Click += (_, _) => prop.OpenDynamics();
+            DockPanel.SetDock(tune, Dock.Right);
+            row.Children.Add(tune);
+        }
         var eye = SmIconBtn(Icons.Eye, "Shown in tool property docker");
         eye.Width = 22;
         eye.Click += (_, _) =>
@@ -516,4 +578,108 @@ public partial class MainWindow
 
     private static void SetToolPropertyVisible(ToolPropertyDescriptor prop, bool visible)
         => App.Config.SetToolPropertyDockerVisible(prop.Id, visible);
+
+    private void PositionDockerDynamicsPopup(Window popup)
+    {
+        if (Position.X + Width + 280 < Screens.Primary?.WorkingArea.Width)
+            popup.Position = new PixelPoint(Position.X + (int)Width + 4, Position.Y);
+        else
+            popup.Position = new PixelPoint(Math.Max(0, Position.X - 280), Position.Y);
+    }
+
+    private void OpenDockerSizeDynamics() => ShowDockerDynamicsPopup(
+        _dockerSizeDynPopup, v => _dockerSizeDynPopup = v, "Brush Size",
+        () => (_activePreset ?? _canvas.Brush).SizeDynamics,
+        dyn => UpdateCurrentBrush(p => p with { SizeDynamics = dyn }));
+
+    private void OpenDockerOpacityDynamics() => ShowDockerDynamicsPopup(
+        _dockerOpacDynPopup, v => _dockerOpacDynPopup = v, "Opacity",
+        () => (_activePreset ?? _canvas.Brush).OpacityDynamics,
+        dyn => UpdateCurrentBrush(p => p with { OpacityDynamics = dyn }));
+
+    private void OpenDockerFlowDynamics() => ShowDockerDynamicsPopup(
+        _dockerFlowDynPopup, v => _dockerFlowDynPopup = v, "Flow",
+        () => BrushDynamics.ToParameterDynamics((_activePreset ?? _canvas.Brush).Dynamics.Flow),
+        dyn => UpdateCurrentBrush(p => p with
+        {
+            Dynamics = DockerWithDynamics(p.Dynamics, d => d.Flow = BrushDynamics.ToCurveOption(dyn))
+        }));
+
+    private void OpenDockerHardnessDynamics() => ShowDockerDynamicsPopup(
+        _dockerHardnessDynPopup, v => _dockerHardnessDynPopup = v, "Hardness",
+        () => BrushDynamics.ToParameterDynamics((_activePreset ?? _canvas.Brush).Dynamics.Hardness),
+        dyn => UpdateCurrentBrush(p => p with
+        {
+            Dynamics = DockerWithDynamics(p.Dynamics, d => d.Hardness = BrushDynamics.ToCurveOption(dyn))
+        }));
+
+    private void OpenDockerSpacingDynamics() => ShowDockerDynamicsPopup(
+        _dockerSpacingDynPopup, v => _dockerSpacingDynPopup = v, "Spacing",
+        () => BrushDynamics.ToParameterDynamics((_activePreset ?? _canvas.Brush).Dynamics.Spacing),
+        dyn => UpdateCurrentBrush(p => p with
+        {
+            Dynamics = DockerWithDynamics(p.Dynamics, d => d.Spacing = BrushDynamics.ToCurveOption(dyn))
+        }));
+
+    private void OpenDockerTipDensityDynamics() => ShowDockerDynamicsPopup(
+        _dockerTipDensityDynPopup, v => _dockerTipDensityDynPopup = v, "Brush Density",
+        () => BrushDynamics.ToParameterDynamics((_activePreset ?? _canvas.Brush).Dynamics.TipDensity),
+        dyn => UpdateCurrentBrush(p => p with
+        {
+            Dynamics = DockerWithDynamics(p.Dynamics, d => d.TipDensity = BrushDynamics.ToCurveOption(dyn))
+        }));
+
+    private void OpenDockerTipThicknessDynamics() => ShowDockerDynamicsPopup(
+        _dockerTipThicknessDynPopup, v => _dockerTipThicknessDynPopup = v, "Thickness",
+        () => BrushDynamics.ToParameterDynamics((_activePreset ?? _canvas.Brush).Dynamics.TipThickness),
+        dyn => UpdateCurrentBrush(p => p with
+        {
+            Dynamics = DockerWithDynamics(p.Dynamics, d => d.TipThickness = BrushDynamics.ToCurveOption(dyn))
+        }));
+
+    private void OpenDockerAngleDynamics()
+    {
+        if (_dockerAngleDynPopup != null)
+        {
+            _dockerAngleDynPopup.Activate();
+            return;
+        }
+
+        var preset = _activePreset ?? _canvas.Brush;
+        _dockerAngleDynPopup = new AngleDynamicsPopupWindow(
+            preset.BaseAngleSource,
+            preset.AngleJitter,
+            source => UpdateCurrentBrush(p => p with { BaseAngleSource = source }),
+            jitter => UpdateCurrentBrush(p => p with { AngleJitter = jitter }));
+        _dockerAngleDynPopup.Closed += (_, _) => _dockerAngleDynPopup = null;
+        PositionDockerDynamicsPopup(_dockerAngleDynPopup);
+        _dockerAngleDynPopup.Show(this);
+    }
+
+    private void ShowDockerDynamicsPopup(
+        DynamicsPopupWindow? existing,
+        Action<DynamicsPopupWindow?> assign,
+        string title,
+        Func<ParameterDynamics> getDynamics,
+        Action<ParameterDynamics> onChange)
+    {
+        if (existing != null)
+        {
+            existing.Activate();
+            return;
+        }
+
+        var popup = new DynamicsPopupWindow(title, getDynamics(), onChange);
+        assign(popup);
+        popup.Closed += (_, _) => assign(null);
+        PositionDockerDynamicsPopup(popup);
+        popup.Show(this);
+    }
+
+    private static BrushDynamics DockerWithDynamics(BrushDynamics source, Action<BrushDynamics> update)
+    {
+        var clone = source.Clone();
+        update(clone);
+        return clone;
+    }
 }

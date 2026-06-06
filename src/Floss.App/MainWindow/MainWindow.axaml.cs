@@ -234,6 +234,8 @@ public partial class MainWindow : Window, Tools.IViewportController
     private string? _currentFilePath; // Replaces _currentFlossPath
     private int _layerDragSourceIndex = -1;
     private int _pendingDragIndex = -1;
+    private int _pendingLayerSelectIndex = -1;
+    private bool _layerDragInProgress;
     private Point _pendingDragStartPos;
     private PointerPressedEventArgs? _pendingDragArgs;
     private int _renamingLayerIndex = -1;
@@ -2767,6 +2769,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         foreach (var b in _toolButtons) SetRailActive(b, b == button);
         _footerStatusText.Text = ToolDisplayName(tool);
         RefreshToolProperties();
+        UpdateDiscordPresence();
     }
 
     private string ToolDisplayName(ITool tool)
@@ -3054,13 +3057,11 @@ public partial class MainWindow : Window, Tools.IViewportController
         if (_layerRows.TryGetValue(activeIdx, out var refs))
         {
             layer.MarkThumbnailDirty();
-            layer.RefreshThumbnail();
             if (refs.PreviewImage != null)
                 refs.PreviewImage.Source = layer.GetThumbnail();
             if (refs.MaskPreviewImage != null && layer.HasMask)
             {
                 layer.MarkMaskThumbnailDirty();
-                layer.RefreshMaskThumbnail();
                 refs.MaskPreviewImage.Source = layer.GetMaskThumbnail();
             }
         }

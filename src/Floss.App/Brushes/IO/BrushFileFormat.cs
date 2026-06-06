@@ -14,8 +14,8 @@ public static class BrushFileFormat
     public const string Extension = ".flbr";
     private const uint Magic = 0x52424C46; // FLBR, little endian
 
-    // Version 14 adds SpeedAdaptiveStabilizer on the preset.
-    private const int Version = 14;
+    // Version 15 stores the 4-level BrushQuality enum (PixelArt/Low/Medium/High).
+    private const int Version = 15;
 
     public static BrushAsset Load(string path)
     {
@@ -57,7 +57,14 @@ public static class BrushFileFormat
             // 3. Safely read Version 8 properties
             var quality = BrushQuality.High;
             if (version >= 8)
-                quality = (BrushQuality)reader.ReadInt32();
+            {
+                var rawQuality = reader.ReadInt32();
+                quality = version >= 15
+                    ? Enum.IsDefined(typeof(BrushQuality), rawQuality)
+                        ? (BrushQuality)rawQuality
+                        : BrushQuality.High
+                    : BrushQualityPolicy.FromLegacyFileValue(rawQuality);
+            }
 
             // 4. Safely read Version 9 properties
             string? texture = null;

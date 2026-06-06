@@ -1,6 +1,7 @@
 namespace Floss.App.Tests;
 
 using Floss.App.Canvas.Compositing;
+using Floss.App.Document;
 
 public class DrawingDocumentTests
 {
@@ -196,6 +197,27 @@ public class DrawingDocumentTests
         document.MoveLayer(2, 0, LayerDropPlacement.Below);
         TestAssertions.Equal(0, document.ActiveLayerIndex);
         TestAssertions.True(ReferenceEquals(moving, document.ActiveLayer));
+    }
+
+    [Fact]
+    public void MoveLayer_IntoGroup_AddsLayerAsChild()
+    {
+        var document = new DrawingDocument(4, 4);
+        document.AddLayer();
+        document.AddLayer();
+        document.AddLayer();
+        document.GroupSelectedLayers([0, 1]);
+
+        var group = document.Layers.First(l => l.IsGroup);
+        var groupIndex = document.Layers.ToList().IndexOf(group);
+        var moving = document.Layers.First(l => !l.IsGroup && l.Parent == null);
+        var movingIndex = document.Layers.ToList().IndexOf(moving);
+        TestAssertions.True(document.CanMoveLayer(movingIndex, groupIndex, LayerDropPlacement.Into));
+
+        document.MoveLayer(movingIndex, groupIndex, LayerDropPlacement.Into);
+
+        TestAssertions.True(group.Children.Contains(moving));
+        TestAssertions.True(group.IsOpen);
     }
 
     [Fact]

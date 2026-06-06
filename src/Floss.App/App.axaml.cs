@@ -6,6 +6,7 @@ using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Floss.App.Input;
+using Floss.App.Integrations;
 using Floss.App.Windows;
 using System;
 using System.IO;
@@ -22,6 +23,7 @@ public partial class App : Application
     public static ToolGroupConfig ToolGroups { get; private set; } = new();
     public static ModifierKeySettings ModifierKeys { get; private set; } = ModifierKeySettings.CreateDefaults();
     public static PenPressureSettings PenPressure { get; private set; } = new();
+    public static DiscordRichPresenceService DiscordPresence { get; } = new();
 
     public override void Initialize()
     {
@@ -90,6 +92,7 @@ public partial class App : Application
         {
             if (desktop.MainWindow is MainWindow mainWindow)
                 mainWindow.FlushLayoutToConfig();
+            DiscordPresence.Dispose();
             Config.Save();
             Shortcuts.Save();
             ToolGroups.Save();
@@ -120,7 +123,11 @@ public partial class App : Application
                 if (!string.IsNullOrWhiteSpace(initialFile))
                     window.Opened += async (_, _) => await window.OpenDocumentFromPathAsync(initialFile);
 
-                window.Opened += (_, _) => splash.Close();
+                window.Opened += (_, _) =>
+                {
+                    splash.Close();
+                    window.StartDiscordPresence();
+                };
                 window.Closed += (_, _) =>
                 {
                     if (splash.IsVisible)

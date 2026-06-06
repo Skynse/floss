@@ -57,12 +57,6 @@ public sealed class DirectDrawOutput : IOutputProcess
             : BeginTransaction(ctx, layer, samples[0]);
 
         QueueNewSamples(tx, layer, samples);
-        if (tx.NextSegmentIndex == 1 &&
-            tx.QueuedSamples.Count == 1 &&
-            tx.QueuedSamples[0].Source is CanvasInputSource.Mouse or CanvasInputSource.Unknown)
-        {
-            tx.QueuedSamples.Add(tx.QueuedSamples[0]);
-        }
 
         EnsureActiveTransaction();
 

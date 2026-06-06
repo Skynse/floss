@@ -8,7 +8,7 @@ namespace Floss.App.Brushes;
 public enum MixingMode { Standard, Perceptual }
 public enum SmudgeMode { Blend, Smear, Smudge }
 public enum BrushTipDirection { Horizontal, Vertical }
-public enum BrushQuality { Low, High }
+public enum BrushQuality { PixelArt, Low, Medium, High }
 public enum BrushTipSelectionMode { Single, Sequential, Random }
 
 public sealed record BrushPreset(

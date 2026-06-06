@@ -539,9 +539,9 @@ public sealed class BrushEngine : IDisposable
     private unsafe void RenderCurrentStamps(DrawingLayer layer, ActiveStroke stroke, BrushPreset brush, PixelRegion dirty)
     {
         // For standard SrcOver brushes without color mixing, render stamps to a
-        // temporary scratch with Lighten blend so overlapping stamps within this
-        // batch take the MAX alpha rather than compounding. The scratch is then
-        // composited onto the layer with SrcOver once.
+        // temporary scratch so overlapping stamps within this batch accumulate
+        // src-over alpha (same-color coverage). The scratch is then composited
+        // onto the layer with SrcOver once.
         // Skip scratch for few stamps (large brushes) — the overhead of allocating
         // and blitting a huge scratch bitmap exceeds the cost of direct per-stamp draw.
         bool isMultiTipSingle = false;
@@ -1096,6 +1096,12 @@ public sealed class BrushEngine : IDisposable
             var amount = (Hash01(sp.DabSeqNo, (int)(sp.StrokeRandom * 100_000f)) * 2f - 1f) * scatter * size;
             x += MathF.Cos(radians) * amount;
             y += MathF.Sin(radians) * amount;
+        }
+
+        if (BrushQualityPolicy.SnapStampCenterToPixel(brush.Quality))
+        {
+            x = MathF.Round(x);
+            y = MathF.Round(y);
         }
 
         return new StampSample(
@@ -2011,12 +2017,13 @@ public sealed class BrushEngine : IDisposable
                     if (stampA > 255) stampA = 255;
 
                     var offset = (px - dirtyX) * 4;
-                    if (stampA > scratchRow[offset + 3])
+                    var mergedA = AccumulateSrcOverAlpha(scratchRow[offset + 3], stampA);
+                    if (mergedA > 0)
                     {
                         scratchRow[offset + 0] = (byte)brushB;
                         scratchRow[offset + 1] = (byte)brushG;
                         scratchRow[offset + 2] = (byte)brushR;
-                        scratchRow[offset + 3] = (byte)stampA;
+                        scratchRow[offset + 3] = mergedA;
                     }
                 }
             }
@@ -2195,8 +2202,7 @@ public sealed class BrushEngine : IDisposable
                         if (stampA > 255) stampA = 255;
 
                         var idx = ly * tsz + (px - tilePixX);
-                        if (stampA > maskTile[idx])
-                            maskTile[idx] = (byte)stampA;
+                        maskTile[idx] = AccumulateSrcOverAlpha(maskTile[idx], stampA);
                     }
                     continue;
                 }
@@ -2226,8 +2232,7 @@ public sealed class BrushEngine : IDisposable
                     if (stampA > 255) stampA = 255;
 
                     var idx = ly * tsz + (px - tilePixX);
-                    if (stampA > maskTile[idx])
-                        maskTile[idx] = (byte)stampA;
+                    maskTile[idx] = AccumulateSrcOverAlpha(maskTile[idx], stampA);
                 }
             }
         }
@@ -2298,10 +2303,13 @@ public sealed class BrushEngine : IDisposable
 
                             if (maskA == 0)
                             {
-                                tile[dstOffset] = beforeB;
-                                tile[dstOffset + 1] = beforeG;
-                                tile[dstOffset + 2] = beforeR;
-                                tile[dstOffset + 3] = beforeA;
+                                if (beforeTile != null)
+                                {
+                                    tile[dstOffset] = beforeB;
+                                    tile[dstOffset + 1] = beforeG;
+                                    tile[dstOffset + 2] = beforeR;
+                                    tile[dstOffset + 3] = beforeA;
+                                }
                                 continue;
                             }
 
@@ -2748,8 +2756,8 @@ public sealed class BrushEngine : IDisposable
     }
 
     /// <summary>
-    /// Merge all dabs touching one 64×64 layer tile via max-alpha, then composite once.
-    /// Avoids SrcOver compounding when large brush stamps overlap within a batch.
+    /// Merge all dabs touching one 64×64 layer tile via src-over alpha, then composite once.
+    /// Avoids per-dab layer compounding when large brush stamps overlap within a batch.
     /// </summary>
     private static unsafe void ApplyCachedDabsLightenToTile(
         byte[] tile,
@@ -2813,12 +2821,13 @@ public sealed class BrushEngine : IDisposable
                             if (stampA > 255) stampA = 255;
 
                             var offset = (px - tilePixX) * 4;
-                            if (stampA > scratchRow[offset + 3])
+                            var mergedA = AccumulateSrcOverAlpha(scratchRow[offset + 3], stampA);
+                            if (mergedA > 0)
                             {
                                 scratchRow[offset + 0] = (byte)brushB;
                                 scratchRow[offset + 1] = (byte)brushG;
                                 scratchRow[offset + 2] = (byte)brushR;
-                                scratchRow[offset + 3] = (byte)stampA;
+                                scratchRow[offset + 3] = mergedA;
                             }
                         }
                         continue;
@@ -2849,12 +2858,13 @@ public sealed class BrushEngine : IDisposable
                         if (stampA > 255) stampA = 255;
 
                         var offset = (px - tilePixX) * 4;
-                        if (stampA > scratchRow[offset + 3])
+                        var mergedA = AccumulateSrcOverAlpha(scratchRow[offset + 3], stampA);
+                        if (mergedA > 0)
                         {
                             scratchRow[offset + 0] = (byte)brushB;
                             scratchRow[offset + 1] = (byte)brushG;
                             scratchRow[offset + 2] = (byte)brushR;
-                            scratchRow[offset + 3] = (byte)stampA;
+                            scratchRow[offset + 3] = mergedA;
                         }
                     }
                 }
@@ -3011,18 +3021,20 @@ public sealed class BrushEngine : IDisposable
     private static double ElapsedMs(long started)
         => (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
 
+    private static void ApplyBrushQualityToPaint(SKPaint paint, BrushQuality quality)
+    {
+        paint.IsAntialias = BrushQualityPolicy.IsAntialiasEnabled(quality);
+#pragma warning disable CS0618
+        paint.FilterQuality = BrushQualityPolicy.FilterQuality(quality);
+#pragma warning restore CS0618
+    }
+
     private void RenderPreparedStamps(ActiveStroke stroke, BrushPreset brush, SKCanvas canvas)
     {
-        using var colorStampPaint = new SKPaint
-        {
-            IsAntialias = true,
-            BlendMode = stroke.Paint.BlendMode
-        };
-        using var stackingPaint = new SKPaint
-        {
-            IsAntialias = true,
-            BlendMode = SKBlendMode.SrcOver
-        };
+        using var colorStampPaint = new SKPaint { BlendMode = stroke.Paint.BlendMode };
+        ApplyBrushQualityToPaint(colorStampPaint, brush.Quality);
+        using var stackingPaint = new SKPaint { BlendMode = SKBlendMode.SrcOver };
+        ApplyBrushQualityToPaint(stackingPaint, brush.Quality);
 
         for (var i = 0; i < _stamps.Count; i++)
         {
@@ -3758,6 +3770,17 @@ public sealed class BrushEngine : IDisposable
     private static float StampOpacity255(SKBlendMode mode, float stampOpacity, float colorAlpha)
         => UsesMaskOpacity(mode) ? stampOpacity * 255f : stampOpacity * colorAlpha;
 
+    /// <summary>
+    /// Porter-Duff src-over alpha for same-color dab masks. Max-alpha was lighter in overlap zones.
+    /// </summary>
+    private static byte AccumulateSrcOverAlpha(byte existingAlpha, int stampAlpha)
+    {
+        if (stampAlpha <= 0) return existingAlpha;
+        if (stampAlpha >= 255) return 255;
+        if (existingAlpha <= 0) return (byte)stampAlpha;
+        return (byte)Math.Min(255, existingAlpha + (stampAlpha * (255 - existingAlpha) + 127) / 255);
+    }
+
     private static void RenderWithSkiaOnLayer(DrawingLayer layer, PixelRegion dirty, Action<SKCanvas> render)
     {
         if (!layer.IsAlphaLocked)
@@ -4146,14 +4169,11 @@ public sealed class BrushEngine : IDisposable
             SmearFirstDabPending = brush.ColorMix && brush.SmudgeMode == SmudgeMode.Smear;
             Paint = new SKPaint
             {
-                IsAntialias = true,
-#pragma warning disable CS0618
-                FilterQuality = brush.Quality == BrushQuality.High ? SKFilterQuality.High : SKFilterQuality.Low,
-#pragma warning restore CS0618
                 BlendMode = brush.BlendMode,
                 Color = _baseColor,
                 ColorFilter = SKColorFilter.CreateBlendMode(_baseColor, SKBlendMode.SrcIn)
             };
+            ApplyBrushQualityToPaint(Paint, brush.Quality);
         }
 
         public float StrokeRandom { get; }
@@ -4288,7 +4308,8 @@ public sealed class BrushEngine : IDisposable
             if (_dabCache.TryGetValue(key, out dab!))
                 return true;
 
-            if (TryBakeLargeMaskDab(key, out dab))
+            if (TryBakeLargeCircleDab(key, out dab)
+                || TryBakeLargeMaskDab(key, out dab))
             {
                 _dabCache[key] = dab;
                 _dabCacheOrder.Enqueue(key);
@@ -4302,13 +4323,10 @@ public sealed class BrushEngine : IDisposable
             using (var paint = new SKPaint
             {
                 Color = SKColors.White,
-                BlendMode = SKBlendMode.Src,
-                IsAntialias = true,
-#pragma warning disable CS0618
-                FilterQuality = _brush.Quality == BrushQuality.High ? SKFilterQuality.High : SKFilterQuality.Low
-#pragma warning restore CS0618
+                BlendMode = SKBlendMode.Src
             })
             {
+                ApplyBrushQualityToPaint(paint, _brush.Quality);
                 canvas.Clear(SKColors.Transparent);
                 canvas.Translate(layout.BitmapWidth * 0.5f, layout.BitmapHeight * 0.5f);
                 if (MathF.Abs(layout.AngleDegrees) > 0.001f)
@@ -4339,15 +4357,9 @@ public sealed class BrushEngine : IDisposable
             var layout = ComputeDabLayout(key, colorStamp.Width, colorStamp.Height);
             var bitmap = new SKBitmap(new SKImageInfo(layout.BitmapWidth, layout.BitmapHeight, SKColorType.Bgra8888, SKAlphaType.Unpremul));
             using (var canvas = new SKCanvas(bitmap))
-            using (var paint = new SKPaint
+            using (var paint = new SKPaint { BlendMode = SKBlendMode.Src })
             {
-                BlendMode = SKBlendMode.Src,
-                IsAntialias = true,
-#pragma warning disable CS0618
-                FilterQuality = _brush.Quality == BrushQuality.High ? SKFilterQuality.High : SKFilterQuality.Low
-#pragma warning restore CS0618
-            })
-            {
+                ApplyBrushQualityToPaint(paint, _brush.Quality);
                 canvas.Clear(SKColors.Transparent);
                 canvas.Translate(layout.BitmapWidth * 0.5f, layout.BitmapHeight * 0.5f);
                 if (MathF.Abs(layout.AngleDegrees) > 0.001f)
@@ -4372,6 +4384,43 @@ public sealed class BrushEngine : IDisposable
             int OffsetX,
             int OffsetY,
             float AngleDegrees);
+
+        private bool TryBakeLargeCircleDab(CachedDabKey key, out CachedDab dab)
+        {
+            dab = null!;
+            if (key.Size < LargeStampCachedRasterMinDiameterPx)
+                return false;
+            if (_brush.Shape != null || key.Angle != 0 || key.FlipBits != 0 || key.TipIndex != 0)
+                return false;
+            if (TipFor(0) is not ProceduralBrushTip { Shape: BrushTipShape.Circle or BrushTipShape.SoftRound })
+                return false;
+            if (Math.Abs(_brush.TipThickness - 1.0) > 0.001f
+                && Math.Abs(key.Thickness / 256f - (float)_brush.TipThickness) > 0.05f)
+                return false;
+
+            var hardness = Math.Clamp(key.Hardness * 100 / 255, 0, 100);
+            var diamUpper = Math.Min(4096, key.Size + 8);
+            var buffer = new byte[diamUpper * diamUpper];
+            var stamp = ClassicBrushLut.GetStamp(key.Size, hardness, buffer, buffer);
+            var d = stamp.Diameter;
+            if (d <= 0 || d * d > buffer.Length)
+                return false;
+
+            var bitmap = new SKBitmap(new SKImageInfo(d, d, SKColorType.Alpha8, SKAlphaType.Unpremul));
+            unsafe
+            {
+                var dst = (byte*)bitmap.GetPixels().ToPointer();
+                var stride = bitmap.RowBytes;
+                fixed (byte* src = stamp.Data)
+                {
+                    for (var y = 0; y < d; y++)
+                        Buffer.MemoryCopy(src + y * d, dst + y * stride, d, d);
+                }
+            }
+
+            dab = new CachedDab(bitmap, stamp.Left, stamp.Top, d, d);
+            return true;
+        }
 
         private bool TryBakeLargeMaskDab(CachedDabKey key, out CachedDab dab)
         {
