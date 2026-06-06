@@ -81,7 +81,7 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
         var source = _shared.Source;
         var sourceHasUsefulAlpha = _shared.SourceHasUsefulAlpha;
 
-        using var scaled = new SKBitmap(new SKImageInfo(size, size, SKColorType.Bgra8888, SKAlphaType.Premul));
+        using var scaled = new SKBitmap(new SKImageInfo(size, size, SKColorType.Bgra8888, SKAlphaType.Unpremul));
         using (var canvas = new SKCanvas(scaled))
         using (var paint = new SKPaint { IsAntialias = true })
         {
@@ -146,7 +146,7 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
         }
 
         var source = _shared.Source;
-        var stamp = new SKBitmap(new SKImageInfo(size, size, SKColorType.Bgra8888, SKAlphaType.Premul));
+        var stamp = new SKBitmap(new SKImageInfo(size, size, SKColorType.Bgra8888, SKAlphaType.Unpremul));
         using (var canvas = new SKCanvas(stamp))
         using (var paint = new SKPaint { IsAntialias = true })
         {
@@ -271,7 +271,7 @@ public sealed class ImageBrushTip : IBrushTip, IDisposable
         var scale = MaxSourceDimension / (float)maxDim;
         var targetW = Math.Max(1, (int)MathF.Round(decoded.Width * scale));
         var targetH = Math.Max(1, (int)MathF.Round(decoded.Height * scale));
-        var resized = new SKBitmap(new SKImageInfo(targetW, targetH, SKColorType.Bgra8888, SKAlphaType.Premul));
+        var resized = new SKBitmap(new SKImageInfo(targetW, targetH, SKColorType.Bgra8888, SKAlphaType.Unpremul));
         if (!decoded.ScalePixels(resized, new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear)))
         {
             resized.Dispose();

@@ -26,9 +26,9 @@ public sealed class PenPressureSettingsWindow : Window
         CanResize = true;
         MinWidth = 380;
         MinHeight = 320;
-        Background = new SolidColorBrush(Color.Parse(Bg1));
         Title = "Pen Pressure Settings";
-        ShowInTaskbar = false;
+
+        CustomWindowChrome.ConfigurePopup(this);
 
         // ── Enable toggle ────────────────────────────────────────────────
         _enableToggle = new CheckBox
@@ -118,9 +118,10 @@ public sealed class PenPressureSettingsWindow : Window
         };
 
         // ── Layout ────────────────────────────────────────────────────────
-        Content = new StackPanel
+        var body = new StackPanel
         {
             Children = { _enableToggle, helpLabel, _curveGraph, btnRow }
         };
+        Content = CustomWindowChrome.Wrap(this, Title, body);
     }
 }

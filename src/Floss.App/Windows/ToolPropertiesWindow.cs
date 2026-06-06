@@ -105,11 +105,11 @@ public sealed class ToolPropertiesWindow : Window
         _onOpenNodeGraphEditor = onOpenNodeGraphEditor;
         _isBrushTool = toolPreset.OutputProcess == OutputProcessType.DirectDraw;
 
-        Width = 560;
-        Height = 620;
+        Width = 440;
+        Height = 560;
         CanResize = true;
-        MinWidth = 500;
-        MinHeight = 500;
+        MinWidth = 400;
+        MinHeight = 440;
         Background = new SolidColorBrush(Color.Parse(Bg0));
         Title = _isBrushTool ? "Brush Settings" : $"Tool Properties — {toolPreset.Name}";
         WindowDecorations = WindowDecorations.None;
@@ -173,7 +173,7 @@ public sealed class ToolPropertiesWindow : Window
         var title = new TextBlock
         {
             Text = _isBrushTool ? "Brush Settings" : "Tool Properties",
-            FontSize = 20,
+            FontSize = 12,
             FontWeight = FontWeight.SemiBold,
             Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
             VerticalAlignment = VerticalAlignment.Center
@@ -185,89 +185,95 @@ public sealed class ToolPropertiesWindow : Window
         var header = new DockPanel
         {
             LastChildFill = true,
-            Height = 60,
-            Margin = new Thickness(22, 0)
+            Height = 32,
+            Margin = new Thickness(8, 0)
         };
-        header.PointerPressed += (_, e) =>
-        {
-            if (e.GetCurrentPoint(header).Properties.IsLeftButtonPressed)
-                BeginMoveDrag(e);
-        };
+        CustomWindowChrome.WireTitleBarDrag(header, this);
         DockPanel.SetDock(closeBtn, Dock.Right);
         header.Children.Add(closeBtn);
         header.Children.Add(title);
 
-        _preview.Height = 122;
-        _preview.Margin = new Thickness(72, 0, 72, 14);
+        var navStack = new StackPanel { Spacing = 0 };
+        foreach (var btn in _catButtons)
+            navStack.Children.Add(btn);
 
-        var tabs = new Border
+        var nav = new Border
         {
+            Width = 108,
+            Background = new SolidColorBrush(Color.Parse(Bg2)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-            BorderThickness = new Thickness(0, 1, 0, 1),
+            BorderThickness = new Thickness(0, 0, 1, 0),
             Child = new ScrollViewer
             {
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                Content = BuildTabs()
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = navStack
             }
         };
 
         _contentHost.Background = new SolidColorBrush(Color.Parse(Bg1));
-        _contentHost.Padding = new Thickness(12, 12);
+        _contentHost.Padding = new Thickness(8, 6);
+
+        var body = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("108,*")
+        };
+        Grid.SetColumn(nav, 0);
+        Grid.SetColumn(_contentHost, 1);
+        body.Children.Add(nav);
+        body.Children.Add(_contentHost);
+
+        _preview.Height = 88;
+        _preview.Margin = new Thickness(0);
+        _preview.HorizontalAlignment = HorizontalAlignment.Stretch;
+
+        var previewHost = new Border
+        {
+            Height = 88,
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Background = new SolidColorBrush(Color.Parse(Bg0)),
+            Child = _preview
+        };
 
         var shell = new Grid
         {
-            RowDefinitions = new RowDefinitions("Auto,Auto,Auto,*"),
+            RowDefinitions = new RowDefinitions("Auto,*,Auto"),
             Background = new SolidColorBrush(Color.Parse(Bg1))
         };
         Grid.SetRow(header, 0);
-        Grid.SetRow(_preview, 1);
-        Grid.SetRow(tabs, 2);
-        Grid.SetRow(_contentHost, 3);
+        Grid.SetRow(body, 1);
+        Grid.SetRow(previewHost, 2);
         shell.Children.Add(header);
-        shell.Children.Add(_preview);
-        shell.Children.Add(tabs);
-        shell.Children.Add(_contentHost);
+        shell.Children.Add(body);
+        shell.Children.Add(previewHost);
 
         return new Border
         {
             Background = new SolidColorBrush(Color.Parse(Bg1)),
-            BorderBrush = new SolidColorBrush(Color.Parse("#42464f")),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(7),
+            CornerRadius = new CornerRadius(6),
             ClipToBounds = true,
             Child = shell
         };
-    }
-
-    private Control BuildTabs()
-    {
-        var stack = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            MinHeight = 46
-        };
-        foreach (var btn in _catButtons)
-            stack.Children.Add(btn);
-        return stack;
     }
 
     private static Button HeaderButton(string icon, string tip)
     {
         var button = new Button
         {
-            Content = MaterialIcon(icon, 22),
-            Width = 40,
-            Height = 40,
+            Content = MaterialIcon(icon, 16),
+            Width = 28,
+            Height = 28,
             Padding = new Thickness(0),
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
             Background = Avalonia.Media.Brushes.Transparent,
             BorderThickness = new Thickness(0),
-            CornerRadius = new CornerRadius(6),
-            Margin = new Thickness(2, 0)
+            CornerRadius = new CornerRadius(4),
+            Margin = new Thickness(0)
         };
         ToolTip.SetTip(button, tip);
         return button;
@@ -287,11 +293,11 @@ public sealed class ToolPropertiesWindow : Window
         var btn = new Button
         {
             Content = CategoryDisplayName(_categories[index]),
-            Width = 78,
-            Height = 46,
-            Padding = new Thickness(0),
-            FontSize = 13,
-            HorizontalContentAlignment = HorizontalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Height = 28,
+            Padding = new Thickness(10, 0),
+            FontSize = 11,
             VerticalContentAlignment = VerticalAlignment.Center,
             Background = new SolidColorBrush(Colors.Transparent),
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
@@ -308,9 +314,13 @@ public sealed class ToolPropertiesWindow : Window
         {
             var active = i == _activeCategory;
             _catButtons[i].Background = active
-                ? new SolidColorBrush(Color.Parse(Accent))
+                ? new SolidColorBrush(Color.Parse(SelectionBg))
                 : new SolidColorBrush(Colors.Transparent);
             _catButtons[i].Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextSecondary));
+            _catButtons[i].BorderBrush = active
+                ? new SolidColorBrush(Color.Parse(Accent))
+                : new SolidColorBrush(Colors.Transparent);
+            _catButtons[i].BorderThickness = new Thickness(active ? 2 : 0, 0, 0, 0);
         }
     }
 
@@ -374,7 +384,9 @@ public sealed class ToolPropertiesWindow : Window
     private static ScrollViewer WrapContent(Control content) => new()
     {
         Content = content,
-        Padding = new Thickness(0, 0, 12, 0)
+        HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        Padding = new Thickness(0, 0, 4, 0)
     };
 
     // ── Category content ──────────────────────────────────────────────────────
@@ -1143,14 +1155,14 @@ public sealed class ToolPropertiesWindow : Window
         var btn = new Button
         {
             Content = label,
-            Height = 28,
-            Padding = new Thickness(12, 0),
-            FontSize = 12,
-            Background = new SolidColorBrush(Color.Parse(active ? Accent : Bg2)),
-            BorderBrush = new SolidColorBrush(Color.Parse(active ? Accent : Stroke)),
+            Height = 22,
+            Padding = new Thickness(8, 0),
+            FontSize = 10,
+            Background = new SolidColorBrush(Color.Parse(active ? AccentSoft : Bg2)),
+            BorderBrush = new SolidColorBrush(Color.Parse(active ? SelectionBorder : Stroke)),
             BorderThickness = new Thickness(1),
             Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextSecondary)),
-            CornerRadius = new CornerRadius(5)
+            CornerRadius = new CornerRadius(4)
         };
         btn.Click += (_, _) => onClick();
         return btn;
@@ -1676,10 +1688,11 @@ public sealed class ToolPropertiesWindow : Window
     {
         var dynBtn = new Button
         {
-            Content = MaterialIcon(Icons.TuneVertical, 14),
-            Width = 20,
-            Height = 20,
+            Content = MaterialIcon(Icons.TuneVertical, 12),
+            Width = 18,
+            Height = 18,
             Padding = new Thickness(0),
+            Margin = new Thickness(2, 0, 0, 0),
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
@@ -1731,7 +1744,9 @@ public sealed class ToolPropertiesWindow : Window
         {
             if (e.Property == RangeBase.ValueProperty) val.Text = FormatV(slider.Value, fmt);
         };
-        var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 1, 0, 1) };
+        slider.Margin = new Thickness(4, 0);
+        slider.VerticalAlignment = VerticalAlignment.Center;
+        var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 1), MinHeight = 24 };
         DockPanel.SetDock(val, Dock.Right);
         row.Children.Add(val);
         row.Children.Add(slider);
@@ -1743,8 +1758,9 @@ public sealed class ToolPropertiesWindow : Window
         var lbl = new TextBlock
         {
             Text = label,
-            FontSize = 13,
-            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
+            FontSize = 11,
+            Width = 88,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
             VerticalAlignment = VerticalAlignment.Center
         };
         var val = MkValLabel(slider.Value, fmt);
@@ -1752,21 +1768,24 @@ public sealed class ToolPropertiesWindow : Window
         {
             if (e.Property == RangeBase.ValueProperty) val.Text = FormatV(slider.Value, fmt);
         };
+        slider.Margin = new Thickness(4, 0);
+        slider.VerticalAlignment = VerticalAlignment.Center;
 
-        var header = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 6) };
-        DockPanel.SetDock(val, Dock.Right);
+        var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 1), MinHeight = 24 };
+        DockPanel.SetDock(lbl, Dock.Left);
 
-        // Eye toggle for tool property docker visibility
+        Button? eyeBtn = null;
         if (toolPropId != null)
         {
-            bool visible = App.Config.IsToolPropertyDockerVisible(toolPropId);
-            var eyeBtn = new Button
+            var visible = App.Config.IsToolPropertyDockerVisible(toolPropId);
+            eyeBtn = new Button
             {
                 Content = visible ? "◉" : "○",
-                Width = 24,
-                Height = 24,
+                Width = 18,
+                Height = 18,
                 Padding = new Thickness(0),
-                FontSize = 12,
+                FontSize = 9,
+                Margin = new Thickness(2, 0, 0, 0),
                 HorizontalContentAlignment = HorizontalAlignment.Center,
                 VerticalContentAlignment = VerticalAlignment.Center,
                 Foreground = new SolidColorBrush(Color.Parse(visible ? Accent : TextMuted)),
@@ -1782,32 +1801,32 @@ public sealed class ToolPropertiesWindow : Window
                 ToolTip.SetTip(eyeBtn, newVisible ? "Hide from tool property docker" : "Show in tool property docker");
             };
             DockPanel.SetDock(eyeBtn, Dock.Right);
-            header.Children.Add(eyeBtn);
         }
 
         if (extra != null)
         {
+            extra.VerticalAlignment = VerticalAlignment.Center;
             DockPanel.SetDock(extra, Dock.Right);
-            header.Children.Add(extra);
         }
-        header.Children.Add(val);
-        header.Children.Add(lbl);
 
-        return new StackPanel
-        {
-            Spacing = 0,
-            Margin = new Thickness(0, 0, 0, 13),
-            Children = { header, slider }
-        };
+        DockPanel.SetDock(val, Dock.Right);
+        row.Children.Add(lbl);
+        row.Children.Add(val);
+        if (extra != null)
+            row.Children.Add(extra);
+        if (eyeBtn != null)
+            row.Children.Add(eyeBtn);
+        row.Children.Add(slider);
+        return row;
     }
 
     private static TextBlock MkValLabel(double value, string fmt) => new()
     {
         Text = FormatV(value, fmt),
-        FontSize = 13,
-        Width = 58,
+        FontSize = 10,
+        Width = 44,
         TextAlignment = Avalonia.Media.TextAlignment.Right,
-        Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
+        Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
         VerticalAlignment = VerticalAlignment.Center,
         FontFamily = new FontFamily("Consolas, Courier New, monospace")
     };
@@ -2176,11 +2195,11 @@ public sealed class ToolPropertiesWindow : Window
     private static TextBlock SectionHeader(string text) => new()
     {
         Text = text,
-        FontSize = 10,
+        FontSize = 9,
         FontWeight = FontWeight.SemiBold,
         Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-        Margin = new Thickness(0, 8, 0, 6),
-        LetterSpacing = 0
+        Margin = new Thickness(0, 6, 0, 2),
+        LetterSpacing = 0.5
     };
 
     private static void StyleCombo(ComboBox combo)
@@ -2198,9 +2217,9 @@ public sealed class ToolPropertiesWindow : Window
         var b = new Button
         {
             Content = label,
-            Height = 28,
-            Padding = new Thickness(12, 0),
-            FontSize = 12,
+            Height = 24,
+            Padding = new Thickness(8, 0),
+            FontSize = 11,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
             Classes = { "outline" }
@@ -2247,8 +2266,8 @@ public sealed class ToolPropertiesWindow : Window
                 SKBlendMode.DstOut, SKBlendMode.Clear
             },
             SelectedItem = _brushPreset.BlendMode,
-            FontSize = 12,
-            MinHeight = 32,
+            FontSize = 11,
+            MinHeight = 24,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
         StyleCombo(_blendModeCombo);
@@ -2258,13 +2277,13 @@ public sealed class ToolPropertiesWindow : Window
                 return;
             Commit(p => p with { BlendMode = mode });
         };
-        var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 10) };
+        var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 1), MinHeight = 24 };
         var lbl = new TextBlock
         {
             Text = "Blend",
-            FontSize = 12,
-            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
-            Width = 84,
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            Width = 88,
             VerticalAlignment = VerticalAlignment.Center
         };
         DockPanel.SetDock(lbl, Dock.Left);
@@ -2283,8 +2302,8 @@ public sealed class ToolPropertiesWindow : Window
         {
             ItemsSource = new[] { MixingMode.Standard, MixingMode.Perceptual },
             SelectedItem = _brushPreset.MixingMode,
-            FontSize = 12,
-            MinHeight = 32,
+            FontSize = 11,
+            MinHeight = 24,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
         StyleCombo(_mixingModeCombo);
@@ -2294,13 +2313,13 @@ public sealed class ToolPropertiesWindow : Window
                 return;
             Commit(p => p with { MixingMode = mode });
         };
-        var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 10) };
+        var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 1), MinHeight = 24 };
         var lbl = new TextBlock
         {
             Text = "Mixing",
-            FontSize = 12,
-            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
-            Width = 84,
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            Width = 88,
             VerticalAlignment = VerticalAlignment.Center
         };
         DockPanel.SetDock(lbl, Dock.Left);
@@ -2321,10 +2340,11 @@ public sealed class ToolPropertiesWindow : Window
         var row = new DockPanel
         {
             LastChildFill = false,
-            Margin = new Thickness(0, 0, 0, 10),
+            Margin = new Thickness(0, 1),
+            MinHeight = 24,
             Children =
             {
-                new TextBlock { Text = "Color mixing", FontSize = 12, Foreground = new SolidColorBrush(Color.Parse(TextPrimary)), Width = 112, VerticalAlignment = VerticalAlignment.Center },
+                new TextBlock { Text = "Color mixing", FontSize = 11, Foreground = new SolidColorBrush(Color.Parse(TextSecondary)), Width = 88, VerticalAlignment = VerticalAlignment.Center },
                 _mixToggle
             }
         };
@@ -2337,16 +2357,17 @@ public sealed class ToolPropertiesWindow : Window
         _blendBtn = MkToggleBtn("Blend", _brushPreset.SmudgeMode == SmudgeMode.Blend, () => SetSmudgeMode(SmudgeMode.Blend));
         _smearBtn = MkToggleBtn("Smear", _brushPreset.SmudgeMode == SmudgeMode.Smear, () => SetSmudgeMode(SmudgeMode.Smear));
         _smudgeBtn = MkToggleBtn("Running color", _brushPreset.SmudgeMode == SmudgeMode.Smudge, () => SetSmudgeMode(SmudgeMode.Smudge));
-        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
         panel.Children.Add(_blendBtn);
         panel.Children.Add(_smearBtn);
         panel.Children.Add(_smudgeBtn);
         var row = new DockPanel
         {
             LastChildFill = true,
-            Margin = new Thickness(0, 0, 0, 10),
+            Margin = new Thickness(0, 1),
+            MinHeight = 24,
             Children = {
-                new TextBlock { Text = "Mode", FontSize = 12, Foreground = new SolidColorBrush(Color.Parse(TextPrimary)), Width = 84, VerticalAlignment = VerticalAlignment.Center },
+                new TextBlock { Text = "Mode", FontSize = 11, Foreground = new SolidColorBrush(Color.Parse(TextSecondary)), Width = 88, VerticalAlignment = VerticalAlignment.Center },
                 panel
             }
         };
@@ -2371,8 +2392,8 @@ public sealed class ToolPropertiesWindow : Window
     private static void StylizeToggle(Button? btn, bool active)
     {
         if (btn == null) return;
-        btn.Background = new SolidColorBrush(Color.Parse(active ? Accent : Bg2));
-        btn.BorderBrush = new SolidColorBrush(Color.Parse(active ? Accent : Stroke));
+        btn.Background = new SolidColorBrush(Color.Parse(active ? AccentSoft : Bg2));
+        btn.BorderBrush = new SolidColorBrush(Color.Parse(active ? SelectionBorder : Stroke));
         btn.Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextSecondary));
     }
 
@@ -2386,8 +2407,8 @@ public sealed class ToolPropertiesWindow : Window
         {
             ItemsSource = levels,
             SelectedIndex = HardnessToLevel(_brushPreset.Hardness),
-            FontSize = 12,
-            MinHeight = 32,
+            FontSize = 11,
+            MinHeight = 24,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
         StyleCombo(_aaLevelCombo);
@@ -2399,13 +2420,13 @@ public sealed class ToolPropertiesWindow : Window
             var hardness = LevelToHardness(level);
             Commit(p => p with { Hardness = hardness });
         };
-        var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 10) };
+        var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 1), MinHeight = 24 };
         var lbl = new TextBlock
         {
             Text = "Quality",
-            FontSize = 12,
-            Foreground = new SolidColorBrush(Color.Parse(TextPrimary)),
-            Width = 84,
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            Width = 88,
             VerticalAlignment = VerticalAlignment.Center
         };
         DockPanel.SetDock(lbl, Dock.Left);

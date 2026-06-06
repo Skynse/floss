@@ -7,6 +7,16 @@ public class CanvasInputRouterTests
 {
     // ── Mock host ─────────────────────────────────────────────────────────────
 
+    private sealed class TransformToolStub : ITool
+    {
+        public bool HasPendingOperation => true;
+        public void PointerDown(ToolContext ctx, CanvasInputSample s) { }
+        public void PointerMove(ToolContext ctx, CanvasInputSample s) { }
+        public void PointerUp(ToolContext ctx, CanvasInputSample s) { }
+        public void Cancel(ToolContext ctx) { }
+        public void RenderOverlay(DrawingContext dc, ToolContext ctx, double zoom) { }
+    }
+
     private sealed class MockHost : ICanvasInputHost
     {
         public bool IsAlternateActive { get; set; }
@@ -16,10 +26,11 @@ public class CanvasInputRouterTests
         public bool IsResizeDragging { get; set; }
         public double Zoom { get; set; } = 1.0;
         public IViewportController? ViewportController { get; set; }
-        public (int Input, int Output) ToolTypes { get; set; }
+        public bool HasActiveToolAlternate { get; set; } = true;
+        public CanvasInputPolicy InputPolicy { get; set; } =
+            CanvasInputPolicy.ForActivePreset((int)InputProcessType.Pen, (int)OutputProcessType.DirectDraw);
         public bool TemporaryPresetActive { get; set; }
         public bool HasViewportNavOverlay { get; set; }
-        public bool HasActiveToolAlternate { get; set; } = true;
 
         public List<string> Operations { get; } = [];
 
@@ -69,8 +80,8 @@ public class CanvasInputRouterTests
             => Operations.Add("CommitTool");
 
         bool ICanvasInputHost.IsTransformActive => false;
-        public bool IsSmartShapeEditActive { get; set; }
-        bool ICanvasInputHost.IsSmartShapeEditActive => IsSmartShapeEditActive;
+
+        CanvasInputPolicy ICanvasInputHost.GetInputPolicy() => InputPolicy;
 
         void ICanvasInputHost.EndTransformDragIfActive() { }
 
@@ -124,12 +135,12 @@ public class CanvasInputRouterTests
 
         bool ICanvasInputHost.IsOverCanvasUi(Point viewportPos) => false;
 
+        bool ICanvasInputHost.HidesOsCursorForPaintedPreview => false;
+
         void ICanvasInputHost.SetCursorNone()
             => Operations.Add("CursorNone");
         void ICanvasInputHost.ResetCursor()
             => Operations.Add("ResetCursor");
-
-        (int, int) ICanvasInputHost.GetActiveToolTypes() => ToolTypes;
     }
 
     // ── Tests ─────────────────────────────────────────────────────────────────
@@ -194,7 +205,7 @@ public class CanvasInputRouterTests
     [Fact]
     public void CompletedStrokeIsNotCancelledByLaterTempToolActivation()
     {
-        var host = new MockHost { ToolTypes = (1, 1) };
+        var host = new MockHost { InputPolicy = CanvasInputPolicy.ForActivePreset(1, 1) };
         var router = new CanvasInputRouter(host);
 
         // Start a stroke (Down)
@@ -250,7 +261,8 @@ public class CanvasInputRouterTests
 
         var host = new MockHost
         {
-            ToolTypes = ((int)InputProcessType.Pen, (int)OutputProcessType.DirectDraw),
+            InputPolicy = CanvasInputPolicy.ForActivePreset(
+                (int)InputProcessType.Pen, (int)OutputProcessType.DirectDraw),
             HasActiveToolAlternate = false
         };
         var router = new CanvasInputRouter(host);
@@ -266,7 +278,8 @@ public class CanvasInputRouterTests
     {
         var host = new MockHost
         {
-            ToolTypes = ((int)InputProcessType.Pen, (int)OutputProcessType.DirectDraw),
+            InputPolicy = CanvasInputPolicy.ForActivePreset(
+                (int)InputProcessType.Pen, (int)OutputProcessType.DirectDraw),
             HasActiveToolAlternate = true
         };
         typeof(App).GetProperty(nameof(App.ModifierKeys))!.SetValue(null, ModifierKeySettings.CreateDefaults());
@@ -288,9 +301,8 @@ public class CanvasInputRouterTests
     {
         var host = new MockHost
         {
-            ToolTypes = ((int)InputProcessType.Pen, (int)OutputProcessType.DirectDraw),
-            HasActiveToolAlternate = true,
-            IsSmartShapeEditActive = true
+            InputPolicy = CanvasInputPolicy.TransientEdit,
+            HasActiveToolAlternate = true
         };
         typeof(App).GetProperty(nameof(App.ModifierKeys))!.SetValue(null, ModifierKeySettings.CreateDefaults());
         var router = new CanvasInputRouter(host);
@@ -311,9 +323,8 @@ public class CanvasInputRouterTests
     {
         var host = new MockHost
         {
-            ToolTypes = ((int)InputProcessType.Pen, (int)OutputProcessType.DirectDraw),
-            HasActiveToolAlternate = true,
-            IsSmartShapeEditActive = true
+            InputPolicy = CanvasInputPolicy.TransientEdit,
+            HasActiveToolAlternate = true
         };
         typeof(App).GetProperty(nameof(App.ModifierKeys))!.SetValue(null, ModifierKeySettings.CreateDefaults());
         var router = new CanvasInputRouter(host);
@@ -329,9 +340,64 @@ public class CanvasInputRouterTests
     }
 
     [Fact]
+    public void FilterPreview_BlocksBrushPointerButAllowsViewportZoom()
+    {
+        var host = new MockHost
+        {
+            InputPolicy = CanvasInputPolicy.FilterPreview,
+        };
+        typeof(App).GetProperty(nameof(App.ModifierKeys))!.SetValue(null, ModifierKeySettings.CreateDefaults());
+        var router = new CanvasInputRouter(host);
+
+        router.HandlePointerPress(
+            action: CanvasAction.PrimaryTool,
+            isPrimaryDown: true,
+            pointerId: 1,
+            viewportPos: new Point(100, 100),
+            eventArgs: null,
+            ctrlHeld: false,
+            shiftHeld: false);
+
+        TestAssertions.Equal(RouterState.Idle, router.State,
+            "Filter preview must not start a brush transaction");
+        TestAssertions.False(host.Operations.Any(o => o.StartsWith("Dispatch:")),
+            "Filter preview must not dispatch to the active tool");
+
+        host.Operations.Clear();
+        router.HandleKeyDown(Key.LeftCtrl, KeyModifiers.Control);
+        router.HandleKeyDown(Key.Space, KeyModifiers.Control);
+
+        TestAssertions.True(
+            host.Operations.Any(o => o == $"PushPreset:{ToolGroupConfig.ViewZoomInPresetId}"),
+            "Ctrl+Space viewport zoom must still work during filter preview");
+    }
+
+    [Fact]
+    public void TransientEdit_CtrlDoesNotPushMoveLayerOrCommit()
+    {
+        // Brush Ctrl = move layer; during transform that must not fire (uses general Ctrl = none).
+        var host = new MockHost
+        {
+            InputPolicy = CanvasInputPolicy.TransientEdit,
+            ActiveTool = new TransformToolStub(),
+        };
+        typeof(App).GetProperty(nameof(App.ModifierKeys))!.SetValue(null, ModifierKeySettings.CreateDefaults());
+        var router = new CanvasInputRouter(host);
+
+        router.HandleKeyDown(Key.LeftCtrl, KeyModifiers.Control);
+
+        TestAssertions.False(
+            host.Operations.Any(o => o.StartsWith("PushPreset:")),
+            "Ctrl must not push move-layer during transient edit");
+        TestAssertions.False(
+            host.Operations.Contains("CommitTool"),
+            "Ctrl must not commit transform");
+    }
+
+    [Fact]
     public void CaptureLostDuringSmartShapeEditDoesNotCommit()
     {
-        var host = new MockHost { IsSmartShapeEditActive = true };
+        var host = new MockHost { InputPolicy = CanvasInputPolicy.TransientEdit };
         var router = new CanvasInputRouter(host);
 
         router.HandlePointerPress(
@@ -355,7 +421,8 @@ public class CanvasInputRouterTests
     {
         var host = new MockHost
         {
-            ToolTypes = ((int)InputProcessType.Pen, (int)OutputProcessType.DirectDraw),
+            InputPolicy = CanvasInputPolicy.ForActivePreset(
+                (int)InputProcessType.Pen, (int)OutputProcessType.DirectDraw),
             HasActiveToolAlternate = true
         };
         typeof(App).GetProperty(nameof(App.ModifierKeys))!.SetValue(null, ModifierKeySettings.CreateDefaults());
@@ -383,7 +450,7 @@ public class CanvasInputRouterTests
     [Fact]
     public void AfterStrokeReleaseHeldSpaceBecomesReadyPan()
     {
-        var host = new MockHost { ToolTypes = (1, 1) };
+        var host = new MockHost { InputPolicy = CanvasInputPolicy.ForActivePreset(1, 1) };
         var router = new CanvasInputRouter(host);
 
         // Press and hold Space

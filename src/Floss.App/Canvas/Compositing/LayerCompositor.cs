@@ -530,7 +530,13 @@ public sealed class LayerCompositor : IDisposable
     {
         _compositeIdleEvent.Reset();
         Interlocked.Increment(ref _compositeActive);
-        try { lock (CompositeGate) { return CompositeCore(layers, w, h, paperColor, viewport); } }
+        try
+        {
+            lock (CompositeGate)
+            {
+                return CompositeCore(layers, w, h, paperColor, viewport);
+            }
+        }
         finally
         {
             if (Interlocked.Decrement(ref _compositeActive) == 0)
@@ -1112,10 +1118,18 @@ public sealed class LayerCompositor : IDisposable
 
     private sealed class MergeHost(LayerCompositor o) : ILayerMergeHost
     {
-        public unsafe void CompositePaintLayer(byte* d, int ds, int w, int h, DrawingLayer l, double op, PixelRegion c, int ox, int oy, BlendMode? blendModeOverride = null, double? opacityOverride = null) => LayerCompositorPixelOps.CompositeLayer(d, ds, w, h, l, op, c, ox, oy, blendModeOverride, opacityOverride);
+        public unsafe void CompositePaintLayer(byte* d, int ds, int w, int h, DrawingLayer l, double op, PixelRegion c, int ox, int oy, BlendMode? blendModeOverride = null, double? opacityOverride = null)
+            => LayerCompositorPixelOps.CompositeLayer(d, ds, w, h, l, op, c, ox, oy, blendModeOverride, opacityOverride);
+
         public unsafe void CompositeProjectionBuffer(byte* d, int ds, TiledPixelBuffer p, BlendMode b, double op, PixelRegion c, int ox, int oy) => LayerCompositorPixelOps.CompositeProjectionBuffer(d, ds, p, b, op, c, ox, oy);
-        public unsafe void CompositeClippedPaintLayer(byte* d, int ds, int w, int h, DrawingLayer l, DrawingLayer bl, double op, PixelRegion c, int ox, int oy) => LayerCompositorPixelOps.CompositeClippedLayer(d, ds, w, h, l, bl, op, c, ox, oy);
+
+        public unsafe void CompositeClippedPaintLayer(byte* d, int ds, int w, int h, DrawingLayer l, DrawingLayer bl, double op, PixelRegion c, int ox, int oy)
+            => LayerCompositorPixelOps.CompositeClippedLayer(d, ds, w, h, l, bl, op, c, ox, oy);
+
         public unsafe void CompositeClippedGroupIntoBuffer(byte* d, int ds, int w, int h, DrawingLayer g, DrawingLayer bl, double op, PixelRegion c, int ox, int oy) => o.CompositeClippedGroup(d, ds, w, h, g, bl, op, c, ox, oy);
+
+        public unsafe void CompositeAlphaPreservingPaintLayer(byte* d, int ds, int w, int h, DrawingLayer l, double op, PixelRegion c, int ox, int oy)
+            => LayerCompositorPixelOps.CompositeLayerAlphaPreserving(d, ds, w, h, l, op, c, ox, oy);
     }
 
     private unsafe void CompositeClippedGroup(byte* d, int ds, int w, int h, DrawingLayer g, DrawingLayer bl, double op, PixelRegion c, int ox, int oy)

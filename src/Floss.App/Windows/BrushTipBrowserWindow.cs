@@ -30,11 +30,10 @@ public sealed class BrushTipBrowserWindow : Window
         CanResize = true;
         MinWidth = 320;
         MinHeight = 360;
-        Background = new SolidColorBrush(Color.Parse(Bg1));
         Title = "Brush Tips";
-        ShowInTaskbar = false;
 
-        Content = BuildContent();
+        CustomWindowChrome.ConfigurePopup(this);
+        Content = CustomWindowChrome.Wrap(this, Title, BuildContent());
     }
 
     private Control BuildContent()
@@ -204,7 +203,7 @@ public sealed class BrushTipBrowserWindow : Window
         const int size = 64;
         var tip = new ProceduralBrushTip(shape, shape == BrushTipShape.Ellipse ? 2.4f : 1.0f);
         var mask = tip.GenerateMask(48, 0.85f);
-        var info = new SKImageInfo(size, size, SKColorType.Bgra8888, SKAlphaType.Premul);
+        var info = new SKImageInfo(size, size, SKColorType.Bgra8888, SKAlphaType.Unpremul);
         using var bitmap = new SKBitmap(info);
         using var canvas = new SKCanvas(bitmap);
         canvas.Clear(SKColors.Transparent);

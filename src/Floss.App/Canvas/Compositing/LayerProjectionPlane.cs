@@ -95,7 +95,7 @@ internal sealed class LayerProjectionPlane
                                     clipItem.Layer.Opacity,
                                     baseLayer, clip, originX, originY);
                             else
-                                LayerCompositorPixelOps.CompositeLayerAlphaPreserving(
+                                _host.CompositeAlphaPreservingPaintLayer(
                                     tp, clip.Width * 4, clip.Width, clip.Height,
                                     clipItem.Layer, 1.0, clip, originX, originY);
                         }
@@ -156,7 +156,7 @@ internal sealed class LayerProjectionPlane
                         item.Layer, item.Layer.Opacity,
                         clip, originX, originY);
                 else
-                    LayerCompositorPixelOps.CompositeLayerAlphaPreserving(
+                    _host.CompositeAlphaPreservingPaintLayer(
                         dst, dstStride, width, height,
                         item.Layer, 1.0, clip, originX, originY);
             }

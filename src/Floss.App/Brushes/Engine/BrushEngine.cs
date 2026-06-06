@@ -2594,6 +2594,23 @@ public sealed class BrushEngine : IDisposable
 
         var fx = localX / dab.MaskScaleX;
         var fy = localY / dab.MaskScaleY;
+        BilinearSampleBgraUnpremul(srcPtr, srcW, srcH, stride, fx, fy, out b, out g, out r, out a);
+    }
+
+    /// <summary>Bilinear filter in premul space, output unpremul BGRA (avoids dark fringes).</summary>
+    private static unsafe void BilinearSampleBgraUnpremul(
+        byte* src,
+        int srcW,
+        int srcH,
+        int stride,
+        float fx,
+        float fy,
+        out byte b,
+        out byte g,
+        out byte r,
+        out byte a)
+    {
+        b = g = r = a = 0;
         if (fx < 0f || fy < 0f || fx >= srcW || fy >= srcH)
             return;
 
@@ -2603,14 +2620,32 @@ public sealed class BrushEngine : IDisposable
         var y1 = Math.Min(y0 + 1, srcH - 1);
         var tx = fx - x0;
         var ty = fy - y0;
-        var o00 = y0 * stride + x0 * 4;
-        var o10 = y0 * stride + x1 * 4;
-        var o01 = y1 * stride + x0 * 4;
-        var o11 = y1 * stride + x1 * 4;
-        b = (byte)(srcPtr[o00] + (srcPtr[o10] - srcPtr[o00]) * tx + ((srcPtr[o01] + (srcPtr[o11] - srcPtr[o01]) * tx) - (srcPtr[o00] + (srcPtr[o10] - srcPtr[o00]) * tx)) * ty + 0.5f);
-        g = (byte)(srcPtr[o00 + 1] + (srcPtr[o10 + 1] - srcPtr[o00 + 1]) * tx + ((srcPtr[o01 + 1] + (srcPtr[o11 + 1] - srcPtr[o01 + 1]) * tx) - (srcPtr[o00 + 1] + (srcPtr[o10 + 1] - srcPtr[o00 + 1]) * tx)) * ty + 0.5f);
-        r = (byte)(srcPtr[o00 + 2] + (srcPtr[o10 + 2] - srcPtr[o00 + 2]) * tx + ((srcPtr[o01 + 2] + (srcPtr[o11 + 2] - srcPtr[o01 + 2]) * tx) - (srcPtr[o00 + 2] + (srcPtr[o10 + 2] - srcPtr[o00 + 2]) * tx)) * ty + 0.5f);
-        a = (byte)(srcPtr[o00 + 3] + (srcPtr[o10 + 3] - srcPtr[o00 + 3]) * tx + ((srcPtr[o01 + 3] + (srcPtr[o11 + 3] - srcPtr[o01 + 3]) * tx) - (srcPtr[o00 + 3] + (srcPtr[o10 + 3] - srcPtr[o00 + 3]) * tx)) * ty + 0.5f);
+
+        static void ReadPremul(byte* p, int offset, out float pb, out float pg, out float pr, out float pa)
+        {
+            pa = p[offset + 3] / 255f;
+            pb = p[offset + 0] / 255f * pa;
+            pg = p[offset + 1] / 255f * pa;
+            pr = p[offset + 2] / 255f * pa;
+        }
+
+        ReadPremul(src, y0 * stride + x0 * 4, out var pb00, out var pg00, out var pr00, out var pa00);
+        ReadPremul(src, y0 * stride + x1 * 4, out var pb10, out var pg10, out var pr10, out var pa10);
+        ReadPremul(src, y1 * stride + x0 * 4, out var pb01, out var pg01, out var pr01, out var pa01);
+        ReadPremul(src, y1 * stride + x1 * 4, out var pb11, out var pg11, out var pr11, out var pa11);
+
+        static float Lerp(float a, float b, float t) => a + (b - a) * t;
+
+        var pb = Lerp(Lerp(pb00, pb10, tx), Lerp(pb01, pb11, tx), ty);
+        var pg = Lerp(Lerp(pg00, pg10, tx), Lerp(pg01, pg11, tx), ty);
+        var pr = Lerp(Lerp(pr00, pr10, tx), Lerp(pr01, pr11, tx), ty);
+        var pa = Lerp(Lerp(pa00, pa10, tx), Lerp(pa01, pa11, tx), ty);
+        if (pa <= 1e-5f) return;
+
+        b = (byte)Math.Clamp(pb / pa * 255f + 0.5f, 0, 255);
+        g = (byte)Math.Clamp(pg / pa * 255f + 0.5f, 0, 255);
+        r = (byte)Math.Clamp(pr / pa * 255f + 0.5f, 0, 255);
+        a = (byte)Math.Clamp(pa * 255f + 0.5f, 0, 255);
     }
 
     private static unsafe void ApplyCachedDabToTile(

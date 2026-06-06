@@ -26,4 +26,8 @@ internal interface ILayerMergeHost
         byte* dst, int dstStride, int width, int height,
         DrawingLayer group, DrawingLayer baseLayer, double opacityScale,
         PixelRegion clip, int originX, int originY);
+
+    unsafe void CompositeAlphaPreservingPaintLayer(
+        byte* dst, int dstStride, int width, int height,
+        DrawingLayer layer, double opacityScale, PixelRegion clip, int originX, int originY);
 }

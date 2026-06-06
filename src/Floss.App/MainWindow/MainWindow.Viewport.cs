@@ -86,7 +86,7 @@ public partial class MainWindow : ICanvasInputHost
         ActivateCanvasKeyboardRegion();
         _workspaceViewport.Focus();
         UpdateViewportPointerFromEvent(e);
-        ApplyViewportOsCursorHidden();
+        SyncViewportOsCursor();
 
         // Let smart-shape launcher buttons receive the click (tunnel runs before children).
         if (IsOverSmartShapeLauncher(e.GetPosition(_workspaceViewport)))
@@ -460,19 +460,13 @@ public partial class MainWindow : ICanvasInputHost
         => _canvas.CommitActiveTool();
 
     bool ICanvasInputHost.IsTransformActive => _canvas.IsTransformActive;
-    bool ICanvasInputHost.IsSmartShapeEditActive => _canvas.IsSmartShapeEditActive;
+
+    CanvasInputPolicy ICanvasInputHost.GetInputPolicy() => _canvas.InputPolicy;
 
     void ICanvasInputHost.EndTransformDragIfActive()
         => _canvas.EndTransformDragIfActive();
 
     ITool? ICanvasInputHost.ActiveTool => _canvas.ActiveTool;
-
-    (int, int) ICanvasInputHost.GetActiveToolTypes()
-    {
-        var preset = _activeToolGroup?.ActivePreset;
-        if (preset == null) return (0, 0);
-        return ((int)preset.InputProcess, (int)preset.OutputProcess);
-    }
 
     bool ICanvasInputHost.IsLayerPickDrag => _canvas.IsLayerPickDrag;
 
@@ -590,6 +584,8 @@ public partial class MainWindow : ICanvasInputHost
         return false;
     }
 
+    bool ICanvasInputHost.HidesOsCursorForPaintedPreview => _canvas.ShouldShowToolCursor;
+
     void ICanvasInputHost.SetCursorNone() => ApplyViewportOsCursorHidden();
 
     void ICanvasInputHost.ResetCursor() => SyncViewportOsCursor();
@@ -665,7 +661,7 @@ public partial class MainWindow : ICanvasInputHost
 
     private void ResetTransientInputState()
     {
-        if (_canvas.IsTransformActive || _canvas.IsSmartShapeEditActive)
+        if (_canvas.InputPolicy.IsTransientEdit)
             return;
 
         if (_temporaryPresetActive)

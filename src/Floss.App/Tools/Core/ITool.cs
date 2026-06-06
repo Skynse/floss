@@ -60,6 +60,8 @@ public sealed class ToolContext
     public Action InvalidateToolCursor { get; init; } = () => { };
     public Action? SmartShapePhaseChanged { get; set; }
     public Action InvalidateSelectionOverlay { get; init; } = () => { };
+    /// <summary>True while compositor or projection scheduler has pending work (Krita-style preview throttle).</summary>
+    public Func<bool>? IsCompositorBusy { get; init; }
     public Action? TransformEditChanged { get; init; }
     public Action SelectionChanged { get; init; } = () => { };
     public Action<SelectionMask.Snapshot> CommitSelectionMutation { get; init; } = _ => { };

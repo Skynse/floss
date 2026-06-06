@@ -75,11 +75,11 @@ public sealed class DynamicsPopupWindow : Window
         MinWidth = 480;
         MinHeight = 380;
         CanResize = true;
-        ShowInTaskbar = false;
-        Background = new SolidColorBrush(Color.Parse(Bg1));
         Title = $"{paramName} — Dynamics";
+        WindowStartupLocation = WindowStartupLocation.Manual;
 
-        Content = BuildContent();
+        CustomWindowChrome.ConfigurePopup(this);
+        Content = CustomWindowChrome.Wrap(this, Title, BuildContent());
         SyncFromDynamics(dynamics);
         WireEvents();
     }

@@ -913,8 +913,18 @@ public partial class MainWindow
         };
 
         dialog.Opened += (_, _) => { if (previewOn) ApplyPreviewNow(); };
-        await dialog.ShowDialog(this);
-        return await tcs.Task;
+
+        // Non-modal: canvas stays interactive for pan/zoom while adjusting filter params.
+        _canvas.EnterFilterPreviewSession();
+        try
+        {
+            dialog.Show(this);
+            return await tcs.Task;
+        }
+        finally
+        {
+            _canvas.ExitFilterPreviewSession();
+        }
     }
 
     private async Task ShowMessage(string title, string message)

@@ -132,8 +132,9 @@ public static unsafe class SimdPixelOps
 
     /// <summary>
     /// Blend a solid brush color into a tile row using a greyscale mask.
-    /// AVX2 fast path handles the all-opaque-dst case (no per-pixel division).
-    /// Scalar fallback handles mixed or transparent dst pixels.
+    /// Layer tiles store unpremul BGRA; use associated-alpha compositing (scalar path).
+    /// AVX2 is only used for alpha-lock (linear rgb blend, alpha preserved).
+    /// Crucial fix for dark stroke halos — see notes/dark-brush-edge-fix.md.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static unsafe void StampSrcOverMaskedRow(
@@ -143,8 +144,8 @@ public static unsafe class SimdPixelOps
         if (count <= 0 || opacity <= 0) return;
         if (opacity > 255) opacity = 255;
 
-        if (Avx2.IsSupported && Sse41.IsSupported && count >= 8)
-            StampSrcOverMaskedRowAvx2(dst, mask, count, srcB, srcG, srcR, opacity, alphaLocked);
+        if (alphaLocked && Avx2.IsSupported && Sse41.IsSupported && count >= 8)
+            StampSrcOverMaskedRowAvx2(dst, mask, count, srcB, srcG, srcR, opacity, alphaLocked: true);
         else
             StampSrcOverMaskedRowScalar(dst, mask, count, srcB, srcG, srcR, opacity, alphaLocked);
     }
@@ -247,7 +248,7 @@ public static unsafe class SimdPixelOps
         }
     }
 
-    private static void StampSrcOverMaskedRowScalar(
+    internal static void StampSrcOverMaskedRowScalar(
         byte* dst, byte* mask, int count,
         int srcB, int srcG, int srcR, int opacity, bool alphaLocked)
     {
@@ -374,7 +375,9 @@ public static unsafe class SimdPixelOps
         byte* dst, byte* mask, int count,
         int srcB, int srcG, int srcR, int opacity, bool alphaLocked)
     {
-        // Broadcast constant src color (A=255 so alpha channel uses: out_A = sa + dstA*(255-sa))
+        // Caller only routes alpha-lock rows here; normal src-over uses scalar associated-alpha.
+        if (!alphaLocked) { StampSrcOverMaskedRowScalar(dst, mask, count, srcB, srcG, srcR, opacity, false); return; }
+
         var srcConst = Vector256.Create(
             (ushort)srcB,(ushort)srcG,(ushort)srcR,(ushort)255,
             (ushort)srcB,(ushort)srcG,(ushort)srcR,(ushort)255,
@@ -396,13 +399,10 @@ public static unsafe class SimdPixelOps
 
             var dB = Avx2.LoadVector256(dst + i * 4);
 
-            bool useFast = alphaLocked || AllDstOpaque(dB);
-            if (!useFast)
+            if (!AllDstOpaque(dB))
             {
-                // Scalar fallback for pixels with mixed/transparent dst alpha
-                for (int x = i; x < i + 8; x++)
-                    StampSrcOver(dst + x * 4, (byte)srcB, (byte)srcG, (byte)srcR,
-                        (mask[x] * opacity) >> 8, alphaLocked);
+                StampSrcOverMaskedRowScalar(dst + i * 4, mask + i, Math.Min(8, count - i),
+                    srcB, srcG, srcR, opacity, alphaLocked: true);
                 continue;
             }
 
@@ -411,9 +411,8 @@ public static unsafe class SimdPixelOps
             var dHi = Avx2.UnpackHigh(dB, Vector256<byte>.Zero).AsUInt16();
             var packed = BlendConstSrcKernel(srcConst, dLo, dHi, aLo, aHi);
 
-            packed = alphaLocked
-                ? Avx2.Or(Avx2.And(packed, s_colorByteMask), Avx2.And(dB, s_alphaByteSet))
-                : Avx2.Or(packed, s_alphaByteSet);  // dst was opaque → stays opaque
+            // Alpha-lock: blend rgb only, preserve dst alpha.
+            packed = Avx2.Or(Avx2.And(packed, s_colorByteMask), Avx2.And(dB, s_alphaByteSet));
 
             Avx2.Store(dst + i * 4, packed);
         }
@@ -423,9 +422,14 @@ public static unsafe class SimdPixelOps
         {
             int ma = mask[i];
             if (ma == 0) continue;
-            int sa = (ma * opacity) >> 8;
+            int sa = (ma * opacity + 127) / 255;
             if (sa <= 0) continue;
-            StampSrcOver(dst + i * 4, (byte)srcB, (byte)srcG, (byte)srcR, sa, alphaLocked);
+            if (sa > 255) sa = 255;
+            int off = i * 4;
+            int inv = 255 - sa;
+            dst[off]   = (byte)((srcB * sa + dst[off]   * inv + 127) / 255);
+            dst[off+1] = (byte)((srcG * sa + dst[off+1] * inv + 127) / 255);
+            dst[off+2] = (byte)((srcR * sa + dst[off+2] * inv + 127) / 255);
         }
     }
 

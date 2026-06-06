@@ -20,8 +20,8 @@ public sealed class CurveGraph : Control
     private Point _dragOrigin;
     private (float X, float Y) _dragPoint;
 
-    private static readonly IBrush BgBrush = new SolidColorBrush(Color.Parse("#090b0f"));
-    private static readonly IBrush GridBrush = new SolidColorBrush(Color.Parse("#181c28"));
+    private static readonly IBrush BgBrush = new SolidColorBrush(Color.Parse("#323232"));
+    private static readonly IBrush GridBrush = new SolidColorBrush(Color.Parse("#6c6c6c"));
     private static readonly IBrush RefBrush = new SolidColorBrush(Color.Parse("#222840"));
     private static readonly IBrush CurveBrush = new SolidColorBrush(Color.Parse("#4c7ed8"));
     private static readonly IBrush PtBrush = new SolidColorBrush(Color.Parse("#80aaee"));

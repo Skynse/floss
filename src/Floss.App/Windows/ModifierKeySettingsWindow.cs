@@ -59,9 +59,9 @@ public sealed class ModifierKeySettingsWindow : Window
         CanResize = true;
         MinWidth = 500;
         MinHeight = 380;
-        Background = new SolidColorBrush(Color.Parse(Bg1));
         Title = "Modifier Key Settings";
-        ShowInTaskbar = false;
+
+        CustomWindowChrome.ConfigurePopup(this);
 
         // ── Top: mode radio buttons ──────────────────────────────────────────
         var generalRadio = new RadioButton
@@ -245,7 +245,7 @@ public sealed class ModifierKeySettingsWindow : Window
         root.Children.Add(MakeSeparator());
         root.Children.Add(scroll);
         root.Children.Add(footer);
-        Content = root;
+        Content = CustomWindowChrome.Wrap(this, Title, root);
 
         RebuildTable();
     }

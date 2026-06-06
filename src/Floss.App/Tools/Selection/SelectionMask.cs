@@ -236,6 +236,14 @@ public sealed class SelectionMask
         return _mask[y * _docW + x] > 0;
     }
 
+    internal bool TryGetMaskBuffer(out byte[]? mask, out int docW, out int docH)
+    {
+        mask = _mask;
+        docW = _docW;
+        docH = _docH;
+        return _mask != null;
+    }
+
     public SKRectI? GetMaskBounds()
     {
         if (_mask == null) return null;

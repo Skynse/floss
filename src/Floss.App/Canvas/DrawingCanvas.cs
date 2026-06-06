@@ -43,6 +43,7 @@ public sealed class DrawingCanvas : Control, IDisposable
     private readonly CompositeTool _brushTool;
     private readonly CompositeTool _eraserTool;
     private readonly TransformTool _transformTool = new();
+    private PixelRegion? _activeTransformRegion;
 
     private BrushPreset _brush = BrushPreset.Defaults[0];
     private Color _paintColor = Color.Parse("#111111");
@@ -150,9 +151,16 @@ public sealed class DrawingCanvas : Control, IDisposable
     /// </summary>
     internal bool PreferViewportToolCursor { get; set; }
 
+    /// <summary>Painted ring on <see cref="ViewportCursorOverlay"/>; OS cursor hidden.</summary>
     internal bool ShouldShowToolCursor =>
         IsBrushResizePreviewActive
-        || ((_isPointerOver || _isCursorPreviewLocked || _toolController.HasPendingOperation) && !IsPaintBlockedByLock);
+        || ((_isPointerOver || _isCursorPreviewLocked)
+            && !IsPaintBlockedByLock
+            && !IsTransformActive
+            && !IsSmartShapeEditActive);
+
+    /// <summary>When false, <see cref="MainWindow.Viewport.Cursor"/> owns the native OS cursor.</summary>
+    internal bool HidesOsCursor => ShouldShowToolCursor;
 
     internal bool IsCursorPreviewLocked => _isCursorPreviewLocked;
 
@@ -177,7 +185,6 @@ public sealed class DrawingCanvas : Control, IDisposable
         _document.DirtyStateChanged += (_, _) => DirtyStateChanged?.Invoke(this, EventArgs.Empty);
         Focusable = true;
         ClipToBounds = false;
-        Cursor = CursorNone;
         RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);
 
         BrushEngine = new BrushEngine();
@@ -191,6 +198,7 @@ public sealed class DrawingCanvas : Control, IDisposable
             InvalidateRender = InvalidateVisual,
             InvalidateToolCursor = NotifyCursorPreviewChanged,
             InvalidateSelectionOverlay = InvalidateSelectionOutline,
+            IsCompositorBusy = () => _compositor.IsCompositeActive || _projectionScheduler.PendingCount > 0,
             TransformEditChanged = () => TransformEditChanged?.Invoke(this, EventArgs.Empty),
             OnColorSampled = c =>
             {
@@ -442,13 +450,12 @@ public sealed class DrawingCanvas : Control, IDisposable
         _pointerTiltX = (float)props.XTilt;
         _pointerTiltY = (float)props.YTilt;
         _pointerTwist = (float)props.Twist;
-        Cursor = CursorNone;
         NotifyCursorPreviewChanged();
     }
 
     public void ClearViewportPointer()
     {
-        if (_toolController.HasPendingOperation || _isCursorPreviewLocked)
+        if (_isCursorPreviewLocked)
             return;
 
         _isPointerOver = false;
@@ -728,8 +735,12 @@ public sealed class DrawingCanvas : Control, IDisposable
         _transformTool.OnCompleted = EndSelectionTransform;
         if (_transformTool.BeginTransform(_ctx, layerIndices))
         {
+            _activeTransformRegion = _transformTool.TransformDirtyRegion;
+            if (_activeTransformRegion is { IsEmpty: false } region)
+                InvalidateCompositor(region);
             NotifySelectionChanged();
             TransformEditChanged?.Invoke(this, EventArgs.Empty);
+            NotifyCursorPreviewChanged();
             return true;
         }
 
@@ -748,8 +759,13 @@ public sealed class DrawingCanvas : Control, IDisposable
             _ctx.Selection.Clear();
         if (previous != null)
             SetActiveTool(previous);
+        var endRegion = _transformTool.CurrentDirtyRegion ?? _activeTransformRegion;
+        if (endRegion is { IsEmpty: false } region)
+            InvalidateCompositor(region);
+        _activeTransformRegion = null;
         _document.NotifySelectionChanged();
         TransformEditChanged?.Invoke(this, EventArgs.Empty);
+        NotifyCursorPreviewChanged();
     }
 
     public void DeleteSelectionTransform()
@@ -1273,6 +1289,48 @@ public sealed class DrawingCanvas : Control, IDisposable
     public bool IsTransformActive => _toolController.ActiveTool is TransformTool tt && tt.HasPendingOperation;
 
     public bool IsSmartShapeEditActive => GetSmartShapePhase() == SmartShapePhase.Preview;
+
+    private int _filterPreviewDepth;
+
+    public bool IsFilterPreviewActive => _filterPreviewDepth > 0;
+
+    public void EnterFilterPreviewSession()
+    {
+        _filterPreviewDepth++;
+        PaintInputSuspended = true;
+        NotifyCursorPreviewChanged();
+    }
+
+    public void ExitFilterPreviewSession()
+    {
+        if (_filterPreviewDepth <= 0)
+            return;
+
+        _filterPreviewDepth--;
+        if (_filterPreviewDepth == 0)
+            PaintInputSuspended = false;
+        NotifyCursorPreviewChanged();
+    }
+
+    public CanvasInputPolicy InputPolicy
+    {
+        get
+        {
+            if (IsFilterPreviewActive)
+                return CanvasInputPolicy.FilterPreview;
+            if (IsTransformActive || IsSmartShapeEditActive)
+                return CanvasInputPolicy.TransientEdit;
+            return _ctx.ActivePreset is { } preset
+                ? CanvasInputPolicy.ForActivePreset((int)preset.InputProcess, (int)preset.OutputProcess)
+                : CanvasInputPolicy.ForActivePreset(0, 0);
+        }
+    }
+
+    /// <summary>OS cursor over the workspace when transform gizmo handles are hovered.</summary>
+    internal StandardCursorType? ViewportOsCursorKind =>
+        IsTransformActive && _isPointerOver
+            ? TransformTool.CursorFor(_pointerPos, Math.Max(CanvasZoom, 0.001))
+            : null;
 
     public void EnterSmartShapeGizmoEdit() { }
 
@@ -2155,7 +2213,6 @@ public sealed class DrawingCanvas : Control, IDisposable
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
-        Cursor = CursorNone;
         var point = e.GetCurrentPoint(this);
 
         // Ctrl+Shift+Left: start a layer-find drag.
@@ -2181,7 +2238,6 @@ public sealed class DrawingCanvas : Control, IDisposable
     protected override void OnPointerEntered(PointerEventArgs e)
     {
         base.OnPointerEntered(e);
-        Cursor = CursorNone;
         _isPointerOver = true;
         var pt = e.GetCurrentPoint(this);
         _pointerPos = pt.Position;
@@ -2223,8 +2279,6 @@ public sealed class DrawingCanvas : Control, IDisposable
             return;
         }
 
-        Cursor = CursorNone;
-
         if (PaintInputSuspended && !_toolController.IsAlternateActive)
         {
             if (_activePointerId >= 0)
@@ -2253,7 +2307,6 @@ public sealed class DrawingCanvas : Control, IDisposable
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
-        if (_isPointerOver) Cursor = CursorNone;
         var point = e.GetCurrentPoint(this);
 
         if (_isLayerPickDrag)

@@ -35,9 +35,9 @@ public sealed class AngleDynamicsPopupWindow : Window
         Width = 340;
         Height = 200;
         CanResize = false;
-        Background = new SolidColorBrush(Color.Parse(Bg1));
-        ShowInTaskbar = false;
         WindowStartupLocation = WindowStartupLocation.Manual;
+
+        CustomWindowChrome.ConfigurePopup(this);
 
         var sourceLbl = new TextBlock
         {
@@ -94,7 +94,7 @@ public sealed class AngleDynamicsPopupWindow : Window
         jitterHeader.Children.Add(jitterLbl);
         jitterHeader.Children.Add(_randomVal);
 
-        Content = new StackPanel
+        var body = new StackPanel
         {
             Margin = new Thickness(16, 14),
             Spacing = 8,
@@ -107,6 +107,7 @@ public sealed class AngleDynamicsPopupWindow : Window
                 _randomSlider
             }
         };
+        Content = CustomWindowChrome.Wrap(this, Title, body);
     }
 
     public void SyncState(AngleSource source, float random)

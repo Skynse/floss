@@ -35,10 +35,10 @@ public sealed class ColorPickerWindow : Window
         Width = 420;
         Height = 480;
         CanResize = false;
-        Background = new SolidColorBrush(Color.Parse(Bg0));
         Title = "Color";
-        ShowInTaskbar = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
+
+        CustomWindowChrome.ConfigurePopup(this);
         // Make it behave like a dialog — clicking outside commits current color
         // but doesn't close automatically, user must click OK or Cancel.
 
@@ -80,7 +80,7 @@ public sealed class ColorPickerWindow : Window
         _sBox.LostFocus += (_, _) => ParseHsv();
         _vBox.LostFocus += (_, _) => ParseHsv();
 
-        Content = BuildLayout();
+        Content = CustomWindowChrome.Wrap(this, Title, BuildLayout());
         UpdateImages();
         UpdateInputs();
     }

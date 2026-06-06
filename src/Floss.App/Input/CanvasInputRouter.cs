@@ -55,8 +55,8 @@ public interface ICanvasInputHost
     void CommitActiveTool();
     ITool? ActiveTool { get; }
     bool IsTransformActive { get; }
-    bool IsSmartShapeEditActive { get; }
     void EndTransformDragIfActive();
+    CanvasInputPolicy GetInputPolicy();
 
     // ── Layer pick ──
     bool IsLayerPickDrag { get; }
@@ -99,14 +99,13 @@ public interface ICanvasInputHost
     bool PaintInputSuspended { get; set; }
 
     // ── Cursor ──
+    bool HidesOsCursorForPaintedPreview { get; }
     void SetCursorNone();
     void ResetCursor();
 
     // ── UI overlap ──
     bool IsOverCanvasUi(Point viewportPos);
 
-    // ── Tool type info for modifier resolution ──
-    (int InputProcessType, int OutputProcessType) GetActiveToolTypes();
 }
 
 /// <summary>
@@ -262,6 +261,9 @@ public sealed class CanvasInputRouter
         // Primary tool dispatch
         if (isPrimaryDown || (_activeModifierAction != ModifierAction.None && isPointerActivation))
         {
+            if (_host.GetInputPolicy().BlocksPrimaryToolPointer)
+                return;
+
             if (eventArgs != null)
             {
                 var e = (PointerPressedEventArgs)eventArgs;
@@ -373,7 +375,7 @@ public sealed class CanvasInputRouter
         {
             if (_host.IsTransformActive)
                 _host.EndTransformDragIfActive();
-            else if (!_host.IsSmartShapeEditActive)
+            else if (!_host.GetInputPolicy().IsTransientEdit)
                 _host.CommitActiveTool();
         }
 
@@ -611,7 +613,7 @@ public sealed class CanvasInputRouter
         _activePointerId = pointerId;
         _canvasButtonPresetActive = isTemporaryPreset;
 
-        if (!IsViewportTool())
+        if (!IsViewportTool() && _host.HidesOsCursorForPaintedPreview)
         {
             _host.SetCursorNone();
             _host.InvalidateViewport();
@@ -669,7 +671,8 @@ public sealed class CanvasInputRouter
 
     private void ReevaluateModifierState()
     {
-        var (inputType, outputType) = _host.GetActiveToolTypes();
+        var policy = _host.GetInputPolicy();
+        var (inputType, outputType) = policy.ModifierToolTypes;
 
         ModifierKeyAssignment? assignment = null;
 
@@ -686,10 +689,9 @@ public sealed class CanvasInputRouter
         if (_state == RouterState.Running)
             return;
 
-        // Smart-shape edit: allow viewport pan/zoom/rotate overlays only (like transform).
-        if (_host.IsSmartShapeEditActive
-            && assignment is { Action: not ModifierAction.None }
-            && !IsSmartShapeViewportNavAssignment(assignment))
+        // Transient edit (transform, smart-shape preview): viewport nav overlays only.
+        if (assignment is { Action: not ModifierAction.None }
+            && !policy.AllowsModifierAction(assignment))
         {
             UpdateReadyAction();
             return;
@@ -787,7 +789,8 @@ public sealed class CanvasInputRouter
         if (!_modifierAlternateActive)
             return;
 
-        if (!_host.IsSmartShapeEditActive && _host.ActiveTool?.HasPendingOperation == true)
+        if (_host.GetInputPolicy().ShouldCommitPendingOnAlternateDeactivate
+            && _host.ActiveTool?.HasPendingOperation == true)
             _host.CommitActiveTool();
         _host.SetAlternateActive(false);
     }
@@ -871,14 +874,6 @@ public sealed class CanvasInputRouter
         var tool = _host.ActiveTool;
         if (tool is not CompositeTool ct) return false;
         return ct.Output is HandOutput or RotateOutput or ZoomOutput;
-    }
-
-    private static bool IsSmartShapeViewportNavAssignment(ModifierKeyAssignment assignment)
-    {
-        if (assignment.Action != ModifierAction.ChangeToolTemporarily)
-            return false;
-
-        return ToolGroupConfig.IsViewportNavigationPreset(assignment.TemporaryToolPresetId);
     }
 
     private static bool IsModifierKey(Key key) => key switch

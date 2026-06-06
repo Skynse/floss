@@ -1593,9 +1593,18 @@ public static class BrushTipNodeGraphEvaluator
                         if (hasColor && stampPtr != null)
                         {
                             var o = x * 4;
-                            b[i] = stampRowPtr[o + 0] / 255f;
-                            g[i] = stampRowPtr[o + 1] / 255f;
-                            r[i] = stampRowPtr[o + 2] / 255f;
+                            var stampA = stampRowPtr[o + 3] / 255f;
+                            if (stampA > 0f)
+                            {
+                                b[i] = stampRowPtr[o + 0] / 255f;
+                                g[i] = stampRowPtr[o + 1] / 255f;
+                                r[i] = stampRowPtr[o + 2] / 255f;
+                                a[i] = maskA * stampA;
+                            }
+                            else
+                            {
+                                a[i] = 0f;
+                            }
                         }
                         else
                         {
@@ -1642,10 +1651,13 @@ public static class BrushTipNodeGraphEvaluator
             var a = new float[n];
             for (var i = 0; i < n; i++)
             {
-                r[i] = Math.Clamp(left.R[i] * inv + right.R[i] * t, 0f, 1f);
-                g[i] = Math.Clamp(left.G[i] * inv + right.G[i] * t, 0f, 1f);
-                b[i] = Math.Clamp(left.B[i] * inv + right.B[i] * t, 0f, 1f);
-                a[i] = Math.Clamp(left.A[i] * inv + right.A[i] * t, 0f, 1f);
+                var la = left.A[i];
+                var ra = right.A[i];
+                a[i] = Math.Clamp(la * inv + ra * t, 0f, 1f);
+                var denom = Math.Max(a[i], 0.0001f);
+                r[i] = Math.Clamp((left.R[i] * la * inv + right.R[i] * ra * t) / denom, 0f, 1f);
+                g[i] = Math.Clamp((left.G[i] * la * inv + right.G[i] * ra * t) / denom, 0f, 1f);
+                b[i] = Math.Clamp((left.B[i] * la * inv + right.B[i] * ra * t) / denom, 0f, 1f);
             }
             return new ColorField(r, g, b, a, left.HasColor || right.HasColor);
         }

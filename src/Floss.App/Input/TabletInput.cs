@@ -120,6 +120,39 @@ internal static class TabletInput
            && !point.Properties.IsEraser
            && (point.Properties.IsLeftButtonPressed || point.Properties.IsBarrelButtonPressed);
 
+    /// <summary>Primary press on UI chrome (title bar drag, etc.) — pen often omits <see cref="PointerPointProperties.IsLeftButtonPressed"/>.</summary>
+    public static bool CanBeginUiDrag(PointerPoint point)
+    {
+        var props = point.Properties;
+        if (props.IsMiddleButtonPressed || props.IsRightButtonPressed)
+            return false;
+
+        return point.Pointer.Type switch
+        {
+            PointerType.Pen => !props.IsEraser
+                && (props.IsLeftButtonPressed || props.IsBarrelButtonPressed || props.Pressure > 0),
+            PointerType.Touch => props.IsLeftButtonPressed || props.Pressure > 0,
+            _ => props.IsLeftButtonPressed
+                || (props.Pressure > 0 && HasTabletAxisData(props)),
+        };
+    }
+
+    /// <summary>Whether the primary pointer is still down during a drag gesture.</summary>
+    public static bool IsPrimaryPointerActive(PointerPoint point)
+    {
+        var props = point.Properties;
+        if (props.IsMiddleButtonPressed || props.IsRightButtonPressed)
+            return false;
+
+        return point.Pointer.Type switch
+        {
+            PointerType.Pen => !props.IsEraser
+                && (props.IsLeftButtonPressed || props.IsBarrelButtonPressed || props.Pressure > 0),
+            PointerType.Touch => props.IsLeftButtonPressed || props.Pressure > 0,
+            _ => props.IsLeftButtonPressed || props.Pressure > 0,
+        };
+    }
+
     private static bool HasTabletAxisData(PointerPointProperties props)
         => props.Pressure > 0 || props.XTilt != 0 || props.YTilt != 0 || props.Twist != 0;
 }

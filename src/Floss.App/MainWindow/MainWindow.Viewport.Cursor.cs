@@ -33,6 +33,7 @@ public partial class MainWindow
         _workspaceViewport.Children.Add(_viewportCursorOverlay);
 
         _workspaceViewport.AddHandler(PointerEnteredEvent, OnWorkspacePointerEntered, RoutingStrategies.Tunnel);
+        SyncViewportOsCursor();
     }
 
     private void OnCanvasCursorPreviewChanged()
@@ -58,41 +59,38 @@ public partial class MainWindow
         SyncViewportOsCursor();
     }
 
-    /// <summary>Hide the OS cursor over the viewport while the painted preview is shown.</summary>
+    /// <summary>
+    /// Single owner of OS cursor state for the canvas subtree.
+    /// Painted brush preview: hide OS cursor, overlay draws the ring.
+    /// Transform and other modes: show native cursors on canvas and viewport alike.
+    /// </summary>
     private void SyncViewportOsCursor()
     {
         if (_workspaceViewport == null || _canvas == null)
             return;
 
-        var hide = _canvas.ShouldShowToolCursor;
-
-        if (hide)
-            ApplyViewportOsCursorHidden();
-        else
-            ClearViewportOsCursorHidden();
+        ApplyViewportOsCursor(_canvas.ShouldShowToolCursor
+            ? CursorNone
+            : ResolveViewportOsCursor());
     }
 
-    private void ApplyViewportOsCursorHidden()
+    private Cursor? ResolveViewportOsCursor()
     {
-        _workspaceViewport!.Cursor = CursorNone;
-        _canvas.Cursor = CursorNone;
-        if (_canvasFrame != null)
-            _canvasFrame.Cursor = CursorNone;
-        if (_canvasHost != null)
-            _canvasHost.Cursor = CursorNone;
-        Cursor = CursorNone;
+        var kind = _canvas!.ViewportOsCursorKind;
+        return kind.HasValue ? new Cursor(kind.Value) : null;
     }
 
-    private void ClearViewportOsCursorHidden()
+    private void ApplyViewportOsCursor(Cursor? cursor)
     {
-        _workspaceViewport!.Cursor = null;
-        _canvas.Cursor = CursorNone;
+        _workspaceViewport!.Cursor = cursor;
+        _canvas!.Cursor = cursor;
         if (_canvasFrame != null)
-            _canvasFrame.Cursor = null;
+            _canvasFrame.Cursor = cursor;
         if (_canvasHost != null)
-            _canvasHost.Cursor = null;
-        Cursor = null;
+            _canvasHost.Cursor = cursor;
     }
+
+    private void ApplyViewportOsCursorHidden() => ApplyViewportOsCursor(CursorNone);
 
     internal void RefreshViewportCursorAfterInput()
     {

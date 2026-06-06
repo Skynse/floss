@@ -1624,7 +1624,7 @@ public partial class MainWindow : Window, Tools.IViewportController
                 {
                     Text = $"Missing panel: {id}",
                     Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-        FontSize = 9,
+                    FontSize = 9,
                     Margin = new Thickness(8)
                 }
             };
@@ -2909,10 +2909,13 @@ public partial class MainWindow : Window, Tools.IViewportController
     {
         if (_temporaryPresetActive) return false;
 
-        // Pan/zoom/rotate the viewport without committing or canceling transform / smart-shape edit.
-        if ((_canvas.IsTransformActive || _canvas.IsSmartShapeEditActive)
-            && ToolGroupConfig.IsViewportNavigationPreset(presetId))
+        var policy = _canvas.InputPolicy;
+
+        if (policy.IsTransientEdit)
         {
+            if (!policy.AllowsTemporaryPreset(presetId))
+                return false;
+
             foreach (var group in App.ToolGroups.Groups)
             {
                 var preset = group.Presets.FirstOrDefault(p => p.Id == presetId);
@@ -2928,9 +2931,7 @@ public partial class MainWindow : Window, Tools.IViewportController
         {
             var preset = group.Presets.FirstOrDefault(p => p.Id == presetId);
             if (preset == null) continue;
-            if (_canvas.IsSmartShapeEditActive)
-                return false;
-            if (_canvas.ActiveTool.HasPendingOperation)
+            if (policy.ShouldCommitPendingOnTemporaryPresetPush && _canvas.ActiveTool.HasPendingOperation)
                 _canvas.CommitActiveTool();
             _savedPresetTemp = _activeToolGroup?.ActivePreset;
             _temporaryPresetActive = true;
@@ -2958,10 +2959,11 @@ public partial class MainWindow : Window, Tools.IViewportController
         // Commit any pending operation on the temporary tool before switching back
         // (e.g. eyedropper click that hasn't received PointerUp yet because the
         // modifier key was released first).
-        if (!_canvas.IsSmartShapeEditActive && _canvas.ActiveTool.HasPendingOperation)
+        if (_canvas.InputPolicy.ShouldCommitPendingOnTemporaryPresetPop
+            && _canvas.ActiveTool.HasPendingOperation)
             _canvas.CommitActiveTool();
 
-        if (_canvas.IsSmartShapeEditActive)
+        if (_canvas.InputPolicy.IsTransientEdit)
             return;
 
         if (prev != null)
@@ -3217,8 +3219,8 @@ internal sealed class RulerOverlay : Control
         var flipY = _canvas.FlipY;
         var panX = _canvas.PanOffsetX;
         var panY = _canvas.PanOffsetY;
-
-        var bg = new SolidColorBrush(Color.FromArgb(255, 30, 30, 35));
+        // ##2b2b2b
+        var bg = new SolidColorBrush(Color.FromUInt32(0xFF2b2b2b));
         var tickPen = new Pen(new SolidColorBrush(Color.FromArgb(160, 180, 200, 220)), 1);
         var labelBrush = new SolidColorBrush(Color.FromArgb(220, 200, 210, 220));
 

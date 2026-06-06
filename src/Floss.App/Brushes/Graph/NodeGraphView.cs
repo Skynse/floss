@@ -263,7 +263,7 @@ public sealed class NodeGraphView : Control
         var width = Math.Max(1, (int)MathF.Round(source.Width * scale));
         var height = Math.Max(1, (int)MathF.Round(source.Height * scale));
 
-        using var scaled = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul));
+        using var scaled = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Unpremul));
         if (!source.ScalePixels(scaled, new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None)))
             throw new InvalidDataException("Brush tip PNG could not be scaled.");
 
