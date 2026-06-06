@@ -235,6 +235,7 @@ public sealed class NodeGraphEditorPanel : UserControl
 
         _view.LoadGraph(_graph, new());
         _view.AutoLayout();
+        _view.CaptureHistoryBaseline();
 
         Loaded += (_, _) =>
         {
@@ -312,6 +313,7 @@ public sealed class NodeGraphEditorPanel : UserControl
         _graph = graph.DeepClone();
         _view.LoadGraph(_graph, new());
         _view.AutoLayout();
+        _view.CaptureHistoryBaseline();
         _selectedNode = null;
         RefreshPropertyPanel();
         if (brushTitle != null)
@@ -395,6 +397,7 @@ public sealed class NodeGraphEditorPanel : UserControl
         _graph = graph;
         _view.LoadGraph(_graph, new Dictionary<string, Avalonia.Point>());
         _view.AutoLayout();
+        _view.CaptureHistoryBaseline();
         _selectedNode = null;
         RefreshPropertyPanel();
         DoCommit();

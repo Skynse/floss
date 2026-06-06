@@ -112,6 +112,8 @@ public sealed class ToolFactory
             {
                 Tolerance = preset.Tolerance,
                 FillReference = preset.FillReference,
+                ContiguousFill = preset.ContiguousFill,
+                AreaScaling = preset.AreaScaling,
                 Opacity = opacity,
                 BlendMode = blendMode
             },
@@ -133,7 +135,9 @@ public sealed class ToolFactory
             {
                 Tolerance = preset.Tolerance,
                 Operation = preset.SelectOp,
-                FillReference = preset.FillReference
+                FillReference = preset.FillReference,
+                ContiguousFill = preset.ContiguousFill,
+                AreaScaling = preset.AreaScaling
             },
             OutputProcessType.Stroke => new StrokeOutput
             {

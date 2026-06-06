@@ -76,6 +76,47 @@ public class SelectOpHelperTests
     }
 
     [Fact]
+    public void FloodFill_AfterFullCanvasRect_ClearsStaleOutlineRect()
+    {
+        const int w = 100, h = 100;
+        var mask = new SelectionMask();
+        mask.Resize(w, h);
+        mask.SetFromRect(0, 0, w, h, SelectOp.Replace);
+        TestAssertions.Equal(w, mask.GeometryRectForTests.Width);
+
+        var buf = new byte[w * h * 4];
+        for (var i = 0; i < buf.Length; i += 4)
+        {
+            buf[i] = 255;
+            buf[i + 1] = 255;
+            buf[i + 2] = 255;
+            buf[i + 3] = 255;
+        }
+
+        for (var y = 20; y < 30; y++)
+        {
+            for (var x = 20; x < 30; x++)
+            {
+                var off = (y * w + x) * 4;
+                buf[off] = 40;
+                buf[off + 1] = 120;
+                buf[off + 2] = 200;
+                buf[off + 3] = 255;
+            }
+        }
+
+        mask.SetFromFloodFillBuffer(buf, 25, 25, 0.0, SelectOp.Replace);
+
+        TestAssertions.Equal(0, mask.GeometryRectForTests.Width);
+        var bounds = mask.GetMaskBounds();
+        Assert.NotNull(bounds);
+        TestAssertions.True(bounds!.Value.Width < w);
+        TestAssertions.True(bounds.Value.Height < h);
+        TestAssertions.True(mask.IsSelected(25, 25));
+        TestAssertions.False(mask.IsSelected(0, 0));
+    }
+
+    [Fact]
     public void SelectionMask_ReplaceZeroRect_ClearsSelection()
     {
         var mask = new SelectionMask();

@@ -1,9 +1,7 @@
 using System;
-using System.Collections.Generic;
 using Floss.App.Document;
 using Floss.App.Input;
 using Floss.App.Tools;
-using SkiaSharp;
 
 namespace Floss.App.Processes.Output;
 
@@ -14,6 +12,8 @@ public sealed class MagicWandOutput : IOutputProcess
     public double Tolerance { get; set; } = 0.1;
     public SelectOp Operation { get; set; } = SelectOp.Replace;
     public FillReferenceMode FillReference { get; set; } = FillReferenceMode.CurrentLayer;
+    public bool ContiguousFill { get; set; } = true;
+    public double AreaScaling { get; set; }
 
     public void Preview(ToolContext ctx, IProcessedInput input) { }
 
@@ -28,17 +28,20 @@ public sealed class MagicWandOutput : IOutputProcess
         var docY = (int)click.Point.Y;
         var op = SelectOpHelper.ResolveForSelection(Operation, ctx);
         var before = ctx.Selection.CaptureSnapshot();
+        int areaScaling = (int)Math.Round(Math.Clamp(AreaScaling, -20, 20));
 
         if (FillReference != FillReferenceMode.CurrentLayer)
         {
             var buf = BuildReferenceBuffer(ctx, FillReference);
-            ctx.Selection.SetFromFloodFillBuffer(buf, docX, docY, Tolerance, op);
+            ctx.Selection.SetFromFloodFillBuffer(buf, docX, docY, Tolerance, op,
+                ContiguousFill, areaScaling);
         }
         else
         {
             ctx.Selection.SetFromFloodFill(layer.Pixels,
                 docX - layer.OffsetX, docY - layer.OffsetY,
-                layer.OffsetX, layer.OffsetY, Tolerance, op);
+                layer.OffsetX, layer.OffsetY, Tolerance, op,
+                ContiguousFill, areaScaling);
         }
 
         ctx.CommitSelectionMutation(before);

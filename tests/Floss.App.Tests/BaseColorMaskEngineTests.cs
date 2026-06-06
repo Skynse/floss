@@ -1,9 +1,24 @@
+using Avalonia.Media;
 using Floss.App.Filters;
 
 namespace Floss.App.Tests;
 
 public class BaseColorMaskEngineTests
 {
+    [Fact]
+    public void TintCharacterMask_AppliesChosenFillColor()
+    {
+        var silhouette = new byte[] { 0, 255, 255, 0 };
+        var fill = Color.FromRgb(40, 120, 200);
+        var layer = BaseColorMaskEngine.TintCharacterMask(silhouette, 2, 2, fill);
+
+        TestAssertions.Equal(0, layer[0]);
+        TestAssertions.Equal(200, layer[4]);
+        TestAssertions.Equal(120, layer[5]);
+        TestAssertions.Equal(40, layer[6]);
+        TestAssertions.Equal(255, layer[7]);
+    }
+
     [Fact]
     public void GenerateMasks_WithoutModel_ReturnsModelMissing()
     {

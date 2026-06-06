@@ -14,6 +14,7 @@ public partial class MainWindow
     private Control BuildNodeGraphDockerContent()
     {
         EnsureNodeGraphEditor();
+        WireNodeGraphKeyboardSurface();
         var editor = _nodeGraphEditor!;
         if (editor.Parent is Panel parent)
             parent.Children.Remove(editor);
@@ -31,6 +32,7 @@ public partial class MainWindow
             SaveNodeGraphAsNewBrushPreset,
             docked: true,
             onClose: () => ToggleDockerVisibility("node-graph"));
+        WireNodeGraphKeyboardSurface();
     }
 
     private void SetNodeGraphDockVisible(bool visible, bool reload = true)

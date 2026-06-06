@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Avalonia.Media;
+using Floss.App.Canvas.FloodFill;
 using Floss.App.Document;
 using SkiaSharp;
 
@@ -27,9 +28,7 @@ public sealed class SelectionMask
     private int _selectedCount;
     private bool _simplifyOutline;
 
-    // Reused flood-fill visitation stamp (avoids clearing docW×docH per click).
-    private int[] _visitStamp = [];
-    private int _visitEpoch = 1;
+    private readonly VisitEpoch _visit = new();
 
     private const int SimplifyOutlineSelectedPixels = 400_000;
     private const int MaxOutlineSegments = 12_000;
@@ -104,6 +103,8 @@ public sealed class SelectionMask
     public bool HasSelection => _mask != null;
 
     internal string OutlineGeometryKindForTests => _geoType.ToString();
+
+    internal SKRectI GeometryRectForTests => _geoRect;
 
     internal bool TryGetAlphaTexture(out SKImage? image, out SKRectI bounds, out int texScale)
     {
@@ -212,7 +213,6 @@ public sealed class SelectionMask
     {
         if (_docW == w && _docH == h) return;
         _docW = w; _docH = h;
-        _visitStamp = [];
         Clear();
     }
 
@@ -277,6 +277,7 @@ public sealed class SelectionMask
             else
             {
                 _geoType = SelectionGeometry.Mask;
+                _geoRect = default;
                 _geoPoly.Clear();
             }
         }
@@ -392,7 +393,8 @@ public sealed class SelectionMask
 
     // Flood-fill selection from a flat BGRA byte[] reference composite (e.g. merged reference layers).
     public void SetFromFloodFillBuffer(byte[] refBuf, int startDocX, int startDocY,
-        double tolerance, SelectOp op = SelectOp.Replace)
+        double tolerance, SelectOp op = SelectOp.Replace,
+        bool contiguousFill = true, int areaScaling = 0)
     {
         EnsureMaskExists();
         if ((uint)startDocX >= (uint)_docW || (uint)startDocY >= (uint)_docH) return;
@@ -400,36 +402,27 @@ public sealed class SelectionMask
         int startIdx = startDocY * _docW + startDocX;
         int off = startIdx * 4;
         byte refB = refBuf[off], refG = refBuf[off + 1], refR = refBuf[off + 2], refA = refBuf[off + 3];
-        int tolInt = (int)(tolerance * 255 * 4);
+        int threshold = ColorDifference.Tolerance01ToThreshold(tolerance);
 
         var next = CreateBaseMask(op);
-        BeginVisitPass();
-
-        // Krita-style color-similarity cache: for flat-color regions, avoid
-        // recomputing the Manhattan distance for every pixel with the same RGBA.
         var simCache = new Dictionary<uint, bool>(1024);
 
-        bool Similar(int idx)
+        bool Similar(int docX, int docY)
         {
+            int idx = docY * _docW + docX;
             int pOff = idx * 4;
             uint packed = (uint)(refBuf[pOff] | (refBuf[pOff + 1] << 8) | (refBuf[pOff + 2] << 16) | (refBuf[pOff + 3] << 24));
             if (simCache.TryGetValue(packed, out var cached))
                 return cached;
-            var result = Math.Abs(refBuf[pOff] - refB) + Math.Abs(refBuf[pOff + 1] - refG)
-                + Math.Abs(refBuf[pOff + 2] - refR) + Math.Abs(refBuf[pOff + 3] - refA) <= tolInt;
+            var result = ColorDifference.IsSimilarBgra(refBuf.AsSpan(pOff, 4), refB, refG, refR, refA, threshold);
             simCache[packed] = result;
             return result;
         }
 
-        FloodFillMask(next, startDocX, startDocY, op, (docX, docY) => Similar(docY * _docW + docX));
-        if (op == SelectOp.Intersect)
-            ClearUnvisitedIntersect(next);
+        RunFloodFillIntoMask(next, startDocX, startDocY, op, Similar, contiguousFill);
+        ApplyAreaScalingToMask(next, areaScaling);
         CommitMask(next);
-        _geoType = SelectionGeometry.Mask;
-        _cachedMaskGeo = null;
-        _simplifyOutline = false;
-        _geoPoly.Clear();
-        ClearOutline();
+        FinalizeMaskSelection();
     }
 
     public void SetFromFloodFill(
@@ -439,7 +432,9 @@ public sealed class SelectionMask
         int offsetX,
         int offsetY,
         double tolerance,
-        SelectOp op = SelectOp.Replace)
+        SelectOp op = SelectOp.Replace,
+        bool contiguousFill = true,
+        int areaScaling = 0)
     {
         EnsureMaskExists();
 
@@ -449,11 +444,9 @@ public sealed class SelectionMask
             return;
 
         pixels.GetPixel(srcX, srcY, out byte refB, out byte refG, out byte refR, out byte refA);
-        int tolInt = (int)(tolerance * 255 * 4);
+        int threshold = ColorDifference.Tolerance01ToThreshold(tolerance);
 
         var next = CreateBaseMask(op);
-        BeginVisitPass();
-
         var simCache = new Dictionary<int, bool>(1024);
 
         bool Similar(int docX, int docY)
@@ -462,20 +455,15 @@ public sealed class SelectionMask
             int packed = b | (g << 8) | (r << 16) | (a << 24);
             if (simCache.TryGetValue(packed, out var cached))
                 return cached;
-            var result = Math.Abs(b - refB) + Math.Abs(g - refG) + Math.Abs(r - refR) + Math.Abs(a - refA) <= tolInt;
+            var result = ColorDifference.IsSimilarBgra(b, g, r, a, refB, refG, refR, refA, threshold);
             simCache[packed] = result;
             return result;
         }
 
-        FloodFillMask(next, startDocX, startDocY, op, Similar);
-        if (op == SelectOp.Intersect)
-            ClearUnvisitedIntersect(next);
+        RunFloodFillIntoMask(next, startDocX, startDocY, op, Similar, contiguousFill);
+        ApplyAreaScalingToMask(next, areaScaling);
         CommitMask(next);
-        _geoType = SelectionGeometry.Mask;
-        _cachedMaskGeo = null;
-        _simplifyOutline = false;
-        _geoPoly.Clear();
-        ClearOutline();
+        FinalizeMaskSelection();
     }
 
     public void RenderOverlay(DrawingContext dc, double zoom)
@@ -523,13 +511,6 @@ public sealed class SelectionMask
 
         if (_geoType == SelectionGeometry.Mask)
         {
-            if (_geoRect.Width > 0 && _geoRect.Height > 0)
-            {
-                var r = new Avalonia.Rect(_geoRect.Left, _geoRect.Top, _geoRect.Width, _geoRect.Height);
-                dc.DrawRectangle(null, pen, r);
-                return;
-            }
-
             if (_simplifyOutline || _selectedCount > SimplifyOutlineSelectedPixels)
             {
                 if (_maskBounds is { } b)
@@ -719,85 +700,53 @@ public sealed class SelectionMask
         _maskBounds = count > 0 ? new SKRectI(minX, minY, maxX + 1, maxY + 1) : null;
     }
 
-    private void BeginVisitPass()
+    private void FinalizeMaskSelection()
     {
-        int n = _docW * _docH;
-        if (_visitStamp.Length < n)
-            _visitStamp = new int[n];
-        if (++_visitEpoch == int.MaxValue)
+        _geoType = SelectionGeometry.Mask;
+        _geoRect = default;
+        _cachedMaskGeo = null;
+        _simplifyOutline = false;
+        _geoPoly.Clear();
+        ClearOutline();
+    }
+
+    private void RunFloodFillIntoMask(
+        byte[] next,
+        int startX,
+        int startY,
+        SelectOp op,
+        Func<int, int, bool> similar,
+        bool contiguousFill)
+    {
+        void OnPixel(int x, int y) => Apply(next, x, y, op, true);
+
+        if (contiguousFill)
         {
-            Array.Clear(_visitStamp);
-            _visitEpoch = 1;
+            _visit.BeginPass(_docW * _docH);
+            FloodFillScanline.FillContiguous(_docW, _docH, startX, startY, similar,
+                _visit.Stamp, _visit.Epoch, OnPixel);
+            if (op == SelectOp.Intersect)
+                ClearUnvisitedIntersect(next);
+        }
+        else if (op == SelectOp.Intersect)
+        {
+            for (int y = 0; y < _docH; y++)
+            {
+                for (int x = 0; x < _docW; x++)
+                    Apply(next, x, y, SelectOp.Intersect, similar(x, y));
+            }
+        }
+        else
+        {
+            FloodFillNonContiguous.FillInBounds(0, 0, _docW - 1, _docH - 1, similar, OnPixel);
         }
     }
 
-    private void PushNewSpans(Stack<(int x, int y)> stack, int left, int right, int y, Func<int, int, bool> similar)
+    private void ApplyAreaScalingToMask(byte[] next, int areaScaling)
     {
-        bool inSpan = false;
-        for (int x = left; x <= right; x++)
-        {
-            int idx = y * _docW + x;
-            if (similar(x, y) && _visitStamp[idx] != _visitEpoch)
-            {
-                if (!inSpan)
-                {
-                    stack.Push((x, y));
-                    inSpan = true;
-                }
-            }
-            else
-            {
-                inSpan = false;
-            }
-        }
-    }
-
-    private void FloodFillMask(byte[] mask, int startX, int startY, SelectOp op, Func<int, int, bool> similar)
-    {
-        if (!similar(startX, startY)) return;
-
-        var stack = new Stack<(int x, int y)>(256);
-        stack.Push((startX, startY));
-
-        while (stack.Count > 0)
-        {
-            var (seedX, seedY) = stack.Pop();
-            if ((uint)seedY >= (uint)_docH) continue;
-
-            int seedIdx = seedY * _docW + seedX;
-            if (_visitStamp[seedIdx] == _visitEpoch || !similar(seedX, seedY))
-                continue;
-
-            int left = seedX;
-            while (left > 0)
-            {
-                int li = seedY * _docW + left - 1;
-                if (_visitStamp[li] == _visitEpoch || !similar(left - 1, seedY))
-                    break;
-                left--;
-            }
-
-            int right = seedX;
-            while (right + 1 < _docW)
-            {
-                int ri = seedY * _docW + right + 1;
-                if (_visitStamp[ri] == _visitEpoch || !similar(right + 1, seedY))
-                    break;
-                right++;
-            }
-
-            for (int x = left; x <= right; x++)
-            {
-                int idx = seedY * _docW + x;
-                _visitStamp[idx] = _visitEpoch;
-                Apply(mask, x, seedY, op, true);
-            }
-
-            if (seedY > 0)
-                PushNewSpans(stack, left, right, seedY - 1, similar);
-            if (seedY + 1 < _docH)
-                PushNewSpans(stack, left, right, seedY + 1, similar);
-        }
+        int delta = Math.Clamp(areaScaling, -20, 20);
+        if (delta != 0)
+            MaskMorphology.ApplyAreaScaling(next, _docW, _docH, delta);
     }
 
     private bool TryGetSolidRectBounds(out SKRectI rect)
@@ -888,7 +837,7 @@ public sealed class SelectionMask
             for (int px = iter.Left; px < iter.Right; px++)
             {
                 int idx = row + px;
-                if (_visitStamp[idx] == _visitEpoch) continue;
+                if (_visit.Stamp[idx] == _visit.Epoch) continue;
                 Apply(next, px, py, SelectOp.Intersect, false);
             }
         }

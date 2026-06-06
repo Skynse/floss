@@ -14,6 +14,7 @@ using Floss.App.Document;
 using Floss.App.Filters;
 using Floss.App.ImageFiles;
 using Floss.App.Tools;
+using Floss.App.Windows;
 using SkiaSharp;
 
 namespace Floss.App;
@@ -400,6 +401,34 @@ public partial class MainWindow
             Margin = new Thickness(0, 4, 0, 0)
         });
 
+        var maskFillColor = BaseColorMaskEngine.DefaultMaskFillColor;
+        var maskColorSwatch = new Border
+        {
+            Width = 32,
+            Height = 24,
+            CornerRadius = new CornerRadius(3),
+            BorderThickness = new Thickness(1),
+            BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
+            Background = new SolidColorBrush(maskFillColor),
+            Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand)
+        };
+        var maskColorRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Margin = new Thickness(0, 8, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        maskColorRow.Children.Add(new TextBlock
+        {
+            Text = "Mask color",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        maskColorRow.Children.Add(maskColorSwatch);
+        content.Children.Add(maskColorRow);
+
         var tcs = new TaskCompletionSource<bool>();
         var dialog = new Window
         {
@@ -449,10 +478,20 @@ public partial class MainWindow
         cancelBtn.Click += (_, _) => { tcs.TrySetResult(false); dialog.Close(); };
         generateBtn.Click += (_, _) => { tcs.TrySetResult(true); dialog.Close(); };
         dialog.Closed += (_, _) => tcs.TrySetResult(false);
+        maskColorSwatch.PointerPressed += async (_, _) =>
+        {
+            var picker = new ColorPickerWindow(maskFillColor, c =>
+            {
+                maskFillColor = c;
+                maskColorSwatch.Background = new SolidColorBrush(c);
+            });
+            await picker.ShowDialog(dialog);
+        };
 
         await dialog.ShowDialog(this);
         if (!await tcs.Task) return;
 
+        var selectedMaskColor = maskFillColor;
         BaseColorMaskEngine.GrantConsent();
 
         using (var modelBusy = BeginBusy(BaseColorMaskEngine.ModelFileExists
@@ -477,7 +516,7 @@ public partial class MainWindow
             var raw = new byte[w * h * 4];
             Marshal.Copy(bitmap.GetPixels(), raw, 0, raw.Length);
             bitmap.Dispose();
-            return BaseColorMaskEngine.GenerateMasks(raw, w, h);
+            return BaseColorMaskEngine.GenerateMasks(raw, w, h, selectedMaskColor);
         });
 
         var masks = generation.Masks;

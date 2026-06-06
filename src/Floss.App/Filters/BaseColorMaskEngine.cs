@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
 using System.Threading.Tasks;
+using Avalonia.Media;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 
@@ -29,6 +30,9 @@ public readonly struct MaskGenerationResult
 /// </summary>
 public static class BaseColorMaskEngine
 {
+    /// <summary>Default fill for detected silhouette regions (slightly darker than paper white).</summary>
+    public static readonly Color DefaultMaskFillColor = Color.FromRgb(200, 200, 200);
+
     private static InferenceSession? _isnetSession;
     private static readonly object _isnetLock = new();
     private static bool _modelConsentGiven;
@@ -138,7 +142,7 @@ public static class BaseColorMaskEngine
         }
     }
 
-    public static MaskGenerationResult GenerateMasks(byte[] bgra, int w, int h)
+    public static MaskGenerationResult GenerateMasks(byte[] bgra, int w, int h, Color? maskFillColor = null)
     {
         if (!ModelFileExists && GetIsnetSession() == null)
             return Empty(AnimeSegStatus.ModelMissing);
@@ -160,7 +164,8 @@ public static class BaseColorMaskEngine
         if (silhouette == null)
             return Empty(AnimeSegStatus.NoForegroundDetected);
 
-        var layer = CharacterMaskLayer(silhouette, w, h);
+        var fill = maskFillColor ?? DefaultMaskFillColor;
+        var layer = TintCharacterMask(silhouette, w, h, fill);
         return new MaskGenerationResult
         {
             Masks = HasVisiblePixels(layer) ? [layer] : [],
@@ -171,17 +176,17 @@ public static class BaseColorMaskEngine
     private static MaskGenerationResult Empty(AnimeSegStatus status) =>
         new() { Masks = [], AnimeSeg = status };
 
-    /// <summary>Character silhouette → BGRA layer (opaque inside character, transparent outside).</summary>
-    private static byte[] CharacterMaskLayer(byte[] characterMask, int w, int h)
+    /// <summary>Character silhouette → BGRA layer (opaque fill inside character, transparent outside).</summary>
+    public static byte[] TintCharacterMask(byte[] characterMask, int w, int h, Color fill)
     {
         var bgra = new byte[w * h * 4];
         for (var i = 0; i < w * h; i++)
         {
             if (characterMask[i] == 0) continue;
             var p = i * 4;
-            bgra[p] = 255;
-            bgra[p + 1] = 255;
-            bgra[p + 2] = 255;
+            bgra[p] = fill.B;
+            bgra[p + 1] = fill.G;
+            bgra[p + 2] = fill.R;
             bgra[p + 3] = 255;
         }
         return bgra;

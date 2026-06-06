@@ -386,6 +386,33 @@ public class DrawingDocumentTests
     }
 
     [Fact]
+    public void DeletePaperLayer_UndoRedo_RestoresPaperBackground()
+    {
+        var document = new DrawingDocument(4, 4);
+        document.AddLayer();
+        document.AddBackgroundLayer();
+        document.SetPaperColor(Avalonia.Media.Color.FromArgb(255, 240, 230, 220));
+
+        var paperIndex = document.Layers.ToList().FindIndex(l => l.IsPaper);
+        TestAssertions.True(paperIndex >= 0);
+        TestAssertions.True(document.IsPaperBackgroundVisible);
+
+        document.DeleteLayers([paperIndex]);
+        Assert.Null(document.PaperLayer);
+        TestAssertions.False(document.IsPaperBackgroundVisible);
+
+        document.Undo();
+        Assert.NotNull(document.PaperLayer);
+        TestAssertions.True(document.Layers.Any(l => l.IsPaper));
+        TestAssertions.True(document.IsPaperBackgroundVisible);
+        TestAssertions.Equal(240, document.PaperColor.R);
+
+        document.Redo();
+        Assert.Null(document.PaperLayer);
+        TestAssertions.False(document.IsPaperBackgroundVisible);
+    }
+
+    [Fact]
     public void DeleteLayers_RemovesMultipleSelectedLayers()
     {
         var document = new DrawingDocument(4, 4);

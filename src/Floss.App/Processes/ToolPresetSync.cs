@@ -71,10 +71,14 @@ internal static class ToolPresetSync
                 wand.Operation = preset.SelectOp;
                 wand.Tolerance = preset.Tolerance;
                 wand.FillReference = preset.FillReference;
+                wand.ContiguousFill = preset.ContiguousFill;
+                wand.AreaScaling = preset.AreaScaling;
                 break;
             case FloodFillOutput fill:
                 fill.Tolerance = preset.Tolerance;
                 fill.FillReference = preset.FillReference;
+                fill.ContiguousFill = preset.ContiguousFill;
+                fill.AreaScaling = preset.AreaScaling;
                 fill.Opacity = opacity;
                 fill.BlendMode = blendMode;
                 break;

@@ -66,4 +66,21 @@ public class KeyboardInputScopeTests
         TestAssertions.True(scope.ShouldRouteToNodeGraph(canvas));
         TestAssertions.False(scope.ShouldRouteToCanvas(canvas));
     }
+
+    [Fact]
+    public void LazyRegisteredNodeGraph_RoutesWhenPointerOver()
+    {
+        var scope = new KeyboardInputScope();
+        var canvas = new Avalonia.Controls.Grid { IsVisible = true };
+        var nodeGraph = new Avalonia.Controls.Grid { IsVisible = true };
+        scope.RegisterSurface(canvas, KeyboardInputRegion.Canvas);
+        scope.Activate(KeyboardInputRegion.Canvas);
+
+        // Simulate lazy init: node graph surface registered after startup wiring.
+        scope.RegisterSurface(nodeGraph, KeyboardInputRegion.NodeGraph);
+        scope.UpdatePointerVisual(nodeGraph);
+
+        TestAssertions.True(scope.ShouldRouteToNodeGraph(canvas));
+        TestAssertions.False(scope.ShouldRouteToCanvas(canvas));
+    }
 }

@@ -25,6 +25,7 @@ public static class KeyboardSurface
             => scope.UpdatePointerVisual(e.Source as Visual ?? surface);
 
         surface.AddHandler(InputElement.PointerPressedEvent, Activate, RoutingStrategies.Tunnel | RoutingStrategies.Bubble);
+        surface.AddHandler(InputElement.PointerEnteredEvent, Activate, RoutingStrategies.Tunnel | RoutingStrategies.Bubble);
         surface.AddHandler(InputElement.PointerMovedEvent, TrackPointer, RoutingStrategies.Tunnel | RoutingStrategies.Bubble);
     }
 }

@@ -269,7 +269,7 @@ public sealed class DrawingDocument : IDisposable
         Height = newH;
         Selection.Resize(newW, newH);
 
-        PaperLayer = _layers.FirstOrDefault(l => l.IsPaper);
+        RebindPaperState();
 
         ActiveLayerIndex = _layers.Count > 0 ? Math.Clamp(ActiveLayerIndex, 0, _layers.Count - 1) : -1;
         NotifyLayersChanged();
@@ -355,9 +355,7 @@ public sealed class DrawingDocument : IDisposable
 
     public void FinalizeImport(int? activeLayerIndex = null)
     {
-        PaperLayer = _layers.FirstOrDefault(l => l.IsPaper);
-        if (PaperLayer != null && PaperColor.A == 0)
-            PaperColor = new Avalonia.Media.Color(255, 255, 255, 255);
+        RebindPaperState();
 
         var defaultActive = _layers.FindIndex(l => !l.IsPaper && !l.IsGroup);
         if (defaultActive < 0)
@@ -616,7 +614,7 @@ public sealed class DrawingDocument : IDisposable
         roots.Add(bg);
         RebuildFlatLayerOrder(roots);
 
-        PaperLayer = bg;
+        RebindPaperState();
         NotifyLayersChanged();
     }
 
@@ -702,13 +700,9 @@ public sealed class DrawingDocument : IDisposable
             layer.Dispose();
         }
 
-        if (removedPaper)
-        {
-            PaperLayer = null;
-            PaperColor = new Avalonia.Media.Color(0, 0, 0, 0);
-        }
-
         RebuildFlatLayerOrder();
+        if (removedPaper)
+            RebindPaperState();
         if (_layers.Count == 0)
         {
             ActiveLayerIndex = -1;
@@ -1435,11 +1429,12 @@ public sealed class DrawingDocument : IDisposable
         return layer;
     }
 
-    private DocumentSnapshot CaptureSnapshot() => new(Width, Height, ActiveLayerIndex, _layers.Select(CaptureLayerSnapshot).ToArray(), Selection.CaptureSnapshot());
+    private DocumentSnapshot CaptureSnapshot() => new(Width, Height, ActiveLayerIndex, PaperColor, _layers.Select(CaptureLayerSnapshot).ToArray(), Selection.CaptureSnapshot());
 
     private void RestoreSnapshot(DocumentSnapshot snapshot)
     {
         Width = snapshot.Width; Height = snapshot.Height;
+        PaperColor = snapshot.PaperColor;
         Selection.RestoreSnapshot(snapshot.Selection);
         NotifyLayerRemovedRecursive(_layers);
         foreach (var l in _layers) l.Dispose();
@@ -1455,12 +1450,23 @@ public sealed class DrawingDocument : IDisposable
         }
 
         ActiveLayerIndex = _layers.Count > 0 ? Math.Clamp(snapshot.ActiveLayerIndex, 0, _layers.Count - 1) : -1;
+        RebindPaperState();
         NotifyLayersChanged();
         NotifySelectionChanged();
     }
 
+    /// <summary>Keep <see cref="PaperLayer"/> and <see cref="PaperColor"/> aligned with the layer list.</summary>
+    private void RebindPaperState()
+    {
+        PaperLayer = _layers.FirstOrDefault(l => l.IsPaper);
+        if (PaperLayer == null)
+            PaperColor = new Avalonia.Media.Color(0, 0, 0, 0);
+        else if (PaperColor.A == 0)
+            PaperColor = new Avalonia.Media.Color(255, 255, 255, 255);
+    }
+
     // --- Records and State Classes ---
-    private sealed record DocumentSnapshot(int Width, int Height, int ActiveLayerIndex, LayerSnapshot[] Layers, SelectionMask.Snapshot Selection);
+    private sealed record DocumentSnapshot(int Width, int Height, int ActiveLayerIndex, Avalonia.Media.Color PaperColor, LayerSnapshot[] Layers, SelectionMask.Snapshot Selection);
     private sealed record LayerSnapshot(string Name, bool IsVisible, bool IsLocked, bool IsAlphaLocked, bool IsReference, bool IsPaper, double Opacity, BlendMode BlendMode, int OffsetX, int OffsetY, bool IsGroup, bool IsOpen, bool IsClipping, int IndentLevel, int ParentIndex, int BitmapWidth, int BitmapHeight, Dictionary<(int X, int Y), byte[]> Tiles, AdjustmentLayerData? Adjustment = null, Dictionary<(int X, int Y), byte[]>? MaskTiles = null, bool IsMaskVisible = true);
 
     private interface IHistoryState
@@ -1533,7 +1539,14 @@ public sealed class DrawingDocument : IDisposable
         public PixelRegion VisualDirtyRegion => PixelRegion.Empty;
 
         public IHistoryState CaptureRedo(DrawingDocument document) => new InsertLayerHistoryState(RemovedIndex, document.ActiveLayerIndex);
-        public void Restore(DrawingDocument document) { document._layers.Insert(RemovedIndex, document.CreateLayerFromSnapshot(RemovedSnap)); document.ActiveLayerIndex = document._layers.Count > 0 ? Math.Clamp(PreviousActiveIndex, 0, document._layers.Count - 1) : -1; document.NotifyLayersChanged(); }
+        public void Restore(DrawingDocument document)
+        {
+            document._layers.Insert(RemovedIndex, document.CreateLayerFromSnapshot(RemovedSnap));
+            document.ActiveLayerIndex = document._layers.Count > 0 ? Math.Clamp(PreviousActiveIndex, 0, document._layers.Count - 1) : -1;
+            if (RemovedSnap.IsPaper)
+                document.RebindPaperState();
+            document.NotifyLayersChanged();
+        }
     }
 
     // Stores the structural position of a layer before a move — no pixels copied.

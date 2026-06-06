@@ -145,12 +145,22 @@ public sealed class NodeGraphView : Control
         _selectedNodeId = null;
         RebuildNodeIndex();
         _history.Clear();
-        _history.Add(new HistoryEntry(_graph.DeepClone(), new(_positions)));
-        _historyIndex = 0;
+        _historyIndex = -1;
         InvalidatePreviews();
         InvalidateVisual();
         WireCacheInvalidate();
     }
+
+    /// <summary>Reset undo stack to the current graph + node positions (call after AutoLayout).</summary>
+    public void CaptureHistoryBaseline()
+    {
+        _history.Clear();
+        _history.Add(new HistoryEntry(_graph.DeepClone(), new(_positions)));
+        _historyIndex = 0;
+    }
+
+    internal bool AllNodesHavePositions()
+        => _graph.Nodes.All(n => _positions.ContainsKey(n.Id));
 
     private void RebuildNodeIndex()
     {
@@ -295,7 +305,7 @@ public sealed class NodeGraphView : Control
 
     public void Undo()
     {
-        if (_historyIndex <= 0) return;
+        if (_historyIndex <= 0 || _history.Count == 0) return;
         _historyIndex--;
         RestoreEntry(_history[_historyIndex]);
     }
@@ -311,6 +321,8 @@ public sealed class NodeGraphView : Control
     {
         _graph = entry.Graph.DeepClone();
         _positions = new Dictionary<string, Point>(entry.Positions);
+        if (_graph.Nodes.Count > 0 && !AllNodesHavePositions())
+            AutoLayout();
         _selectedNodeId = null;
         RebuildNodeIndex();
         WireCacheInvalidate();

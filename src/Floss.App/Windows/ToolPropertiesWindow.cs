@@ -1504,8 +1504,12 @@ public sealed class ToolPropertiesWindow : Window
             case OutputProcessType.MagicWand when cat == "Magic Wand Settings":
                 panel.Children.Add(BuildGenericSliderRow("Tolerance", 0, 1.0,
                     _toolPreset.Tolerance, v => CommitTool(p => p.Tolerance = v), toolPropId: "wand.tolerance"));
+                panel.Children.Add(BuildGenericComboRow<FillReferenceMode>("Reference",
+                    _toolPreset.FillReference, v => CommitTool(p => p.FillReference = v), toolPropId: "wand.reference"));
                 panel.Children.Add(BuildGenericComboRow<SelectOp>("Operation",
                     _toolPreset.SelectOp, v => CommitTool(p => p.SelectOp = v), toolPropId: "wand.op"));
+                panel.Children.Add(BuildGenericSliderRow("Area Scaling", -20, 20,
+                    _toolPreset.AreaScaling, v => CommitTool(p => p.AreaScaling = v), "px", step: 1, toolPropId: "wand.areaScaling"));
                 panel.Children.Add(BuildGenericToggleRow("Contiguous",
                     _toolPreset.ContiguousFill, v => CommitTool(p => p.ContiguousFill = v), toolPropId: "wand.contiguous"));
                 break;

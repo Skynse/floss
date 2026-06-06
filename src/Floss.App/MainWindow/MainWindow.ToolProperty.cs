@@ -208,8 +208,12 @@ public partial class MainWindow
                 props.AddRange([
                     SliderProp("wand.tolerance", "Tolerance", true,
                         () => preset.Tolerance, v => UpdateActiveToolPreset(p => p.Tolerance = v), 0, 1, "%"),
+                    EnumProp("wand.reference", "Reference", true,
+                        () => preset.FillReference, v => UpdateActiveToolPreset(p => p.FillReference = v)),
                     EnumProp("wand.op", "Operation", true,
                         () => preset.SelectOp, v => UpdateActiveToolPreset(p => p.SelectOp = v)),
+                    SliderProp("wand.areaScaling", "Area Scaling", false,
+                        () => preset.AreaScaling, v => UpdateActiveToolPreset(p => p.AreaScaling = v), -20, 20, "px"),
                     BoolProp("wand.contiguous", "Contiguous", false,
                         () => preset.ContiguousFill, v => UpdateActiveToolPreset(p => p.ContiguousFill = v))
                 ]);
