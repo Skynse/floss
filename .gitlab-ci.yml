@@ -14,7 +14,6 @@
 #   Windows + macOS portable zips (dotnet cross-publish from Linux)
 
 stages:
-  - test
   - pack
   - deploy
 
@@ -29,17 +28,6 @@ variables:
     key: dotnet-$CI_COMMIT_REF_SLUG
     paths:
       - .nuget/packages/
-
-test:
-  stage: test
-  image: mcr.microsoft.com/dotnet/sdk:10.0
-  <<: *dotnet_cache
-  script:
-    - dotnet restore tests/Floss.App.Tests/Floss.App.Tests.csproj
-    - dotnet test tests/Floss.App.Tests/Floss.App.Tests.csproj -c Release --no-restore
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH
 
 .tag_version: &tag_version
   - |

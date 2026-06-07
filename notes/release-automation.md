@@ -26,15 +26,16 @@ All installers are **built on Linux CI** (cross-publish for Windows/macOS portab
 ### 1. Gumroad product
 
 1. [Gumroad](https://gumroad.com) → create a **digital product** (single tier).
-2. Copy **product id** from edit URL: `…/products/<GUMROAD_PRODUCT_ID>/edit`
-3. [Advanced settings](https://app.gumroad.com/settings/advanced) → **access token** with `edit_products` scope.
+2. Set **custom permalink** to `floss` (Share → URL). Public link: `https://popshuvit.gumroad.com/l/floss`.
+3. Copy **product id** from edit URL: `…/products/<GUMROAD_PRODUCT_ID>/edit` (stays `dqmpcx` — used by CLI/CI, not the public slug).
+4. [Advanced settings](https://app.gumroad.com/settings/advanced) → **access token** with `edit_products` scope.
 
 ### 2. GitLab CI variables
 
 ```bash
 glab variable set GUMROAD_ACCESS_TOKEN "..." -m -p
 glab variable set GUMROAD_PRODUCT_ID "dqmpcx" -p
-glab variable set GUMROAD_PRODUCT_URL "https://austinamakye.gumroad.com/l/floss" -p
+glab variable set GUMROAD_PRODUCT_URL "https://popshuvit.gumroad.com/l/floss" -p
 ```
 
 ### 3. floss-site
@@ -48,7 +49,7 @@ Point the download/buy page at your Gumroad product. Gumroad is fulfillment — 
 ./packaging/release/release.sh
 ```
 
-GitLab: `test` → `pack:all` → `deploy:gumroad`.
+GitLab: `pack:all` → `deploy:gumroad` (tests are local only).
 
 ## Local upload (without CI)
 

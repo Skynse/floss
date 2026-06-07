@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title data-gumroad-field="name">Floss</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #1b1b1b;
+      --fg: #e2e2e2;
+      --muted: #b8b8b8;
+      --surface: #242424;
+      --surface-2: #2b2b2b;
+      --border: #3c3c3c;
+      --accent: #4f78b8;
+      --accent-hi: #88a6d4;
+      --glow: radial-gradient(ellipse 80% 60% at 50% -10%, rgba(79, 120, 184, 0.35), transparent 65%);
+    }
+    html.light {
+      color-scheme: light;
+      --bg: #f4f4f5;
+      --fg: #18181b;
+      --muted: #52525b;
+      --surface: #ffffff;
+      --surface-2: #fafafa;
+      --border: #e4e4e7;
+      --accent: #3d5f96;
+      --accent-hi: #4f78b8;
+      --glow: radial-gradient(ellipse 80% 60% at 50% -10%, rgba(79, 120, 184, 0.18), transparent 65%);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      line-height: 1.6;
+    }
+    .glow { background: var(--glow); }
+    .card {
+      background: color-mix(in srgb, var(--surface) 88%, transparent);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      transition: filter 0.15s ease, transform 0.15s ease;
+    }
+    .btn-primary:hover { filter: brightness(1.08); }
+    .btn-primary:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: 2px; }
+    .btn-secondary {
+      background: transparent;
+      color: var(--fg);
+      border: 1px solid var(--border);
+      cursor: pointer;
+    }
+    .btn-secondary:hover { border-color: var(--accent-hi); color: var(--accent-hi); }
+    input[type="number"] {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--fg);
+      border-radius: 8px;
+      padding: 0.65rem 0.85rem;
+      width: 7rem;
+    }
+    input[type="number"]:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: 1px; }
+    .fade-up { opacity: 0; transform: translateY(18px); animation: fadeUp 0.7s ease forwards; }
+    .fade-up.d1 { animation-delay: 0.08s; }
+    .fade-up.d2 { animation-delay: 0.16s; }
+    .fade-up.d3 { animation-delay: 0.24s; }
+    @keyframes fadeUp { to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) {
+      .fade-up { animation: none; opacity: 1; transform: none; }
+    }
+    /* Gumroad injects block HTML into description — must NOT live inside <p> */
+    .product-description {
+      margin-top: 1rem;
+      max-width: 36rem;
+      font-size: 0.95rem;
+      color: var(--muted);
+    }
+    .product-description p {
+      margin: 0 0 1rem;
+    }
+    .product-description p:last-child {
+      margin-bottom: 0;
+    }
+    .product-description strong {
+      color: var(--fg);
+      font-weight: 600;
+    }
+    .product-description ul {
+      margin: 0 0 1rem;
+      padding-left: 1.25rem;
+      list-style: disc;
+    }
+    .product-description li {
+      margin: 0.35rem 0;
+    }
+    .product-description li::marker {
+      color: var(--accent-hi);
+    }
+    .product-description a {
+      color: var(--accent-hi);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div class="glow min-h-screen">
+    <header class="mx-auto flex max-w-5xl items-center justify-between gap-4 px-5 py-5">
+      <div class="flex items-center gap-3">
+        <img
+          src="https://public-files.gumroad.com/nh96fp7uiukkijt9ecyi2pj0dy50"
+          alt=""
+          width="44"
+          height="44"
+          class="rounded-xl border border-[color:var(--border)]"
+        />
+        <div>
+          <p class="text-lg font-semibold tracking-tight" data-gumroad-field="name">Floss</p>
+          <p class="text-sm text-[color:var(--muted)]">Digital painting · Beta</p>
+        </div>
+      </div>
+      <button
+        id="theme-toggle"
+        type="button"
+        class="btn-secondary rounded-lg px-3 py-2 text-sm"
+        aria-label="Toggle light and dark mode"
+      >
+        Theme
+      </button>
+    </header>
+
+    <main class="mx-auto max-w-5xl px-5 pb-16">
+      <section class="grid items-center gap-10 py-8 md:grid-cols-[1.05fr_0.95fr] md:py-12">
+        <div class="fade-up">
+          <p class="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--accent-hi)]">
+            All platforms · one purchase
+          </p>
+          <h1 class="text-4xl font-semibold leading-tight tracking-tight md:text-5xl">
+            Professional painting tools, without the clutter.
+          </h1>
+          <!-- Sync body copy from product-description.html -->
+          <div class="product-description">
+            <p><strong>Floss</strong> is a digital painting app built for artists who want professional tools without a cluttered interface.</p>
+            <p>Paint with responsive brushes, organize work in layers and folders, and open files you already have (PSD, KRA, PNG, and more). Save layered <strong>.floss</strong> documents or export when you're done.</p>
+            <p><strong>What you get</strong></p>
+            <ul>
+              <li><strong>Linux</strong>: AppImage + Flatpak</li>
+              <li><strong>Windows</strong>: portable zip + installer</li>
+              <li><strong>macOS</strong>: Apple Silicon + Intel builds</li>
+            </ul>
+            <p>One purchase includes every platform. Download what you need from your Gumroad library.</p>
+            <p><strong>Updates</strong></p>
+            <p>When a new version ships, log into Gumroad and download the latest builds from your library.</p>
+            <p><strong>Beta note</strong></p>
+            <p>Floss is in active beta (<strong>v0.1.x</strong>). Expect rough edges, missing features, and breaking changes between releases. You're supporting early development and get every update in this series as we ship them.</p>
+            <p>Questions or a broken download? Email <a href="mailto:support@flosspaint.com">support@flosspaint.com</a></p>
+          </div>
+          <ul class="mt-6 space-y-2 text-sm text-[color:var(--muted)]">
+            <li>Linux — AppImage + Flatpak</li>
+            <li>Windows — portable zip</li>
+            <li>macOS — Apple Silicon + Intel .dmg</li>
+          </ul>
+        </div>
+
+        <div class="fade-up d1">
+          <img
+            src="https://public-files.gumroad.com/vi3131bp6lw33f27k5ylbpbhx4ei"
+            alt="Floss workspace screenshot"
+            width="670"
+            height="352"
+            class="card w-full shadow-2xl"
+          />
+        </div>
+      </section>
+
+      <section class="fade-up d2 card mx-auto max-w-3xl p-6 md:p-8" aria-labelledby="buy-heading">
+        <h2 id="buy-heading" class="text-2xl font-semibold tracking-tight">Get Floss</h2>
+        <p class="mt-2 text-sm text-[color:var(--muted)]">
+          Pay what you want (minimum <span data-gumroad-field="price">$9.99</span>).
+          Includes every platform. Re-download updates from your Gumroad library.
+        </p>
+
+        <div class="mt-6 flex flex-wrap items-end gap-3">
+          <label class="flex flex-col gap-1 text-sm">
+            <span class="text-[color:var(--muted)]">Your price (USD)</span>
+            <input id="gr-price" type="number" min="9.99" step="0.01" value="9.99" aria-label="Price in US dollars" />
+          </label>
+          <button id="gr-buy" type="button" class="btn-primary rounded-lg px-6 py-3 text-sm font-semibold">
+            I want this
+          </button>
+          <button
+            type="button"
+            class="btn-secondary rounded-lg px-5 py-3 text-sm font-semibold"
+            data-gumroad-action="buy"
+            data-gumroad-price="9.99"
+          >
+            Quick buy — $9.99
+          </button>
+        </div>
+
+        <p class="mt-4 text-xs text-[color:var(--muted)]">
+          Beta software — rough edges and breaking changes between releases are expected.
+          DRM-free. No account checks in the app.
+        </p>
+      </section>
+
+      <section class="fade-up d3 mt-10 grid gap-4 md:grid-cols-3">
+        <article class="card p-5">
+          <h3 class="font-semibold">Brushes that respond</h3>
+          <p class="mt-2 text-sm text-[color:var(--muted)]">Pressure, speed, and tilt. Wet mixing, presets, and .abr import.</p>
+        </article>
+        <article class="card p-5">
+          <h3 class="font-semibold">Layers &amp; folders</h3>
+          <p class="mt-2 text-sm text-[color:var(--muted)]">Blend modes, clipping masks, alpha lock, full undo stack.</p>
+        </article>
+        <article class="card p-5">
+          <h3 class="font-semibold">Files you already use</h3>
+          <p class="mt-2 text-sm text-[color:var(--muted)]">Open PSD and KRA with layers. Save .floss or export when done.</p>
+        </article>
+      </section>
+    </main>
+
+    <footer class="border-t border-[color:var(--border)] px-5 py-8 text-center text-xs text-[color:var(--muted)]">
+      <p>Questions? support@flosspaint.com</p>
+    </footer>
+  </div>
+
+  <script>
+    (function () {
+      var root = document.documentElement;
+      var toggle = document.getElementById("theme-toggle");
+      var stored = null;
+      try { stored = localStorage.getItem("floss-theme"); } catch (e) {}
+      if (stored === "light") root.classList.add("light");
+      if (stored === "dark") root.classList.remove("light");
+
+      toggle.addEventListener("click", function () {
+        root.classList.toggle("light");
+        try {
+          localStorage.setItem("floss-theme", root.classList.contains("light") ? "light" : "dark");
+        } catch (e) {}
+      });
+
+      document.getElementById("gr-buy").addEventListener("click", function () {
+        var v = (document.getElementById("gr-price").value || "").trim();
+        var params = {};
+        if (v !== "") {
+          var n = parseFloat(v);
+          if (!isNaN(n) && n >= 0) params.price = String(n);
+        }
+        parent.postMessage({ type: "gumroad:checkout", params: params }, "*");
+      });
+    })();
+  </script>
+</body>
+</html>
