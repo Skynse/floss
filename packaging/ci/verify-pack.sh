@@ -47,7 +47,8 @@ if ! $CHECK_ONLY; then
 fi
 
 echo "==> CI-parity verify in debian:bookworm via $CONTAINER (check_only=$CHECK_ONLY)"
-$CONTAINER run --rm \
+# flatpak-builder needs FUSE for rofiles (GitLab runners provide it; local containers need --privileged).
+$CONTAINER run --rm --privileged \
   -v "$ROOT:/builds/Skynse/floss:Z" \
   -w /builds/Skynse/floss \
   debian:bookworm \
