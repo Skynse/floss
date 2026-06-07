@@ -8,3 +8,4 @@ genisoimage
 squashfs-tools
 libfuse2
 fuse3
+libicu72
