@@ -1,10 +1,10 @@
-# GitLab CI — build Floss installers and upload to Cloudflare R2 on tags.
+# GitLab CI — build Floss installers and upload to Gumroad on tags.
 #
 # CI variables (optional):
 #   FLOSS_VERSION — override csproj Version at pack time
 #
-# CI variables (required for deploy:cdn on tags):
-#   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ACCOUNT_ID, R2_BUCKET, CDN_PUBLIC_URL
+# CI variables (required for deploy:gumroad on tags):
+#   GUMROAD_ACCESS_TOKEN, GUMROAD_PRODUCT_ID
 #
 # Release: git tag v0.1.0-beta.2 && git push origin --tags
 # See notes/release-automation.md
@@ -121,11 +121,11 @@ pack:macos:
     - when: manual
       allow_failure: true
 
-# Upload pack artifacts to Cloudflare R2 on version tags.
-# GitLab CI variables: R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ACCOUNT_ID, R2_BUCKET, CDN_PUBLIC_URL
-deploy:cdn:
+# Upload pack artifacts to Gumroad on version tags (buyers re-download from library).
+# GitLab CI variables: GUMROAD_ACCESS_TOKEN, GUMROAD_PRODUCT_ID
+deploy:gumroad:
   stage: deploy
-  image: mcr.microsoft.com/dotnet/sdk:10.0
+  image: debian:bookworm-slim
   needs:
     - job: pack:linux
       artifacts: true
@@ -136,13 +136,13 @@ deploy:cdn:
       artifacts: true
       optional: true
   before_script:
-    - apt-get update -qq && apt-get install -y -qq awscli
-    - chmod +x packaging/release/upload-cdn.sh
+    - apt-get update -qq && apt-get install -y -qq curl ca-certificates
+    - chmod +x packaging/release/upload-gumroad.sh
     - export FLOSS_VERSION="${CI_COMMIT_TAG#v}"
   script:
-    - ./packaging/release/upload-cdn.sh
+    - ./packaging/release/upload-gumroad.sh
   rules:
     - if: $CI_COMMIT_TAG =~ /^v/
   environment:
     name: production
-    url: https://cdn.flosspaint.com/downloads/version.json
+    url: $GUMROAD_PRODUCT_URL

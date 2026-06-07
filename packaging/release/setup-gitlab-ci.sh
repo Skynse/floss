@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Push R2/CDN CI variables to GitLab from packaging/release/.env.release
+# Push Gumroad CI variables to GitLab from packaging/release/.env.release
 #
 # One-time:
 #   cp packaging/release/.env.release.example packaging/release/.env.release
-#   # fill in GITLAB_TOKEN + R2_* values
+#   # fill in GITLAB_TOKEN + GUMROAD_* values
 #   ./packaging/release/setup-gitlab-ci.sh
+#
+# Or with glab (no GITLAB_TOKEN needed):
+#   glab variable set GUMROAD_ACCESS_TOKEN "..." -m -p
+#   glab variable set GUMROAD_PRODUCT_ID "..." -p
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -22,7 +26,7 @@ source "$ENV_FILE"
 set +a
 
 if [[ -z "${GITLAB_TOKEN:-}" ]]; then
-  echo "Set GITLAB_TOKEN in $ENV_FILE (api scope)." >&2
+  echo "Set GITLAB_TOKEN in $ENV_FILE (api scope), or use glab variable set." >&2
   exit 1
 fi
 
@@ -38,11 +42,8 @@ require_var() {
   fi
 }
 
-require_var R2_ACCESS_KEY_ID
-require_var R2_SECRET_ACCESS_KEY
-require_var R2_ACCOUNT_ID
-require_var R2_BUCKET
-require_var CDN_PUBLIC_URL
+require_var GUMROAD_ACCESS_TOKEN
+require_var GUMROAD_PRODUCT_ID
 
 if ! command -v curl >/dev/null; then
   echo "curl is required." >&2
@@ -84,17 +85,11 @@ upsert_variable() {
 }
 
 echo "==> GitLab CI variables → $PROJECT"
-upsert_variable R2_ACCESS_KEY_ID "$R2_ACCESS_KEY_ID" true true
-upsert_variable R2_SECRET_ACCESS_KEY "$R2_SECRET_ACCESS_KEY" true true
-upsert_variable R2_ACCOUNT_ID "$R2_ACCOUNT_ID" false true
-upsert_variable R2_BUCKET "$R2_BUCKET" false true
-upsert_variable CDN_PUBLIC_URL "$CDN_PUBLIC_URL" false true
+upsert_variable GUMROAD_ACCESS_TOKEN "$GUMROAD_ACCESS_TOKEN" true true
+upsert_variable GUMROAD_PRODUCT_ID "$GUMROAD_PRODUCT_ID" false true
 
-if [[ -n "${R2_PREFIX:-}" ]]; then
-  upsert_variable R2_PREFIX "$R2_PREFIX" false true
-fi
-if [[ -n "${R2_ENDPOINT:-}" ]]; then
-  upsert_variable R2_ENDPOINT "$R2_ENDPOINT" false true
+if [[ -n "${GUMROAD_PRODUCT_URL:-}" ]]; then
+  upsert_variable GUMROAD_PRODUCT_URL "$GUMROAD_PRODUCT_URL" false true
 fi
 
 echo ""

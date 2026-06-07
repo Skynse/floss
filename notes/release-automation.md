@@ -1,52 +1,50 @@
-# Release automation (CDN + site)
+# Release automation (Gumroad)
+
+Aseprite-style: one paid product, all platforms, buyers re-download updates from their Gumroad library. No in-app licensing or auto-updater.
 
 ## Overview
 
 | Step | Where | Trigger |
 |------|--------|---------|
 | Build installers | GitLab CI `pack:*` jobs | git tag `v*` |
-| Upload binaries | `packaging/release/upload-cdn.sh` | CI `deploy:cdn` on tag |
-| Download links | `cdn.flosspaint.com/downloads/*` | stable filenames |
-| Version label on site | `cdn.flosspaint.com/downloads/version.json` | fetched at page render (no Vercel redeploy per release) |
-| Marketing site | Vercel (`floss-site`) | git push to main |
+| Upload binaries | `packaging/release/upload-gumroad.sh` | CI `deploy:gumroad` on tag |
+| Purchase + downloads | Gumroad product | embed checkout on flosspaint.com |
+| Updates | Buyer Gumroad library | manual re-download after each release |
 
 ## One-time setup
 
-### 1. Secrets file (local, gitignored)
+### 1. Gumroad product
+
+1. [Gumroad](https://gumroad.com) → create a **digital product** (single tier — same app for everyone).
+2. Attach placeholder files or leave empty; CI replaces them on first tagged release.
+3. Copy **product id** from the edit URL: `…/products/<GUMROAD_PRODUCT_ID>/edit`
+4. [Advanced settings](https://app.gumroad.com/settings/advanced) → create **access token** with `edit_products` scope.
+
+### 2. GitLab CI variables
 
 ```bash
 cp packaging/release/.env.release.example packaging/release/.env.release
-# edit: GITLAB_TOKEN + R2_* values
+# edit GUMROAD_ACCESS_TOKEN + GUMROAD_PRODUCT_ID
 ./packaging/release/setup-gitlab-ci.sh
 ```
 
-`setup-gitlab-ci.sh` pushes CI variables to GitLab via API (no web UI).
+Or with glab:
 
-GitLab token: https://gitlab.com/-/user_settings/personal_access_tokens — scope **api**.
-
-### Cloudflare R2
-
-1. R2 bucket (e.g. `floss-cdn`)
-2. Custom domain: `cdn.flosspaint.com` → bucket, public access or CDN rule
-3. API token with Object Read & Write
-
-### GitLab CI variables (floss repo, masked)
+```bash
+glab variable set GUMROAD_ACCESS_TOKEN "..." -m -p
+glab variable set GUMROAD_PRODUCT_ID "..." -p
+glab variable set GUMROAD_PRODUCT_URL "https://yourname.gumroad.com/l/floss" -p
+```
 
 | Variable | Example |
 |----------|---------|
-| `R2_ACCESS_KEY_ID` | R2 access key |
-| `R2_SECRET_ACCESS_KEY` | R2 secret |
-| `R2_ACCOUNT_ID` | Cloudflare account id |
-| `R2_BUCKET` | `floss-cdn` |
-| `CDN_PUBLIC_URL` | `https://cdn.flosspaint.com` |
+| `GUMROAD_ACCESS_TOKEN` | Gumroad API token |
+| `GUMROAD_PRODUCT_ID` | Product id from dashboard |
+| `GUMROAD_PRODUCT_URL` | Public product link (optional, CI environment URL) |
 
-Optional: `R2_PREFIX` (default `downloads`), `R2_ENDPOINT` (override).
+### 3. floss-site
 
-### Vercel (floss-site)
-
-| Variable | Value |
-|----------|--------|
-| `NEXT_PUBLIC_DOWNLOAD_CDN` | `https://cdn.flosspaint.com` |
+Point the download/buy page at your Gumroad product (embed widget or link). Do **not** host release binaries on the marketing site — Gumroad is fulfillment.
 
 ## Release workflow
 
@@ -55,35 +53,30 @@ Optional: `R2_PREFIX` (default `downloads`), `R2_ENDPOINT` (override).
 ./packaging/release/release.sh
 ```
 
-That tags `v{Version}`, pushes branch + tag → GitLab runs pack + `deploy:cdn`.
+That tags `v{Version}`, pushes branch + tag → GitLab runs pack + `deploy:gumroad`.
 
 Or manually:
 
 ```bash
 git tag v0.1.0-beta.2
-git push origin main --tags
+git push origin master --tags
 ```
 
-GitLab runs tests → pack jobs (linux always; win/mac if runners available) → `deploy:cdn` uploads artifacts to R2.
+GitLab runs tests → pack jobs → `deploy:gumroad` uploads artifacts to the Gumroad product (replaces all attached files).
 
-Site download page reads `version.json` from CDN; binary hrefs use `NEXT_PUBLIC_DOWNLOAD_CDN/downloads/<file>`.
+Optional: send a [Gumroad email update](https://gumroad.com/help/article/169-how-to-send-an-update) to buyers when a release ships.
 
 ## Local upload (without CI)
 
 ```bash
-export R2_ACCESS_KEY_ID=...
-export R2_SECRET_ACCESS_KEY=...
-export R2_ACCOUNT_ID=...
-export R2_BUCKET=floss-cdn
-export CDN_PUBLIC_URL=https://cdn.flosspaint.com
+export GUMROAD_ACCESS_TOKEN=...
+export GUMROAD_PRODUCT_ID=...
 
 ./packaging/velopack/pack.sh linux-x64
 ./packaging/flatpak/build.sh
 ./packaging/portable/pack.sh all
-./packaging/release/upload-cdn.sh
+./packaging/release/upload-gumroad.sh
 ```
-
-Requires [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html).
 
 ## Key files
 
@@ -91,8 +84,6 @@ Requires [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-s
 |------|------|
 | `packaging/release/release.sh` | `git tag` + `git push` from csproj Version |
 | `packaging/release/setup-gitlab-ci.sh` | Push CI variables via GitLab API |
+| `packaging/release/upload-gumroad.sh` | Upload/replace product files via gumroad-cli |
 | `packaging/release/.env.release.example` | Local secrets template |
-| `packaging/release/upload-cdn.sh` | R2 upload + `version.json` |
-| `.gitlab-ci.yml` | `deploy:cdn` stage on tags |
-| `floss-site/app/content/floss.ts` | CDN base URL + download paths |
-| `floss-site/app/lib/release-manifest.ts` | Fetch `version.json` |
+| `.gitlab-ci.yml` | `deploy:gumroad` stage on tags |

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tag + push → GitLab CI builds installers and uploads to R2.
+# Tag + push → GitLab CI builds installers and uploads to Gumroad.
 #
 # Usage:
 #   ./packaging/release/release.sh           # tag v{Version from csproj}, push
@@ -69,6 +69,8 @@ else
   echo "Pushed $TAG. Watch pipeline:"
   echo "  https://gitlab.com/Skynse/floss/-/pipelines"
   echo ""
-  echo "When deploy:cdn finishes, check:"
-  echo "  https://cdn.flosspaint.com/downloads/version.json"
+  echo "When deploy:gumroad finishes, check your Gumroad product files."
+  if [[ -n "${GUMROAD_PRODUCT_URL:-}" ]]; then
+    echo "  $GUMROAD_PRODUCT_URL"
+  fi
 fi

@@ -56,8 +56,8 @@ copy_one "$ROOT/artifacts/portable/FlossPaint-osx-x64-beta-portable.zip" \
 cat > "$DOWNLOADS/README.txt" <<EOF
 Floss beta installers (v$VERSION)
 
-These files are copied by packaging/release/sync-to-site.sh from the floss repo.
-Do not commit large binaries to git — upload to your CDN/hosting instead.
+Local preview only — production releases go to Gumroad (see notes/release-automation.md).
+Buyers download and update from their Gumroad library.
 
 Linux AppImage:  FlossPaint-linux-x64-beta.AppImage
 Linux Flatpak:   flatpak install --user com.flosspaint.Floss.flatpak
@@ -66,6 +66,6 @@ macOS:           FlossPaint-osx-arm64-beta-portable.zip (Apple Silicon) or osx-x
 EOF
 
 echo ""
-echo "Done. Deploy floss-site with downloads in public/downloads/ or upload to CDN:"
-echo "  ./packaging/release/upload-cdn.sh"
+echo "Done. For releases, upload to Gumroad:"
+echo "  ./packaging/release/upload-gumroad.sh"
 ls -la "$DOWNLOADS"
