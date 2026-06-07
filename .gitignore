@@ -20,6 +20,9 @@ Drawpile/
 # Local Codex session mount
 .codex
 
+# Release secrets (R2 + GitLab token) — see packaging/release/.env.release.example
+packaging/release/.env.release
+
 # ML models (downloaded on demand to user data dir)
 *.onnx
 tmp/

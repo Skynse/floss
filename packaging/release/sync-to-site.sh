@@ -66,5 +66,6 @@ macOS:           FlossPaint-osx-arm64-beta-portable.zip (Apple Silicon) or osx-x
 EOF
 
 echo ""
-echo "Done. Deploy floss-site with downloads in public/downloads/ or point links at your CDN."
+echo "Done. Deploy floss-site with downloads in public/downloads/ or upload to CDN:"
+echo "  ./packaging/release/upload-cdn.sh"
 ls -la "$DOWNLOADS"
