@@ -8,10 +8,3 @@ genisoimage
 squashfs-tools
 libfuse2
 fuse3
-flatpak
-flatpak-builder
-bubblewrap
-imagemagick
-elfutils
-appstream-compose
-patch

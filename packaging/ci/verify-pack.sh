@@ -37,7 +37,6 @@ fi
 
 chmod +x "$ROOT/packaging/ci/"*.sh \
   "$ROOT/packaging/velopack/pack.sh" \
-  "$ROOT/packaging/flatpak/build.sh" \
   "$ROOT/packaging/portable/pack.sh" \
   "$ROOT/packaging/macos/pack-dmg.sh"
 
@@ -47,8 +46,7 @@ if ! $CHECK_ONLY; then
 fi
 
 echo "==> CI-parity verify in debian:bookworm via $CONTAINER (check_only=$CHECK_ONLY)"
-# flatpak-builder needs FUSE for rofiles (GitLab runners provide it; local containers need --privileged).
-$CONTAINER run --rm --privileged \
+$CONTAINER run --rm \
   -v "$ROOT:/builds/Skynse/floss:Z" \
   -w /builds/Skynse/floss \
   debian:bookworm \

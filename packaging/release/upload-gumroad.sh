@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Upload release installers to a Gumroad product (Aseprite-style buyer library updates).
 #
-# Built on Linux CI: AppImage, Flatpak, Windows/macOS portable zips.
+# Built on Linux CI: AppImage, Linux/Windows portable zips, macOS DMGs.
 #
 # Required env:
 #   GUMROAD_ACCESS_TOKEN, GUMROAD_PRODUCT_ID
@@ -72,8 +72,8 @@ echo "==> Upload to Gumroad product $GUMROAD_PRODUCT_ID (v$VERSION)"
 
 collect_file "$ROOT/artifacts/velopack/linux-x64-beta/*.AppImage" \
   "FlossPaint-${VERSION}-linux-x64.AppImage"
-collect_file "$ROOT/artifacts/flatpak/com.flosspaint.Floss.flatpak" \
-  "FlossPaint-${VERSION}.flatpak"
+collect_file "$ROOT/artifacts/portable/FlossPaint-linux-x64-beta-portable.zip" \
+  "FlossPaint-${VERSION}-linux-x64-portable.zip"
 collect_file "$ROOT/artifacts/portable/FlossPaint-win-x64-beta-portable.zip" \
   "FlossPaint-${VERSION}-win-x64-portable.zip"
 collect_file "$ROOT/artifacts/macos/FlossPaint-osx-arm64-beta.dmg" \

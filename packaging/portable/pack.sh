@@ -2,6 +2,7 @@
 # Self-contained publish + zip (no Velopack). Works cross-platform from Linux.
 #
 # Usage:
+#   ./packaging/portable/pack.sh linux-x64
 #   ./packaging/portable/pack.sh win-x64
 #   ./packaging/portable/pack.sh osx-arm64
 #   ./packaging/portable/pack.sh osx-x64
@@ -54,13 +55,14 @@ pack_one() {
 
 RID="${1:-}"
 case "$RID" in
-  win-x64|osx-arm64|osx-x64) pack_one "$RID" ;;
+  linux-x64|win-x64|osx-arm64|osx-x64) pack_one "$RID" ;;
   all)
+    pack_one linux-x64
     pack_one win-x64
     ./packaging/macos/pack-dmg.sh all
     ;;
   *)
-    echo "Usage: $0 {win-x64|osx-arm64|osx-x64|all}" >&2
+    echo "Usage: $0 {linux-x64|win-x64|osx-arm64|osx-x64|all}" >&2
     exit 1
     ;;
 esac

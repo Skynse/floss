@@ -37,9 +37,6 @@ export DOTNET_CLI_TELEMETRY_OPTOUT="${DOTNET_CLI_TELEMETRY_OPTOUT:-true}"
 
 dotnet --version
 
-echo "==> flatpak flathub (system)"
-flatpak remote-add --if-not-exists --system flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-
 if [[ -n "${CI_COMMIT_TAG:-}" ]]; then
   export FLOSS_VERSION="${CI_COMMIT_TAG#v}"
   echo "Release version: $FLOSS_VERSION"

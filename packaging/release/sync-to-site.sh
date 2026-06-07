@@ -6,8 +6,7 @@
 #
 # Build first:
 #   ./packaging/velopack/pack.sh linux-x64
-#   ./packaging/flatpak/build.sh
-#   ./packaging/portable/pack.sh all              # win + mac portable zips (from Linux)
+#   ./packaging/portable/pack.sh all
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -41,8 +40,8 @@ echo "==> Sync installers to $DOWNLOADS (version $VERSION)"
 copy_one "$ROOT/artifacts/velopack/linux-x64-beta/*.AppImage" \
   "FlossPaint-linux-x64-beta.AppImage"
 
-copy_one "$ROOT/artifacts/flatpak/com.flosspaint.Floss.flatpak" \
-  "com.flosspaint.Floss.flatpak"
+copy_one "$ROOT/artifacts/portable/FlossPaint-linux-x64-beta-portable.zip" \
+  "FlossPaint-linux-x64-beta-portable.zip"
 
 copy_one "$ROOT/artifacts/portable/FlossPaint-win-x64-beta-portable.zip" \
   "FlossPaint-win-x64-beta-portable.zip"
@@ -60,7 +59,7 @@ Local preview only — production releases go to Gumroad (see notes/release-auto
 Buyers download and update from their Gumroad library.
 
 Linux AppImage:  FlossPaint-linux-x64-beta.AppImage
-Linux Flatpak:   flatpak install --user com.flosspaint.Floss.flatpak
+Linux portable:  FlossPaint-linux-x64-beta-portable.zip — unzip, run ./Floss
 Windows:         FlossPaint-win-x64-beta-portable.zip — unzip, run Floss.exe
 macOS:           FlossPaint-osx-arm64-beta-portable.zip (Apple Silicon) or osx-x64 (Intel)
 EOF

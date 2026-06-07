@@ -11,8 +11,8 @@
 # See notes/release-automation.md
 #
 # pack:all runs on Linux only:
-#   Linux AppImage + Flatpak (Velopack / flatpak)
-#   Windows + macOS portable zips (dotnet cross-publish from Linux)
+#   Linux AppImage + portable zip (Velopack / portable)
+#   Windows portable zip + macOS DMGs (dotnet cross-publish from Linux)
 
 stages:
   - pack
@@ -44,7 +44,7 @@ pack:all:
     expire_in: 90 days
     paths:
       - artifacts/velopack/linux-x64-beta/*.AppImage
-      - artifacts/flatpak/com.flosspaint.Floss.flatpak
+      - artifacts/portable/FlossPaint-linux-x64-beta-portable.zip
       - artifacts/portable/FlossPaint-win-x64-beta-portable.zip
       - artifacts/macos/*.dmg
   rules:

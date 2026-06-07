@@ -29,15 +29,9 @@ require_one_of() {
 echo "==> Checking pack toolchain"
 
 require_cmd dotnet
-require_cmd flatpak
-require_cmd flatpak-builder
 require_cmd zip
-require_one_of "ImageMagick" magick convert
 require_one_of "ISO9660 tool" genisoimage mkisofs
 require_cmd mksquashfs
-require_cmd eu-strip
-require_cmd appstream-compose
-require_cmd patch
 
 if ! dotnet msbuild "$PROJECT" -getProperty:Version -nologo >/dev/null 2>&1; then
   echo "MISSING: readable Version in $PROJECT" >&2
@@ -55,7 +49,7 @@ fi
 if ((missing)); then
   echo "" >&2
   echo "Install Debian bookworm deps:" >&2
-  echo "  sudo ./packaging/ci/bootstrap.sh" >&2
+  echo "  source packaging/ci/bootstrap.sh" >&2
   echo "Or run the CI-parity check in Docker:" >&2
   echo "  ./packaging/ci/verify-pack.sh" >&2
   exit 1
