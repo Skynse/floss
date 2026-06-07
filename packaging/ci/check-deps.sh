@@ -36,6 +36,8 @@ require_one_of "ImageMagick" magick convert
 require_one_of "ISO9660 tool" genisoimage mkisofs
 require_cmd mksquashfs
 require_cmd eu-strip
+require_cmd appstream-compose
+require_cmd patch
 
 if ! dotnet msbuild "$PROJECT" -getProperty:Version -nologo >/dev/null 2>&1; then
   echo "MISSING: readable Version in $PROJECT" >&2

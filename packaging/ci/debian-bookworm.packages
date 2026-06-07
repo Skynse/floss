@@ -13,3 +13,5 @@ flatpak-builder
 bubblewrap
 imagemagick
 elfutils
+appstream
+patch
