@@ -42,7 +42,7 @@ pack:all:
   <<: *dotnet_cache
   before_script:
     - apt-get update -qq
-    - apt-get install -y -qq --no-install-recommends ca-certificates curl wget zip genisoimage squashfs-tools libfuse2 fuse3 flatpak flatpak-builder bubblewrap
+    - apt-get install -y -qq --no-install-recommends ca-certificates curl wget zip genisoimage squashfs-tools libfuse2 fuse3 flatpak flatpak-builder bubblewrap imagemagick
     - curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
     - bash /tmp/dotnet-install.sh --channel 10.0 --install-dir /usr/share/dotnet
     - export DOTNET_ROOT=/usr/share/dotnet
