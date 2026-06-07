@@ -13,6 +13,9 @@ finish-args:
   - --talk-name=org.freedesktop.portal.FileChooser
   - --talk-name=org.freedesktop.portal.OpenURI
   - --talk-name=org.freedesktop.portal.Settings
+build-options:
+  no-debuginfo: true
+  strip: false
 modules:
   - name: floss
     buildsystem: simple

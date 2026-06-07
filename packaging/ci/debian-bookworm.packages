@@ -1,0 +1,15 @@
+# Debian packages required for pack:all (GitLab CI and packaging/ci/verify-pack.sh).
+# One package per line; blank lines and # comments are ignored.
+ca-certificates
+curl
+wget
+zip
+genisoimage
+squashfs-tools
+libfuse2
+fuse3
+flatpak
+flatpak-builder
+bubblewrap
+imagemagick
+elfutils

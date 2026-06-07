@@ -6,7 +6,8 @@
 # CI variables (required for deploy:gumroad on tags):
 #   GUMROAD_ACCESS_TOKEN, GUMROAD_PRODUCT_ID
 #
-# Release: git tag v0.1.0-beta.2 && git push origin --tags
+# Release: ./packaging/release/release.sh
+# Local CI parity: ./packaging/ci/verify-pack.sh
 # See notes/release-automation.md
 #
 # pack:all runs on Linux only:
@@ -29,33 +30,15 @@ variables:
     paths:
       - .nuget/packages/
 
-.tag_version: &tag_version
-  - |
-    if [ -n "${CI_COMMIT_TAG:-}" ]; then
-      export FLOSS_VERSION="${CI_COMMIT_TAG#v}"
-      echo "Release version: $FLOSS_VERSION"
-    fi
-
 pack:all:
   stage: pack
   image: debian:bookworm
   <<: *dotnet_cache
   before_script:
-    - apt-get update -qq
-    - apt-get install -y -qq --no-install-recommends ca-certificates curl wget zip genisoimage squashfs-tools libfuse2 fuse3 flatpak flatpak-builder bubblewrap imagemagick
-    - curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
-    - bash /tmp/dotnet-install.sh --channel 10.0 --install-dir /usr/share/dotnet
-    - export DOTNET_ROOT=/usr/share/dotnet
-    - export PATH="$DOTNET_ROOT:$PATH"
-    - dotnet --version
-    - flatpak remote-add --if-not-exists --system flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-    - *tag_version
+    - source packaging/ci/bootstrap.sh
+    - bash packaging/ci/check-deps.sh
   script:
-    - dotnet tool restore
-    - chmod +x packaging/velopack/pack.sh packaging/flatpak/build.sh packaging/portable/pack.sh packaging/macos/pack-dmg.sh
-    - ./packaging/velopack/pack.sh linux-x64
-    - FLATPAK_SCOPE=system ./packaging/flatpak/build.sh
-    - ./packaging/portable/pack.sh all
+    - bash packaging/ci/pack-all.sh
   artifacts:
     name: floss-$CI_COMMIT_REF_SLUG
     expire_in: 90 days
