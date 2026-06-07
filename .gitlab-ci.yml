@@ -38,10 +38,16 @@ variables:
 
 pack:all:
   stage: pack
-  image: mcr.microsoft.com/dotnet/sdk:10.0
+  image: debian:bookworm
   <<: *dotnet_cache
   before_script:
-    - apt-get update -qq && apt-get install -y -qq fuse libfuse2 flatpak flatpak-builder zip genisoimage
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends ca-certificates curl wget zip genisoimage libfuse2 fuse3 flatpak flatpak-builder bubblewrap
+    - curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+    - bash /tmp/dotnet-install.sh --channel 10.0 --install-dir /usr/share/dotnet
+    - export DOTNET_ROOT=/usr/share/dotnet
+    - export PATH="$DOTNET_ROOT:$PATH"
+    - dotnet --version
     - flatpak remote-add --if-not-exists --system flathub https://dl.flathub.org/repo/flathub.flatpakrepo
     - *tag_version
   script:
