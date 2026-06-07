@@ -7,30 +7,25 @@ Build distributable installers with [Velopack](https://velopack.io/). **No auto-
 ```bash
 dotnet tool restore
 
-# Linux — produces an AppImage
+# Linux — AppImage + Flatpak
 ./packaging/velopack/pack.sh linux-x64
-
-# Linux Flatpak bundle (separate from Velopack)
 ./packaging/flatpak/build.sh
 
-# Windows — produces Setup.exe + portable zip (run on Windows or a Windows CI job)
-./packaging/velopack/pack.sh win-x64
-
-# macOS — produces a .dmg (run on macOS or a macOS CI job)
-./packaging/velopack/pack.sh osx-arm64
-./packaging/velopack/pack.sh osx-x64
+# Windows + macOS from Linux
+./packaging/portable/pack.sh win-x64          # portable zip
+./packaging/macos/pack-dmg.sh all             # .app inside .dmg (unsigned)
+./packaging/portable/pack.sh all              # win zip + mac dmg
 ```
+
+Velopack `.dmg` via `vpk` still requires macOS (Apple codesign tools). We build unsigned DMGs on Linux with `packaging/macos/pack-dmg.sh` instead.
 
 ## What to publish
 
-Upload these to your download page (ignore the `.nupkg` and `releases.*.json` files — those are only for auto-update feeds):
-
-| Platform | File to ship |
-|----------|----------------|
+| Platform | CI / default file |
+|----------|-------------------|
 | Linux x64 (AppImage) | `FlossPaint-linux-x64-beta.AppImage` |
-| Linux x64 (Flatpak) | `com.flosspaint.Floss.flatpak` — `flatpak install --user ./com.flosspaint.Floss.flatpak` |
-| Windows x64 | `FlossPaint-win-x64-beta-Setup.exe` (name may vary — check output dir) |
-| Windows portable | `FlossPaint-win-x64-beta-Portable.zip` |
+| Linux x64 (Flatpak) | `com.flosspaint.Floss.flatpak` |
+| Windows x64 | `FlossPaint-win-x64-beta-portable.zip` |
 | macOS Apple Silicon | `FlossPaint-osx-arm64-beta.dmg` |
 | macOS Intel | `FlossPaint-osx-x64-beta.dmg` |
 

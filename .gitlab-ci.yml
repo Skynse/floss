@@ -1,4 +1,4 @@
-# GitLab CI — build Floss installers and upload to Gumroad on tags.
+# GitLab CI — build Floss installers on Linux (all platforms) and upload to Gumroad on tags.
 #
 # CI variables (optional):
 #   FLOSS_VERSION — override csproj Version at pack time
@@ -8,9 +8,10 @@
 #
 # Release: git tag v0.1.0-beta.2 && git push origin --tags
 # See notes/release-automation.md
-# Windows job needs a Windows runner (GitLab SaaS: tag saas-windows-medium-amd64,
-# or your own shell runner with .NET SDK installed).
-# macOS job needs a macOS runner (GitLab SaaS: tag saas-macos-medium-m1).
+#
+# pack:all runs on Linux only:
+#   Linux AppImage + Flatpak (Velopack / flatpak)
+#   Windows + macOS portable zips (dotnet cross-publish from Linux)
 
 stages:
   - test
@@ -34,7 +35,7 @@ test:
   image: mcr.microsoft.com/dotnet/sdk:10.0
   <<: *dotnet_cache
   script:
-    - dotnet restore
+    - dotnet restore tests/Floss.App.Tests/Floss.App.Tests.csproj
     - dotnet test tests/Floss.App.Tests/Floss.App.Tests.csproj -c Release --no-restore
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -47,94 +48,42 @@ test:
       echo "Release version: $FLOSS_VERSION"
     fi
 
-pack:linux:
+pack:all:
   stage: pack
   image: mcr.microsoft.com/dotnet/sdk:10.0
   <<: *dotnet_cache
   before_script:
-    - apt-get update -qq && apt-get install -y -qq fuse libfuse2 flatpak flatpak-builder
+    - apt-get update -qq && apt-get install -y -qq fuse libfuse2 flatpak flatpak-builder zip genisoimage
     - flatpak remote-add --if-not-exists --system flathub https://dl.flathub.org/repo/flathub.flatpakrepo
     - *tag_version
   script:
     - dotnet tool restore
-    - chmod +x packaging/velopack/pack.sh packaging/flatpak/build.sh packaging/portable/pack.sh
+    - chmod +x packaging/velopack/pack.sh packaging/flatpak/build.sh packaging/portable/pack.sh packaging/macos/pack-dmg.sh
     - ./packaging/velopack/pack.sh linux-x64
     - FLATPAK_SCOPE=system ./packaging/flatpak/build.sh
     - ./packaging/portable/pack.sh all
   artifacts:
-    name: floss-linux-$CI_COMMIT_REF_SLUG
+    name: floss-$CI_COMMIT_REF_SLUG
     expire_in: 90 days
     paths:
       - artifacts/velopack/linux-x64-beta/*.AppImage
       - artifacts/flatpak/com.flosspaint.Floss.flatpak
-      - artifacts/portable/*.zip
+      - artifacts/portable/FlossPaint-win-x64-beta-portable.zip
+      - artifacts/macos/*.dmg
   rules:
     - if: $CI_COMMIT_TAG
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: manual
+      allow_failure: true
     - when: manual
       allow_failure: true
 
-pack:windows:
-  stage: pack
-  tags:
-    - saas-windows-medium-amd64
-  <<: *dotnet_cache
-  before_script:
-    - dotnet tool restore
-    - *tag_version
-  script:
-    - packaging/velopack/pack.ps1 win-x64
-  artifacts:
-    name: floss-win-x64-$CI_COMMIT_REF_SLUG
-    expire_in: 90 days
-    paths:
-      - artifacts/velopack/win-x64-beta/*Setup.exe
-      - artifacts/velopack/win-x64-beta/*Portable.zip
-  rules:
-    - if: $CI_COMMIT_TAG
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
-    - when: manual
-      allow_failure: true
-
-pack:macos:
-  stage: pack
-  tags:
-    - saas-macos-medium-m1
-  <<: *dotnet_cache
-  before_script:
-    - dotnet tool restore
-    - *tag_version
-  script:
-    - chmod +x packaging/velopack/pack.sh
-    - ./packaging/velopack/pack.sh osx-arm64
-  artifacts:
-    name: floss-macos-arm64-$CI_COMMIT_REF_SLUG
-    expire_in: 90 days
-    paths:
-      - artifacts/velopack/osx-arm64-beta/*.dmg
-  rules:
-    - if: $CI_COMMIT_TAG
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
-    - when: manual
-      allow_failure: true
-
-# Upload pack artifacts to Gumroad on version tags (buyers re-download from library).
-# GitLab CI variables: GUMROAD_ACCESS_TOKEN, GUMROAD_PRODUCT_ID
 deploy:gumroad:
   stage: deploy
   image: debian:bookworm-slim
   needs:
-    - job: pack:linux
+    - job: pack:all
       artifacts: true
-    - job: pack:windows
-      artifacts: true
-      optional: true
-    - job: pack:macos
-      artifacts: true
-      optional: true
   before_script:
     - apt-get update -qq && apt-get install -y -qq curl ca-certificates
     - chmod +x packaging/release/upload-gumroad.sh

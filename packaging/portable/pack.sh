@@ -57,8 +57,7 @@ case "$RID" in
   win-x64|osx-arm64|osx-x64) pack_one "$RID" ;;
   all)
     pack_one win-x64
-    pack_one osx-arm64
-    pack_one osx-x64
+    ./packaging/macos/pack-dmg.sh all
     ;;
   *)
     echo "Usage: $0 {win-x64|osx-arm64|osx-x64|all}" >&2

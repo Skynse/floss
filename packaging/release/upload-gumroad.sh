@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Upload release installers to a Gumroad product (Aseprite-style buyer library updates).
 #
+# Built on Linux CI: AppImage, Flatpak, Windows/macOS portable zips.
+#
 # Required env:
 #   GUMROAD_ACCESS_TOKEN, GUMROAD_PRODUCT_ID
 # Optional:
@@ -51,7 +53,6 @@ find_one() {
   printf '%s\n' "${matches[0]}"
 }
 
-# collect_file <glob> <gumroad display name>
 FILES=()
 NAMES=()
 collect_file() {
@@ -73,31 +74,12 @@ collect_file "$ROOT/artifacts/velopack/linux-x64-beta/*.AppImage" \
   "FlossPaint-${VERSION}-linux-x64.AppImage"
 collect_file "$ROOT/artifacts/flatpak/com.flosspaint.Floss.flatpak" \
   "FlossPaint-${VERSION}.flatpak"
-collect_file "$ROOT/artifacts/velopack/win-x64-beta/*Setup.exe" \
-  "FlossPaint-${VERSION}-win-x64-Setup.exe"
-
-win_portable=""
-if win_portable="$(find_one "$ROOT/artifacts/velopack/win-x64-beta/*Portable.zip")"; then
-  :
-elif win_portable="$(find_one "$ROOT/artifacts/portable/FlossPaint-win-x64-beta-portable.zip")"; then
-  :
-fi
-if [[ -n "$win_portable" ]]; then
-  FILES+=("$win_portable")
-  NAMES+=("FlossPaint-${VERSION}-win-x64-portable.zip")
-  echo "  FlossPaint-${VERSION}-win-x64-portable.zip  <-  $win_portable"
-else
-  echo "  (skip) FlossPaint-${VERSION}-win-x64-portable.zip"
-fi
-
-collect_file "$ROOT/artifacts/velopack/osx-arm64-beta/*.dmg" \
+collect_file "$ROOT/artifacts/portable/FlossPaint-win-x64-beta-portable.zip" \
+  "FlossPaint-${VERSION}-win-x64-portable.zip"
+collect_file "$ROOT/artifacts/macos/FlossPaint-osx-arm64-beta.dmg" \
   "FlossPaint-${VERSION}-macOS-arm64.dmg"
-collect_file "$ROOT/artifacts/velopack/osx-x64-beta/*.dmg" \
+collect_file "$ROOT/artifacts/macos/FlossPaint-osx-x64-beta.dmg" \
   "FlossPaint-${VERSION}-macOS-x64.dmg"
-collect_file "$ROOT/artifacts/portable/FlossPaint-osx-arm64-beta-portable.zip" \
-  "FlossPaint-${VERSION}-macOS-arm64-portable.zip"
-collect_file "$ROOT/artifacts/portable/FlossPaint-osx-x64-beta-portable.zip" \
-  "FlossPaint-${VERSION}-macOS-x64-portable.zip"
 
 if ((${#FILES[@]} == 0)); then
   echo "No release artifacts found under $ROOT/artifacts/." >&2
