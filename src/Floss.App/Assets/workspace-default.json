@@ -1,0 +1,61 @@
+{
+  "LayoutVersion": 8,
+  "LeftRailWidth": 280,
+  "RightPanelWidth": 320,
+  "RightDockSplit": 0.5,
+  "LeftDockSplit": 0.5,
+  "BottomDockHeight": 320,
+  "RightColumns": [
+    {
+      "Id": "right-0",
+      "Panels": ["tab:color", "tab:layers", "tab:navigator"],
+      "TabGroups": {
+        "tab:color": {
+          "PanelIds": ["color", "color-slider", "layer-properties"],
+          "ActiveIndex": 0
+        },
+        "tab:layers": {
+          "PanelIds": ["layers"],
+          "ActiveIndex": 0
+        },
+        "tab:navigator": {
+          "PanelIds": ["overview", "history"],
+          "ActiveIndex": 0
+        }
+      },
+      "Rows": null
+    }
+  ],
+  "LeftColumns": [
+    {
+      "Id": "left-0",
+      "Panels": ["tab:left"],
+      "TabGroups": {
+        "tab:left": {
+          "PanelIds": ["tools", "brush", "tool-properties"],
+          "ActiveIndex": 1
+        }
+      },
+      "Rows": null
+    }
+  ],
+  "BottomColumns": [
+    {
+      "Id": "bottom-0",
+      "Panels": ["node-graph"],
+      "TabGroups": {},
+      "Rows": null
+    }
+  ],
+  "ColumnProportions": {},
+  "PanelHeights": {
+    "tab:color": 0.35,
+    "tab:layers": 0.45,
+    "tab:navigator": 0.2,
+    "tab:left": 1,
+    "node-graph": 1
+  },
+  "FloatingPanels": {},
+  "HiddenDockers": ["node-graph", "color-slider"],
+  "PanelContentState": {}
+}

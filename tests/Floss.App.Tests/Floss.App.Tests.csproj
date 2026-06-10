@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>Floss.App.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="Floss.App.Brushes" />
+    <Using Include="Floss.App.Brushes.Graph" />
+    <Using Include="Floss.App.Brushes.Engine" />
+    <Using Include="Floss.App.Brushes.Tips" />
+    <Using Include="Floss.App.Brushes.IO" />
+    <Using Include="Floss.App.Brushes.Curves" />
+    <Using Include="Floss.App.Canvas.Compositing" />
+    <Using Include="Floss.App.Windows" />
+    <Using Include="Floss.App.Config" />
+    <Using Include="Floss.App.Controls" />
+    <Using Include="Floss.App.Diagnostics" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Headless" Version="12.0.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.0">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Floss.App/Floss.App.csproj" />
+  </ItemGroup>
+</Project>

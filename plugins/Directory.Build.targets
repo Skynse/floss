@@ -1,0 +1,27 @@
+<Project>
+  <PropertyGroup>
+    <PluginInstallDir>$(FlossPluginsDir)/$(AssemblyName)</PluginInstallDir>
+  </PropertyGroup>
+
+  <Target Name="CopyToPluginsDirectory" AfterTargets="Build">
+    <MakeDir Directories="$(PluginInstallDir)" />
+    <ItemGroup>
+      <_PluginDeployFiles Include="$(TargetPath)" />
+      <_PluginDeployFiles Include="$(TargetDir)$(AssemblyName).floss-plugin.json"
+                          Condition="Exists('$(TargetDir)$(AssemblyName).floss-plugin.json')" />
+      <_PluginDeployFiles Include="$(TargetDir)$(AssemblyName).deps.json"
+                          Condition="Exists('$(TargetDir)$(AssemblyName).deps.json')" />
+      <_PluginDeployFiles Include="@(PluginDeployExtraFiles)" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_PluginDeployFiles)"
+          DestinationFiles="@(_PluginDeployFiles->'$(PluginInstallDir)\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <ItemGroup>
+      <_RuntimeDeployFiles Include="$(TargetDir)runtimes/**" Condition="Exists('$(TargetDir)runtimes')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_RuntimeDeployFiles)"
+          DestinationFiles="@(_RuntimeDeployFiles->'$(PluginInstallDir)/runtimes/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true"
+          Condition="'@(_RuntimeDeployFiles)' != ''" />
+  </Target>
+</Project>

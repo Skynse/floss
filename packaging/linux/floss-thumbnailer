@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Floss thumbnailer — extracts preview.png from .floss ZIP archives
+# Usage: floss-thumbnailer <input> <output> <size>
+
+input="$1"
+output="$2"
+size="$3"
+
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+
+if ! unzip -q -o "$input" "preview.png" -d "$tmpdir" 2>/dev/null; then
+    exit 1
+fi
+
+cp "$tmpdir/preview.png" "$output"
+
+if command -v convert &>/dev/null; then
+    convert "$output" -resize "${size}x${size}>" "$output" 2>/dev/null
+fi

@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Floss.AnimeMaskPlugin</AssemblyName>
+    <RootNamespace>Floss.AnimeMaskPlugin</RootNamespace>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Floss.App/Floss.App.csproj">
+      <Private>false</Private>
+    </ProjectReference>
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.21.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="Floss.AnimeMaskPlugin.floss-plugin.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PluginDeployExtraFiles Include="$(TargetDir)Microsoft.ML.OnnxRuntime.dll" Condition="Exists('$(TargetDir)Microsoft.ML.OnnxRuntime.dll')" />
+  </ItemGroup>
+</Project>

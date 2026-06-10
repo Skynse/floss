@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.flosspaint.Floss</id>
+  <name>Floss</name>
+  <summary>Digital painting and image editing</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <developer_name>Floss</developer_name>
+  <description>
+    <p>
+      Floss is a digital painting and image editing application with layered
+      documents, brush dynamics, PSD/KRA import, and a fast tiled canvas.
+    </p>
+    <p>Beta software — save often.</p>
+  </description>
+  <launchable type="desktop-id">com.flosspaint.Floss.desktop</launchable>
+  <url type="homepage">https://flosspaint.com</url>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.1.0-beta.1" date="2026-05-23" />
+  </releases>
+</component>

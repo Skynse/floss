@@ -1,0 +1,5 @@
+{
+  "id": "floss.hello-plugin",
+  "name": "Hello Plugin",
+  "minAppVersion": "0.1.0"
+}

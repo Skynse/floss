@@ -1,0 +1,52 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>Floss</AssemblyName>
+    <RootNamespace>Floss.App</RootNamespace>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- Semver2 for Velopack; packaging/velopack/pack.sh reads this Version property. -->
+    <Version>0.1.0-beta.1</Version>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Floss.App.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Floss.App.Brushes" />
+    <Using Include="Floss.App.Brushes.Graph" />
+    <Using Include="Floss.App.Brushes.Engine" />
+    <Using Include="Floss.App.Brushes.Tips" />
+    <Using Include="Floss.App.Brushes.IO" />
+    <Using Include="Floss.App.Brushes.Curves" />
+    <Using Include="Floss.App.Canvas.Compositing" />
+    <Using Include="Floss.App.Windows" />
+    <Using Include="Floss.App.Config" />
+    <Using Include="Floss.App.Controls" />
+    <Using Include="Floss.App.Diagnostics" />
+    <Using Include="Floss.App.Docking" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="**\*.onnx" />
+    <AvaloniaResource Include="../../packaging/icon.png" Link="Assets/icon.png" />
+    <AvaloniaResource Include="Assets/workspace-default.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.0.2" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.0.2" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.0.2" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.0.2" />
+    <PackageReference Include="DiscordRichPresence" Version="1.6.1.71-master" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
+    <PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.1">
+      <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
+      <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+</Project>

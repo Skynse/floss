@@ -1,0 +1,4 @@
+[Thumbnailer Entry]
+TryExec=@THUMBNAILER_EXEC@
+Exec=@THUMBNAILER_EXEC@ %i %o %s
+MimeType=application/x-floss;

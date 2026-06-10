@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-floss">
+    <comment>Floss Document</comment>
+    <comment xml:lang="en">Floss Document</comment>
+    <acronym>FLOSS</acronym>
+    <expanded-acronym>Floss Document</expanded-acronym>
+    <sub-class-of type="application/zip"/>
+    <glob pattern="*.floss"/>
+    <magic priority="60">
+      <match value="PK\x03\x04" type="string" offset="0">
+        <match value="application/x-floss" type="string" offset="38"/>
+      </match>
+    </magic>
+  </mime-type>
+</mime-info>

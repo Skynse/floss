@@ -1,0 +1,57 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Mirror of AppColors.cs — neutral dark theme -->
+    <Color x:Key="Bg0">#1e1e1e</Color>
+    <Color x:Key="Bg1">#323232</Color>
+    <Color x:Key="Bg2">#2b2b2b</Color>
+    <Color x:Key="Bg3">#404040</Color>
+    <Color x:Key="BgSidebar">#2a2a2a</Color>
+
+    <Color x:Key="Stroke">#474747</Color>
+    <Color x:Key="StrokeSubtle">#3a3a3a</Color>
+
+    <Color x:Key="TextPrimary">#e8e8e8</Color>
+    <Color x:Key="TextSecondary">#b8b8b8</Color>
+    <Color x:Key="TextMuted">#8a8a8a</Color>
+
+    <Color x:Key="Accent">#3d9eff</Color>
+    <Color x:Key="AccentSoft">#3d3d3d</Color>
+    <Color x:Key="SelectionBg">#3a3a3a</Color>
+    <Color x:Key="SelectionBgActive">#454545</Color>
+    <Color x:Key="SelectionBorder">#5a9fd8</Color>
+
+    <Color x:Key="AccentWarm">#d28a45</Color>
+    <Color x:Key="AccentWarmSoft">#3d2b1e</Color>
+
+    <Color x:Key="Success">#3fb950</Color>
+    <Color x:Key="Warning">#d29922</Color>
+    <Color x:Key="Danger">#da3633</Color>
+
+    <Color x:Key="SliderTrack">#3c3c3c</Color>
+    <Color x:Key="SliderFill">#5a5a5a</Color>
+    <Color x:Key="SliderFillHover">#6a6a6a</Color>
+    <Color x:Key="SliderFillActive">#3d9eff</Color>
+    <Color x:Key="SliderThumb">#c8c8c8</Color>
+    <Color x:Key="SliderThumbLine">#e0e0e0</Color>
+
+    <CornerRadius x:Key="SmRadius">2</CornerRadius>
+    <CornerRadius x:Key="ControlRadius">3</CornerRadius>
+    <CornerRadius x:Key="CardRadius">4</CornerRadius>
+    <CornerRadius x:Key="FullRadius">999</CornerRadius>
+
+    <SolidColorBrush x:Key="Bg0Brush"            Color="{StaticResource Bg0}"/>
+    <SolidColorBrush x:Key="Bg1Brush"            Color="{StaticResource Bg1}"/>
+    <SolidColorBrush x:Key="Bg2Brush"            Color="{StaticResource Bg2}"/>
+    <SolidColorBrush x:Key="Bg3Brush"            Color="{StaticResource Bg3}"/>
+    <SolidColorBrush x:Key="StrokeBrush"         Color="{StaticResource Stroke}"/>
+    <SolidColorBrush x:Key="TextPrimaryBrush"    Color="{StaticResource TextPrimary}"/>
+    <SolidColorBrush x:Key="TextSecondaryBrush"  Color="{StaticResource TextSecondary}"/>
+    <SolidColorBrush x:Key="TextMutedBrush"      Color="{StaticResource TextMuted}"/>
+    <SolidColorBrush x:Key="AccentBrush"         Color="{StaticResource Accent}"/>
+    <SolidColorBrush x:Key="AccentSoftBrush"     Color="{StaticResource AccentSoft}"/>
+    <SolidColorBrush x:Key="SelectionBgBrush"    Color="{StaticResource SelectionBg}"/>
+    <SolidColorBrush x:Key="SelectionBgActiveBrush" Color="{StaticResource SelectionBgActive}"/>
+    <SolidColorBrush x:Key="DangerBrush"         Color="{StaticResource Danger}"/>
+    <SolidColorBrush x:Key="SuccessBrush"        Color="{StaticResource Success}"/>
+    <SolidColorBrush x:Key="WarningBrush"        Color="{StaticResource Warning}"/>
+</ResourceDictionary>

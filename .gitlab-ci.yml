@@ -1,0 +1,74 @@
+# GitLab CI — build Floss installers on Linux (all platforms) and upload to Gumroad on tags.
+#
+# CI variables (optional):
+#   FLOSS_VERSION — override csproj Version at pack time
+#
+# CI variables (required for deploy:gumroad on tags):
+#   GUMROAD_ACCESS_TOKEN, GUMROAD_PRODUCT_ID
+#
+# Release: ./packaging/release/release.sh
+# Local CI parity: ./packaging/ci/verify-pack.sh
+# See notes/release-automation.md
+#
+# pack:all runs on Linux only:
+#   Linux AppImage + portable zip (Velopack / portable)
+#   Windows portable zip + macOS DMGs (dotnet cross-publish from Linux)
+
+stages:
+  - pack
+  - deploy
+
+variables:
+  DOTNET_ROLL_FORWARD: LatestMajor
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  NUGET_PACKAGES: "$CI_PROJECT_DIR/.nuget/packages"
+
+.dotnet_cache: &dotnet_cache
+  cache:
+    key: dotnet-$CI_COMMIT_REF_SLUG
+    paths:
+      - .nuget/packages/
+
+pack:all:
+  stage: pack
+  image: debian:bookworm
+  <<: *dotnet_cache
+  before_script:
+    - source packaging/ci/bootstrap.sh
+    - bash packaging/ci/check-deps.sh
+  script:
+    - bash packaging/ci/pack-all.sh
+  artifacts:
+    name: floss-$CI_COMMIT_REF_SLUG
+    expire_in: 90 days
+    paths:
+      - artifacts/velopack/linux-x64-beta/*.AppImage
+      - artifacts/portable/FlossPaint-linux-x64-beta-portable.zip
+      - artifacts/portable/FlossPaint-win-x64-beta-portable.zip
+      - artifacts/macos/*.dmg
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+      allow_failure: true
+    - when: manual
+      allow_failure: true
+
+deploy:gumroad:
+  stage: deploy
+  image: debian:bookworm-slim
+  needs:
+    - job: pack:all
+      artifacts: true
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq curl ca-certificates
+    - chmod +x packaging/release/upload-gumroad.sh
+    - export FLOSS_VERSION="${CI_COMMIT_TAG#v}"
+  script:
+    - ./packaging/release/upload-gumroad.sh
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+  environment:
+    name: production
+    url: $GUMROAD_PRODUCT_URL

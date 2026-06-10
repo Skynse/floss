@@ -1,0 +1,430 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Floss.App.App"
+             RequestedThemeVariant="Dark">
+
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceInclude Source="/Styles/Theme.axaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+
+    <Application.Styles>
+        <FluentTheme />
+
+        <Style Selector="Window">
+            <Setter Property="FontFamily" Value="Inter, Segoe UI, Noto Sans, Ubuntu, Cantarell, Arial"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Background" Value="{StaticResource Bg0}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+        </Style>
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             Button — base template shared by all variants
+        ══════════════════════════════════════════════════════════════════ -->
+        <Style Selector="Button">
+            <Setter Property="Background"                Value="Transparent"/>
+            <Setter Property="BorderBrush"               Value="Transparent"/>
+            <Setter Property="BorderThickness"           Value="0"/>
+            <Setter Property="CornerRadius"              Value="{StaticResource ControlRadius}"/>
+            <Setter Property="Padding"                   Value="8,3"/>
+            <Setter Property="Cursor"                    Value="Hand"/>
+            <Setter Property="Foreground"                Value="{StaticResource TextSecondary}"/>
+            <Setter Property="RenderTransformOrigin"     Value="50%,50%"/>
+            <Setter Property="RenderTransform"           Value="scale(1)"/>
+            <Setter Property="Transitions">
+                <Transitions>
+                    <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.1"/>
+                </Transitions>
+            </Setter>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="{TemplateBinding CornerRadius}"
+                            ClipToBounds="True">
+                        <Panel>
+                            <Border Name="Overlay" IsHitTestVisible="False"
+                                    Background="Transparent"
+                                    CornerRadius="{TemplateBinding CornerRadius}">
+                                <Border.Transitions>
+                                    <Transitions>
+                                        <BrushTransition Property="Background" Duration="0:0:0.15"/>
+                                    </Transitions>
+                                </Border.Transitions>
+                            </Border>
+                            <ContentPresenter Padding="{TemplateBinding Padding}"
+                                              HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              Content="{TemplateBinding Content}"
+                                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                                              Foreground="{TemplateBinding Foreground}"/>
+                        </Panel>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+        </Style>
+        <Style Selector="Button:pointerover /template/ Border#Overlay">
+            <Setter Property="Background" Value="#14ffffff"/>
+        </Style>
+        <Style Selector="Button:pressed /template/ Border#Overlay">
+            <Setter Property="Background" Value="#24ffffff"/>
+        </Style>
+        <Style Selector="Button:pressed">
+            <Setter Property="RenderTransform" Value="scale(0.97)"/>
+        </Style>
+        <Style Selector="Button:disabled">
+            <Setter Property="Opacity" Value="0.35"/>
+        </Style>
+
+        <!-- .primary — filled accent -->
+        <Style Selector="Button.primary">
+            <Setter Property="Background"  Value="{StaticResource Accent}"/>
+            <Setter Property="Foreground"  Value="#ffffff"/>
+        </Style>
+
+        <!-- .outline — transparent with border -->
+        <Style Selector="Button.outline">
+            <Setter Property="Background"       Value="Transparent"/>
+            <Setter Property="BorderBrush"      Value="{StaticResource Stroke}"/>
+            <Setter Property="BorderThickness"  Value="1"/>
+            <Setter Property="Foreground"       Value="{StaticResource TextSecondary}"/>
+        </Style>
+        <Style Selector="Button.outline:pointerover /template/ Border#Overlay">
+            <Setter Property="Background" Value="{StaticResource Bg2}"/>
+        </Style>
+
+        <!-- .ghost — transparent, no border (explicit alias of base) -->
+        <Style Selector="Button.ghost">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+        </Style>
+
+        <!-- .destructive — danger fill -->
+        <Style Selector="Button.destructive">
+            <Setter Property="Background" Value="{StaticResource Danger}"/>
+            <Setter Property="Foreground" Value="#ffffff"/>
+        </Style>
+
+        <!-- .icon — square, no padding, centered icon -->
+        <Style Selector="Button.icon">
+            <Setter Property="Padding"                     Value="0"/>
+            <Setter Property="Width"                       Value="24"/>
+            <Setter Property="Height"                      Value="24"/>
+            <Setter Property="HorizontalContentAlignment"  Value="Center"/>
+            <Setter Property="VerticalContentAlignment"    Value="Center"/>
+        </Style>
+
+        <!-- Tool rail — flat, no scale bounce -->
+        <Style Selector="Button.tool-rail">
+            <Setter Property="Padding"                     Value="0"/>
+            <Setter Property="Width"                       Value="40"/>
+            <Setter Property="Height"                      Value="36"/>
+            <Setter Property="CornerRadius"              Value="4"/>
+            <Setter Property="Background"                Value="Transparent"/>
+            <Setter Property="BorderThickness"           Value="0"/>
+            <Setter Property="HorizontalContentAlignment"  Value="Center"/>
+            <Setter Property="VerticalContentAlignment"    Value="Center"/>
+            <Setter Property="Transitions"                 Value="{x:Null}"/>
+        </Style>
+        <Style Selector="Button.tool-rail:pointerover /template/ Border#Overlay">
+            <Setter Property="Background" Value="#1affffff"/>
+        </Style>
+
+        <!-- Panel icon buttons — flat ghost -->
+        <Style Selector="Button.icon-tool">
+            <Setter Property="Padding"                     Value="0"/>
+            <Setter Property="Width"                       Value="28"/>
+            <Setter Property="Height"                      Value="28"/>
+            <Setter Property="CornerRadius"              Value="4"/>
+            <Setter Property="Background"                Value="Transparent"/>
+            <Setter Property="BorderThickness"           Value="0"/>
+            <Setter Property="HorizontalContentAlignment"  Value="Center"/>
+            <Setter Property="VerticalContentAlignment"    Value="Center"/>
+            <Setter Property="Transitions"                 Value="{x:Null}"/>
+        </Style>
+        <Style Selector="Button.icon-tool:pointerover /template/ Border#Overlay">
+            <Setter Property="Background" Value="{StaticResource Bg3}"/>
+        </Style>
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             ToggleButton
+        ══════════════════════════════════════════════════════════════════ -->
+        <Style Selector="ToggleButton">
+            <Setter Property="Background"            Value="Transparent"/>
+            <Setter Property="BorderBrush"           Value="Transparent"/>
+            <Setter Property="BorderThickness"       Value="0"/>
+            <Setter Property="CornerRadius"          Value="{StaticResource ControlRadius}"/>
+            <Setter Property="Padding"               Value="12,5"/>
+            <Setter Property="Cursor"                Value="Hand"/>
+            <Setter Property="Foreground"            Value="{StaticResource TextSecondary}"/>
+            <Setter Property="RenderTransformOrigin" Value="50%,50%"/>
+            <Setter Property="RenderTransform"       Value="scale(1)"/>
+            <Setter Property="Transitions">
+                <Transitions>
+                    <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.1"/>
+                </Transitions>
+            </Setter>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="{TemplateBinding CornerRadius}"
+                            ClipToBounds="True">
+                        <Panel>
+                            <Border Name="Overlay" IsHitTestVisible="False"
+                                    Background="Transparent"
+                                    CornerRadius="{TemplateBinding CornerRadius}">
+                                <Border.Transitions>
+                                    <Transitions>
+                                        <BrushTransition Property="Background" Duration="0:0:0.15"/>
+                                    </Transitions>
+                                </Border.Transitions>
+                            </Border>
+                            <ContentPresenter Padding="{TemplateBinding Padding}"
+                                              HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              Content="{TemplateBinding Content}"
+                                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                                              Foreground="{TemplateBinding Foreground}"/>
+                        </Panel>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+        </Style>
+        <Style Selector="ToggleButton:pointerover /template/ Border#Overlay">
+            <Setter Property="Background" Value="#14ffffff"/>
+        </Style>
+        <Style Selector="ToggleButton:pressed /template/ Border#Overlay">
+            <Setter Property="Background" Value="#24ffffff"/>
+        </Style>
+        <Style Selector="ToggleButton:pressed">
+            <Setter Property="RenderTransform" Value="scale(0.97)"/>
+        </Style>
+        <Style Selector="ToggleButton:checked">
+            <Setter Property="Background" Value="{StaticResource SelectionBg}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+        </Style>
+        <Style Selector="ToggleButton:checked:pointerover /template/ Border#Overlay">
+            <Setter Property="Background" Value="#18ffffff"/>
+        </Style>
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             TextBox
+        ══════════════════════════════════════════════════════════════════ -->
+        <Style Selector="TextBox">
+            <Setter Property="CornerRadius"                Value="{StaticResource ControlRadius}"/>
+            <Setter Property="Foreground"                  Value="{StaticResource TextPrimary}"/>
+            <Setter Property="CaretBrush"                  Value="{StaticResource TextPrimary}"/>
+            <Setter Property="SelectionBrush"              Value="{StaticResource Accent}"/>
+            <Setter Property="SelectionForegroundBrush"    Value="#ffffff"/>
+            <Setter Property="BorderBrush"                 Value="{StaticResource Stroke}"/>
+            <Setter Property="BorderThickness"             Value="1"/>
+            <Setter Property="Background"                  Value="{StaticResource Bg2}"/>
+            <Setter Property="FontSize"                    Value="12"/>
+        </Style>
+        <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
+            <Setter Property="BorderBrush"    Value="{StaticResource Accent}"/>
+            <Setter Property="BorderThickness" Value="1.5"/>
+        </Style>
+        <Style Selector="TextBox:pointerover /template/ Border#PART_BorderElement">
+            <Setter Property="BorderBrush" Value="{StaticResource TextMuted}"/>
+        </Style>
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             ComboBox
+        ══════════════════════════════════════════════════════════════════ -->
+        <Style Selector="ComboBox">
+            <Setter Property="CornerRadius"    Value="{StaticResource ControlRadius}"/>
+            <Setter Property="Foreground"      Value="{StaticResource TextSecondary}"/>
+            <Setter Property="Background"      Value="{StaticResource Bg2}"/>
+            <Setter Property="BorderBrush"     Value="{StaticResource Stroke}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding"         Value="6,1"/>
+            <Setter Property="FontSize"        Value="12"/>
+        </Style>
+        <Style Selector="ComboBox:pointerover">
+            <Setter Property="BorderBrush" Value="{StaticResource TextMuted}"/>
+        </Style>
+        <Style Selector="ComboBox:focus">
+            <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+        </Style>
+        <Style Selector="ComboBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding"    Value="8,4"/>
+            <Setter Property="FontSize"   Value="12"/>
+        </Style>
+        <Style Selector="ComboBoxItem:selected">
+            <Setter Property="Background" Value="{StaticResource SelectionBg}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+        </Style>
+        <Style Selector="ComboBoxItem:pointerover">
+            <Setter Property="Background" Value="{StaticResource Bg2}"/>
+        </Style>
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             CheckBox
+        ══════════════════════════════════════════════════════════════════ -->
+        <Style Selector="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+            <Setter Property="FontSize"   Value="12"/>
+            <Setter Property="Cursor"     Value="Hand"/>
+        </Style>
+        <Style Selector="CheckBox /template/ Border#NormalRectangle">
+            <Setter Property="Width"            Value="14"/>
+            <Setter Property="Height"           Value="14"/>
+            <Setter Property="CornerRadius"     Value="2"/>
+            <Setter Property="Background"       Value="{StaticResource Bg2}"/>
+            <Setter Property="BorderBrush"      Value="{StaticResource Stroke}"/>
+            <Setter Property="BorderThickness"  Value="1"/>
+        </Style>
+        <Style Selector="CheckBox:checked /template/ Border#NormalRectangle">
+            <Setter Property="Background"  Value="{StaticResource Accent}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+        </Style>
+        <Style Selector="CheckBox:pointerover /template/ Border#NormalRectangle">
+            <Setter Property="BorderBrush" Value="{StaticResource TextMuted}"/>
+        </Style>
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             Menu / MenuItem
+        ══════════════════════════════════════════════════════════════════ -->
+        <Style Selector="Menu">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+        </Style>
+        <Style Selector="MenuItem">
+            <Setter Property="Foreground"   Value="{StaticResource TextSecondary}"/>
+            <Setter Property="Background"   Value="Transparent"/>
+            <Setter Property="Padding"      Value="8,4"/>
+            <Setter Property="FontSize"     Value="12"/>
+            <Setter Property="CornerRadius" Value="{StaticResource SmRadius}"/>
+        </Style>
+        <Style Selector="MenuItem:selected, MenuItem:pointerover">
+            <Setter Property="Background" Value="{StaticResource Bg2}"/>
+        </Style>
+
+        <!-- Legacy Avalonia Slider styles (app uses Controls.ScrubSlider instead) -->
+        <Style Selector="Slider:horizontal">
+            <Setter Property="Background" Value="{StaticResource SliderTrack}"/>
+            <Setter Property="MinHeight"  Value="14"/>
+            <Setter Property="MaxHeight"  Value="14"/>
+            <Setter Property="Cursor"     Value="SizeWestEast"/>
+            <Setter Property="Padding"    Value="0"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="{TemplateBinding Background}"
+                            Height="14"
+                            CornerRadius="2"
+                            ClipToBounds="False">
+                        <Track Name="PART_Track" Orientation="Horizontal"
+                               Height="14"
+                               Minimum="{TemplateBinding Minimum}"
+                               Maximum="{TemplateBinding Maximum}"
+                               Value="{TemplateBinding Value, Mode=TwoWay}">
+                            <Track.DecreaseButton>
+                                <RepeatButton Name="PART_DecreaseButton" Focusable="False">
+                                    <RepeatButton.Template>
+                                        <ControlTemplate>
+                                            <Border Name="Fill" Background="Transparent"/>
+                                        </ControlTemplate>
+                                    </RepeatButton.Template>
+                                </RepeatButton>
+                            </Track.DecreaseButton>
+                            <Track.Thumb>
+                                <Thumb Width="12" Height="12" Cursor="SizeWestEast">
+                                    <Thumb.Template>
+                                        <ControlTemplate>
+                                            <Border Width="10" Height="10"
+                                                    Background="{StaticResource SliderThumb}"
+                                                    BorderBrush="{StaticResource Stroke}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="2"
+                                                    VerticalAlignment="Center"
+                                                    HorizontalAlignment="Center"/>
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Track.Thumb>
+                            <Track.IncreaseButton>
+                                <RepeatButton Name="PART_IncreaseButton" Focusable="False">
+                                    <RepeatButton.Template>
+                                        <ControlTemplate>
+                                            <Border Background="Transparent"/>
+                                        </ControlTemplate>
+                                    </RepeatButton.Template>
+                                </RepeatButton>
+                            </Track.IncreaseButton>
+                        </Track>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+        </Style>
+        <Style Selector="Slider:horizontal:pointerover /template/ RepeatButton#PART_DecreaseButton /template/ Border#Fill">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="Slider:horizontal:pressed /template/ RepeatButton#PART_DecreaseButton /template/ Border#Fill">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+
+        <!-- ScrollViewers: always show scrollbars when content overflows -->
+        <Style Selector="ScrollViewer">
+            <Setter Property="HorizontalScrollBarVisibility" Value="Visible"/>
+            <Setter Property="VerticalScrollBarVisibility" Value="Visible"/>
+        </Style>
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             ScrollBar
+        ══════════════════════════════════════════════════════════════════ -->
+        <Style Selector="ScrollBar">
+            <Setter Property="Opacity" Value="0.85"/>
+        </Style>
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             ListBox / ListBoxItem
+        ══════════════════════════════════════════════════════════════════ -->
+        <Style Selector="ListBoxItem">
+            <Setter Property="Background"   Value="Transparent"/>
+            <Setter Property="Padding"      Value="4,2"/>
+            <Setter Property="CornerRadius" Value="{StaticResource SmRadius}"/>
+        </Style>
+        <Style Selector="ListBoxItem:selected">
+            <Setter Property="Background" Value="{StaticResource SelectionBg}"/>
+        </Style>
+        <Style Selector="ListBoxItem:pointerover">
+            <Setter Property="Background" Value="{StaticResource Bg3}"/>
+        </Style>
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             Utility classes
+        ══════════════════════════════════════════════════════════════════ -->
+        <!-- Usage: <TextBlock Classes="section-header" Text="COLOR"/> -->
+        <Style Selector="TextBlock.section-header">
+            <Setter Property="FontSize"     Value="11"/>
+            <Setter Property="FontWeight"   Value="Normal"/>
+            <Setter Property="Foreground"   Value="{StaticResource TextSecondary}"/>
+            <Setter Property="LetterSpacing" Value="0"/>
+            <Setter Property="Margin"       Value="0"/>
+        </Style>
+
+        <!-- Usage: <Separator/> or <Border Classes="rule"/> -->
+        <Style Selector="Separator">
+            <Setter Property="Background"          Value="{StaticResource Stroke}"/>
+            <Setter Property="Height"              Value="1"/>
+            <Setter Property="Margin"              Value="0,3"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+        </Style>
+        <Style Selector="Border.rule">
+            <Setter Property="Background"          Value="{StaticResource Stroke}"/>
+            <Setter Property="Height"              Value="1"/>
+            <Setter Property="Margin"              Value="0,3"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+        </Style>
+
+    </Application.Styles>
+</Application>

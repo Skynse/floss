@@ -1,0 +1,31 @@
+# Build outputs
+bin/
+obj/
+artifacts/
+TestResults/
+target/
+docs/
+notes/
+bench/
+profiles/
+*.nettrace
+*.etlx
+*.speedscope.json
+# .NET user state
+*.user
+*.suo
+
+# Editor and OS noise
+.DS_Store
+*.swp
+*.log
+.idea/
+.vscode/
+
+# Release secrets (R2 + GitLab token) — see packaging/release/.env.release.example
+packaging/release/.env.release
+packaging/macos/.env.signing
+
+# ML models (downloaded on demand to user data dir)
+*.onnx
+tmp/

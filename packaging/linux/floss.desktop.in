@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Floss
+Comment=Digital painting and image editing
+Exec=@EXEC@ %f
+Icon=floss
+Terminal=false
+Categories=Graphics;2DGraphics;RasterGraphics;
+MimeType=application/x-floss;application/x-kra;
+StartupNotify=true

@@ -1,0 +1,9 @@
+<Project>
+  <!-- Mirrors AppPaths.PluginsDirectory (Linux XDG data: ~/.local/share/Floss/Plugins). -->
+  <PropertyGroup>
+    <FlossAppData Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(APPDATA)</FlossAppData>
+    <FlossAppData Condition="$([MSBuild]::IsOSPlatform('OSX'))">$(HOME)/Library/Application Support</FlossAppData>
+    <FlossAppData Condition="'$(FlossAppData)' == ''">$(HOME)/.local/share</FlossAppData>
+    <FlossPluginsDir>$(FlossAppData)/Floss/Plugins</FlossPluginsDir>
+  </PropertyGroup>
+</Project>
