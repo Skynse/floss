@@ -390,7 +390,7 @@ public class LayerCompositorTests
     [Fact]
     public void SampleCompositePixel_MatchesCompositeToBgra_ForRealCharacterLayerOnly()
     {
-        const string path = "/home/neckles/Downloads/electrichearts_20250824A_kiki.kra";
+        var path = TestPaths.KraTestFile;
         if (!File.Exists(path))
             return;
 
@@ -504,7 +504,7 @@ public class LayerCompositorTests
     [Fact]
     public void CompositeToBgra_RendersKikiGroupCharacterPixel()
     {
-        const string path = "/home/neckles/Downloads/electrichearts_20250824A_kiki.kra";
+        var path = TestPaths.KraTestFile;
         if (!File.Exists(path))
             return;
 
@@ -527,7 +527,7 @@ public class LayerCompositorTests
     public void Composite_RealGroupedKra_TiledPathMatchesCompositeToBgra_AtLowAlphaCharacterPixel()
     {
         EnsureAvalonia();
-        const string path = "/home/neckles/Downloads/electrichearts_20250824A_kiki.kra";
+        var path = TestPaths.KraTestFile;
         if (!File.Exists(path))
             return;
 

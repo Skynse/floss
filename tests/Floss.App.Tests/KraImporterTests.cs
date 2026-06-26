@@ -38,7 +38,7 @@ public class KraImporterTests
     [Fact]
     public void Load_RealKraArchive_ImportsExpectedTileCounts()
     {
-        const string path = "/home/neckles/Downloads/electrichearts_20250824A_kiki.kra";
+        var path = TestPaths.KraTestFile;
         if (!File.Exists(path))
             return;
 
@@ -72,7 +72,7 @@ public class KraImporterTests
     [Fact]
     public void Load_RealKraArchive_ImportsVisiblePixelContent()
     {
-        const string path = "/home/neckles/Downloads/electrichearts_20250824A_kiki.kra";
+        var path = TestPaths.KraTestFile;
         if (!File.Exists(path))
             return;
 

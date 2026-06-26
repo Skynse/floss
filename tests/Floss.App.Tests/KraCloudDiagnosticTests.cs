@@ -8,7 +8,7 @@ namespace Floss.App.Tests;
 
 public class KraCloudDiagnosticTests
 {
-    private const string KraPath = "/home/neckles/Downloads/electrichearts_20250824A_kiki.kra";
+    private static readonly string KraPath = TestPaths.KraTestFile;
 
     [Fact]
     public void Load_RealKraArchive_SkyCloudLayersHavePixels()
