@@ -1,8 +1,24 @@
 # Floss
 
-Desktop drawing application built with Avalonia and C# on .NET 10.
+Digital painting and image editing for desktop.
+
+<img src="assets/hero-workspace.png" alt="Floss workspace with artwork on canvas" width="800">
+
+Floss is a painting app built for people who think in strokes, not menus. It supports pressure, speed, and tilt on every brush, a full layer system with folders and blend modes, and it opens PSD and KRA files with layers intact.
+
+The brush engine is built around a node graph. You wire up shapes, noise, textures, and bristles, and the preview shows you exactly what hits the canvas. Save your favorites as presets.
+
+Pan, zoom, rotate, flip. Work big, work close, work however you like.
+
+## Platforms
+
+- **Linux** - AppImage, Flatpak
+- **Windows** - portable zip
+- **macOS** - Apple Silicon and Intel
 
 ## Build
+
+Requires the .NET 10 SDK.
 
 ```sh
 dotnet restore
@@ -10,14 +26,10 @@ dotnet build
 dotnet run --project src/Floss.App
 ```
 
-## Publish
+## Tech
 
-Windows builds require the **Visual C++ Redistributable for Visual Studio 2015–2022**. If you get "side-by-side configuration is incorrect", install [vc_redist.x64.exe](https://aka.ms/vs/17/release/vc_redist.x64.exe).
+Floss is built with [Avalonia](https://avaloniaui.net/) and C# on .NET 10. It includes a plugin system if you want to extend it.
 
-```sh
-dotnet publish src/Floss.App/Floss.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:PublishTrimmed=false -o artifacts/floss-win-x64-compact
-```
+## License
 
-```sh
-dotnet publish src/Floss.App/Floss.App.csproj -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:PublishTrimmed=false -o artifacts/floss-linux-x64-compact
-```
+Floss is source-available. The code is here to read, learn from, and fork, but commercial use and redistribution are restricted. See the [LICENSE](LICENSE) file for details.
