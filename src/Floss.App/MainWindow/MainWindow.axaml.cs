@@ -474,6 +474,26 @@ public partial class MainWindow : Window, Tools.IViewportController
             return;
         }
 
+        if (key == Key.OemBackslash && mods == KeyModifiers.None)
+        {
+            if (_canvas.HasDocument && _canvas.ActiveLayerIndex >= 0)
+            {
+                _canvas.ToggleLayerMaskEditing(_canvas.ActiveLayerIndex);
+                e.Handled = true;
+                return;
+            }
+        }
+
+        if (key == Key.OemBackslash && mods == (KeyModifiers.Control | KeyModifiers.Shift))
+        {
+            if (_canvas.HasDocument && _canvas.ActiveLayerIndex >= 0)
+            {
+                _canvas.SetLayerMaskEditing(_canvas.ActiveLayerIndex, false);
+                e.Handled = true;
+                return;
+            }
+        }
+
         // Tool group shortcuts (checked after regular shortcuts via KeyBinding above)
         var matching = GetToolsPanel().ToolGroupButtons
             .Where(p => !p.Group.Shortcut.IsEmpty && p.Group.Shortcut.Matches(key, mods))

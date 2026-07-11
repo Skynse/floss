@@ -70,6 +70,17 @@ public static class PsdImporter
                         CopyPixels(layer, psdLayer);
                         psdLayer.Bgra = null; // release decoded plane data immediately
                     }
+
+                    if (psdLayer.MaskPlane != null && psdLayer.MaskRight > psdLayer.MaskLeft && psdLayer.MaskBottom > psdLayer.MaskTop)
+                    {
+                        layer.CreateMask();
+                        var maskW = psdLayer.MaskRight - psdLayer.MaskLeft;
+                        var maskH = psdLayer.MaskBottom - psdLayer.MaskTop;
+                        var maskOffsetX = psdLayer.MaskLeft - psdLayer.Left;
+                        var maskOffsetY = psdLayer.MaskTop - psdLayer.Top;
+                        CopyMaskPixels(layer, psdLayer.MaskPlane, maskW, maskH, maskOffsetX, maskOffsetY, psdLayer.MaskDisabled);
+                        psdLayer.MaskPlane = null;
+                    }
                     break;
                 }
         }
@@ -79,6 +90,26 @@ public static class PsdImporter
     {
         dst.Pixels.CopyFromBgra(src.Bgra!, src.Width, src.Height);
         dst.MarkThumbnailDirty();
+    }
+
+    private static void CopyMaskPixels(DrawingLayer dst, byte[] maskPlane, int maskW, int maskH, int offsetX, int offsetY, bool disabled)
+    {
+        var docW = dst.Width;
+        var docH = dst.Height;
+        for (var y = 0; y < maskH; y++)
+        {
+            var docY = y + offsetY;
+            if (docY < 0 || docY >= docH) continue;
+            for (var x = 0; x < maskW; x++)
+            {
+                var docX = x + offsetX;
+                if (docX < 0 || docX >= docW) continue;
+                var v = maskPlane[y * maskW + x];
+                dst.MaskPixels!.SetPixel(docX, docY, v, v, v, v);
+            }
+        }
+        dst.IsMaskVisible = !disabled;
+        dst.MarkMaskThumbnailDirty();
     }
 
     private static BlendMode MapBlendMode(string key) => key.TrimEnd() switch

@@ -366,7 +366,7 @@ public sealed class DrawingDocument : IDisposable
         PaperColor = new Avalonia.Media.Color(255, 255, 255, 255);
         Selection.Resize(Width, Height);
         Selection.Clear();
-        Assistants.Clear();
+        Assistants.ClearSelection();
         ResetHistoryTimeline();
         HistoryChanged?.Invoke(this, EventArgs.Empty);
     }

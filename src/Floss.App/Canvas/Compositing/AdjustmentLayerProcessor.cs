@@ -133,11 +133,15 @@ internal static unsafe class AdjustmentLayerProcessor
 
     public static void ApplyClipped(
         byte* dst, int dstStride, int width, int height,
-        AdjustmentLayerData adj, double opacityScale,
+        DrawingLayer adjLayer, double opacityScale,
         DrawingLayer baseLayer,
         PixelRegion clip, int originX, int originY)
     {
-        if (opacityScale <= 0 || clip.IsEmpty) return;
+        var adj = adjLayer.Adjustment;
+        if (adj == null || opacityScale <= 0 || clip.IsEmpty) return;
+
+        var hasMask = adjLayer.HasMask && adjLayer.IsMaskVisible;
+        var maskPixels = adjLayer.MaskPixels;
 
         var bufLen = clip.Width * clip.Height * 4;
         var buf = ArrayPool<byte>.Shared.Rent(bufLen);
@@ -161,7 +165,10 @@ internal static unsafe class AdjustmentLayerProcessor
                 var op = (float)Math.Clamp(opacityScale, 0.0, 1.0);
 
                 var basePixels = baseLayer.Pixels;
+                var adjOffX = adjLayer.OffsetX;
+                var adjOffY = adjLayer.OffsetY;
                 basePixels.EnterPixelReadLock();
+                if (hasMask) maskPixels!.EnterPixelReadLock();
                 try
                 {
                     for (var y = clip.Y; y < clip.Bottom; y++)
@@ -187,13 +194,29 @@ internal static unsafe class AdjustmentLayerProcessor
                             var baseA = tile[(localY * ts + localX) * 4 + 3];
                             if (baseA == 0) continue;
 
-                            var eff = op * (baseA / 255f);
+                            float maskFactor = 1f;
+                            if (hasMask)
+                            {
+                                var mx = x - adjOffX;
+                                var my = y - adjOffY;
+                                var mTileX = LayerCompositorPixelOps.FloorDiv(mx, ts);
+                                var mTileY = LayerCompositorPixelOps.FloorDiv(my, ts);
+                                var mTile = maskPixels!.GetTileOrNull(mTileX, mTileY);
+                                if (mTile == null) continue;
+                                var mLocalX = mx - mTileX * ts;
+                                var mLocalY = my - mTileY * ts;
+                                maskFactor = mTile[(mLocalY * ts + mLocalX) * 4 + 3] / 255f;
+                                if (maskFactor <= 0) continue;
+                            }
+
+                            var eff = op * (baseA / 255f) * maskFactor;
                             BlendPx(dstRow, adjRow[0], adjRow[1], adjRow[2], eff);
                         }
                     }
                 }
                 finally
                 {
+                    if (hasMask) maskPixels!.ExitPixelReadLock();
                     basePixels.ExitPixelReadLock();
                 }
             }

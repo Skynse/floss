@@ -132,20 +132,28 @@ public static class PsdExporter
     {
         var layer = exportLayer.Layer;
         var bounds = exportLayer.Bounds;
+        var hasMask = layer.HasMask && !layer.IsGroup;
 
         w.WriteInt32(bounds.Y);
         w.WriteInt32(bounds.X);
         w.WriteInt32(bounds.Bottom);
         w.WriteInt32(bounds.Right);
 
-        w.WriteUInt16(4); // 4 channels
+        var chanCount = hasMask ? 5 : 4;
+        w.WriteUInt16((ushort)chanCount);
 
-        var positions = new long[4];
+        var positions = new long[chanCount];
         for (int c = -1; c < 3; c++)
         {
             w.WriteInt16((short)c);
             positions[c + 1] = w.Position;
             w.WriteUInt32(0); // length placeholder
+        }
+        if (hasMask)
+        {
+            w.WriteInt16(-2); // mask channel
+            positions[4] = w.Position;
+            w.WriteUInt32(0);
         }
 
         w.WriteAscii("8BIM");
@@ -156,10 +164,24 @@ public static class PsdExporter
         w.WriteByte(0); // filler
 
         // Extra data: layer mask data length, layer blending ranges length, then the layer name.
-        // The length prefixes are mandatory even when the sections are empty.
         var extra = new MemoryStream();
         var extraW = new PsdBinaryWriter(extra);
-        extraW.WriteUInt32(0); // Layer mask / adjustment data length
+
+        if (hasMask)
+        {
+            extraW.WriteUInt32(20); // mask data size: 4*4 (bbox) + 1 (default) + 1 (flags) + 2 (pad)
+            extraW.WriteInt32(bounds.Y);
+            extraW.WriteInt32(bounds.X);
+            extraW.WriteInt32(bounds.Bottom);
+            extraW.WriteInt32(bounds.Right);
+            extraW.WriteByte(0); // default color = 0 (concealed)
+            extraW.WriteByte((byte)(layer.IsMaskVisible ? 0 : 2)); // flags: bit 1 = disabled
+            extraW.WriteZeros(2); // padding
+        }
+        else
+        {
+            extraW.WriteUInt32(0); // Layer mask / adjustment data length
+        }
         extraW.WriteUInt32(0); // Layer blending ranges length
         var nameBytes = Encoding.ASCII.GetBytes(layer.Name);
         var nameLen = Math.Min(nameBytes.Length, 255);
@@ -180,6 +202,8 @@ public static class PsdExporter
     {
         var width = Math.Max(0, exportLayer.Bounds.Width);
         var height = Math.Max(0, exportLayer.Bounds.Height);
+        var layer = exportLayer.Layer;
+        var hasMask = layer.HasMask && !layer.IsGroup;
 
         for (int ch = -1; ch < 3; ch++)
         {
@@ -187,6 +211,18 @@ public static class PsdExporter
 
             var savedPos = w.Position;
             w.Position = lengthPositions[ch + 1];
+            w.WriteUInt32((uint)data.Length);
+            w.Position = savedPos;
+
+            w.WriteBytes(data);
+        }
+
+        if (hasMask)
+        {
+            var data = CompressMaskChannelRle(exportLayer, width, height);
+
+            var savedPos = w.Position;
+            w.Position = lengthPositions[4];
             w.WriteUInt32((uint)data.Length);
             w.Position = savedPos;
 
@@ -238,6 +274,47 @@ public static class PsdExporter
                         1 => g,
                         _ => b
                     };
+            }
+            PackBitsEncode(w, values);
+            rowCounts[y] = (ushort)((int)result.Position - rowStart);
+        }
+
+        var finalData = result.ToArray();
+        for (int y = 0; y < height; y++)
+        {
+            var bytes = new byte[2];
+            BinaryPrimitives.WriteUInt16BigEndian(bytes, rowCounts[y]);
+            Array.Copy(bytes, 0, finalData, (int)rowCountsPos + y * 2, 2);
+        }
+
+        return finalData;
+    }
+
+    private static byte[] CompressMaskChannelRle(ExportLayer exportLayer, int width, int height)
+    {
+        var layer = exportLayer.Layer;
+        var bounds = exportLayer.Bounds;
+        var result = new MemoryStream();
+        var w = new PsdBinaryWriter(result);
+
+        w.WriteUInt16(1); // RLE
+
+        var rowCountsPos = result.Position;
+        for (int i = 0; i < height; i++)
+            w.WriteUInt16(0);
+
+        var rowCounts = new ushort[height];
+
+        for (int y = 0; y < height; y++)
+        {
+            var rowStart = (int)result.Position;
+            var values = new byte[width];
+            for (int x = 0; x < width; x++)
+            {
+                var localX = bounds.X + x - layer.OffsetX;
+                var localY = bounds.Y + y - layer.OffsetY;
+                layer.MaskPixels!.GetPixel(localX, localY, out _, out _, out _, out var a);
+                values[x] = a;
             }
             PackBitsEncode(w, values);
             rowCounts[y] = (ushort)((int)result.Position - rowStart);

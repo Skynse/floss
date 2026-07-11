@@ -91,7 +91,7 @@ internal sealed class LayerProjectionPlane
                             else if (clipItem.Layer.Adjustment != null)
                                 AdjustmentLayerProcessor.ApplyClipped(
                                     tp, clip.Width * 4, clip.Width, clip.Height,
-                                    clipItem.Layer.Adjustment!,
+                                    clipItem.Layer,
                                     clipItem.Layer.Opacity,
                                     baseLayer, clip, originX, originY);
                             else

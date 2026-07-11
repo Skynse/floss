@@ -72,4 +72,48 @@ public class DocumentAssistantsTests
         Assert.NotNull(hit);
         Assert.Equal(ruler.Id, hit.Id);
     }
+
+    [Fact]
+    public void All_ExcludesRulersOnHiddenLayers()
+    {
+        var doc = new DrawingDocument(256, 256);
+        doc.SelectLayer(0);
+        var ruler = PaintingAssistant.FromDrag(PaintingAssistant.RulerType, new Point(10, 10), new Point(100, 10));
+        doc.Assistants.Add(ruler, createAtEditingLayer: true);
+
+        Assert.Single(doc.Assistants.All);
+
+        doc.Layers[0].IsVisible = false;
+
+        Assert.Empty(doc.Assistants.All);
+    }
+
+    [Fact]
+    public void ClearSelection_DeselectsWithoutRemovingRulers()
+    {
+        var doc = new DrawingDocument(256, 256);
+        var ruler = PaintingAssistant.FromDrag(PaintingAssistant.RulerType, new Point(10, 10), new Point(100, 10));
+        doc.Assistants.Add(ruler, createAtEditingLayer: true);
+        doc.Assistants.SelectedId = ruler.Id;
+
+        doc.Assistants.ClearSelection();
+
+        Assert.Null(doc.Assistants.SelectedId);
+        Assert.Single(doc.Assistants.Rulers);
+    }
+
+    [Fact]
+    public void EnumerateForRender_ExcludesRulersOnHiddenLayers()
+    {
+        var doc = new DrawingDocument(256, 256);
+        doc.SelectLayer(0);
+        var ruler = PaintingAssistant.FromDrag(PaintingAssistant.RulerType, new Point(10, 10), new Point(100, 10));
+        doc.Assistants.Add(ruler, createAtEditingLayer: true);
+
+        Assert.Single(doc.Assistants.EnumerateForRender());
+
+        doc.Layers[0].IsVisible = false;
+
+        Assert.Empty(doc.Assistants.EnumerateForRender());
+    }
 }

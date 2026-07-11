@@ -622,6 +622,11 @@ public sealed partial class LayersDockPanel : ContentControl
             _maskLayerToolbarMenu.Items.Add(MaskMenuItem("Create Mask", () =>
             {
                 _ps.Canvas.CreateLayerMask(idx);
+                BuildLayerListImpl();
+            }));
+            _maskLayerToolbarMenu.Items.Add(MaskMenuItem("Create and Edit Mask", () =>
+            {
+                _ps.Canvas.CreateLayerMask(idx);
                 _ps.Canvas.SetLayerMaskEditing(idx, true);
                 BuildLayerListImpl();
             }));
@@ -645,6 +650,11 @@ public sealed partial class LayersDockPanel : ContentControl
                 _ps.Canvas.ToggleLayerMask(idx);
                 BuildLayerListImpl();
             }));
+        _maskLayerToolbarMenu.Items.Add(MaskMenuItem("Invert Mask", () =>
+        {
+            InvertLayerMask(idx);
+            BuildLayerListImpl();
+        }));
         _maskLayerToolbarMenu.Items.Add(MaskMenuItem("Apply Mask", () =>
         {
             _ps.Canvas.ApplyLayerMask(idx);
@@ -663,6 +673,28 @@ public sealed partial class LayersDockPanel : ContentControl
         var item = new MenuItem { Header = header };
         item.Click += (_, _) => action();
         return item;
+    }
+
+    private void InvertLayerMask(int idx)
+    {
+        var layer = _ps.Canvas.Layers[idx];
+        if (layer.MaskPixels == null) return;
+        var tiles = layer.MaskPixels.CaptureTiles();
+        foreach (var (key, tile) in tiles)
+        {
+            if (tile == null) continue;
+            for (var i = 0; i < tile.Length; i += 4)
+            {
+                var v = (byte)(255 - tile[i + 3]);
+                tile[i] = v;
+                tile[i + 1] = v;
+                tile[i + 2] = v;
+                tile[i + 3] = v;
+            }
+        }
+        layer.MaskPixels.RestoreTiles(tiles);
+        layer.MarkMaskThumbnailDirty();
+        _ps.Canvas.InvalidateVisual();
     }
 
 

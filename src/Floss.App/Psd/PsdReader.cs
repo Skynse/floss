@@ -36,6 +36,12 @@ public sealed class PsdLayerNode : PsdNode
     public int Width => Right - Left;
     public int Height => Bottom - Top;
     public byte[]? Bgra { get; set; } // null = empty / transparent layer
+    public byte[]? MaskPlane { get; set; }
+    public int MaskTop { get; set; }
+    public int MaskLeft { get; set; }
+    public int MaskBottom { get; set; }
+    public int MaskRight { get; set; }
+    public bool MaskDisabled { get; set; }
 }
 
 public sealed class PsdGroupNode : PsdNode
@@ -127,7 +133,20 @@ public static class PsdReader
             var extraEnd = stream.Position + extraLen;
 
             // layer mask data
-            r.Skip((int)r.U32());
+            var maskDataLen = (int)r.U32();
+            if (maskDataLen > 0)
+            {
+                var maskDataEnd = stream.Position + maskDataLen;
+                rec.MaskTop = r.I32();
+                rec.MaskLeft = r.I32();
+                rec.MaskBottom = r.I32();
+                rec.MaskRight = r.I32();
+                rec.MaskDefault = r.Byte();
+                var maskFlags = r.Byte();
+                rec.MaskDisabled = (maskFlags & 2) != 0;
+                rec.HasMaskData = true;
+                stream.Position = maskDataEnd;
+            }
             // layer blending ranges
             r.Skip((int)r.U32());
 
@@ -211,7 +230,13 @@ public static class PsdReader
             {
                 if (raw.Length < 2) continue;
                 var compression = (ushort)((raw[0] << 8) | raw[1]);
-                var plane = DecodeBufferedPlane(raw, 2, compression, layerW, layerH, bitDepth);
+                int decodeW = layerW, decodeH = layerH;
+                if (chanId == -2 && rec.HasMaskData)
+                {
+                    decodeW = rec.MaskRight - rec.MaskLeft;
+                    decodeH = rec.MaskBottom - rec.MaskTop;
+                }
+                var plane = DecodeBufferedPlane(raw, 2, compression, decodeW, decodeH, bitDepth);
                 if (plane != null)
                     rec.Channels[chanId] = plane;
             }
@@ -219,6 +244,7 @@ public static class PsdReader
 
             if (rec.SectionType == 0 && rec.Channels.Count > 0 && layerW > 0 && layerH > 0)
             {
+                rec.Channels.TryGetValue(-2, out rec.MaskPlane);
                 rec.PrecomputedBgra = AssembleBgra(rec, layerW, layerH);
                 rec.Channels.Clear();
             }
@@ -285,6 +311,12 @@ public static class PsdReader
                     Bottom = rec.Bottom,
                     Right = rec.Right,
                     Bgra = bgra,
+                    MaskPlane = rec.MaskPlane,
+                    MaskTop = rec.MaskTop,
+                    MaskLeft = rec.MaskLeft,
+                    MaskBottom = rec.MaskBottom,
+                    MaskRight = rec.MaskRight,
+                    MaskDisabled = rec.MaskDisabled,
                 });
             }
         }
@@ -479,6 +511,12 @@ public static class PsdReader
         public Dictionary<short, byte[]> Channels = new();
         // Pre-assembled BGRA, set during parallel pass so BuildTree just grabs it.
         public byte[]? PrecomputedBgra;
+        // Decoded mask plane (channel id -2), if present.
+        public byte[]? MaskPlane;
+        public int MaskTop, MaskLeft, MaskBottom, MaskRight;
+        public byte MaskDefault = 255;
+        public bool MaskDisabled;
+        public bool HasMaskData;
         public string BlendMode = "norm";
         public string DividerBlendMode = "";
         public byte Opacity = 255;

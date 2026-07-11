@@ -1777,6 +1777,8 @@ public sealed class DrawingCanvas : Control, IDisposable
         _transformTool.ViewportFlipX = FlipX == 0 ? 1 : FlipX;
         _transformTool.ViewportFlipY = FlipY == 0 ? 1 : FlipY;
 
+        RenderMaskEditingIndicator(context, canvasBounds);
+
         var assistantPreview = _toolController.ActiveTool is AssistantTool assistantTool
             ? assistantTool.CreatePreview
             : null;
@@ -1814,6 +1816,27 @@ public sealed class DrawingCanvas : Control, IDisposable
                 RenderToolCursorOnCanvas(context);
         }
         DrawTelemetryOverlay(context);
+    }
+
+    private static readonly IBrush MaskEditBorderBrush = new SolidColorBrush(Color.FromArgb(200, 220, 40, 40));
+    private static readonly IBrush MaskEditBadgeBg = new SolidColorBrush(Color.FromArgb(220, 180, 30, 30));
+    private static readonly IBrush MaskEditBadgeText = new SolidColorBrush(Color.FromArgb(255, 255, 220, 220));
+
+    private void RenderMaskEditingIndicator(DrawingContext context, Rect canvasBounds)
+    {
+        var layer = _document.ActiveLayer;
+        if (layer is not { IsMaskEditing: true, HasMask: true }) return;
+
+        var t = Math.Max(1.5, 2.0 / CanvasZoom);
+        context.DrawRectangle(null, new Pen(MaskEditBorderBrush, t * 2), canvasBounds);
+
+        var badgeText = new FormattedText("MASK", CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight, new Typeface(FontFamily.Default, FontStyle.Normal, FontWeight.Bold), 10, MaskEditBadgeText);
+        var badgeW = badgeText.Width + 12;
+        var badgeH = badgeText.Height + 6;
+        var badgeRect = new Rect(canvasBounds.Right - badgeW - 4, canvasBounds.Top + 4, badgeW, badgeH);
+        context.FillRectangle(MaskEditBadgeBg, badgeRect);
+        context.DrawText(badgeText, new Point(badgeRect.X + 6, badgeRect.Y + 3));
     }
 
     private static readonly IBrush TelemetryOverlayBrush = new SolidColorBrush(Color.FromArgb(150, 18, 18, 18));

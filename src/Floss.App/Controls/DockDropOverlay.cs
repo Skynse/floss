@@ -119,8 +119,13 @@ public sealed class DockDropOverlay : Avalonia.Controls.Canvas
     {
         _hintText.Text = text;
         _hintCard.IsVisible = true;
-        SetLeft(_hintCard, x + 14);
-        SetTop(_hintCard, y + 14);
+        _hintCard.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        var cardW = _hintCard.DesiredSize.Width;
+        var cardH = _hintCard.DesiredSize.Height;
+        var clampedX = Math.Min(x + 14, Math.Max(0, Bounds.Width - cardW));
+        var clampedY = Math.Min(y + 14, Math.Max(0, Bounds.Height - cardH));
+        SetLeft(_hintCard, clampedX);
+        SetTop(_hintCard, clampedY);
     }
 
     public const double TabStripHeight = 28;

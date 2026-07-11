@@ -799,6 +799,57 @@ public class LayerCompositorTests
         TestAssertions.Equal((byte)255, pixels[offset + 3]);
     }
 
+    [Fact]
+    public void Composite_ClippingLayerWithMask_AppliesMask()
+    {
+        var baseLayer = new DrawingLayer("Base", 4, 1);
+        baseLayer.Pixels.SetPixel(0, 0, 100, 100, 100, 255);
+        baseLayer.Pixels.SetPixel(1, 0, 100, 100, 100, 255);
+        baseLayer.Pixels.SetPixel(2, 0, 100, 100, 100, 255);
+        baseLayer.Pixels.SetPixel(3, 0, 100, 100, 100, 255);
+
+        var clipLayer = new DrawingLayer("Clip", 4, 1) { IsClipping = true };
+        clipLayer.Pixels.SetPixel(0, 0, 255, 0, 0, 255);
+        clipLayer.Pixels.SetPixel(1, 0, 255, 0, 0, 255);
+        clipLayer.Pixels.SetPixel(2, 0, 255, 0, 0, 255);
+        clipLayer.Pixels.SetPixel(3, 0, 255, 0, 0, 255);
+        clipLayer.CreateMask();
+        clipLayer.MaskPixels!.SetPixel(0, 0, 0, 0, 0, 255);
+        clipLayer.MaskPixels.SetPixel(1, 0, 0, 0, 0, 128);
+        clipLayer.MaskPixels.SetPixel(2, 0, 0, 0, 0, 0);
+        clipLayer.MaskPixels.SetPixel(3, 0, 0, 0, 0, 255);
+
+        using var compositor = new LayerCompositor();
+        var pixels = compositor.CompositeToBgra([baseLayer, clipLayer], 4, 1, 0);
+
+        AssertPixel(pixels, 0, 255, 0, 0, 255);
+        AssertPixel(pixels, 1, 178, 50, 50, 255);
+        AssertPixel(pixels, 2, 100, 100, 100, 255);
+        AssertPixel(pixels, 3, 255, 0, 0, 255);
+    }
+
+    [Fact]
+    public void Composite_ClippingLayerWithDisabledMask_IgnoresMask()
+    {
+        var baseLayer = new DrawingLayer("Base", 2, 1);
+        baseLayer.Pixels.SetPixel(0, 0, 100, 100, 100, 255);
+        baseLayer.Pixels.SetPixel(1, 0, 100, 100, 100, 255);
+
+        var clipLayer = new DrawingLayer("Clip", 2, 1) { IsClipping = true };
+        clipLayer.Pixels.SetPixel(0, 0, 255, 0, 0, 255);
+        clipLayer.Pixels.SetPixel(1, 0, 255, 0, 0, 255);
+        clipLayer.CreateMask();
+        clipLayer.MaskPixels!.SetPixel(0, 0, 0, 0, 0, 0);
+        clipLayer.MaskPixels.SetPixel(1, 0, 0, 0, 0, 0);
+        clipLayer.IsMaskVisible = false;
+
+        using var compositor = new LayerCompositor();
+        var pixels = compositor.CompositeToBgra([baseLayer, clipLayer], 2, 1, 0);
+
+        AssertPixel(pixels, 0, 255, 0, 0, 255);
+        AssertPixel(pixels, 1, 255, 0, 0, 255);
+    }
+
     private static void AssertPixel(byte[] pixels, int x, byte b, byte g, byte r, byte a)
     {
         var offset = x * 4;

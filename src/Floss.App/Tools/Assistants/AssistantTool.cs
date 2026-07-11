@@ -17,6 +17,10 @@ public sealed class AssistantTool : ITool
     private PaintingAssistant? _createPreview;
     private Point _createStart;
     private int _draggingHandle;
+    private Point _moveOffset;
+    private const int BodyMoveHandle = -2;
+    private const double CreateDragThreshold = 16;
+
     public AssistantTool(DrawingDocument document, AssistantCreateSettings createSettings)
     {
         _document = document;
@@ -51,14 +55,14 @@ public sealed class AssistantTool : ITool
         if (lineHit != null)
         {
             assistants.SelectedId = lineHit.Id;
-            _draggingHandle = 0;
+            _draggingHandle = BodyMoveHandle;
+            _moveOffset = new Point(s.X, s.Y);
             ctx.InvalidateRender();
             return;
         }
 
         assistants.SelectedId = null;
         _createStart = point;
-        _createPreview = PaintingAssistant.FromDrag(_createSettings.TypeId, point, point, _createSettings);
         _draggingHandle = -1;
         ctx.InvalidateRender();
     }
@@ -67,6 +71,18 @@ public sealed class AssistantTool : ITool
     {
         var point = ApplyShift(ctx, new Point(s.X, s.Y));
 
+        if (_draggingHandle == -1 && _createPreview == null)
+        {
+            var dx = s.X - _createStart.X;
+            var dy = s.Y - _createStart.Y;
+            if (dx * dx + dy * dy >= CreateDragThreshold * CreateDragThreshold)
+            {
+                _createPreview = PaintingAssistant.FromDrag(_createSettings.TypeId, _createStart, point, _createSettings);
+            }
+            ctx.InvalidateRender();
+            return;
+        }
+
         if (_createPreview != null)
         {
             _createPreview = PaintingAssistant.FromDrag(_createSettings.TypeId, _createStart, point, _createSettings);
@@ -74,14 +90,30 @@ public sealed class AssistantTool : ITool
             return;
         }
 
+        if (_draggingHandle == BodyMoveHandle)
+        {
+            var selected = _document.Assistants.FindById(_document.Assistants.SelectedId);
+            if (selected == null)
+                return;
+
+            var dx = point.X - _moveOffset.X;
+            var dy = point.Y - _moveOffset.Y;
+            _moveOffset = point;
+            for (var i = 1; i <= selected.HandleCount; i++)
+                selected.SetHandle(i, new Point(selected.GetHandle(i).X + dx, selected.GetHandle(i).Y + dy));
+            _document.Assistants.NotifyChanged();
+            ctx.InvalidateRender();
+            return;
+        }
+
         if (_draggingHandle <= 0)
             return;
 
-        var selected = _document.Assistants.FindById(_document.Assistants.SelectedId);
-        if (selected == null)
+        var sel = _document.Assistants.FindById(_document.Assistants.SelectedId);
+        if (sel == null)
             return;
 
-        selected.SetHandle(_draggingHandle, point);
+        sel.SetHandle(_draggingHandle, point);
         _document.Assistants.NotifyChanged();
         ctx.InvalidateRender();
     }
@@ -108,9 +140,13 @@ public sealed class AssistantTool : ITool
             _createPreview = null;
             _draggingHandle = 0;
             TryCommitAssistantsChange();
-            ctx.ActivatePresetById?.Invoke(ToolGroupConfig.ObjectPresetId);
             ctx.InvalidateRender();
             return;
+        }
+
+        if (_draggingHandle == -1)
+        {
+            _undoBefore = null;
         }
 
         _draggingHandle = 0;
@@ -130,10 +166,7 @@ public sealed class AssistantTool : ITool
         ctx.InvalidateRender();
     }
 
-    public void RenderOverlay(DrawingContext dc, ToolContext ctx, double zoom)
-    {
-        // Persistent guides render in DrawingCanvas before tool overlay.
-    }
+    public void RenderOverlay(DrawingContext dc, ToolContext ctx, double zoom) { }
 
     public bool ConsumesModifier(KeyModifiers mods) => mods.HasFlag(KeyModifiers.Shift);
 

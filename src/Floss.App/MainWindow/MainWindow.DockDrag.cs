@@ -35,7 +35,6 @@ public partial class MainWindow
     private readonly List<Rect> _dockColumnBounds = [];
     private DropTargetState? _resolvedDropTarget;
     private DropTargetState? _stickyDropTarget;
-    private bool _dockerDragWindowHandlersActive;
 
     private enum DropZonePriority
     {
@@ -45,9 +44,12 @@ public partial class MainWindow
         ColumnSplit = 1,
         /// <summary>Between tabs in a tab strip (insert at index).</summary>
         TabInsert = 2,
+        /// <summary>Between two rows, or above-first / below-last.</summary>
         RowGap = 3,
-        TabStrip = 4,
-        RowBody = 5,
+        /// <summary>Per-row body edge band (top/bottom of body for insert above/below).</summary>
+        RowBodyEdge = 4,
+        TabStrip = 5,
+        RowBody = 6,
     }
 
     private sealed record DockDropZone(
@@ -61,7 +63,8 @@ public partial class MainWindow
         string Label,
         bool HorizontalInsertLine,
         IReadOnlyList<string> RowPanelIds,
-        int TabInsertIndex = -1);
+        int TabInsertIndex = -1,
+        Rect? RowRect = null);
 
     private sealed record DropTargetState(
         int ColumnIndex,
@@ -178,55 +181,12 @@ public partial class MainWindow
         if (!_dockDragActive && DragDistance(rootPt, _dockDragStart) < DockDragThreshold)
             return;
 
-        if (!_dockDragActive)
-        {
-            _dockDragActive = true;
-            EnsureDockerDragWindowHandlers();
-        }
+        _dockDragActive = true;
 
         RebuildDropZones(panelId);
         UpdateDockerDropPreview(panelId, rootPt);
         if (e != null && _dockDragActive)
             e.Handled = true;
-    }
-
-    private void EnsureDockerDragWindowHandlers()
-    {
-        if (_dockerDragWindowHandlersActive) return;
-        _dockerDragWindowHandlersActive = true;
-        AddHandler(PointerMovedEvent, OnDockerDragWindowPointerMoved,
-            Avalonia.Interactivity.RoutingStrategies.Tunnel | Avalonia.Interactivity.RoutingStrategies.Bubble);
-        AddHandler(PointerReleasedEvent, OnDockerDragWindowPointerReleased,
-            Avalonia.Interactivity.RoutingStrategies.Tunnel | Avalonia.Interactivity.RoutingStrategies.Bubble);
-    }
-
-    private void RemoveDockerDragWindowHandlers()
-    {
-        if (!_dockerDragWindowHandlersActive) return;
-        _dockerDragWindowHandlersActive = false;
-        RemoveHandler(PointerMovedEvent, OnDockerDragWindowPointerMoved);
-        RemoveHandler(PointerReleasedEvent, OnDockerDragWindowPointerReleased);
-    }
-
-    private void OnDockerDragWindowPointerMoved(object? sender, PointerEventArgs e)
-    {
-        if (_dockDragPanelId == null) return;
-        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
-        {
-            CancelDockerDrag();
-            return;
-        }
-
-        ContinueDockerDrag(_dockDragPanelId, PointerPositionInDockOverlay(e), e);
-    }
-
-    private void OnDockerDragWindowPointerReleased(object? sender, PointerReleasedEventArgs e)
-    {
-        if (_dockDragPanelId == null) return;
-        if (_dockDragActive)
-            FinalizeDockerDragAt(PointerPositionInDockOverlay(e));
-        else
-            CancelDockerDrag();
     }
 
     private void FinalizeDockerDragAt(Point rootPt)
@@ -260,7 +220,6 @@ public partial class MainWindow
 
     private void CancelDockerDrag()
     {
-        RemoveDockerDragWindowHandlers();
         _dockDragPanelId = null;
         _dockDragActive = false;
         _dockDropColumn = -99;
@@ -432,7 +391,7 @@ public partial class MainWindow
 
         var topBand = new Rect(body.X, body.Y, body.Width, edgeH);
         _dockDropZones.Add(new DockDropZone(
-            DropZonePriority.RowGap,
+            DropZonePriority.RowBodyEdge,
             columnIndex,
             row.LayoutRowIndex,
             0,
@@ -441,11 +400,12 @@ public partial class MainWindow
             body.Top,
             $"Insert above {rowTitle}",
             false,
-            row.PanelIds));
+            row.PanelIds,
+            RowRect: row.RowRect));
 
         var bottomBand = new Rect(body.X, body.Bottom - edgeH, body.Width, edgeH);
         _dockDropZones.Add(new DockDropZone(
-            DropZonePriority.RowGap,
+            DropZonePriority.RowBodyEdge,
             columnIndex,
             row.LayoutRowIndex + 1,
             0,
@@ -454,7 +414,8 @@ public partial class MainWindow
             body.Bottom,
             $"Insert below {rowTitle}",
             false,
-            row.PanelIds));
+            row.PanelIds,
+            RowRect: row.RowRect));
 
         var centerW = Math.Max(32, body.Width - edgeW * 2);
         var centerH = Math.Max(32, body.Height - edgeH * 2);
@@ -472,7 +433,8 @@ public partial class MainWindow
             center.Top,
             rowTitle,
             false,
-            row.PanelIds));
+            row.PanelIds,
+            RowRect: row.RowRect));
     }
 
     private void AddRailOuterEdgeZones()
@@ -678,7 +640,7 @@ public partial class MainWindow
 
             var layoutRowIndex = FindLayoutRowIndex(column, panelIds);
             if (layoutRowIndex < 0)
-                continue;
+                layoutRowIndex = result.Count;
 
             var rowControl = child as Control;
             if (rowControl == null) continue;
@@ -693,12 +655,12 @@ public partial class MainWindow
                 {
                     tabGroup = tg;
                     var measured = ControlRectInOverlay(tabGroup.TabStrip);
-                    var stripH = DockDropOverlay.TabStripHeight;
-                    if (measured is { Height: > 0 } m && m.Height < rr.Height * 0.35)
-                        stripH = m.Height;
+                    var stripH = measured is { Height: > 0 } m
+                        ? m.Height
+                        : Math.Min(DockDropOverlay.TabStripHeight, Math.Max(20, rr.Height * 0.22));
                     var stripMax = Math.Min(DockDropOverlay.TabStripHeight + 4, rr.Height);
                     if (stripMax > 0)
-                        stripH = Math.Clamp(stripH, Math.Min(22, stripMax), stripMax);
+                        stripH = Math.Clamp(stripH, Math.Min(20, stripMax), stripMax);
                     tabStripRect = new Rect(rr.X, rr.Y, rr.Width, stripH);
                     var bodyTop = tabStripRect.Value.Bottom;
                     bodyRect = new Rect(rr.X, bodyTop, rr.Width, Math.Max(0, rr.Bottom - bodyTop));
@@ -862,6 +824,8 @@ public partial class MainWindow
         _resolvedDropTarget = target;
         if (target != null)
             _stickyDropTarget = target;
+        else
+            _stickyDropTarget = null;
 
         if (target == null)
         {
@@ -912,21 +876,6 @@ public partial class MainWindow
 
         if (zoneHit != null)
         {
-            if (zoneHit.Kind == DockDropKind.MergeTab
-                && sourcePlacement != null
-                && sourcePlacement.ColumnIndex != zoneHit.ColumnIndex)
-            {
-                return new DropTargetState(
-                    zoneHit.ColumnIndex,
-                    0,
-                    zoneHit.LayoutRowIndex,
-                    DockDropKind.InsertRow,
-                    zoneHit.Bounds.Bottom,
-                    zoneHit.Bounds,
-                    $"Insert row in {ZoneLabel(zoneHit.ColumnIndex)}",
-                    false);
-            }
-
             return ZoneToTarget(zoneHit, rootPt);
         }
 
@@ -940,29 +889,31 @@ public partial class MainWindow
 
         var orderedBodies = columnRows.OrderBy(z => z.Bounds.Top).ToList();
         var topRow = orderedBodies[0];
-        if (rootPt.Y < topRow.Bounds.Top && rootPt.X >= topRow.Bounds.Left && rootPt.X <= topRow.Bounds.Right)
+        var topFull = topRow.RowRect ?? topRow.Bounds;
+        if (rootPt.Y < topFull.Top && rootPt.X >= topFull.Left && rootPt.X <= topFull.Right)
         {
             return new DropTargetState(
                 topRow.ColumnIndex,
                 0,
                 topRow.LayoutRowIndex,
                 DockDropKind.InsertRow,
-                topRow.Bounds.Top,
-                topRow.Bounds,
+                topFull.Top,
+                topFull,
                 $"Insert above {topRow.Label}",
                 false);
         }
 
         var bottomRow = orderedBodies[^1];
-        if (rootPt.Y > bottomRow.Bounds.Bottom && rootPt.X >= bottomRow.Bounds.Left && rootPt.X <= bottomRow.Bounds.Right)
+        var bottomFull = bottomRow.RowRect ?? bottomRow.Bounds;
+        if (rootPt.Y > bottomFull.Bottom && rootPt.X >= bottomFull.Left && rootPt.X <= bottomFull.Right)
         {
             return new DropTargetState(
                 bottomRow.ColumnIndex,
                 0,
                 bottomRow.LayoutRowIndex + 1,
                 DockDropKind.InsertRow,
-                bottomRow.Bounds.Bottom,
-                bottomRow.Bounds,
+                bottomFull.Bottom,
+                bottomFull,
                 $"Insert below {bottomRow.Label}",
                 false);
         }
@@ -971,8 +922,9 @@ public partial class MainWindow
             .OrderBy(z => DistanceToRect(z.Bounds, rootPt))
             .First();
 
-        var above = rootPt.Y < nearestRow.Bounds.Top + nearestRow.Bounds.Height * 0.5;
-        var lineY = above ? nearestRow.Bounds.Top : nearestRow.Bounds.Bottom;
+        var nearFull = nearestRow.RowRect ?? nearestRow.Bounds;
+        var above = rootPt.Y < nearFull.Top + nearFull.Height * 0.5;
+        var lineY = above ? nearFull.Top : nearFull.Bottom;
         var insertIdx = above ? nearestRow.LayoutRowIndex : nearestRow.LayoutRowIndex + 1;
         return new DropTargetState(
             nearestRow.ColumnIndex,
@@ -980,7 +932,7 @@ public partial class MainWindow
             insertIdx,
             DockDropKind.InsertRow,
             lineY,
-            nearestRow.Bounds,
+            nearFull,
             above ? $"Insert above {nearestRow.Label}" : $"Insert below {nearestRow.Label}",
             false);
     }
@@ -1069,15 +1021,6 @@ public partial class MainWindow
             label);
     }
 
-    private static string ZoneLabel(int columnIndex)
-    {
-        if (DockColumnIndices.TryParseLeft(columnIndex) is { } left)
-            return $"left column {left}";
-        if (DockColumnIndices.TryParseBottom(columnIndex) is { } bottom)
-            return $"bottom column {bottom}";
-        return $"right column {columnIndex}";
-    }
-
     private DropTargetState ZoneToTarget(DockDropZone zone, Point rootPt)
     {
         switch (zone.Kind)
@@ -1129,7 +1072,7 @@ public partial class MainWindow
                     insertIndex);
             }
 
-            case DockDropKind.InsertRow when zone.Priority == DropZonePriority.RowGap:
+            case DockDropKind.InsertRow when zone.Priority is DropZonePriority.RowGap or DropZonePriority.RowBodyEdge:
                 return new DropTargetState(
                     zone.ColumnIndex,
                     0,

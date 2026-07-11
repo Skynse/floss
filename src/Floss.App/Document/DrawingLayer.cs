@@ -97,6 +97,7 @@ public sealed class DrawingLayer : IDisposable
     public void ApplyMask()
     {
         if (MaskPixels == null) return;
+        var maskSnapshot = MaskPixels.CaptureTiles();
         Pixels.EnterPixelWriteLock();
         try
         {
@@ -107,12 +108,14 @@ public sealed class DrawingLayer : IDisposable
                 var tx = key.X; var ty = key.Y;
                 var tileLeft = tx * TiledPixelBuffer.TileSize;
                 var tileTop = ty * TiledPixelBuffer.TileSize;
+                maskSnapshot.TryGetValue(key, out var maskTile);
                 for (var py = 0; py < TiledPixelBuffer.TileSize; py++)
                 {
                     var docY = tileTop + py;
                     if (docY >= Height) break;
-                    var maskTile = MaskPixels.GetTileOrNull(tx, ty);
-                    var maskRow = maskTile != null ? maskTile.AsSpan((py * TiledPixelBuffer.TileSize + 0) * 4, TiledPixelBuffer.TileSize * 4) : default;
+                    var maskRow = maskTile != null
+                        ? maskTile.AsSpan((py * TiledPixelBuffer.TileSize + 0) * 4, TiledPixelBuffer.TileSize * 4)
+                        : default;
                     for (var px = 0; px < TiledPixelBuffer.TileSize; px++)
                     {
                         var docX = tileLeft + px;

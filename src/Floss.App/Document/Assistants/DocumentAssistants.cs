@@ -21,7 +21,7 @@ public sealed class DocumentAssistants
     public event EventHandler? Changed;
 
     public IReadOnlyList<PaintingAssistant> All
-        => EnumerateRulers(includeHiddenLayers: true).Select(e => e.Ruler).ToList();
+        => EnumerateRulers(includeHiddenLayers: false).Select(e => e.Ruler).ToList();
 
     public IReadOnlyList<PaintingAssistant> Rulers => All;
 
@@ -65,7 +65,7 @@ public sealed class DocumentAssistants
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
-    public void Clear()
+    public void ClearSelection()
     {
         if (SelectedId == null)
             return;

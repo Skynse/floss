@@ -261,10 +261,13 @@ internal static class LayerCompositorPixelOps
         var sourceRegion = new PixelRegion(docLeft - offsetX, docTop - offsetY, docRight - docLeft, docBottom - docTop);
         var pixels = layer.Pixels;
         var basePixels = baseLayer.Pixels;
+        var hasMask = layer.HasMask && layer.IsMaskVisible;
+        var maskPixels = layer.MaskPixels;
         if (!pixels.HasContentTiles(sourceRegion)) return;
 
         pixels.EnterPixelReadLock();
         basePixels.EnterPixelReadLock();
+        if (hasMask) maskPixels!.EnterPixelReadLock();
         try
         {
 
@@ -288,6 +291,10 @@ internal static class LayerCompositorPixelOps
             {
                 var tile = pixels.GetTileOrNull(tx, ty);
                 if (tile == null) continue;
+
+                byte[]? maskTile = null;
+                if (hasMask)
+                    maskTile = maskPixels!.GetTileOrNull(tx, ty);
 
                 var clipLeft = Math.Max(sourceRegion.X, tx * ts);
                 var clipTop = Math.Max(sourceRegion.Y, ty * ts);
@@ -319,6 +326,14 @@ internal static class LayerCompositorPixelOps
                         var tileOffset = tileRowBase + j * 4;
                         uint rawA = tile[tileOffset + 3];
                         if (rawA == 0) continue;
+                        if (hasMask)
+                        {
+                            if (maskTile == null) continue;
+                            uint ma = maskTile[tileOffset + 3];
+                            if (ma == 0) continue;
+                            rawA = (rawA * ma + 127) / 255;
+                            if (rawA == 0) continue;
+                        }
 
                         var docX = srcX + offsetX;
                         var baseX = docX - baseOffsetX;
@@ -404,6 +419,7 @@ internal static class LayerCompositorPixelOps
         }
         finally
         {
+            if (hasMask) maskPixels!.ExitPixelReadLock();
             basePixels.ExitPixelReadLock();
             pixels.ExitPixelReadLock();
         }
@@ -611,6 +627,9 @@ internal static class LayerCompositorPixelOps
                 {
                     var tile = pixels.GetTileOrNull(tx, ty);
                     if (tile == null) continue;
+                    byte[]? maskTile = null;
+                    if (hasMask)
+                        maskTile = layer.MaskPixels!.GetTileOrNull(tx, ty);
                     var clipLeft = Math.Max(sourceRegion.X, tx * ts);
                     var clipTop = Math.Max(sourceRegion.Y, ty * ts);
                     var clipRight = Math.Min(sourceRegion.Right, tx * ts + ts);
@@ -641,10 +660,8 @@ internal static class LayerCompositorPixelOps
                             var docX = clipLeft + j + offsetX;
                             if (hasMask)
                             {
-                                var maskTile = layer.MaskPixels!.GetTileOrNull(tx, ty);
                                 if (maskTile == null) continue;
-                                var maskOff = (tileLocalY * ts + (clipLeft - tx * ts + j)) * 4;
-                                uint ma = maskTile[maskOff + 3];
+                                uint ma = maskTile[tileOffset + 3];
                                 if (ma == 0) continue;
                                 rawA = (rawA * ma + 127) / 255;
                                 if (rawA == 0) continue;
@@ -682,6 +699,9 @@ internal static class LayerCompositorPixelOps
                 {
                     var tile = pixels.GetTileOrNull(tx, ty);
                     if (tile == null) continue;
+                    byte[]? maskTile = null;
+                    if (hasMask)
+                        maskTile = layer.MaskPixels!.GetTileOrNull(tx, ty);
                     var clipLeft = Math.Max(sourceRegion.X, tx * ts);
                     var clipTop = Math.Max(sourceRegion.Y, ty * ts);
                     var clipRight = Math.Min(sourceRegion.Right, tx * ts + ts);
@@ -701,10 +721,8 @@ internal static class LayerCompositorPixelOps
                             var docX = srcX + offsetX;
                             if (hasMask)
                             {
-                                var maskTile = layer.MaskPixels!.GetTileOrNull(tx, ty);
                                 if (maskTile == null) continue;
-                                var maskOff = (tileLocalY * ts + (srcX - tx * ts)) * 4;
-                                uint ma = maskTile[maskOff + 3];
+                                uint ma = maskTile[tileOffset + 3];
                                 if (ma == 0) continue;
                                 rawA = (rawA * ma + 127) / 255;
                                 if (rawA == 0) continue;
@@ -734,6 +752,9 @@ internal static class LayerCompositorPixelOps
             {
                     var tile = pixels.GetTileOrNull(tx, ty);
                     if (tile == null) continue;
+                    byte[]? maskTile = null;
+                    if (hasMask)
+                        maskTile = layer.MaskPixels!.GetTileOrNull(tx, ty);
                     var clipLeft = Math.Max(sourceRegion.X, tx * ts);
                     var clipTop = Math.Max(sourceRegion.Y, ty * ts);
                     var clipRight = Math.Min(sourceRegion.Right, tx * ts + ts);
@@ -753,10 +774,8 @@ internal static class LayerCompositorPixelOps
                         var docX = srcX + offsetX;
                         if (hasMask)
                         {
-                            var maskTile = layer.MaskPixels!.GetTileOrNull(tx, ty);
                             if (maskTile == null) continue;
-                            var maskOff = (tileLocalY * ts + (srcX - tx * ts)) * 4;
-                            uint ma = maskTile[maskOff + 3];
+                            uint ma = maskTile[tileOffset + 3];
                             if (ma == 0) continue;
                             rawA = (rawA * ma + 127) / 255;
                             if (rawA == 0) continue;
@@ -802,6 +821,8 @@ internal static class LayerCompositorPixelOps
         if (docLeft >= docRight || docTop >= docBottom) return;
         var sourceRegion = new PixelRegion(docLeft - offsetX, docTop - offsetY, docRight - docLeft, docBottom - docTop);
         var pixels = layer.Pixels;
+        var hasMask = layer.HasMask && layer.IsMaskVisible;
+        var maskPixels = layer.MaskPixels;
         if (!pixels.HasContentTiles(sourceRegion)) return;
 
         var blendMode = layer.BlendMode;
@@ -817,6 +838,7 @@ internal static class LayerCompositorPixelOps
         if (layerColor is { } lc) { lcR = lc.R; lcG = lc.G; lcB = lc.B; }
 
         pixels.EnterPixelReadLock();
+        if (hasMask) maskPixels!.EnterPixelReadLock();
         try
         {
             var opacityByte = (uint)Math.Round(opacity * 255);
@@ -831,6 +853,11 @@ internal static class LayerCompositorPixelOps
             {
                 var tile = pixels.GetTileOrNull(tx, ty);
                 if (tile == null) continue;
+
+                byte[]? maskTile = null;
+                if (hasMask)
+                    maskTile = maskPixels!.GetTileOrNull(tx, ty);
+
                 var tileLeft = Math.Max(sourceRegion.X, tx * ts);
                 var tileTop = Math.Max(sourceRegion.Y, ty * ts);
                 var tileRight = Math.Min(sourceRegion.Right, tx * ts + ts);
@@ -848,6 +875,14 @@ internal static class LayerCompositorPixelOps
                         var tileOff = (tileLocalY * ts + tileLocalX) * 4;
                         uint rawA = tile[tileOff + 3];
                         if (rawA == 0) continue;
+                        if (hasMask)
+                        {
+                            if (maskTile == null) continue;
+                            uint ma = maskTile[tileOff + 3];
+                            if (ma == 0) continue;
+                            rawA = (rawA * ma + 127) / 255;
+                            if (rawA == 0) continue;
+                        }
                         var docX = srcX + offsetX;
                         var dstOff = (docX - originX) * 4;
                         var dstPtr = dstRow + dstOff;
@@ -899,7 +934,11 @@ internal static class LayerCompositorPixelOps
                 }
             }
         }
-        finally { pixels.ExitPixelReadLock(); }
+        finally
+        {
+            if (hasMask) maskPixels!.ExitPixelReadLock();
+            pixels.ExitPixelReadLock();
+        }
     }
 
     /// <summary>Blend src_color * sa into dst_color, preserve dst_alpha.</summary>

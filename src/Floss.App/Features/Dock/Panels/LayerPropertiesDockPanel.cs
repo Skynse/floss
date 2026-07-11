@@ -21,6 +21,8 @@ public sealed class LayerPropertiesDockPanel : ContentControl
     private CheckBox _referenceLayerCheck = null!;
     private Button _layerColorSquare = null!;
     private ComboBox _expressionColorCombo = null!;
+    private StackPanel _maskSection = null!;
+    private CheckBox _maskEnabledCheck = null!;
 
     private Color _lastLayerColor = Color.Parse("#3d6fd8");
 
@@ -119,9 +121,93 @@ public sealed class LayerPropertiesDockPanel : ContentControl
         exprRow.Children.Add(exprLabel);
         exprRow.Children.Add(_expressionColorCombo);
 
+        _maskSection = new StackPanel { Spacing = 4, IsVisible = false };
+        var maskLabel = new TextBlock
+        {
+            Text = "Layer mask",
+            FontSize = 11,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            Margin = new Thickness(0, 4, 0, 0)
+        };
+        _maskEnabledCheck = new CheckBox
+        {
+            Content = "Mask enabled",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        _maskEnabledCheck.PropertyChanged += (_, e) =>
+        {
+            if (_ps.Sync.SyncingToolPropertyPanel || e.Property != ToggleButton.IsCheckedProperty) return;
+            var canvas = _ps.Canvas;
+            var doc = canvas.Document;
+            if (doc.ActiveLayer is { HasMask: true } al)
+            {
+                if (al.IsMaskVisible != (_maskEnabledCheck.IsChecked == true))
+                    canvas.ToggleLayerMask(doc.ActiveLayerIndex);
+            }
+        };
+        var maskBtnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        var invertBtn = new Button
+        {
+            Content = "Invert",
+            FontSize = 10,
+            Padding = new Thickness(6, 2),
+            HorizontalAlignment = HorizontalAlignment.Left
+        };
+        invertBtn.Click += (_, _) =>
+        {
+            var canvas = _ps.Canvas;
+            var doc = canvas.Document;
+            if (doc.ActiveLayer is { HasMask: true })
+                InvertMask(doc.ActiveLayerIndex);
+        };
+        var applyBtn = new Button
+        {
+            Content = "Apply",
+            FontSize = 10,
+            Padding = new Thickness(6, 2),
+            HorizontalAlignment = HorizontalAlignment.Left
+        };
+        applyBtn.Click += (_, _) =>
+        {
+            var canvas = _ps.Canvas;
+            var doc = canvas.Document;
+            if (doc.ActiveLayer is { HasMask: true })
+            {
+                canvas.ApplyLayerMask(doc.ActiveLayerIndex);
+                RefreshLayerProperties();
+            }
+        };
+        var deleteBtn = new Button
+        {
+            Content = "Delete",
+            FontSize = 10,
+            Padding = new Thickness(6, 2),
+            HorizontalAlignment = HorizontalAlignment.Left
+        };
+        deleteBtn.Click += (_, _) =>
+        {
+            var canvas = _ps.Canvas;
+            var doc = canvas.Document;
+            if (doc.ActiveLayer is { HasMask: true })
+            {
+                canvas.DeleteLayerMask(doc.ActiveLayerIndex);
+                RefreshLayerProperties();
+            }
+        };
+        maskBtnRow.Children.Add(invertBtn);
+        maskBtnRow.Children.Add(applyBtn);
+        maskBtnRow.Children.Add(deleteBtn);
+        _maskSection.Children.Add(maskLabel);
+        _maskSection.Children.Add(_maskEnabledCheck);
+        _maskSection.Children.Add(maskBtnRow);
+
         _layerPropertiesPanel.Children.Add(layerColorRow);
         _layerPropertiesPanel.Children.Add(_referenceLayerCheck);
         _layerPropertiesPanel.Children.Add(exprRow);
+        _layerPropertiesPanel.Children.Add(_maskSection);
 
         RefreshLayerProperties();
         return _layerPropertiesPanel;
@@ -153,6 +239,11 @@ public sealed class LayerPropertiesDockPanel : ContentControl
 
             _expressionColorCombo.SelectedItem = layer.ExpressionColor;
             _referenceLayerCheck.IsChecked = layer.IsReference;
+
+            var hasMask = layer.HasMask && !layer.IsGroup;
+            _maskSection.IsVisible = hasMask;
+            if (hasMask)
+                _maskEnabledCheck.IsChecked = layer.IsMaskVisible;
         }
         finally
         {
@@ -203,5 +294,27 @@ public sealed class LayerPropertiesDockPanel : ContentControl
             RefreshLayerProperties();
         });
         picker.Show(_ps.Shell.Owner);
+    }
+
+    private void InvertMask(int idx)
+    {
+        var layer = _ps.Canvas.Layers[idx];
+        if (layer.MaskPixels == null) return;
+        var tiles = layer.MaskPixels.CaptureTiles();
+        foreach (var (key, tile) in tiles)
+        {
+            if (tile == null) continue;
+            for (var i = 0; i < tile.Length; i += 4)
+            {
+                var v = (byte)(255 - tile[i + 3]);
+                tile[i] = v;
+                tile[i + 1] = v;
+                tile[i + 2] = v;
+                tile[i + 3] = v;
+            }
+        }
+        layer.MaskPixels.RestoreTiles(tiles);
+        layer.MarkMaskThumbnailDirty();
+        _ps.Canvas.InvalidateVisual();
     }
 }
