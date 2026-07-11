@@ -45,13 +45,14 @@ public sealed class DocumentPropertiesDialog : Window
     {
         _mode = mode;
         Title = mode == DocumentPropertiesMode.New ? "New Document" : "Canvas Properties";
-        Width = mode == DocumentPropertiesMode.New ? 560 : 680;
+        Width = mode == DocumentPropertiesMode.New ? 620 : 720;
         MinWidth = Width;
         SizeToContent = SizeToContent.Height;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         CanResize = false;
         Background = new SolidColorBrush(Color.Parse(Bg2));
         Foreground = new SolidColorBrush(Color.Parse(TextPrimary));
+        Padding = new Thickness(0);
 
         _customTemplates = DocumentTemplateStore.LoadCustom();
 
@@ -123,13 +124,13 @@ public sealed class DocumentPropertiesDialog : Window
         };
         _previewFrame = new Border
         {
-            Width = 140,
-            Height = 140,
+            Width = 148,
+            Height = 148,
             Background = new SolidColorBrush(Color.Parse(Bg1)),
             BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(10),
+            Padding = new Thickness(14),
             Child = _previewInner
         };
         UpdatePreviewAspect();
@@ -157,7 +158,7 @@ public sealed class DocumentPropertiesDialog : Window
     {
         var w = Math.Max(1, (int)(_widthInput.Value ?? 1));
         var h = Math.Max(1, (int)(_heightInput.Value ?? 1));
-        const double max = 108;
+        const double max = 112;
         var scale = Math.Min(max / w, max / h);
         _previewInner.Width = Math.Max(8, w * scale);
         _previewInner.Height = Math.Max(8, h * scale);
@@ -292,21 +293,30 @@ public sealed class DocumentPropertiesDialog : Window
             VerticalAlignment = VerticalAlignment.Center
         });
 
-        var fields = new StackPanel { Spacing = 0, MinWidth = 380 };
+        var fields = new StackPanel { Spacing = 0, MinWidth = 400 };
 
         if (_mode == DocumentPropertiesMode.New && _templateDropdown != null)
         {
             fields.Children.Add(SectionLabel("TEMPLATE"));
-            var templateRow = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 4, 0, 4) };
-            DockPanel.SetDock(_saveTemplateBtn!, Dock.Right);
-            DockPanel.SetDock(_deleteTemplateBtn!, Dock.Right);
-            templateRow.Children.Add(_saveTemplateBtn!);
-            templateRow.Children.Add(new Border { Width = 4 });
-            templateRow.Children.Add(_deleteTemplateBtn!);
-            templateRow.Children.Add(new Border { Width = 4 });
+            var templateRow = new Grid
+            {
+                Margin = new Thickness(0, 4, 0, 6),
+                ColumnSpacing = 8,
+                ColumnDefinitions =
+                {
+                    new ColumnDefinition(1, GridUnitType.Star),
+                    new ColumnDefinition(GridLength.Auto),
+                    new ColumnDefinition(GridLength.Auto)
+                }
+            };
+            Grid.SetColumn(_templateDropdown, 0);
+            Grid.SetColumn(_deleteTemplateBtn!, 1);
+            Grid.SetColumn(_saveTemplateBtn!, 2);
             templateRow.Children.Add(_templateDropdown);
+            templateRow.Children.Add(_deleteTemplateBtn!);
+            templateRow.Children.Add(_saveTemplateBtn!);
             fields.Children.Add(templateRow);
-            fields.Children.Add(new Border { Height = 10 });
+            fields.Children.Add(new Border { Height = 8 });
         }
 
         fields.Children.Add(SectionLabel(_mode == DocumentPropertiesMode.New ? "DOCUMENT" : "CANVAS"));
@@ -321,13 +331,17 @@ public sealed class DocumentPropertiesDialog : Window
         _bgDropdown.SelectionChanged += (_, _) => UpdatePreviewAspect();
 
         if (_recordTimelapseCheckBox != null)
+        {
+            _recordTimelapseCheckBox.Margin = new Thickness(0, 10, 0, 0);
             fields.Children.Add(_recordTimelapseCheckBox);
+        }
 
         var swapBtn = new Button
         {
             Content = "⇅  Swap W/H",
-            Height = 24,
-            Padding = new Thickness(8, 0),
+            Height = 28,
+            MinWidth = 108,
+            Padding = new Thickness(10, 0),
             FontSize = 11,
             Background = new SolidColorBrush(Color.Parse(Bg1)),
             Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
@@ -335,7 +349,8 @@ public sealed class DocumentPropertiesDialog : Window
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(3),
             HorizontalAlignment = HorizontalAlignment.Left,
-            Margin = new Thickness(0, 4, 0, 0)
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 10, 0, 0)
         };
         swapBtn.Click += (_, _) =>
         {
@@ -349,7 +364,7 @@ public sealed class DocumentPropertiesDialog : Window
             Text = "Unit: px",
             FontSize = 10,
             Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-            Margin = new Thickness(0, 8, 0, 0)
+            Margin = new Thickness(0, 12, 0, 2)
         };
         fields.Children.Add(unitLabel);
 
@@ -357,14 +372,14 @@ public sealed class DocumentPropertiesDialog : Window
         {
             ColumnDefinitions =
             {
-                new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 380 },
+                new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 400 },
                 new ColumnDefinition(168, GridUnitType.Pixel)
             },
-            ColumnSpacing = 20
+            ColumnSpacing = 24
         };
         Grid.SetColumn(fields, 0);
         Grid.SetColumn(_previewFrame, 1);
-        _previewFrame.Margin = new Thickness(0);
+        _previewFrame.Margin = new Thickness(0, 22, 0, 0);
         _previewFrame.VerticalAlignment = VerticalAlignment.Top;
         body.Children.Add(fields);
         body.Children.Add(_previewFrame);
@@ -372,7 +387,7 @@ public sealed class DocumentPropertiesDialog : Window
         var root = new StackPanel
         {
             Spacing = 0,
-            Margin = new Thickness(20, 18, 20, 20),
+            Margin = new Thickness(22, 18, 22, 22),
             Children = { header, body }
         };
 
@@ -381,20 +396,20 @@ public sealed class DocumentPropertiesDialog : Window
 
     private Control BuildSizeRow()
     {
-        const int labelCol = 72;
-        const int heightLabelCol = 52;
+        const int labelCol = 88;
         var row = new Grid
         {
-            Margin = new Thickness(0, 3, 0, 3),
-            ColumnSpacing = 10
+            Margin = new Thickness(0, 6, 0, 6),
+            ColumnSpacing = 12
         };
         row.ColumnDefinitions.Add(new ColumnDefinition(labelCol, GridUnitType.Pixel));
-        row.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 110 });
-        row.ColumnDefinitions.Add(new ColumnDefinition(heightLabelCol, GridUnitType.Pixel));
-        row.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 110 });
+        row.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 132 });
+        row.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        row.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 132 });
 
         var wLabel = FieldLabel("Width", labelCol);
-        var hLabel = FieldLabel("Height", heightLabelCol);
+        var hLabel = FieldLabel("Height", width: 52);
+        hLabel.Margin = new Thickness(4, 0, 0, 0);
         Grid.SetColumn(wLabel, 0);
         Grid.SetColumn(_widthInput, 1);
         Grid.SetColumn(hLabel, 2);
@@ -408,14 +423,14 @@ public sealed class DocumentPropertiesDialog : Window
 
     private Control BuildResolutionRow()
     {
-        const int labelCol = 72;
+        const int labelCol = 88;
         var row = new Grid
         {
-            Margin = new Thickness(0, 3, 0, 3),
-            ColumnSpacing = 10
+            Margin = new Thickness(0, 6, 0, 6),
+            ColumnSpacing = 12
         };
         row.ColumnDefinitions.Add(new ColumnDefinition(labelCol, GridUnitType.Pixel));
-        row.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 120 });
+        row.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MinWidth = 132 });
         row.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
 
         var dpiSuffix = new TextBlock
@@ -424,7 +439,7 @@ public sealed class DocumentPropertiesDialog : Window
             FontSize = 11,
             Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(4, 0, 0, 0)
+            Margin = new Thickness(6, 0, 0, 0)
         };
 
         var label = FieldLabel("Resolution", labelCol);
@@ -480,26 +495,34 @@ public sealed class DocumentPropertiesDialog : Window
         Maximum = max,
         Increment = 1,
         FontSize = 12,
-        MinHeight = 28,
-        MinWidth = 100,
-        HorizontalAlignment = HorizontalAlignment.Stretch
+        MinHeight = 30,
+        // Spinner buttons eat ~28px; keep enough room for 5-digit values like 16000.
+        MinWidth = 132,
+        Padding = new Thickness(8, 4, 4, 4),
+        FormatString = "0",
+        HorizontalAlignment = HorizontalAlignment.Stretch,
+        VerticalContentAlignment = VerticalAlignment.Center
     };
 
     private static TextBox MkTextBox(string text) => new()
     {
         Text = text,
         FontSize = 12,
-        MinHeight = 28,
-        HorizontalAlignment = HorizontalAlignment.Stretch
+        MinHeight = 30,
+        Padding = new Thickness(8, 4),
+        HorizontalAlignment = HorizontalAlignment.Stretch,
+        VerticalContentAlignment = VerticalAlignment.Center
     };
 
     private static Button SmBtn(string label) => new()
     {
         Content = label,
-        Height = 26,
-        Padding = new Thickness(8, 0),
+        Height = 30,
+        MinHeight = 30,
+        Padding = new Thickness(12, 0),
         FontSize = 11,
         HorizontalContentAlignment = HorizontalAlignment.Center,
+        VerticalContentAlignment = VerticalAlignment.Center,
         Background = new SolidColorBrush(Color.Parse(Bg1)),
         Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
         BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
@@ -510,10 +533,13 @@ public sealed class DocumentPropertiesDialog : Window
     private static Button MkDialogButton(string label, bool primary) => new()
     {
         Content = label,
-        Width = 72,
-        Height = 28,
+        MinWidth = 80,
+        Width = double.NaN,
+        Height = 30,
+        Padding = new Thickness(14, 0),
         FontSize = 12,
         HorizontalContentAlignment = HorizontalAlignment.Center,
+        VerticalContentAlignment = VerticalAlignment.Center,
         Background = new SolidColorBrush(Color.Parse(primary ? Accent : Bg1)),
         Foreground = new SolidColorBrush(primary ? Colors.White : Color.Parse(TextSecondary)),
         BorderBrush = primary ? null : new SolidColorBrush(Color.Parse(Stroke)),
@@ -527,17 +553,17 @@ public sealed class DocumentPropertiesDialog : Window
         FontSize = 9,
         FontWeight = FontWeight.SemiBold,
         Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-        Margin = new Thickness(0, 0, 0, 2),
+        Margin = new Thickness(0, 2, 0, 6),
         LetterSpacing = 1.2
     };
 
     private static Control FieldRow(string label, Control input)
     {
-        const int labelCol = 72;
+        const int labelCol = 88;
         var row = new Grid
         {
-            Margin = new Thickness(0, 3, 0, 3),
-            ColumnSpacing = 10,
+            Margin = new Thickness(0, 6, 0, 6),
+            ColumnSpacing = 12,
             ColumnDefinitions =
             {
                 new ColumnDefinition(labelCol, GridUnitType.Pixel),
@@ -552,12 +578,13 @@ public sealed class DocumentPropertiesDialog : Window
         return row;
     }
 
-    private static TextBlock FieldLabel(string text, double width = 72) => new()
+    private static TextBlock FieldLabel(string text, double width = 88) => new()
     {
         Text = text,
         FontSize = 11,
         Width = width,
         Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
-        VerticalAlignment = VerticalAlignment.Center
+        VerticalAlignment = VerticalAlignment.Center,
+        TextTrimming = TextTrimming.None
     };
 }

@@ -35,4 +35,8 @@
   <ItemGroup>
     <ProjectReference Include="../../src/Floss.App/Floss.App.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Floss.App.Features" />
+  </ItemGroup>
 </Project>

@@ -5,29 +5,40 @@ using Avalonia;
 namespace Floss.App.Document.Assistants;
 
 /// <summary>
-/// fisheye: warp the flat perspective grid inside a lens circle (not a separate sphere).
+/// Fisheye: warp the flat perspective grid inside a lens sized to the visible view.
 /// </summary>
 internal static class FisheyeAssistantGeometry
 {
-    private const int SamplesPerSegment = 40;
+    private const int SamplesPerSegment = 64;
 
     internal readonly record struct LensFrame(Point Center, double Radius, double FovRadians);
 
     public static LensFrame GetLensFrame(PaintingAssistant assistant)
+        => GetLensFrame(assistant, visibleDocumentRect: null);
+
+    public static LensFrame GetLensFrame(PaintingAssistant assistant, Rect? visibleDocumentRect)
     {
-        var bounds = PerspectiveGridGeometry.GetViewBounds(assistant);
-        var center = bounds.Center;
-        var radius = Math.Max(Math.Max(bounds.Width, bounds.Height) * 0.5, 1);
+        _ = visibleDocumentRect;
+        // Lens is fully document-stable (handle-anchored). Zoom must not re-scale the warp.
+        var stable = PerspectiveGridGeometry.ResolveClipBounds(assistant, visibleDocumentRect: null);
+        var center = stable.Center;
+        var radius = Math.Max(Math.Sqrt(stable.Width * stable.Width + stable.Height * stable.Height) * 0.5, 1);
         var fovRad = Math.Clamp(assistant.FovDegrees, 10, 360) * Math.PI / 180;
         return new LensFrame(center, radius, fovRad);
     }
 
     public static IEnumerable<PerspectiveGridGeometry.GridCurve> EnumerateWarpedGridCurves(PaintingAssistant assistant)
-        => EnumerateWarpedCurves(assistant);
+        => EnumerateWarpedCurves(assistant, visibleDocumentRect: null, zoom: 1.0);
+
+    public static IEnumerable<PerspectiveGridGeometry.GridCurve> EnumerateWarpedGridCurves(
+        PaintingAssistant assistant,
+        Rect? visibleDocumentRect,
+        double zoom)
+        => EnumerateWarpedCurves(assistant, visibleDocumentRect, zoom);
 
     public static IEnumerable<IReadOnlyList<Point>> EnumeratePlaneCurves(PaintingAssistant assistant, int plane)
     {
-        foreach (var curve in EnumerateWarpedCurves(assistant))
+        foreach (var curve in EnumerateWarpedCurves(assistant, null, 1.0))
         {
             if (curve.Plane == plane)
                 yield return curve.Points;
@@ -36,7 +47,7 @@ internal static class FisheyeAssistantGeometry
 
     public static IEnumerable<IReadOnlyList<Point>> EnumerateAllCurves(PaintingAssistant assistant)
     {
-        foreach (var curve in EnumerateWarpedCurves(assistant))
+        foreach (var curve in EnumerateWarpedCurves(assistant, null, 1.0))
             yield return curve.Points;
     }
 
@@ -48,17 +59,23 @@ internal static class FisheyeAssistantGeometry
                 yield return (curve[i - 1], curve[i]);
         }
 
-        foreach (var seg in LensCircleSegments(assistant))
+        foreach (var seg in LensCircleSegments(assistant, null))
             yield return seg;
     }
 
     public static IEnumerable<(Point A, Point B)> BoundarySegments(PaintingAssistant assistant)
-        => LensCircleSegments(assistant);
+        => LensCircleSegments(assistant, null);
 
-    private static IEnumerable<PerspectiveGridGeometry.GridCurve> EnumerateWarpedCurves(PaintingAssistant assistant)
+    public static IEnumerable<(Point A, Point B)> BoundarySegments(PaintingAssistant assistant, Rect? visibleDocumentRect)
+        => LensCircleSegments(assistant, visibleDocumentRect);
+
+    private static IEnumerable<PerspectiveGridGeometry.GridCurve> EnumerateWarpedCurves(
+        PaintingAssistant assistant,
+        Rect? visibleDocumentRect,
+        double zoom)
     {
-        var frame = GetLensFrame(assistant);
-        foreach (var curve in PerspectiveGridGeometry.EnumerateCurves(assistant))
+        var frame = GetLensFrame(assistant, visibleDocumentRect);
+        foreach (var curve in PerspectiveGridGeometry.EnumerateCurves(assistant, visibleDocumentRect, zoom))
         {
             var warped = WarpPolyline(curve.Points, frame);
             if (warped.Count >= 2)
@@ -66,10 +83,10 @@ internal static class FisheyeAssistantGeometry
         }
     }
 
-    private static IEnumerable<(Point A, Point B)> LensCircleSegments(PaintingAssistant assistant)
+    private static IEnumerable<(Point A, Point B)> LensCircleSegments(PaintingAssistant assistant, Rect? visibleDocumentRect)
     {
-        var frame = GetLensFrame(assistant);
-        const int segments = 96;
+        var frame = GetLensFrame(assistant, visibleDocumentRect);
+        const int segments = 128;
         Point? prev = null;
         for (var i = 0; i <= segments; i++)
         {
@@ -119,7 +136,6 @@ internal static class FisheyeAssistantGeometry
             return p;
 
         // Equidistant fisheye: map flat tangent-plane distance to incidence angle, then r ∝ θ.
-        // Straight perspective lines become curves (globe projection).
         var focal = frame.Radius / Math.Tan(halfFov);
         var incidence = Math.Atan(dist / focal);
         var warpedDist = frame.Radius * incidence / halfFov;

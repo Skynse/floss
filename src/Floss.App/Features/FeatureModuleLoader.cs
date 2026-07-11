@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using Floss.App.Docking;
 using Floss.App.Features.Dock;
 using Floss.App.Features.Dock.BuiltIn;
@@ -14,7 +16,16 @@ public static class FeatureModuleLoader
     public static void RegisterServices(IFeatureSession session, FeatureServices services)
     {
         foreach (var module in AllModules())
-            module.RegisterServices(services, session);
+        {
+            try
+            {
+                module.RegisterServices(services, session);
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"[Floss] Module '{module.GetType().Name}' RegisterServices failed: {ex.Message}");
+            }
+        }
     }
 
     public static void RegisterAll(IFeatureSession session)
@@ -23,7 +34,16 @@ public static class FeatureModuleLoader
             return;
 
         foreach (var module in AllModules())
-            module.Register(session);
+        {
+            try
+            {
+                module.Register(session);
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"[Floss] Module '{module.GetType().Name}' Register failed: {ex.Message}");
+            }
+        }
     }
 
     /// <summary>Built-in modules plus DLL plugins from <see cref="Config.AppPaths.PluginsDirectory"/>.</summary>

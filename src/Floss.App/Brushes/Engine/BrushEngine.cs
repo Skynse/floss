@@ -174,7 +174,7 @@ public sealed class BrushEngine : IDisposable
 
     /// <summary>Pre-stroke tile snapshot (first capture per tile). Used to rebuild the
     /// layer from max-alpha stroke mask without compounding dab overlaps across batches.</summary>
-    public void BindStrokeBeforeTiles(IReadOnlyDictionary<(int X, int Y), byte[]?>? beforeTiles)
+    public void BindStrokeBeforeTiles(Dictionary<(int X, int Y), byte[]?>? beforeTiles)
     {
         lock (_gate)
         {
@@ -576,12 +576,16 @@ public sealed class BrushEngine : IDisposable
                 if (PreferStrokeMaskComposite(layer, brush)
                     && TryAccumulateCachedDabsToStrokeMask(stroke, brush, brush.BlendMode,
                         baseColor.Blue, baseColor.Green, baseColor.Red, baseColor.Alpha,
-                        brushGrain, texPx, texW, texH, texStride, dirty, grainTable))
+                        brushGrain, texPx, texW, texH, texStride, dirty, grainTable, layer))
                 {
-                    ApplyStrokeMaskToLayer(layer, stroke, dirty,
+                    // Rebuild every tile that has stroke-mask coverage, not just this
+                    // batch's dirty rect — partial dirty updates leave soft edges cut
+                    // on 64px boundaries (the alpha-lock "tile grid" seam).
+                    var applyDirty = ExpandDirtyToStrokeMaskTiles(stroke, dirty);
+                    ApplyStrokeMaskToLayer(layer, stroke, applyDirty,
                         baseColor.Blue, baseColor.Green, baseColor.Red, brush.BlendMode);
                     _lastRasterPath = "StrokeMaskCached";
-                    PaintBuf(layer).PruneRegion(dirty);
+                    PaintBuf(layer).PruneRegion(applyDirty);
                     return;
                 }
 
@@ -1066,7 +1070,8 @@ public sealed class BrushEngine : IDisposable
         var spacing = BrushSpacing.EstimateDistance(brush, (float)maxSize)
             * Math.Max(1.0f, (float)brush.Dynamics.Spacing.MaxOutput);
         var scatter = brush.Dynamics.Scatter.IsEnabled ? maxSize * Math.Max(0.0, brush.Dynamics.Scatter.MaxOutput) : 0.0;
-        return Math.Max(1.0, maxSize * 0.75 + spacing + scatter + 3.0);
+        // Diagonal pad covers rotated elliptical / image tips whose AABB exceeds size*0.75.
+        return Math.Max(1.0, maxSize * 0.75 * Math.Sqrt(2.0) + spacing + scatter + 4.0);
     }
 
     private unsafe void RenderStampsViaScratch(DrawingLayer layer, ActiveStroke stroke, BrushPreset brush, PixelRegion dirty)
@@ -1986,7 +1991,8 @@ public sealed class BrushEngine : IDisposable
         int texH,
         int texStride,
         PixelRegion dirty,
-        float[]? grainTable)
+        float[]? grainTable,
+        DrawingLayer layer)
     {
         if (stroke.BeforeTiles == null || _stamps.Count == 0)
             return false;
@@ -2065,15 +2071,45 @@ public sealed class BrushEngine : IDisposable
             int ty = (short)(key >> 16);
             var tilePixX = tx * tsz;
             var tilePixY = ty * tsz;
-            MaxCachedDabsIntoStrokeMask(stroke, tx, ty, tilePixX, tilePixY, dirty, grainTable, dabs, blendMode,
+            MaxCachedDabsIntoStrokeMask(stroke, layer, tx, ty, tilePixX, tilePixY, dirty, grainTable, dabs, blendMode,
                 brushGrain, texPx, texW, texH, texStride);
         }
 
         return true;
     }
 
+    private static PixelRegion ExpandDirtyToStrokeMaskTiles(ActiveStroke stroke, PixelRegion dirty)
+    {
+        const int tsz = TiledPixelBuffer.TileSize;
+        var result = dirty;
+        foreach (var (tx, ty) in stroke.StrokeMaskTiles.Keys)
+            result = result.Union(new PixelRegion(tx * tsz, ty * tsz, tsz, tsz));
+        return result;
+    }
+
+    private static void EnsureBeforeTileCaptured(ActiveStroke stroke, DrawingLayer layer, int tx, int ty)
+    {
+        var before = stroke.BeforeTiles;
+        if (before == null) return;
+        var key = (tx, ty);
+        if (before.ContainsKey(key)) return;
+
+        // First time this tile joins the stroke mask: snapshot before any mask apply.
+        var raw = PaintBuf(layer).GetTileOrNull(tx, ty);
+        if (raw == null)
+        {
+            before[key] = null;
+            return;
+        }
+
+        var copy = new byte[raw.Length];
+        Buffer.BlockCopy(raw, 0, copy, 0, raw.Length);
+        before[key] = copy;
+    }
+
     private static unsafe void MaxCachedDabsIntoStrokeMask(
         ActiveStroke stroke,
+        DrawingLayer layer,
         int tx,
         int ty,
         int tilePixX,
@@ -2092,6 +2128,7 @@ public sealed class BrushEngine : IDisposable
         var tileKey = (tx, ty);
         if (!stroke.StrokeMaskTiles.TryGetValue(tileKey, out var maskTile))
         {
+            EnsureBeforeTileCaptured(stroke, layer, tx, ty);
             maskTile = new byte[tsz * tsz];
             stroke.StrokeMaskTiles[tileKey] = maskTile;
         }
@@ -4124,7 +4161,7 @@ public sealed class BrushEngine : IDisposable
         public SKColor BaseColor => _baseColor;
         public bool HasAnyColorTip { get; }
         public Dictionary<(int X, int Y), byte[]> StrokeMaskTiles { get; } = new();
-        public IReadOnlyDictionary<(int X, int Y), byte[]?>? BeforeTiles { get; set; }
+        public Dictionary<(int X, int Y), byte[]?>? BeforeTiles { get; set; }
 
         public bool Matches(BrushPreset brush)
             => ReferenceEquals(_brush, brush);

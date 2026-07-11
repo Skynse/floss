@@ -540,6 +540,7 @@ public partial class MainWindow : Window, Tools.IViewportController
     private Control? _footer;
     private Control? _rulerOverlay;
     private CheckerboardOverlay? _checkerboardOverlay;
+    private PerspectiveGridOverlay? _perspectiveGridOverlay;
     private SelectionOutlineOverlay? _selectionOutlineOverlay;
     private Grid _canvasHost = null!;
     private bool _canvasOnly;
@@ -633,6 +634,15 @@ public partial class MainWindow : Window, Tools.IViewportController
         _checkerboardOverlay = new CheckerboardOverlay(_canvas);
         _workspaceViewport.Children.Add(_checkerboardOverlay);
         _workspaceViewport.Children.Add(_canvasFrame);
+
+        _perspectiveGridOverlay = new PerspectiveGridOverlay
+        {
+            Canvas = _canvas,
+            ZIndex = 50,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
+        };
+        _workspaceViewport.Children.Add(_perspectiveGridOverlay);
 
         _rulerOverlay = new RulerOverlay(_canvas);
         _rulerOverlay.IsVisible = _showRulers;

@@ -1697,6 +1697,98 @@ public class BrushTests
         public void Dispose() => _cached?.Dispose();
     }
 
+    [Fact]
+    public void BrushEngine_AlphaLocked_DoesNotPaintTransparentAcrossTileBoundary()
+    {
+        // Soft stamp centered on the 64px tile seam: opaque left tile, empty right tile.
+        const int ts = TiledPixelBuffer.TileSize;
+        var layer = new DrawingLayer("Layer", ts * 2, ts * 2);
+        for (var y = 0; y < ts * 2; y++)
+        for (var x = 0; x < ts; x++)
+            layer.Pixels.SetPixel(x, y, 40, 40, 40, 255);
+        layer.IsAlphaLocked = true;
+
+        using var engine = new BrushEngine();
+        var brush = new BrushPreset("Soft lock", 48, 1, 0.15, 0.08, Colors.Red, 0)
+        {
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null
+        };
+        var from = Sample(ts - 8, ts, 0);
+        var to = Sample(ts + 8, ts, 8_000);
+
+        engine.BeginStroke(brush, from);
+        engine.RasterizeSegment(layer, brush, from, to);
+
+        // Transparent side of the seam must stay empty under alpha lock.
+        for (var y = ts - 16; y < ts + 16; y++)
+        for (var x = ts; x < ts + 24; x++)
+        {
+            layer.Pixels.GetPixel(x, y, out var b, out var g, out var r, out var a);
+            TestAssertions.Equal(0, a, $"alpha-lock leaked at ({x},{y}) a={a} rgb=({r},{g},{b})");
+        }
+
+        // Opaque side should still accept paint (RGB changes, alpha preserved).
+        layer.Pixels.GetPixel(ts - 4, ts, out _, out _, out var rr, out var aa);
+        TestAssertions.Equal(255, aa);
+        TestAssertions.True(rr > 40, "expected red paint on opaque side of tile seam");
+    }
+
+    [Fact]
+    public void BrushEngine_AlphaLocked_StrokeMaskPath_NoSeamAcrossTiles()
+    {
+        // Force the live stroke-mask rebuild path (large soft brush) across a tile seam.
+        const int ts = TiledPixelBuffer.TileSize;
+        var layer = new DrawingLayer("Layer", ts * 3, ts * 3);
+        layer.ActivePixels.LiveStroke = true;
+        for (var y = 0; y < ts * 3; y++)
+        for (var x = 0; x < ts * 3; x++)
+            layer.Pixels.SetPixel(x, y, 30, 30, 30, 255);
+        layer.IsAlphaLocked = true;
+
+        using var engine = new BrushEngine();
+        var brush = new BrushPreset("Soft lock large", 96, 1, 0.12, 0.06, Colors.Red, 0)
+        {
+            Tip = new ProceduralBrushTip(BrushTipShape.Circle),
+            Shape = null
+        };
+
+        var before = new Dictionary<(int, int), byte[]?>();
+        // Capture whole area as before-tiles (simulates DirectDrawOutput).
+        layer.CaptureTiles(new PixelRegion(0, 0, ts * 3, ts * 3), before);
+
+        var from = Sample(ts - 20, ts + 10, 0);
+        var to = Sample(ts + 40, ts + 10, 12_000);
+        engine.BeginStroke(brush, from);
+        engine.BindStrokeBeforeTiles(before);
+
+        // Two batches to exercise cross-batch mask rebuild.
+        var mid = Sample(ts + 8, ts + 10, 6_000);
+        engine.RasterizeSegment(layer, brush, from, mid);
+        engine.BindStrokeBeforeTiles(before);
+        engine.RasterizeSegment(layer, brush, mid, to);
+
+        // No transparent leaks on the right of the seam (still fully opaque base).
+        for (var y = ts; y < ts + 20; y++)
+        for (var x = ts; x < ts + 30; x++)
+        {
+            layer.Pixels.GetPixel(x, y, out _, out _, out _, out var a);
+            TestAssertions.Equal(255, a, $"alpha changed at ({x},{y}) under alpha lock");
+        }
+
+        // No hard RGB discontinuity exactly on the tile boundary (seam tell).
+        for (var y = ts - 5; y < ts + 25; y++)
+        {
+            layer.Pixels.GetPixel(ts - 1, y, out var b0, out var g0, out var r0, out _);
+            layer.Pixels.GetPixel(ts, y, out var b1, out var g1, out var r1, out _);
+            var dr = Math.Abs(r0 - r1);
+            var dg = Math.Abs(g0 - g1);
+            var db = Math.Abs(b0 - b1);
+            TestAssertions.True(dr + dg + db < 40,
+                $"tile seam RGB jump at y={y}: L=({r0},{g0},{b0}) R=({r1},{g1},{b1})");
+        }
+    }
+
     private sealed class PresetApplyingTool : ITool
     {
         public void PointerDown(ToolContext ctx, CanvasInputSample s) { }

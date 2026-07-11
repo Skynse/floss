@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using Avalonia.Controls;
 
@@ -19,7 +20,8 @@ public sealed class MenuRegistry : IMenuRegistry
         if (!item.IsSeparator)
             ArgumentException.ThrowIfNullOrEmpty(item.Header);
 
-        _items[item.Id] = item;
+        if (_items.TryAdd(item.Id, item) == false)
+            Trace.WriteLine($"[Floss] Menu item id '{item.Id}' overwritten by new registration");
     }
 
     public void Unregister(string id) => _items.TryRemove(id, out _);

@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Floss.App.Features</RootNamespace>
+    <Description>Stable plugin API contract for Floss. Plugins reference this assembly, not Floss.App.</Description>
+  </PropertyGroup>
+</Project>

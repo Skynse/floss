@@ -1,5 +1,9 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Floss.App/Floss.App.csproj" />
+    <Project Path="src/Floss.Plugin.Abstractions/Floss.Plugin.Abstractions.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Floss.App.Tests/Floss.App.Tests.csproj" />
   </Folder>
 </Solution>

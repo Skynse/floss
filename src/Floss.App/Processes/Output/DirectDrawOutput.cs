@@ -305,6 +305,13 @@ public sealed class DirectDrawOutput : IOutputProcess
         var region = EstimateSegmentBatchRegion(tx, samples, startSegmentIndex, segmentCount);
         if (!region.IsEmpty)
         {
+            // Alpha-lock + stroke-mask rebuild need a complete before-snapshot for
+            // every tile the soft stamp may touch (including neighbors).
+            if (tx.Layer.IsAlphaLocked)
+                region = region.Inflate(TiledPixelBuffer.TileSize * 2);
+            else
+                region = region.Inflate(TiledPixelBuffer.TileSize / 2);
+
             tx.Layer.ActivePixels.EnterPixelReadLock();
             try
             {

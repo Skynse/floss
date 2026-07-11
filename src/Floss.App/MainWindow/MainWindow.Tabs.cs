@@ -246,6 +246,7 @@ public partial class MainWindow
         if (_rulerOverlay is RulerOverlay ro) ro.Canvas = _canvas;
         if (_resizeOverlay != null) _resizeOverlay.Canvas = _canvas;
         if (_selectionOutlineOverlay != null) _selectionOutlineOverlay.Canvas = _canvas;
+        if (_perspectiveGridOverlay != null) _perspectiveGridOverlay.Canvas = _canvas;
         if (_viewportCursorOverlay != null)
             _viewportCursorOverlay.Canvas = _canvas;
 

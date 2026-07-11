@@ -1,7 +1,8 @@
 namespace Floss.App.Features;
 
 /// <summary>
-/// A feature module registers dockers, tools, or actions at startup (plugin ctor pattern).
+/// Plugin/feature module entry point. Implement this to contribute tools, panels,
+/// menu items, actions, overlays, or filters to Floss.
 /// </summary>
 public interface IFeatureModule
 {

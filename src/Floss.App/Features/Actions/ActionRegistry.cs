@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Input;
@@ -19,7 +20,8 @@ public sealed class ActionRegistry : IActionRegistry
         if (action.Execute == null && action.ExecuteAsync == null)
             throw new ArgumentException("Action must provide Execute or ExecuteAsync.", nameof(action));
 
-        _actions[action.Id] = action;
+        if (_actions.TryAdd(action.Id, action) == false)
+            Trace.WriteLine($"[Floss] Action id '{action.Id}' overwritten by new registration");
     }
 
     public void Unregister(string id) => _actions.TryRemove(id, out _);

@@ -349,6 +349,7 @@ public partial class MainWindow : ICanvasInputHost
         _checkerboardOverlay?.InvalidateVisual();
         _resizeOverlay?.InvalidateVisual();
         _selectionOutlineOverlay?.InvalidateVisual();
+        _perspectiveGridOverlay?.InvalidateVisual();
         _viewportCursorOverlay?.InvalidateVisual();
         UpdateSmartShapeLauncher();
         NotifyViewTransformChanged();

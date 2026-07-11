@@ -13,6 +13,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../Floss.Plugin.Abstractions/Floss.Plugin.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="Floss.App.Tests" />
   </ItemGroup>
 

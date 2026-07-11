@@ -95,6 +95,8 @@ public static class PluginCatalog
             skipReason = "disabled in settings";
         else if (manifest?.MinAppVersion is { } minVersion && !AppVersion.IsAtLeast(minVersion))
             skipReason = $"requires Floss {minVersion} (current {AppVersion.Current})";
+        else if (manifest is { IsApiVersionCompatible: false })
+            skipReason = $"requires plugin API {manifest.ApiVersion} (current {PluginManifest.CurrentApiVersion})";
 
         return new PluginDescriptor
         {

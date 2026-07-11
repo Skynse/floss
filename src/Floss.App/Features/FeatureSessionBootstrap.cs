@@ -27,6 +27,7 @@ public static class FeatureSessionBootstrap
         services.Register<IActionRegistry>(new ActionRegistry());
         services.Register<ICanvasOverlayRegistry>(new CanvasOverlayRegistry());
         services.Register<IToolRegistry>(new ToolRegistry());
+        services.Register<IFilterRegistry>(new FilterRegistry());
         return services;
     }
 }

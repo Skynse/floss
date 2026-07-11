@@ -199,7 +199,11 @@ public sealed class DrawingCanvas : Control, IDisposable
         {
             Brush = _brush,
             PaintColor = _paintColor,
-            InvalidateRender = InvalidateVisual,
+            InvalidateRender = () =>
+            {
+                InvalidateVisual();
+                AssistantsOverlayInvalidated?.Invoke();
+            },
             InvalidateToolCursor = NotifyCursorPreviewChanged,
             InvalidateSelectionOverlay = InvalidateSelectionOutline,
             IsCompositorBusy = () => _compositor.IsCompositeActive || _projectionScheduler.PendingCount > 0,
@@ -333,6 +337,8 @@ public sealed class DrawingCanvas : Control, IDisposable
     public event EventHandler? LayersChanged;
 
     public event EventHandler? AssistantsChanged;
+    /// <summary>Fired when tool overlays (including assistant previews) need a viewport redraw.</summary>
+    public event Action? AssistantsOverlayInvalidated;
     public event EventHandler? ActiveLayerChanged;
     public event Action<IReadOnlyList<int>>? LayersFoundByRect;
     public Action<string>? ActivatePresetById { get; set; }
@@ -1562,13 +1568,13 @@ public sealed class DrawingCanvas : Control, IDisposable
     public void ToggleLayerAlphaLock(int index) { if (!IsStrokeOutputPending()) _document.ToggleLayerAlphaLock(index); }
     public void ToggleLayerReference(int index) { if (!IsStrokeOutputPending()) _document.ToggleLayerReference(index); }
     public void ToggleLayerClipping(int index) { if (!IsStrokeOutputPending()) _document.ToggleLayerClipping(index); }
-    public void CreateLayerMask(int index) { if (!IsStrokeOutputPending()) _document.CreateLayerMask(index); }
-    public void ToggleLayerMask(int index) { if (!IsStrokeOutputPending()) _document.ToggleLayerMask(index); }
-    public void ToggleLayerMaskEditing(int index) { if (!IsStrokeOutputPending()) _document.ToggleLayerMaskEditing(index); }
-    public void SetLayerMaskEditing(int index, bool editing) { if (!IsStrokeOutputPending()) _document.SetLayerMaskEditing(index, editing); }
-    public void SetLayerContentEditing(int index) { if (!IsStrokeOutputPending()) _document.SetLayerContentEditing(index); }
-    public void DeleteLayerMask(int index) { if (!IsStrokeOutputPending()) _document.DeleteLayerMask(index); }
-    public void ApplyLayerMask(int index) { if (!IsStrokeOutputPending()) _document.ApplyLayerMask(index); }
+    public void CreateLayerMask(int index) { if (!IsStrokeOutputPending()) { _document.CreateLayerMask(index); InvalidateVisual(); } }
+    public void ToggleLayerMask(int index) { if (!IsStrokeOutputPending()) { _document.ToggleLayerMask(index); InvalidateCompositor(); InvalidateVisual(); } }
+    public void ToggleLayerMaskEditing(int index) { if (!IsStrokeOutputPending()) { _document.ToggleLayerMaskEditing(index); InvalidateVisual(); } }
+    public void SetLayerMaskEditing(int index, bool editing) { if (!IsStrokeOutputPending()) { _document.SetLayerMaskEditing(index, editing); InvalidateVisual(); } }
+    public void SetLayerContentEditing(int index) { if (!IsStrokeOutputPending()) { _document.SetLayerContentEditing(index); InvalidateVisual(); } }
+    public void DeleteLayerMask(int index) { if (!IsStrokeOutputPending()) { _document.DeleteLayerMask(index); InvalidateCompositor(); InvalidateVisual(); } }
+    public void ApplyLayerMask(int index) { if (!IsStrokeOutputPending()) { _document.ApplyLayerMask(index); InvalidateCompositor(); InvalidateVisual(); } }
     public void ToggleLayerOpen(int index) { if (!IsStrokeOutputPending()) _document.ToggleLayerOpen(index); }
     public bool CanMoveLayer(int sourceIndex, int targetIndex, LayerDropPlacement placement) => !IsStrokeOutputPending() && _document.CanMoveLayer(sourceIndex, targetIndex, placement);
     public void MoveLayer(int sourceIndex, int targetIndex, LayerDropPlacement placement) { if (!IsStrokeOutputPending()) _document.MoveLayer(sourceIndex, targetIndex, placement); }
@@ -1616,6 +1622,68 @@ public sealed class DrawingCanvas : Control, IDisposable
     }
 
     public PixelRegion? VisibleDocumentRegion => ComputeVisibleViewport();
+
+    /// <summary>
+    /// Visible document-space rectangle covering the viewport, including areas
+    /// outside the canvas (negative / beyond doc size). Used for CSP-style grids.
+    /// </summary>
+    internal Rect? ComputeUnclampedVisibleDocumentRect()
+    {
+        if (ViewportWidth <= 0 || ViewportHeight <= 0 || CanvasZoom <= 0)
+            return null;
+
+        var zoom = CanvasZoom;
+        var docW = _document.Width;
+        var docH = _document.Height;
+
+        var angle = CanvasRotation * Math.PI / 180.0;
+        var cos = Math.Cos(angle);
+        var sin = Math.Sin(angle);
+        var viewportCenterX = ViewportWidth * 0.5;
+        var viewportCenterY = ViewportHeight * 0.5;
+        var docCenterX = docW * 0.5;
+        var docCenterY = docH * 0.5;
+        var flipX = FlipX == 0 ? 1 : FlipX;
+        var flipY = FlipY == 0 ? 1 : FlipY;
+
+        var minX = double.PositiveInfinity;
+        var minY = double.PositiveInfinity;
+        var maxX = double.NegativeInfinity;
+        var maxY = double.NegativeInfinity;
+
+        foreach (var corner in new[]
+                 {
+                     new Point(0, 0),
+                     new Point(ViewportWidth, 0),
+                     new Point(ViewportWidth, ViewportHeight),
+                     new Point(0, ViewportHeight)
+                 })
+        {
+            var sx = corner.X - viewportCenterX - PanOffsetX;
+            var sy = corner.Y - viewportCenterY - PanOffsetY;
+
+            var unrotatedX = sx * cos + sy * sin;
+            var unrotatedY = -sx * sin + sy * cos;
+            var docX = docCenterX + unrotatedX / (zoom * flipX);
+            var docY = docCenterY + unrotatedY / (zoom * flipY);
+
+            minX = Math.Min(minX, docX);
+            minY = Math.Min(minY, docY);
+            maxX = Math.Max(maxX, docX);
+            maxY = Math.Max(maxY, docY);
+        }
+
+        const double margin = 8;
+        return new Rect(minX - margin, minY - margin, Math.Max(1, maxX - minX + margin * 2), Math.Max(1, maxY - minY + margin * 2));
+    }
+
+    internal PaintingAssistant? AssistantCreatePreview
+        => _toolController.ActiveTool is AssistantTool assistantTool
+            ? assistantTool.CreatePreview
+            : null;
+
+    internal bool TryDocumentPointToVisual(Visual target, Point documentPoint, out Point targetPoint)
+        => TryCanvasPointToVisual(target, documentPoint, out targetPoint);
 
     private PixelRegion? ComputeVisibleViewport()
     {

@@ -84,6 +84,8 @@ public static unsafe class SimdPixelOps
         byte ttda = tilePixel[3];
         if (ttda == 0)
         {
+            // Match AlphaLockPixelOps: locked brushes never expand coverage.
+            if (alphaLocked) return;
             tilePixel[0] = srcB;
             tilePixel[1] = srcG;
             tilePixel[2] = srcR;
@@ -262,7 +264,12 @@ public static unsafe class SimdPixelOps
 
             int off = x * 4;
             byte da = dst[off + 3];
-            if (da == 0) { dst[off] = (byte)srcB; dst[off+1] = (byte)srcG; dst[off+2] = (byte)srcR; dst[off+3] = (byte)sa; continue; }
+            if (da == 0)
+            {
+                if (alphaLocked) continue;
+                dst[off] = (byte)srcB; dst[off+1] = (byte)srcG; dst[off+2] = (byte)srcR; dst[off+3] = (byte)sa;
+                continue;
+            }
 
             if (alphaLocked)
             {
@@ -426,6 +433,7 @@ public static unsafe class SimdPixelOps
             if (sa <= 0) continue;
             if (sa > 255) sa = 255;
             int off = i * 4;
+            if (dst[off + 3] == 0) continue; // alpha lock: never expand coverage
             int inv = 255 - sa;
             dst[off]   = (byte)((srcB * sa + dst[off]   * inv + 127) / 255);
             dst[off+1] = (byte)((srcG * sa + dst[off+1] * inv + 127) / 255);
