@@ -557,6 +557,8 @@ public partial class MainWindow : Window, Tools.IViewportController
         TransparencyLevelHint = [WindowTransparencyLevel.None];
         Background = new SolidColorBrush(Color.Parse(Bg0));
         Icon = new WindowIcon(AssetLoader.Open(new Uri(AppAssets.IconUri)));
+        // Pen hold must not steal UI taps (brush select, etc.) via context menus.
+        UiPointerPolicy.ApplyTo(this);
         _brushLibrary = new BrushLibrary(AppPaths.BrushesDirectory);
         _showRulers = App.Config.ShowRulers;
 

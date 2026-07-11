@@ -21,6 +21,12 @@
             <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
         </Style>
 
+        <!-- Painting UI: pen/touch hold must not become right-click / context menu.
+             Mouse right-click and pen barrel still open ContextMenu. -->
+        <Style Selector=":is(InputElement)">
+            <Setter Property="IsHoldingEnabled" Value="False"/>
+        </Style>
+
         <!-- ══════════════════════════════════════════════════════════════════
              Button — base template shared by all variants
         ══════════════════════════════════════════════════════════════════ -->
