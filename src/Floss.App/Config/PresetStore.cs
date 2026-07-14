@@ -500,6 +500,7 @@ public sealed class PresetStore
             };
             var tips = Tips.Select(t => t.ToTipData(resources)).ToList();
             asset.Preset = Preset.ToPreset(asset.Tip, asset.ShapeData) with { Tips = tips };
+            asset.DualBrushData = Preset.DualBrush?.DeepClone();
             return asset;
         }
     }

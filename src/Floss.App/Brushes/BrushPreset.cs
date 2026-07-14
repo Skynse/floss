@@ -70,6 +70,8 @@ public sealed record BrushPreset(
     public IBrushTip Tip { get; init; } = new ProceduralBrushTip();
     public SkiaSharp.SKBlendMode BlendMode { get; init; } = SkiaSharp.SKBlendMode.SrcOver;
     public ProceduralBrushTip? Shape { get; init; } = null;
+    /// <summary>CSP-style secondary brush (full profile). Not the legacy <see cref="Shape"/> multiply.</summary>
+    public DualBrushProfile DualBrush { get; init; } = DualBrushProfile.Disabled;
     public AngleSource BaseAngleSource { get; init; } = AngleSource.None;
     public float AngleJitter { get; init; } = 0f;
     public bool FlipHorizontal { get; init; } = false;

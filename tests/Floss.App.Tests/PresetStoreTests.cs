@@ -175,7 +175,11 @@ public class PresetStoreTests
             TestAssertions.Equal(materialTip.PngBytes.Length, loaded.Preset.Tips[0].PngBytes.Length);
             TestAssertions.True(loaded.Preset.Tip is NodeBrushTip nodeTip && nodeTip.IsDirectImageSampler,
                 "Persisted PNG tips should restore as graph-backed image sampler tips.");
-            TestAssertions.True(loaded.Preset.Shape is { Shape: BrushTipShape.Ellipse, AspectRatio: 0.5f });
+            TestAssertions.True(loaded.Preset.DualBrush.Tip is ProceduralBrushTip
+                { Shape: BrushTipShape.Ellipse, AspectRatio: 0.5f });
+            TestAssertions.False(loaded.Preset.DualBrush.Enabled,
+                "Legacy shape data should migrate as stored dual profile but stay off until enabled");
+            TestAssertions.True(loaded.Preset.Shape is null);
             TestAssertions.True(loaded.Preset.Dynamics.Size.IsEnabled);
             TestAssertions.True(loaded.Preset.Dynamics.Rotation.IsEnabled);
         }
@@ -612,7 +616,10 @@ public class PresetStoreTests
         // Tip/shape are runtime brush state now so graph and image sampler edits survive restart without overwriting the asset default.
         TestAssertions.True(restored.Tip is NodeBrushTip nodeTip && nodeTip.IsDirectImageSampler,
             "Captured image tips should restore through graph-backed image samplers.");
-        TestAssertions.True(restored.Shape is { Shape: BrushTipShape.Ellipse, AspectRatio: 0.5f });
+        TestAssertions.True(restored.DualBrush.Enabled);
+        TestAssertions.True(restored.DualBrush.Tip is ProceduralBrushTip
+            { Shape: BrushTipShape.Ellipse, AspectRatio: 0.5f });
+        TestAssertions.True(restored.Shape is null);
     }
 
     [Fact]
@@ -713,8 +720,11 @@ public class PresetStoreTests
         TestAssertions.Equal(BrushDynamics.AngleSource.PenTilt, restored.BaseAngleSource);
         TestAssertions.Near(0.25, restored.AngleJitter, 0.0001);
         TestAssertions.True(restored.Tip is NodeBrushTip, "Tip graph should be captured as runtime brush state");
-        TestAssertions.True(restored.Shape is { Shape: BrushTipShape.Rectangle, AspectRatio: 1.5f },
-            "Shape should be captured as runtime brush state");
+        TestAssertions.True(restored.DualBrush.Enabled);
+        TestAssertions.True(restored.DualBrush.Tip is ProceduralBrushTip
+            { Shape: BrushTipShape.Rectangle, AspectRatio: 1.5f },
+            "Legacy shape overrides should restore as dual brush");
+        TestAssertions.True(restored.Shape is null);
     }
 
     [Fact]
@@ -795,6 +805,7 @@ public class PresetStoreTests
         var restored = preset.ApplyToBrushPreset(differentBase);
 
         TestAssertions.Equal(BrushShapeOverrideMode.Null, preset.BrushOverride!.ShapeOverride, "Captured null shape must be an explicit override");
+        TestAssertions.False(restored.DualBrush.Enabled, "Captured null shape must disable dual brush");
         TestAssertions.True(restored.Shape is null, "Graph/image brush state should not inherit the base procedural shape");
     }
 }

@@ -51,6 +51,7 @@ public sealed class BrushPresetOverrideDocument
     public List<BrushTipData>? Tips { get; set; }
     public BrushTipData? Shape { get; set; }
     public BrushShapeOverrideMode ShapeOverride { get; set; } = BrushShapeOverrideMode.Unset;
+    public DualBrushProfileDocument? DualBrush { get; set; }
     public List<BrushParameterGraph>? ParameterGraphs { get; set; }
 
     public bool HasContent =>
@@ -62,7 +63,7 @@ public sealed class BrushPresetOverrideDocument
         TipDirection.HasValue || TipSelectionMode.HasValue || Quality.HasValue || Texture != null ||
         BlendMode.HasValue || BaseAngleSource.HasValue || AngleJitter.HasValue || FlipHorizontal.HasValue ||
         FlipVertical.HasValue || !string.IsNullOrEmpty(DynamicsJson) || Tip != null || Tips != null ||
-        ShapeOverride != BrushShapeOverrideMode.Unset || ParameterGraphs != null;
+        ShapeOverride != BrushShapeOverrideMode.Unset || DualBrush != null || ParameterGraphs != null;
 
     public static BrushPresetOverrideDocument FromPreset(BrushPreset preset)
     {
@@ -115,6 +116,19 @@ public sealed class BrushPresetOverrideDocument
                     Shape = preset.Shape.Shape,
                     AspectRatio = preset.Shape.AspectRatio
                 },
+            DualBrush = preset.DualBrush.Enabled
+                ? DualBrushProfileDocument.FromProfile(preset.DualBrush)
+                : preset.Shape != null
+                    ? DualBrushProfileDocument.FromLegacyShape(
+                        new BrushTipData
+                        {
+                            Kind = BrushTipStorageKind.Procedural,
+                            Shape = preset.Shape.Shape,
+                            AspectRatio = preset.Shape.AspectRatio
+                        },
+                        preset.Size,
+                        enabled: preset.DualBrush.Enabled || preset.Shape != null)
+                    : null,
             ParameterGraphs = preset.ParameterGraphs.Select(g => g.DeepClone()).ToList()
         };
     }
@@ -166,8 +180,19 @@ public sealed class BrushPresetOverrideDocument
                     => new ProceduralBrushTip(shape.Shape, shape.AspectRatio),
                 _ => basePreset.Shape
             },
+            DualBrush = DualBrush switch
+            {
+                { Enabled: true } dual => dual.ToProfile(),
+                _ when ShapeOverride == BrushShapeOverrideMode.Null => DualBrushProfile.Disabled,
+                _ when ShapeOverride == BrushShapeOverrideMode.Value && Shape is { Kind: BrushTipStorageKind.Procedural } shape
+                    => DualBrushProfileDocument.FromLegacyShape(shape, Size ?? basePreset.Size, enabled: true).ToProfile(),
+                _ => basePreset.DualBrush
+            },
             ParameterGraphs = ParameterGraphs?.Select(g => g.DeepClone()).ToList() ?? basePreset.ParameterGraphs
         };
+
+        if (DualBrush is { Enabled: true } || ShapeOverride is BrushShapeOverrideMode.Value or BrushShapeOverrideMode.Null)
+            result = result with { Shape = null };
 
         if (!string.IsNullOrEmpty(DynamicsJson))
         {
@@ -217,6 +242,7 @@ public sealed class BrushPresetOverrideDocument
         Tips = Tips?.Select(t => t.DeepClone()).ToList(),
         Shape = Shape?.DeepClone(),
         ShapeOverride = ShapeOverride,
+        DualBrush = DualBrush?.DeepClone(),
         ParameterGraphs = ParameterGraphs?.Select(g => g.DeepClone()).ToList()
     };
 }

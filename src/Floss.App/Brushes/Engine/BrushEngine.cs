@@ -4249,17 +4249,44 @@ public sealed class BrushEngine : IDisposable
                 ? Mask
                 : tip.GenerateMask(resolution, normalizedHardness);
 
-            // All tips cache internally; the stroke never owns tip masks.
+            // Legacy shape multiply (deprecated — use DualBrush).
+            if (_brush.Shape != null && !_brush.DualBrush.Enabled)
+            {
+                var shapeMask = _brush.Shape.GenerateMask(resolution, normalizedHardness);
+                var legacyCombined = MultiplyMasks(tipMask, shapeMask);
+                _ownedMasks.Add(legacyCombined);
+                DisposeTemporary(tipMask);
+                return CacheOrReturnTemporary(key, legacyCombined);
+            }
 
-            if (_brush.Shape == null)
-                return CacheOrReturnTemporary(key, tipMask);
+            if (_brush.DualBrush.Enabled)
+            {
+                var dual = _brush.DualBrush;
+                var dualDiameter = Math.Max(1.0, stampDiameter * dual.Size / Math.Max(_brush.Size, 0.001));
+                var dualRes = BrushTipMaskRasterization.MaskResolutionForStamp((float)dualDiameter, _brush);
+                var dualHardness = Math.Clamp((float)dual.Hardness, 0.001f, 1f);
+                var dualMask = dual.Tip.GenerateMask(dualRes, dualHardness);
+                _ownedMasks.Add(dualMask);
+                if (Math.Abs(dual.Angle) > 0.001f)
+                {
+                    var rotated = RotateMaskAlpha(dualMask, (float)dual.Angle);
+                    _ownedMasks.Add(rotated);
+                    dualMask = rotated;
+                }
+                var dualStrength = Math.Clamp((float)(dual.Opacity * dual.Flow), 0f, 1f);
+                if (dualStrength < 0.999f)
+                {
+                    var scaled = ScaleMaskStrength(dualMask, dualStrength);
+                    _ownedMasks.Add(scaled);
+                    dualMask = scaled;
+                }
+                var combined = MultiplyMasks(tipMask, dualMask);
+                _ownedMasks.Add(combined);
+                DisposeTemporary(tipMask);
+                return CacheOrReturnTemporary(key, combined);
+            }
 
-            var shapeMask = _brush.Shape.GenerateMask(resolution, normalizedHardness);
-            var combined = MultiplyMasks(tipMask, shapeMask);
-            _ownedMasks.Add(combined);
-            // shapeMask is ProceduralBrushTip-owned; tip holds it internally, never dispose
-            DisposeTemporary(tipMask);
-            return CacheOrReturnTemporary(key, combined);
+            return CacheOrReturnTemporary(key, tipMask);
         }
 
         public void ReleaseMask(SKBitmap mask)
@@ -4359,7 +4386,7 @@ public sealed class BrushEngine : IDisposable
             dab = null!;
             if (key.Size < LargeStampCachedRasterMinDiameterPx)
                 return false;
-            if (_brush.Shape != null || key.Angle != 0 || key.FlipBits != 0 || key.TipIndex != 0)
+            if (_brush.Shape != null || _brush.DualBrush.Enabled || key.Angle != 0 || key.FlipBits != 0 || key.TipIndex != 0)
                 return false;
             if (TipFor(0) is not ProceduralBrushTip { Shape: BrushTipShape.Circle or BrushTipShape.SoftRound })
                 return false;
@@ -4621,6 +4648,39 @@ public sealed class BrushEngine : IDisposable
             return bmp;
         }
 
+        private static SKBitmap RotateMaskAlpha(SKBitmap mask, float angleDegrees)
+        {
+            var size = Math.Max(mask.Width, mask.Height);
+            var rotated = new SKBitmap(new SKImageInfo(size, size, SKColorType.Alpha8, SKAlphaType.Unpremul));
+            using (var canvas = new SKCanvas(rotated))
+            using (var paint = new SKPaint { BlendMode = SKBlendMode.Src })
+            {
+                canvas.Clear(SKColors.Transparent);
+                canvas.Translate(size * 0.5f, size * 0.5f);
+                canvas.RotateDegrees(angleDegrees);
+                canvas.DrawBitmap(mask, -mask.Width * 0.5f, -mask.Height * 0.5f, paint);
+            }
+            return rotated;
+        }
+
+        /// <summary>Lerp secondary mask toward white so strength=0 leaves primary unchanged.</summary>
+        private static unsafe SKBitmap ScaleMaskStrength(SKBitmap mask, float strength)
+        {
+            var scaled = new SKBitmap(mask.Info);
+            mask.CopyTo(scaled);
+            var dst = (byte*)scaled.GetPixels().ToPointer();
+            var stride = scaled.RowBytes;
+            var inv = 1f - strength;
+            for (var y = 0; y < scaled.Height; y++)
+                for (var x = 0; x < scaled.Width; x++)
+                {
+                    var idx = y * stride + x;
+                    var alpha = dst[idx];
+                    dst[idx] = (byte)Math.Clamp(alpha * strength + 255f * inv, 0, 255);
+                }
+            return scaled;
+        }
+
         public void Dispose()
         {
             foreach (var mask in _maskCache.Values)
@@ -4742,7 +4802,7 @@ public sealed class BrushEngine : IDisposable
         if (stampColorCount != 0) return false;
         if (brush.ColorMix) return false;
         if (!SupportsCpuRasterBlendMode(brush.BlendMode)) return false;
-        if (brush.Shape != null) return false;
+        if (brush.Shape != null || brush.DualBrush.Enabled) return false;
         if (HasMultiTipSelection(brush)) return false;
         if (primaryTip.HasColor) return false;
 

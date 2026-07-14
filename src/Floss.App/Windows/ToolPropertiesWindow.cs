@@ -28,10 +28,11 @@ using static Floss.App.Config.AppColors;
 public sealed class ToolPropertiesWindow : Window
 {
     // ── Categories (dynamic based on tool type) ───────────────────────────────
-    private readonly string[] _categories;
+    private string[] _categories;
     private readonly bool _isBrushTool;
     private int _activeCategory;
-    private readonly Button[] _catButtons;
+    private Button[] _catButtons = [];
+    private StackPanel _navStack = null!;
     private readonly Border _contentHost = new();
 
     // ── State ─────────────────────────────────────────────────────────────────
@@ -152,7 +153,24 @@ public sealed class ToolPropertiesWindow : Window
     private string[] BuildCategories()
     {
         if (_isBrushTool)
-            return ["Brush Size", "Ink", "Anti-aliasing", "Brush shape", "Brush tip", "Stroke", "Texture"];
+        {
+            var cats = new List<string>
+            {
+                "Brush Size", "Ink", "Anti-aliasing", "Brush shape", "Brush tip", "Stroke", "Texture", "Dual brush"
+            };
+            if (_brushPreset.DualBrush.Enabled)
+            {
+                cats.AddRange(
+                [
+                    "2 - Brush tip",
+                    "2 - Ink",
+                    "2 - Edge",
+                    "2 - Stroke",
+                    "2 - Texture"
+                ]);
+            }
+            return cats.ToArray();
+        }
 
         if (_toolPreset.Kind == ToolKind.Assistant)
             return ["Assistant Settings"];
@@ -200,6 +218,7 @@ public sealed class ToolPropertiesWindow : Window
         header.Children.Add(title);
 
         var navStack = new StackPanel { Spacing = 0 };
+        _navStack = navStack;
         foreach (var btn in _catButtons)
             navStack.Children.Add(btn);
 
@@ -213,6 +232,7 @@ public sealed class ToolPropertiesWindow : Window
             {
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                AllowAutoHide = false,
                 Content = navStack
             }
         };
@@ -291,8 +311,29 @@ public sealed class ToolPropertiesWindow : Window
         "Anti-aliasing" => "Edge",
         "Brush shape" => "Shape",
         "Brush tip" => "Tip",
+        "2 - Brush tip" => "2 - Tip",
+        "2 - Ink" => "2 - Ink",
+        "2 - Edge" => "2 - Edge",
+        "2 - Stroke" => "2 - Stroke",
+        "2 - Texture" => "2 - Texture",
         _ => category
     };
+
+    private void RebuildNavigation()
+    {
+        var previous = _categories.ElementAtOrDefault(_activeCategory);
+        _categories = BuildCategories();
+        _catButtons = _categories.Select((_, i) => MakeCatBtn(i)).ToArray();
+        _navStack.Children.Clear();
+        foreach (var btn in _catButtons)
+            _navStack.Children.Add(btn);
+        var idx = previous != null ? Array.IndexOf(_categories, previous) : -1;
+        if (idx < 0 && previous != null && previous.StartsWith("2 -", StringComparison.Ordinal))
+            idx = Array.IndexOf(_categories, "Dual brush");
+        _activeCategory = idx >= 0 ? idx : Math.Min(_activeCategory, Math.Max(0, _categories.Length - 1));
+        HighlightActiveCategory();
+        SelectCategory(_activeCategory);
+    }
 
     private Button MakeCatBtn(int index)
     {
@@ -365,17 +406,23 @@ public sealed class ToolPropertiesWindow : Window
             return;
         }
 
-        // BrushShape and BrushTip are rebuilt fresh (preset-dependent, no shared sliders).
-        // All others are pre-built cached panels to avoid re-parenting sliders.
-        _contentHost.Child = index switch
+        // BrushShape, BrushTip, and dual sections rebuild fresh (preset-dependent).
+        var cat = _categories[index];
+        _contentHost.Child = cat switch
         {
-            0 => _brushSizePanel,
-            1 => _inkPanel,
-            2 => _aaPanel,
-            3 => WrapContent(BuildBrushShapeContent()),
-            4 => WrapContent(BuildBrushTipContent()),
-            5 => _strokePanel,
-            6 => _texturePanel,
+            "Brush Size" => _brushSizePanel,
+            "Ink" => WrapContent(BuildInkContent()),
+            "Anti-aliasing" => _aaPanel,
+            "Brush shape" => WrapContent(BuildBrushShapeContent()),
+            "Brush tip" => WrapContent(BuildBrushTipContent()),
+            "Stroke" => _strokePanel,
+            "Texture" => _texturePanel,
+            "Dual brush" => WrapContent(BuildDualBrushContent()),
+            "2 - Brush tip" => WrapContent(BuildDualTipContent()),
+            "2 - Ink" => WrapContent(BuildDualInkContent()),
+            "2 - Edge" => WrapContent(BuildDualEdgeContent()),
+            "2 - Stroke" => WrapContent(BuildDualStrokeContent()),
+            "2 - Texture" => WrapContent(BuildDualTextureContent()),
             _ => new Border()
         };
     }
@@ -392,6 +439,7 @@ public sealed class ToolPropertiesWindow : Window
         Content = content,
         HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        AllowAutoHide = false,
         Padding = new Thickness(0, 0, 4, 0)
     };
 
@@ -406,24 +454,286 @@ public sealed class ToolPropertiesWindow : Window
         }
     };
 
-    private Control BuildInkContent() => new StackPanel
+    private Control BuildInkContent()
     {
-        Spacing = 0,
-        Children =
+        var stack = new StackPanel { Spacing = 0 };
+        stack.Children.Add(SectionHeader("INK"));
+        stack.Children.Add(DynSliderRow("Opacity", _opacitySlider, "%", () => OpenOpacityDynamics(), "brush.opacity"));
+        stack.Children.Add(DynSliderRow("Flow", _flowSlider, "%", () => OpenFlowDynamics(), "brush.flow"));
+        stack.Children.Add(BuildBlendModeRow());
+        stack.Children.Add(SectionHeader("COLOR MIXING"));
+        stack.Children.Add(BuildMixToggleRow("brush.colorMix"));
+        stack.Children.Add(BuildSmudgeModeRow("brush.smudgeMode"));
+        stack.Children.Add(PlainSliderRow("Amount of paint", _amountOfPaintSlider, "%", "brush.amountOfPaint"));
+        stack.Children.Add(PlainSliderRow("Density of paint", _densityOfPaintSlider, "%", "brush.densityOfPaint"));
+        stack.Children.Add(PlainSliderRow("Color stretch", _colorStretchSlider, "%", "brush.colorStretch"));
+        stack.Children.Add(PlainSliderRow("Intensity of blur", _blurAmountSlider, "%", "brush.blurAmount"));
+        stack.Children.Add(BuildMixingModeRow());
+        return stack;
+    }
+
+    private Control BuildDualBrushContent()
+    {
+        var dual = _brushPreset.DualBrush;
+        var stack = new StackPanel { Spacing = 0 };
+        stack.Children.Add(SectionHeader("DUAL BRUSH"));
+        stack.Children.Add(new TextBlock
         {
-            DynSliderRow("Opacity", _opacitySlider, "%", () => OpenOpacityDynamics(), "brush.opacity"),
-            DynSliderRow("Flow",    _flowSlider,    "%", () => OpenFlowDynamics(), "brush.flow"),
-            BuildBlendModeRow(),
-            SectionHeader("COLOR MIXING"),
-            BuildMixToggleRow("brush.colorMix"),
-            BuildSmudgeModeRow("brush.smudgeMode"),
-            PlainSliderRow("Amount of paint", _amountOfPaintSlider, "%", "brush.amountOfPaint"),
-            PlainSliderRow("Density of paint", _densityOfPaintSlider, "%", "brush.densityOfPaint"),
-            PlainSliderRow("Color stretch", _colorStretchSlider, "%", "brush.colorStretch"),
-            PlainSliderRow("Intensity of blur", _blurAmountSlider, "%", "brush.blurAmount"),
-            BuildMixingModeRow(),
+            Text = "A full second brush (Tip, Ink, Edge, Stroke, Texture) combined with the primary stamp.",
+            FontSize = 10,
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 8)
+        });
+        stack.Children.Add(BuildDualBrushEnableRow());
+
+        if (!dual.Enabled)
+        {
+            stack.Children.Add(new TextBlock
+            {
+                Text = "Off — enable above to show 2 - sections in the sidebar.",
+                FontSize = 10,
+                Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+                Margin = new Thickness(0, 4, 0, 0)
+            });
+            return stack;
         }
-    };
+
+        var tipLabel = dual.Tip switch
+        {
+            ProceduralBrushTip p => p.Shape.ToString(),
+            ImageBrushTip => "Image tip",
+            NodeBrushTip => "Custom tip",
+            _ => "Tip"
+        };
+        stack.Children.Add(new TextBlock
+        {
+            Text = $"On — secondary: {tipLabel}, {dual.Size:0}px, opacity {dual.Opacity * 100:0}%, flow {dual.Flow * 100:0}%.\nUse the 2 - categories below Dual brush in the sidebar.",
+            FontSize = 10,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 8, 0, 0)
+        });
+        return stack;
+    }
+
+    private Control BuildDualBrushEnableRow()
+    {
+        var enable = new CheckBox
+        {
+            Content = "Enable dual brush",
+            FontSize = 11,
+            IsChecked = _brushPreset.DualBrush.Enabled,
+            Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+            Margin = new Thickness(0, 0, 0, 4)
+        };
+        enable.PropertyChanged += (_, e) =>
+        {
+            if (_syncing || e.Property != ToggleButton.IsCheckedProperty) return;
+            var on = enable.IsChecked == true;
+            Commit(p => p with
+            {
+                DualBrush = on
+                    ? p.DualBrush.Enabled ? p.DualBrush : DualBrushProfile.CreateDefault()
+                    : p.DualBrush with { Enabled = false }
+            });
+            RebuildNavigation();
+        };
+        return enable;
+    }
+
+    private void CommitDual(Func<DualBrushProfile, DualBrushProfile> update)
+        => Commit(p => p with { DualBrush = update(p.DualBrush with { Enabled = true }) });
+
+    private void PrependDualSectionToggle(StackPanel stack)
+    {
+        stack.Children.Insert(0, new Border
+        {
+            Height = 1,
+            Background = new SolidColorBrush(Color.Parse(Stroke)),
+            Margin = new Thickness(0, 0, 0, 8)
+        });
+        stack.Children.Insert(0, BuildDualBrushEnableRow());
+    }
+
+    private Control BuildDualTipContent()
+    {
+        var dual = _brushPreset.DualBrush;
+        var procTip = BuiltInProceduralTipFor(dual.Tip);
+        var result = new StackPanel { Spacing = 0 };
+        PrependDualSectionToggle(result);
+        result.Children.Add(SectionHeader("2 - BRUSH TIP LIBRARY"));
+        result.Children.Add(BuildDualTipLibraryGrid());
+
+        if (procTip?.Shape == BrushTipShape.Ellipse)
+        {
+            var aspectSlider = MkSlider(0.1, 8.0, Math.Clamp(procTip.AspectRatio, 0.1, 8.0), "Secondary oval ratio");
+            WireSlider(aspectSlider, v => CommitDual(d => d with
+            {
+                Tip = new ProceduralBrushTip(BrushTipShape.Ellipse, (float)v)
+            }));
+            result.Children.Add(PlainSliderRowRaw(aspectSlider, "f2"));
+        }
+
+        var sizeSlider = MkSlider(1, 500, dual.Size, "Secondary brush size");
+        WireSlider(sizeSlider, v => CommitDual(d => d with { Size = v }));
+        result.Children.Add(PlainSliderRow("Size", sizeSlider, "px"));
+        return result;
+    }
+
+    private Control BuildDualTipLibraryGrid()
+    {
+        var grid = new WrapPanel { Orientation = Orientation.Horizontal };
+        var dual = _brushPreset.DualBrush;
+        var activeProc = BuiltInProceduralTipFor(dual.Tip);
+        var activeImgKey = ActiveImageTipKey(dual.Tip);
+
+        foreach (var shape in Enum.GetValues<BrushTipShape>())
+        {
+            var shapeLocal = shape;
+            var selected = activeProc?.Shape == shape && activeImgKey == null;
+            grid.Children.Add(MkLibraryTipCell(
+                RenderTipThumbnail(shape),
+                shape.ToString(),
+                LibrarySizeLabel(shape),
+                selected,
+                () =>
+                {
+                    CommitDual(d => d with
+                    {
+                        Tip = new ProceduralBrushTip(shapeLocal,
+                            shapeLocal == BrushTipShape.Ellipse ? 2.4f : 1.0f)
+                    });
+                    _contentHost.Child = WrapContent(BuildDualTipContent());
+                }));
+        }
+
+        try
+        {
+            if (Directory.Exists(AppPaths.BrushTipsDirectory))
+            {
+                foreach (var path in Directory.EnumerateFiles(AppPaths.BrushTipsDirectory, "*.png").OrderBy(Path.GetFileName))
+                {
+                    IImage? bmp = null;
+                    byte[]? fileBytes = null;
+                    try
+                    {
+                        fileBytes = File.ReadAllBytes(path);
+                        using var ms = new MemoryStream(fileBytes);
+                        bmp = new Bitmap(ms);
+                    }
+                    catch { continue; }
+
+                    var localPath = path;
+                    var selected = activeImgKey != null && fileBytes != null
+                                   && string.Equals(activeImgKey, ImageTipKey(fileBytes), StringComparison.Ordinal);
+                    var px = bmp is Bitmap b ? Math.Max((int)b.Size.Width, (int)b.Size.Height).ToString() : "—";
+                    grid.Children.Add(MkLibraryTipCell(
+                        bmp,
+                        Path.GetFileNameWithoutExtension(localPath),
+                        px,
+                        selected,
+                        () =>
+                        {
+                            CommitDual(d => d with { Tip = new ImageBrushTip(localPath) });
+                            _contentHost.Child = WrapContent(BuildDualTipContent());
+                        }));
+                }
+            }
+        }
+        catch (Exception ex) { CrashLog.Write(ex, "ToolPropertiesWindow.BuildDualTipLibraryGrid"); }
+
+        return grid;
+    }
+
+    private Control BuildDualInkContent()
+    {
+        var dual = _brushPreset.DualBrush;
+        var opacity = MkSlider(0.01, 1, dual.Opacity, "Secondary opacity");
+        WireSlider(opacity, v => CommitDual(d => d with { Opacity = v }));
+        var flow = MkSlider(0.01, 1, dual.Flow, "Secondary flow");
+        WireSlider(flow, v => CommitDual(d => d with { Flow = v }));
+        var stack = new StackPanel { Spacing = 0 };
+        PrependDualSectionToggle(stack);
+        stack.Children.Add(SectionHeader("2 - INK"));
+        stack.Children.Add(PlainSliderRow("Opacity", opacity, "%"));
+        stack.Children.Add(PlainSliderRow("Flow", flow, "%"));
+        return stack;
+    }
+
+    private Control BuildDualEdgeContent()
+    {
+        var dual = _brushPreset.DualBrush;
+        var hardness = MkSlider(0, 1, dual.Hardness, "Secondary hardness");
+        WireSlider(hardness, v => CommitDual(d => d with { Hardness = v }));
+        var stack = new StackPanel { Spacing = 0 };
+        PrependDualSectionToggle(stack);
+        stack.Children.Add(SectionHeader("2 - EDGE"));
+        stack.Children.Add(PlainSliderRow("Hardness", hardness, "%"));
+        stack.Children.Add(BuildDualQualityRow());
+        return stack;
+    }
+
+    private Control BuildDualQualityRow()
+    {
+        var dual = _brushPreset.DualBrush;
+        var combo = new ComboBox
+        {
+            ItemsSource = Enum.GetValues<BrushQuality>(),
+            SelectedItem = dual.Quality,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        StyleCombo(combo);
+        combo.SelectionChanged += (_, _) =>
+        {
+            if (_syncing || combo.SelectedItem is not BrushQuality q) return;
+            CommitDual(d => d with { Quality = q });
+        };
+        return new DockPanel
+        {
+            LastChildFill = true,
+            Margin = new Thickness(0, 2, 0, 2),
+            Children =
+            {
+                new TextBlock { Text = "Quality", FontSize = 11, Width = 72, VerticalAlignment = VerticalAlignment.Center, Foreground = new SolidColorBrush(Color.Parse(TextSecondary)) },
+                combo
+            }
+        };
+    }
+
+    private Control BuildDualStrokeContent()
+    {
+        var dual = _brushPreset.DualBrush;
+        var spacing = MkSlider(0.01, 1, dual.Spacing, "Secondary spacing");
+        WireSlider(spacing, v => CommitDual(d => d with { Spacing = v }));
+        var angle = MkSlider(0, 360, dual.Angle, "Secondary angle");
+        WireSlider(angle, v => CommitDual(d => d with { Angle = v }));
+        var stack = new StackPanel { Spacing = 0 };
+        PrependDualSectionToggle(stack);
+        stack.Children.Add(SectionHeader("2 - STROKE"));
+        stack.Children.Add(PlainSliderRow("Spacing", spacing, "%"));
+        stack.Children.Add(PlainSliderRow("Angle", angle, "°"));
+        return stack;
+    }
+
+    private Control BuildDualTextureContent()
+    {
+        var dual = _brushPreset.DualBrush;
+        var grain = MkSlider(0, 1, dual.Grain, "Secondary grain");
+        WireSlider(grain, v => CommitDual(d => d with { Grain = v }));
+        var stack = new StackPanel { Spacing = 0 };
+        PrependDualSectionToggle(stack);
+        stack.Children.Add(SectionHeader("2 - TEXTURE"));
+        stack.Children.Add(PlainSliderRow("Grain", grain, "%"));
+        stack.Children.Add(new TextBlock
+        {
+            Text = dual.Texture ?? "No texture",
+            FontSize = 10,
+            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+            Margin = new Thickness(0, 4, 0, 0)
+        });
+        return stack;
+    }
 
     private Control BuildAntiAliasingContent() => new StackPanel
     {
@@ -439,126 +749,9 @@ public sealed class ToolPropertiesWindow : Window
 
         var result = new StackPanel { Spacing = 0 };
 
-        // ── Tip image library (feeds Image Sampler nodes in the graph) ───────
-        var galleryPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
-        var materialTips = MaterialTipsFor(_brushPreset);
-        var activeTipData = ActiveMaterialTipData(_brushPreset);
-
-        foreach (var tipData in materialTips)
-        {
-            var td = tipData;
-            var isActiveMaterial = activeTipData != null && TipDataEquals(activeTipData, td);
-            var tipObj = td.CreateTip();
-            var bmp = BuildTipPreview(tipObj);
-            if (tipObj is IDisposable disp) disp.Dispose();
-
-            var img = new Image { Source = bmp, Width = 40, Height = 40, Stretch = Stretch.Uniform };
-            var trashBtn = new Button
-            {
-                Content = "✕",
-                Width = 14, Height = 14, Padding = new Thickness(0), FontSize = 8,
-                HorizontalContentAlignment = HorizontalAlignment.Center,
-                VerticalContentAlignment = VerticalAlignment.Center,
-                Background = new SolidColorBrush(Color.Parse(Bg1)),
-                BorderBrush = new SolidColorBrush(Color.Parse(Stroke)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(2),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(0, 1, 1, 0)
-            };
-            trashBtn.PointerPressed += (_, e) => e.Handled = true;
-            trashBtn.Click += (_, _) =>
-            {
-                var newList = materialTips
-                    .Where(t => !BrushMaterialTips.ReferencesSame(t, td))
-                    .Select(t => t.DeepClone())
-                    .ToList();
-                Commit(p =>
-                {
-                    if (newList.Count == 0 && IsMaterialTip(p.Tip)
-                        && ActiveMaterialTipData(p) is { } active
-                        && BrushMaterialTips.ReferencesSame(active, td))
-                        return p with { Tip = RestoreProceduralTip(), Tips = [] };
-
-                    var (tips, tip) = BrushMaterialTips.ApplyLibraryChange(p, newList, removed: td);
-                    return p with { Tips = tips, Tip = tip };
-                });
-                _contentHost.Child = WrapContent(BuildBrushTipContent());
-            };
-
-            var cell = new Grid { Width = 54, Height = 58, Margin = new Thickness(2) };
-            cell.Children.Add(new Border
-            {
-                Background = new SolidColorBrush(Color.Parse(isActiveMaterial ? AccentSoft : Bg2)),
-                BorderBrush = new SolidColorBrush(Color.Parse(isActiveMaterial ? Accent : Stroke)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(4),
-                Child = img,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                VerticalAlignment = VerticalAlignment.Stretch
-            });
-            cell.Children.Add(trashBtn);
-            cell.PointerPressed += (_, _) =>
-            {
-                if (isActiveMaterial) return;
-                var newList = materialTips.Where(t => !TipDataEquals(t, td)).Select(t => t.DeepClone()).ToList();
-                newList.Insert(0, td.DeepClone());
-                Commit(p => p with { Tips = newList });
-                _contentHost.Child = WrapContent(BuildBrushTipContent());
-            };
-            galleryPanel.Children.Add(cell);
-        }
-
-        var newCell = MkGalleryNewBtn(() =>
-        {
-            var browser = new BrushTipBrowserWindow(this, tip =>
-            {
-                RememberProceduralTip(_brushPreset.Tip);
-                var td = BrushMaterialTips.NormalizeTip(BrushTipData.FromTip(tip));
-                var newList = MaterialTipsFor(_brushPreset)
-                    .Where(t => !BrushMaterialTips.ReferencesSame(t, td))
-                    .Select(BrushMaterialTips.NormalizeTip)
-                    .Append(td)
-                    .ToList();
-                Commit(p =>
-                {
-                    if (p.Tip is NodeBrushTip { IsDirectImageSampler: false })
-                    {
-                        var (tips, updatedTip) = BrushMaterialTips.ApplyLibraryChange(p, newList);
-                        return p with { Tips = tips, Tip = updatedTip };
-                    }
-                    return p with { Tip = CreateGraphTipFromTipData(td), Tips = newList };
-                });
-                if (_activeCategory == 4)
-                    _contentHost.Child = WrapContent(BuildBrushTipContent());
-            });
-            browser.Show(this);
-        });
-        galleryPanel.Children.Add(newCell);
-
-        var galleryScroll = new ScrollViewer
-        {
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Visible,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            Content = galleryPanel,
-            Margin = new Thickness(0, 0, 0, 2)
-        };
-        result.Children.Add(SectionHeader("TIP IMAGES"));
-        result.Children.Add(new TextBlock
-        {
-            Text = "PNG library for Image Sampler nodes in the graph editor.",
-            FontSize = 10,
-            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-            TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 0, 0, 4)
-        });
-        result.Children.Add(galleryScroll);
-        if (materialTips.Count > 1)
-            result.Children.Add(BuildTipSelectionModeRow());
-
-        if (IsGraphTip(_brushPreset.Tip))
-            result.Children.Add(BuildTipGraphControls());
+        // ── Brush Tip Library (inline grid — pick a stamp for this brush) ─────
+        result.Children.Add(SectionHeader("BRUSH TIP LIBRARY"));
+        result.Children.Add(BuildBrushTipLibraryGrid());
 
         if (procTip?.Shape == BrushTipShape.Ellipse)
         {
@@ -589,7 +782,180 @@ public sealed class ToolPropertiesWindow : Window
         WireSlider(localDensity, v => Commit(p => p with { TipDensity = v }));
         result.Children.Add(DynSliderRow("Brush density", localDensity, "%", () => OpenTipDensityDynamics(), "brush.tipDensity"));
 
+        var localSpacing = MkSlider(0.01, 1, Math.Clamp(_brushPreset.Spacing, 0.01, 1), "Stamp spacing");
+        WireSlider(localSpacing, v => Commit(p => p with { Spacing = v }));
+        result.Children.Add(PlainSliderRow("Spacing", localSpacing, "%", "brush.spacing"));
+
+        if (IsGraphTip(_brushPreset.Tip) && _brushPreset.Tip is NodeBrushTip node
+            && !node.Graph.TryGetDirectImageSampler(out _))
+            result.Children.Add(BuildTipGraphControls());
+
         return result;
+    }
+
+    private Control BuildBrushTipLibraryGrid()
+    {
+        var grid = new WrapPanel { Orientation = Orientation.Horizontal };
+        var activeProc = BuiltInProceduralTipFor(_brushPreset.Tip);
+        var activeImgKey = ActiveImageTipKey(_brushPreset.Tip);
+
+        foreach (var shape in Enum.GetValues<BrushTipShape>())
+        {
+            var selected = activeProc?.Shape == shape && activeImgKey == null;
+            var shapeLocal = shape;
+            grid.Children.Add(MkLibraryTipCell(
+                RenderTipThumbnail(shape),
+                shape.ToString(),
+                LibrarySizeLabel(shape),
+                selected,
+                () => CommitMainTip(new ProceduralBrushTip(shapeLocal,
+                    shapeLocal == BrushTipShape.Ellipse ? 2.4f : 1.0f))));
+        }
+
+        try
+        {
+            if (Directory.Exists(AppPaths.BrushTipsDirectory))
+            {
+                foreach (var path in Directory.EnumerateFiles(AppPaths.BrushTipsDirectory, "*.png")
+                             .OrderBy(Path.GetFileName))
+                {
+                    IImage? bmp = null;
+                    try
+                    {
+                        using var ms = new MemoryStream(File.ReadAllBytes(path));
+                        bmp = new Bitmap(ms);
+                    }
+                    catch (Exception ex)
+                    {
+                        CrashLog.Write(ex, $"ToolPropertiesWindow.TipLibrary ({path})");
+                        continue;
+                    }
+
+                    var localPath = path;
+                    byte[]? fileBytes = null;
+                    try { fileBytes = File.ReadAllBytes(path); } catch { /* preview already loaded */ }
+                    var selected = activeImgKey != null && fileBytes != null
+                                   && string.Equals(activeImgKey, ImageTipKey(fileBytes), StringComparison.Ordinal);
+                    var px = bmp is Bitmap b
+                        ? Math.Max((int)b.Size.Width, (int)b.Size.Height).ToString()
+                        : "—";
+                    grid.Children.Add(MkLibraryTipCell(
+                        bmp,
+                        Path.GetFileNameWithoutExtension(localPath),
+                        px,
+                        selected,
+                        () => CommitMainTip(new ImageBrushTip(localPath))));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write(ex, "ToolPropertiesWindow.BuildBrushTipLibraryGrid");
+        }
+
+        grid.Children.Add(MkGalleryNewBtn(() =>
+        {
+            var browser = new BrushTipBrowserWindow(this, tip =>
+            {
+                CommitMainTip(tip);
+            });
+            browser.Show(this);
+        }));
+
+        // No nested ScrollViewer — outer category scroller owns scrolling.
+        return grid;
+    }
+
+    private Button MkLibraryTipCell(IImage? thumb, string label, string sizeLabel, bool active, Action onClick)
+    {
+        Control inner;
+        if (thumb != null)
+        {
+            inner = new StackPanel
+            {
+                Spacing = 1,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Children =
+                {
+                    new Image { Source = thumb, Width = 40, Height = 40, Stretch = Stretch.Uniform },
+                    new TextBlock
+                    {
+                        Text = sizeLabel,
+                        FontSize = 9,
+                        FontWeight = FontWeight.SemiBold,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextSecondary))
+                    },
+                    new TextBlock
+                    {
+                        Text = label,
+                        FontSize = 8,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        MaxWidth = 54,
+                        Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted))
+                    }
+                }
+            };
+        }
+        else
+        {
+            inner = new TextBlock
+            {
+                Text = label,
+                FontSize = 9,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = new SolidColorBrush(Color.Parse(active ? TextPrimary : TextMuted))
+            };
+        }
+
+        var btn = new Button
+        {
+            Width = 64,
+            Height = 78,
+            Margin = new Thickness(2),
+            Padding = new Thickness(2),
+            Background = new SolidColorBrush(Color.Parse(active ? AccentSoft : Bg2)),
+            BorderBrush = new SolidColorBrush(Color.Parse(active ? Accent : Stroke)),
+            BorderThickness = new Thickness(active ? 2 : 1),
+            CornerRadius = new CornerRadius(4),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Content = inner
+        };
+        ToolTip.SetTip(btn, label);
+        btn.Click += (_, _) => onClick();
+        return btn;
+    }
+
+    private static string LibrarySizeLabel(BrushTipShape shape) => shape switch
+    {
+        BrushTipShape.Circle => "30",
+        BrushTipShape.SoftRound => "64",
+        BrushTipShape.Ellipse => "40",
+        BrushTipShape.Flat => "48",
+        BrushTipShape.Rectangle => "36",
+        BrushTipShape.Chalk => "42",
+        BrushTipShape.Bristle => "50",
+        BrushTipShape.Scatter => "56",
+        _ => "32"
+    };
+
+    private static string? ActiveImageTipKey(IBrushTip tip)
+    {
+        if (tip is ImageBrushTip img)
+            return ImageTipKey(img.GetPngBytes());
+        if (tip is NodeBrushTip node && node.Graph.TryGetDirectImageSampler(out var bytes))
+            return ImageTipKey(bytes);
+        return null;
+    }
+
+    private static string ImageTipKey(byte[] pngBytes)
+    {
+        var hash = System.Security.Cryptography.SHA1.HashData(pngBytes);
+        return Convert.ToHexString(hash.AsSpan(0, 8));
     }
 
     private Control BuildTipGraphControls()
@@ -2020,25 +2386,44 @@ public sealed class ToolPropertiesWindow : Window
 
     private void CommitMainTip(IBrushTip tip)
     {
-        var tipData = BrushTipData.FromTip(tip);
-        if (tipData.Kind != BrushTipStorageKind.EmbeddedPng)
-            _lastProceduralTip = tipData.DeepClone();
-        Commit(p =>
-        {
-            if (tipData.Kind != BrushTipStorageKind.EmbeddedPng)
-                return p with { Tip = tip, Tips = PreserveMaterialTipsWithActiveFirst(p) };
-
-            var tips = MaterialTipsFor(p)
-                .Where(t => !TipDataEquals(t, tipData))
-                .Select(t => t.DeepClone())
-                .Append(tipData.DeepClone())
-                .ToList();
-            return p with { Tip = CreateGraphTipFromTipData(tipData), Tips = tips };
-        });
+        if (tip is ProceduralBrushTip or ImageBrushTip)
+            RememberProceduralTip(tip);
+        Commit(p => ApplyTipToPreset(p, tip));
         if (_activeCategory == 4)
             _contentHost.Child = WrapContent(BuildBrushTipContent());
         else if (_activeCategory == 3)
             _contentHost.Child = WrapContent(BuildBrushShapeContent());
+    }
+
+    /// <summary>Library tips are first-class stamps — never force a NodeBrushTip wrap.</summary>
+    private static BrushPreset ApplyTipToPreset(BrushPreset preset, IBrushTip tip)
+    {
+        if (tip is ImageBrushTip img)
+        {
+            var data = BrushTipData.FromTip(img);
+            var tips = BrushMaterialTips.ForPreset(preset)
+                .Where(t => !BrushMaterialTips.ReferencesSame(t, data))
+                .Select(t => t.DeepClone())
+                .Prepend(data.DeepClone())
+                .ToList();
+            return preset with
+            {
+                Tip = new ImageBrushTip(img.GetPngBytes()),
+                Tips = tips,
+                TipSelectionMode = BrushTipSelectionMode.Single
+            };
+        }
+
+        if (tip is ProceduralBrushTip proc)
+        {
+            return preset with
+            {
+                Tip = new ProceduralBrushTip(proc.Shape, proc.AspectRatio),
+                TipSelectionMode = BrushTipSelectionMode.Single
+            };
+        }
+
+        return preset with { Tip = tip, TipSelectionMode = BrushTipSelectionMode.Single };
     }
 
     private void RememberProceduralTip(IBrushTip tip)
@@ -2148,6 +2533,7 @@ public sealed class ToolPropertiesWindow : Window
         CloseDynamicsPopups();
         _syncing = true;
         _presetSyncGeneration++;
+        var dualWasEnabled = _brushPreset.DualBrush.Enabled;
         _brushPreset = preset;
         RememberProceduralTip(preset.Tip);
 
@@ -2176,11 +2562,22 @@ public sealed class ToolPropertiesWindow : Window
         if (_textureFileLabel != null)
             _textureFileLabel.Text = preset.Texture != null ? Path.GetFileName(preset.Texture) : "None";
 
-        HighlightActiveCategory();
-        if (_activeCategory == 4)
+        if (dualWasEnabled != preset.DualBrush.Enabled)
+            RebuildNavigation();
+        else
+            HighlightActiveCategory();
+
+        var cat = _categories.ElementAtOrDefault(_activeCategory);
+        if (cat == "Ink")
+            _contentHost.Child = WrapContent(BuildInkContent());
+        else if (cat == "Dual brush")
+            _contentHost.Child = WrapContent(BuildDualBrushContent());
+        else if (cat == "Brush tip")
             _contentHost.Child = WrapContent(BuildBrushTipContent());
-        else if (_activeCategory == 3)
+        else if (cat == "Brush shape")
             _contentHost.Child = WrapContent(BuildBrushShapeContent());
+        else if (cat is "2 - Brush tip" or "2 - Ink" or "2 - Edge" or "2 - Stroke" or "2 - Texture")
+            SelectCategory(_activeCategory);
 
         _activePaintColor = preset.Color;
         _preview.Brush = preset;

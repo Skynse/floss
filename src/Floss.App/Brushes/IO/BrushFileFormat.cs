@@ -14,8 +14,8 @@ public static class BrushFileFormat
     public const string Extension = ".flbr";
     private const uint Magic = 0x52424C46; // FLBR, little endian
 
-    // Version 15 stores the 4-level BrushQuality enum (PixelArt/Low/Medium/High).
-    private const int Version = 15;
+    // Version 16 adds CSP-style DualBrush profile (full secondary brush).
+    private const int Version = 16;
 
     public static BrushAsset Load(string path)
     {
@@ -100,6 +100,9 @@ public static class BrushFileFormat
             var speedAdaptive = version >= 14 && reader.BaseStream.Position < reader.BaseStream.Length
                 ? reader.ReadBoolean()
                 : true;
+            DualBrushProfileDocument? dualBrush = null;
+            if (version >= 16 && reader.BaseStream.Position < reader.BaseStream.Length)
+                dualBrush = ReadDualBrush(reader);
             asset.Preset = new BrushPreset(name, size, opacity, hardness, spacing, color, angle)
             {
                 Dynamics = dynamics,
@@ -121,6 +124,9 @@ public static class BrushFileFormat
                 ParameterGraphs = parameterGraphs,
                 Tip = asset.Tip.CreateTip()
             };
+            asset.DualBrushData = dualBrush;
+            if (dualBrush is { Enabled: true })
+                asset.Preset = asset.Preset with { DualBrush = dualBrush.ToProfile() };
         }
         else if (version == 5)
         {
@@ -240,6 +246,52 @@ public static class BrushFileFormat
             WriteTip(writer, tip);
         WriteParameterGraphs(writer, p.ParameterGraphs);
         writer.Write(p.SpeedAdaptiveStabilizer);
+        WriteDualBrush(writer, p.DualBrush);
+    }
+
+    private static DualBrushProfileDocument? ReadDualBrush(BinaryReader reader)
+    {
+        if (!reader.ReadBoolean())
+            return null;
+        return new DualBrushProfileDocument
+        {
+            Enabled = true,
+            Tip = ReadTip(reader, Version),
+            Size = reader.ReadDouble(),
+            Opacity = reader.ReadDouble(),
+            Hardness = reader.ReadDouble(),
+            Flow = reader.ReadDouble(),
+            Spacing = reader.ReadDouble(),
+            Grain = reader.ReadDouble(),
+            Texture = ReadOptionalString(reader),
+            Quality = (BrushQuality)reader.ReadInt32(),
+            Angle = reader.ReadDouble(),
+            DynamicsJson = reader.ReadString()
+        };
+    }
+
+    private static void WriteDualBrush(BinaryWriter writer, DualBrushProfile profile)
+    {
+        writer.Write(profile.Enabled);
+        if (!profile.Enabled)
+            return;
+        WriteTip(writer, BrushTipData.FromTip(profile.Tip));
+        writer.Write(profile.Size);
+        writer.Write(profile.Opacity);
+        writer.Write(profile.Hardness);
+        writer.Write(profile.Flow);
+        writer.Write(profile.Spacing);
+        writer.Write(profile.Grain);
+        writer.Write(profile.Texture ?? string.Empty);
+        writer.Write((int)profile.Quality);
+        writer.Write(profile.Angle);
+        writer.Write(profile.Dynamics.Serialize());
+    }
+
+    private static string? ReadOptionalString(BinaryReader reader)
+    {
+        var value = reader.ReadString();
+        return value.Length > 0 ? value : null;
     }
 
     // ── Helpers (kept exactly the same) ────────────────────────────────────

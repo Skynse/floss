@@ -17,6 +17,7 @@ namespace Floss.App.Windows;
 
 using static Floss.App.Config.AppColors;
 
+/// <summary>Simple tip picker popup used when importing/adding a tip from Tool Properties.</summary>
 public sealed class BrushTipBrowserWindow : Window
 {
     private readonly Action<IBrushTip> _onSelect;
@@ -30,7 +31,7 @@ public sealed class BrushTipBrowserWindow : Window
         CanResize = true;
         MinWidth = 320;
         MinHeight = 360;
-        Title = "Brush Tips";
+        Title = "Brush Tip Library";
 
         CustomWindowChrome.ConfigurePopup(this);
         Content = CustomWindowChrome.Wrap(this, Title, BuildContent());
@@ -38,7 +39,6 @@ public sealed class BrushTipBrowserWindow : Window
 
     private Control BuildContent()
     {
-        // Header
         var importBtn = SmBtn("Import PNG");
         importBtn.Click += async (_, _) => await ImportPngAsync();
 
@@ -51,7 +51,6 @@ public sealed class BrushTipBrowserWindow : Window
         header.Children.Add(MkHeader("Select a tip"));
         header.Children.Add(importBtn);
 
-        // Procedural section
         var procGrid = new WrapPanel
         {
             Orientation = Orientation.Horizontal,
@@ -59,43 +58,47 @@ public sealed class BrushTipBrowserWindow : Window
         };
         foreach (var shape in Enum.GetValues<BrushTipShape>())
         {
-            var btn = MakeTipBtn(
+            procGrid.Children.Add(MakeTipBtn(
                 RenderShapePreview(shape),
                 shape.ToString(),
-                () => Select(new ProceduralBrushTip(shape)));
-            procGrid.Children.Add(btn);
+                DefaultSizeLabel(shape),
+                () => Select(new ProceduralBrushTip(shape))));
         }
 
-        // Image section
         var imgGrid = new WrapPanel
         {
             Orientation = Orientation.Horizontal,
             Margin = new Thickness(0, 4, 0, 0)
         };
 
-        var pngFiles = new List<string>();
         try
         {
             if (Directory.Exists(AppPaths.BrushTipsDirectory))
-                pngFiles.AddRange(Directory.EnumerateFiles(AppPaths.BrushTipsDirectory, "*.png"));
-        }
-        catch (Exception ex) { CrashLog.Write(ex, "BrushTipBrowserWindow.LoadBrushes (enum)"); }
-
-        foreach (var path in pngFiles.OrderBy(Path.GetFileName))
-        {
-            Bitmap? bitmap = null;
-            try
             {
-                var bytes = File.ReadAllBytes(path);
-                using var ms = new MemoryStream(bytes);
-                bitmap = new Bitmap(ms);
-            }
-            catch (Exception ex) { CrashLog.Write(ex, $"BrushTipBrowserWindow.LoadBrushes (load {path})"); continue; }
+                foreach (var path in Directory.EnumerateFiles(AppPaths.BrushTipsDirectory, "*.png").OrderBy(Path.GetFileName))
+                {
+                    Bitmap? bitmap = null;
+                    try
+                    {
+                        using var ms = new MemoryStream(File.ReadAllBytes(path));
+                        bitmap = new Bitmap(ms);
+                    }
+                    catch (Exception ex)
+                    {
+                        CrashLog.Write(ex, $"BrushTipBrowserWindow.Load ({path})");
+                        continue;
+                    }
 
-            var localPath = path;
-            var btn = MakeTipBtn(bitmap, Path.GetFileNameWithoutExtension(localPath),
-                () => Select(new ImageBrushTip(localPath)));
-            imgGrid.Children.Add(btn);
+                    var localPath = path;
+                    var px = bitmap == null ? "—" : Math.Max((int)bitmap.Size.Width, (int)bitmap.Size.Height).ToString();
+                    imgGrid.Children.Add(MakeTipBtn(bitmap, Path.GetFileNameWithoutExtension(localPath), px,
+                        () => Select(new ImageBrushTip(localPath))));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write(ex, "BrushTipBrowserWindow.LoadBrushes");
         }
 
         var stack = new StackPanel { Spacing = 0 };
@@ -119,38 +122,46 @@ public sealed class BrushTipBrowserWindow : Window
         };
     }
 
-    private Control MakeTipBtn(Bitmap? bitmap, string label, Action onClick)
+    private Control MakeTipBtn(Bitmap? bitmap, string label, string sizeLabel, Action onClick)
     {
-        var img = new Image
-        {
-            Source = bitmap,
-            Width = 48,
-            Height = 48,
-            Stretch = Stretch.Uniform,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-
-        var lbl = new TextBlock
-        {
-            Text = label,
-            FontSize = 9,
-            Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
-            TextAlignment = Avalonia.Media.TextAlignment.Center,
-            TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
-            MaxWidth = 60
-        };
-
         var content = new StackPanel
         {
             Spacing = 2,
-            Children = { img, lbl }
+            Children =
+            {
+                new Image
+                {
+                    Source = bitmap,
+                    Width = 48,
+                    Height = 48,
+                    Stretch = Stretch.Uniform,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                },
+                new TextBlock
+                {
+                    Text = sizeLabel,
+                    FontSize = 9,
+                    FontWeight = FontWeight.SemiBold,
+                    Foreground = new SolidColorBrush(Color.Parse(TextSecondary)),
+                    HorizontalAlignment = HorizontalAlignment.Center
+                },
+                new TextBlock
+                {
+                    Text = label,
+                    FontSize = 9,
+                    Foreground = new SolidColorBrush(Color.Parse(TextMuted)),
+                    TextAlignment = TextAlignment.Center,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    MaxWidth = 60
+                }
+            }
         };
 
         var btn = new Button
         {
             Width = 72,
-            Height = 78,
+            Height = 86,
             Padding = new Thickness(2),
             Margin = new Thickness(0, 0, 4, 4),
             Background = new SolidColorBrush(Color.Parse(Bg2)),
@@ -190,13 +201,29 @@ public sealed class BrushTipBrowserWindow : Window
             var name = files[0].Name;
             if (!name.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
                 name += ".png";
-            var destPath = Path.Combine(AppPaths.BrushTipsDirectory, name);
-            await File.WriteAllBytesAsync(destPath, bytes);
+            Directory.CreateDirectory(AppPaths.BrushTipsDirectory);
+            await File.WriteAllBytesAsync(Path.Combine(AppPaths.BrushTipsDirectory, name), bytes);
         }
-        catch (Exception ex) { CrashLog.Write(ex, "BrushTipBrowserWindow.ImportPng"); }
+        catch (Exception ex)
+        {
+            CrashLog.Write(ex, "BrushTipBrowserWindow.ImportPng");
+        }
 
         Select(new ImageBrushTip(bytes));
     }
+
+    private static string DefaultSizeLabel(BrushTipShape shape) => shape switch
+    {
+        BrushTipShape.Circle => "30",
+        BrushTipShape.SoftRound => "64",
+        BrushTipShape.Ellipse => "40",
+        BrushTipShape.Flat => "48",
+        BrushTipShape.Rectangle => "36",
+        BrushTipShape.Chalk => "42",
+        BrushTipShape.Bristle => "50",
+        BrushTipShape.Scatter => "56",
+        _ => "32"
+    };
 
     private static Bitmap? RenderShapePreview(BrushTipShape shape)
     {
@@ -207,16 +234,8 @@ public sealed class BrushTipBrowserWindow : Window
         using var bitmap = new SKBitmap(info);
         using var canvas = new SKCanvas(bitmap);
         canvas.Clear(SKColors.Transparent);
-
-        using var paint = new SKPaint
-        {
-            IsAntialias = true,
-            Color = SKColors.White,
-            Style = SKPaintStyle.Fill
-        };
-
+        using var paint = new SKPaint { IsAntialias = true, Color = SKColors.White };
         canvas.DrawBitmap(mask, (size - mask.Width) * 0.5f, (size - mask.Height) * 0.5f, paint);
-
         using var image = SKImage.FromBitmap(bitmap);
         using var data = image.Encode(SKEncodedImageFormat.Png, 100);
         using var ms = new MemoryStream(data.ToArray());
@@ -233,18 +252,14 @@ public sealed class BrushTipBrowserWindow : Window
         LetterSpacing = 1.0
     };
 
-    private static Button SmBtn(string label)
+    private static Button SmBtn(string label) => new()
     {
-        var b = new Button
-        {
-            Content = label,
-            Height = 20,
-            Padding = new Thickness(6, 0),
-            FontSize = 10,
-            HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            Classes = { "outline" }
-        };
-        return b;
-    }
+        Content = label,
+        Height = 20,
+        Padding = new Thickness(6, 0),
+        FontSize = 10,
+        HorizontalContentAlignment = HorizontalAlignment.Center,
+        VerticalContentAlignment = VerticalAlignment.Center,
+        Classes = { "outline" }
+    };
 }

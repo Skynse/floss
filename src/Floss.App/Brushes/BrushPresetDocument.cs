@@ -45,6 +45,7 @@ public sealed class BrushPresetDocument
     public bool FlipHorizontal { get; set; }
     public bool FlipVertical { get; set; }
     public List<BrushParameterGraph> ParameterGraphs { get; set; } = [];
+    public DualBrushProfileDocument? DualBrush { get; set; }
 
     public static BrushPresetDocument FromPreset(BrushPreset preset) => new()
     {
@@ -84,7 +85,10 @@ public sealed class BrushPresetDocument
         AngleJitter = preset.AngleJitter,
         FlipHorizontal = preset.FlipHorizontal,
         FlipVertical = preset.FlipVertical,
-        ParameterGraphs = preset.ParameterGraphs.Select(g => g.DeepClone()).ToList()
+        ParameterGraphs = preset.ParameterGraphs.Select(g => g.DeepClone()).ToList(),
+        DualBrush = preset.DualBrush.Enabled
+            ? DualBrushProfileDocument.FromProfile(preset.DualBrush)
+            : null
     };
 
     public BrushPreset ToPreset(BrushTipData tip, BrushTipData? shapeData, Color? colorOverride = null)
@@ -125,8 +129,14 @@ public sealed class BrushPresetDocument
             Tip = tip.CreateTip()
         };
 
-        if (shapeData is { Kind: BrushTipStorageKind.Procedural })
-            preset = preset with { Shape = new ProceduralBrushTip(shapeData.Shape, shapeData.AspectRatio) };
+        if (DualBrush is { Enabled: true } dualDoc)
+            preset = preset with { DualBrush = dualDoc.ToProfile(), Shape = null };
+        else if (shapeData is { Kind: BrushTipStorageKind.Procedural } legacyShape)
+            preset = preset with
+            {
+                DualBrush = DualBrushProfileDocument.FromLegacyShape(legacyShape, Size).ToProfile(),
+                Shape = null
+            };
 
         return preset;
     }

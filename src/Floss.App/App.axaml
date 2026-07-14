@@ -378,17 +378,17 @@
             <Setter Property="Background" Value="Transparent"/>
         </Style>
 
-        <!-- ScrollViewers: always show scrollbars when content overflows -->
+        <!-- ScrollViewers: classic gutters — never overlay/auto-hide.
+             Nested scroll areas stay independently draggable. -->
         <Style Selector="ScrollViewer">
-            <Setter Property="HorizontalScrollBarVisibility" Value="Visible"/>
-            <Setter Property="VerticalScrollBarVisibility" Value="Visible"/>
+            <Setter Property="HorizontalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="AllowAutoHide" Value="False"/>
         </Style>
 
-        <!-- ══════════════════════════════════════════════════════════════════
-             ScrollBar
-        ══════════════════════════════════════════════════════════════════ -->
         <Style Selector="ScrollBar">
-            <Setter Property="Opacity" Value="0.85"/>
+            <Setter Property="AllowAutoHide" Value="False"/>
+            <Setter Property="Opacity" Value="1"/>
         </Style>
 
         <!-- ══════════════════════════════════════════════════════════════════

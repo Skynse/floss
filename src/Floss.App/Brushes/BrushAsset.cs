@@ -118,14 +118,24 @@ public sealed class BrushAsset
     public BrushPreset Preset { get; set; } = BrushPreset.Defaults[0];
     public BrushTipData Tip { get; set; } = new();
 
-    // Persists preset.Shape (always procedural, so only shape+aspect needed).
+    // Legacy secondary tip mask — migrated to DualBrush on load.
     public BrushTipData? ShapeData { get; set; } = null;
+
+    public DualBrushProfileDocument? DualBrushData { get; set; }
 
     public BrushPreset ToPreset()
     {
         var preset = Preset with { Tip = Tip.CreateTip(), Tips = Preset.Tips };
-        if (ShapeData is { Kind: BrushTipStorageKind.Procedural })
-            preset = preset with { Shape = new ProceduralBrushTip(ShapeData.Shape, ShapeData.AspectRatio) };
+        if (DualBrushData is { Enabled: true })
+            preset = preset with { DualBrush = DualBrushData.ToProfile(), Shape = null };
+        else if (ShapeData is { Kind: BrushTipStorageKind.Procedural } legacyShape)
+            preset = preset with
+            {
+                DualBrush = DualBrushProfileDocument.FromLegacyShape(legacyShape, preset.Size).ToProfile(),
+                Shape = null
+            };
+        else if (Preset.DualBrush.Enabled)
+            preset = preset with { DualBrush = Preset.DualBrush.DeepClone() };
         return preset;
     }
 
@@ -133,8 +143,9 @@ public sealed class BrushAsset
     {
         Preset = preset;
         Tip = BrushTipData.FromTip(preset.Tip);
-        ShapeData = preset.Shape != null
-            ? new BrushTipData { Kind = BrushTipStorageKind.Procedural, Shape = preset.Shape.Shape, AspectRatio = preset.Shape.AspectRatio }
+        ShapeData = null;
+        DualBrushData = preset.DualBrush.Enabled
+            ? DualBrushProfileDocument.FromProfile(preset.DualBrush)
             : null;
         return this;
     }
@@ -146,7 +157,8 @@ public sealed class BrushAsset
             Category = Category,
             Preset = Preset with { Name = name },
             Tip = Tip.DeepClone(),
-            ShapeData = ShapeData?.DeepClone()
+            ShapeData = ShapeData?.DeepClone(),
+            DualBrushData = DualBrushData?.DeepClone()
         };
 
     public static BrushAsset FromPreset(BrushPreset preset, string? category = null)
