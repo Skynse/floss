@@ -330,8 +330,6 @@ public sealed partial class ToolPropertiesDockPanel : ContentControl
         return props;
     }
 
-    private static IReadOnlyList<ToolPropertyDescriptor> CurrentLegacyToolProperties() => [];
-
     private void UpdateActiveToolPreset(Action<ToolPreset> update)
     {
         var preset = _ps.Tools.ActiveToolGroup?.ActivePreset;

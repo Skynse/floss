@@ -315,69 +315,6 @@
             <Setter Property="Background" Value="{StaticResource Bg2}"/>
         </Style>
 
-        <!-- Legacy Avalonia Slider styles (app uses Controls.ScrubSlider instead) -->
-        <Style Selector="Slider:horizontal">
-            <Setter Property="Background" Value="{StaticResource SliderTrack}"/>
-            <Setter Property="MinHeight"  Value="14"/>
-            <Setter Property="MaxHeight"  Value="14"/>
-            <Setter Property="Cursor"     Value="SizeWestEast"/>
-            <Setter Property="Padding"    Value="0"/>
-            <Setter Property="Template">
-                <ControlTemplate>
-                    <Border Background="{TemplateBinding Background}"
-                            Height="14"
-                            CornerRadius="2"
-                            ClipToBounds="False">
-                        <Track Name="PART_Track" Orientation="Horizontal"
-                               Height="14"
-                               Minimum="{TemplateBinding Minimum}"
-                               Maximum="{TemplateBinding Maximum}"
-                               Value="{TemplateBinding Value, Mode=TwoWay}">
-                            <Track.DecreaseButton>
-                                <RepeatButton Name="PART_DecreaseButton" Focusable="False">
-                                    <RepeatButton.Template>
-                                        <ControlTemplate>
-                                            <Border Name="Fill" Background="Transparent"/>
-                                        </ControlTemplate>
-                                    </RepeatButton.Template>
-                                </RepeatButton>
-                            </Track.DecreaseButton>
-                            <Track.Thumb>
-                                <Thumb Width="12" Height="12" Cursor="SizeWestEast">
-                                    <Thumb.Template>
-                                        <ControlTemplate>
-                                            <Border Width="10" Height="10"
-                                                    Background="{StaticResource SliderThumb}"
-                                                    BorderBrush="{StaticResource Stroke}"
-                                                    BorderThickness="1"
-                                                    CornerRadius="2"
-                                                    VerticalAlignment="Center"
-                                                    HorizontalAlignment="Center"/>
-                                        </ControlTemplate>
-                                    </Thumb.Template>
-                                </Thumb>
-                            </Track.Thumb>
-                            <Track.IncreaseButton>
-                                <RepeatButton Name="PART_IncreaseButton" Focusable="False">
-                                    <RepeatButton.Template>
-                                        <ControlTemplate>
-                                            <Border Background="Transparent"/>
-                                        </ControlTemplate>
-                                    </RepeatButton.Template>
-                                </RepeatButton>
-                            </Track.IncreaseButton>
-                        </Track>
-                    </Border>
-                </ControlTemplate>
-            </Setter>
-        </Style>
-        <Style Selector="Slider:horizontal:pointerover /template/ RepeatButton#PART_DecreaseButton /template/ Border#Fill">
-            <Setter Property="Background" Value="Transparent"/>
-        </Style>
-        <Style Selector="Slider:horizontal:pressed /template/ RepeatButton#PART_DecreaseButton /template/ Border#Fill">
-            <Setter Property="Background" Value="Transparent"/>
-        </Style>
-
         <!-- ScrollViewers: classic gutters — never overlay/auto-hide.
              Nested scroll areas stay independently draggable. -->
         <Style Selector="ScrollViewer">

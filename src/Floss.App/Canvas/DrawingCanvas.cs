@@ -246,10 +246,8 @@ public sealed class DrawingCanvas : Control, IDisposable
             InvalidateVisual();
         };
         _document.ActiveLayerChanged += (_, _) => ActiveLayerChanged?.Invoke(this, EventArgs.Empty);
-        _document.LayerRemoved += (_, layer) => _compositor.RemoveGroupCache(layer);
         _document.LayerMetadataChanged += (_, e) => LayerMetadataChanged?.Invoke(this, e);
         _document.StrokeSuspendBegan += (_, e) => _compositor.BeginStrokeSuspend(e.Region, e.LayerIndex);
-        _document.StrokeSuspendExtended += (_, r) => _compositor.ExtendStrokeSuspend(r);
         _document.StrokeSuspendEnded += (_, _) => _compositor.EndStrokeSuspend();
     }
 
@@ -1416,8 +1414,6 @@ public sealed class DrawingCanvas : Control, IDisposable
             ? TransformTool.CursorFor(_pointerPos, Math.Max(CanvasZoom, 0.001))
             : null;
 
-    public void EnterSmartShapeGizmoEdit() { }
-
     /// <summary>Cancel auto-fit preview while pen is still down (Esc / deselect).</summary>
     public bool CancelSmartShapePreviewIfActive()
     {
@@ -1431,8 +1427,6 @@ public sealed class DrawingCanvas : Control, IDisposable
         InvalidateVisual();
         return true;
     }
-
-    public void RefitSmartShape(SmartShapeFitKind kind) { }
 
     internal SmartShapeFitKind GetSmartShapeFitKind() =>
         _toolController.ActiveTool is CompositeTool { Input: SmartShapeBrushInputProcess ss }

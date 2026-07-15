@@ -35,6 +35,7 @@ public sealed partial class ColorDockPanel : ContentControl
     {
         _ps = new PanelSession(session);
         Content = BuildColorSection();
+        BuildSwatches();
     }
 
     public void RefreshSliders() => _ps.Color.RefreshColorSliders();

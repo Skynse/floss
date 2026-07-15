@@ -158,8 +158,6 @@ public sealed class LayerCompositor : IDisposable
         }
     }
 
-    public void RemoveGroupCache(DrawingLayer g) { }
-
     public void SetSize(int w, int h)
     {
         if (_width == w && _height == h) return;
@@ -867,9 +865,6 @@ public sealed class LayerCompositor : IDisposable
             }
         }
     }
-
-    // Below-layer pixels do not change during a stroke — do not invalidate the cache here.
-    public void ExtendStrokeSuspend(PixelRegion _) { }
 
     public void EndStrokeSuspend()
     {

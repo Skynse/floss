@@ -37,9 +37,6 @@ public static class AppPaths
     public static string ShortcutsConfigPath { get; } =
         Path.Combine(ConfigDirectory, "shortcuts.json");
 
-    public static string BrushPaletteConfigPath { get; } =
-        Path.Combine(ConfigDirectory, "brush-palette.json");
-
     public static string ToolGroupConfigPath { get; } =
         Path.Combine(ConfigDirectory, "tool-groups.json");
 

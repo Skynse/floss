@@ -572,7 +572,6 @@ public partial class MainWindow : Window, Tools.IViewportController
         EnsurePopupContent();  // pre-build brush/tool controls so sliders exist
         WireControls();
         RestoreFromConfig();
-        // BuildSwatches();
         LoadBrushAssets();
         SelectInitialTool();
         SetColor(Color.Parse(App.Config.LastColor));
